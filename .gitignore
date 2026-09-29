@@ -28,7 +28,6 @@ data/
 logs/
 *.log
 uploads/
-storage/
 
 # Node / 前端
 node_modules/
@@ -42,3 +41,7 @@ npm-debug.log*
 *.swp
 .DS_Store
 Thumbs.db
+
+# 生成产物
+backend/reports/
+reports/
