@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegis.hazard-mas/contracts/agent_message.v1.schema.json",
+  "title": "AEGIS AgentMessage v1",
+  "description": "智能体接入规范 §1：平台与 L3 智能体之间唯一的消息载体。所有消息经平台总线网关强制校验，不合规消息拒收并回 error 回执。字段依据《课题6_项目架构设计.md》§4.3：消息ID/源/目标/动作/载荷/时间戳/链路追踪ID。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "msg_id", "trace_id", "ts", "source", "target", "kind", "action", "payload"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "契约版本。网关拒收非 1.0 消息（演进走 v2 并行 subject）。"
+    },
+    "msg_id": {
+      "type": "string",
+      "pattern": "^msg_[0-9a-f]{16}$",
+      "description": "全局唯一消息 ID，同时作为幂等键：接收方对重复 msg_id 必须去重且不产生副作用。"
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^trc_[0-9a-f]{16}$",
+      "description": "链路追踪 ID。一次灾害事件（感知→研判→决策→执行→反馈）内所有消息共享，用于指标归因与 Jaeger 对接。"
+    },
+    "span_id": {
+      "type": "string",
+      "pattern": "^spn_[0-9a-f]{8}$",
+      "description": "可选。同一事务内的跳点，用于逐级时延拆分。"
+    },
+    "causation_id": {
+      "type": ["string", "null"],
+      "pattern": "^msg_[0-9a-f]{16}$",
+      "description": "本消息所响应的上游消息 ID（in_reply_to）。"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "发送时刻，UTC ISO8601 毫秒精度（如 2026-09-29T13:06:00.123Z）。平台以 ts 计算共享同步时延。"
+    },
+    "source": {
+      "type": "string",
+      "pattern": "^(platform|[a-z][a-z0-9_]{2,31})\\.[a-z][a-z0-9_-]{0,31}$",
+      "description": "源标识：<类型>.<实例>。智能体类型限定 perceive/assess/plan/execute/feedback；平台侧固定 platform.<子系统>。"
+    },
+    "target": {
+      "type": "string",
+      "pattern": "^(platform|[a-z][a-z0-9_]{2,31})\\.[a-z][a-z0-9_-]{0,31}$|^\\*$",
+      "description": "目标标识；'*' 表示广播（仅 event 类允许）。"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["request", "response", "event", "error"],
+      "description": "request/response 走 JetStream request-reply 构成一次协同事务；event 为单向广播；error 为失败回执。"
+    },
+    "action": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,2}$",
+      "description": "受控动作词。规范登记的 v1 动作集合见 subjects.md §5；未注册动作由网关按 allow_unregistered_action 策略处理（默认拒绝）。"
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "default": 3,
+      "description": "1=最高（红色预警类，可抢占）… 5=最低（统计类）。冲突仲裁与调度排序依据。"
+    },
+    "ttl_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 30000,
+      "description": "消息有效期。超期未被消费则由网关丢弃并记录 dropped 指标，防止弱网积压过期指令被执行。"
+    },
+    "payload": {
+      "type": "object",
+      "description": "动作参数。禁止内嵌大体积数据（>64KB 须改为 refs 引用）。",
+      "maxProperties": 64
+    },
+    "refs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "id"],
+        "properties": {
+          "type": { "type": "string", "enum": ["telemetry", "entity", "case", "warning", "task_unit", "object", "snapshot"] },
+          "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "note": { "type": "string", "maxLength": 256 }
+        }
+      },
+      "description": "数据引用。智能体不得直连数据库，须通过平台数据 API 按 ref 取数（智能体接入规范 §4）。"
+    },
+    "reply_to": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]*\\.[a-z][a-z0-9_-]{0,31}$",
+      "description": "request 必填：响应回投递 subject（平台按事务分配唯一收件箱，避免并发串扰）。"
+    },
+    "deadline_ms": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 600000,
+      "description": "request 必填：本次协同事务的完成期限，超期计为失败事务（影响协同成功率）。"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "request" } }, "required": ["kind"] },
+      "then": {
+        "required": ["reply_to", "deadline_ms"],
+        "properties": {
+          "reply_to": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*\\.[a-z][a-z0-9_-]{0,31}$" },
+          "deadline_ms": { "type": "integer", "minimum": 100, "maximum": 600000, "description": "本次协同事务的完成期限，超期计为失败事务（影响协同成功率）。" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "response" } }, "required": ["kind"] },
+      "then": { "required": ["causation_id"], "properties": { "target": { "type": "string", "pattern": "^(platform|[a-z][a-z0-9_]{2,31})\\.[a-z][a-z0-9_-]{0,31}$" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "error" } }, "required": ["kind"] },
+      "then": {
+        "required": ["causation_id"],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["code", "message", "retryable"],
+            "properties": {
+              "code": { "type": "string", "pattern": "^E[A-Z0-9_]{3,20}$" },
+              "message": { "type": "string", "maxLength": 512 },
+              "retryable": { "type": "boolean" },
+              "detail": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "target": { "const": "*" } }, "required": ["target"] },
+      "then": { "properties": { "kind": { "enum": ["event"] } } }
+    }
+  ]
+}

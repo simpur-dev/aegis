@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegis.hazard-mas/contracts/stu.v1.schema.json",
+  "title": "AEGIS Standardized Task Unit (STU) v1",
+  "description": "课题6 §研究内容1 的输出物：标准化任务单元。决策智能体产出 STU，平台工作流引擎将 STU 一一映射为可调度节点。字段依据《课题6_项目架构设计.md》§4.1（任务ID/类型/区域/优先级/责任人/时限/前置依赖）并扩展调度所需字段。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "task_unit_id", "event_id", "hazard_type", "region_code",
+    "task_type", "objective", "priority", "sla_seconds", "required_capabilities",
+    "owner_role", "fallback_policy", "created_by"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "task_unit_id": { "type": "string", "pattern": "^stu_[0-9a-f]{16}$" },
+    "event_id": {
+      "type": "string",
+      "pattern": "^evt_[0-9a-f]{12}$",
+      "description": "所属灾害事件 ID。同一事件下多个 STU 构成任务集。"
+    },
+    "hazard_type": {
+      "type": "string",
+      "enum": ["landslide", "rockfall", "debris_flow", "avalanche", "lake_outburst", "quake_triggered", "unknown"],
+      "description": "高原典型灾种：滑坡/崩塌危岩/泥石流/冰雪雪崩/冰湖溃决（+震入项与 unknown 兜底）。"
+    },
+    "region_code": {
+      "type": "string",
+      "pattern": "^[0-9A-Z]{6,24}$",
+      "description": "风险网格编码（西藏行政区划 + 网格化编码，架构文件 §5.2）。前 6 位为行政区划代码。"
+    },
+    "task_type": {
+      "type": "string",
+      "enum": ["monitor", "assess", "decide", "warn", "dispatch", "evacuate", "verify", "report"],
+      "description": "防控任务类型，决定映射到工作流节点类型。"
+    },
+    "objective": { "type": "string", "minLength": 4, "maxLength": 512 },
+    "priority": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "sla_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400,
+      "description": "任务时限（架构文件「时限」字段）。常规研判类 ≤180 以满足预警生成 ≤3min 指标。"
+    },
+    "required_capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,31}$" },
+      "description": "能力标签，平台据此在能力注册中心路由到智能体实例。"
+    },
+    "owner_role": {
+      "type": "string",
+      "enum": ["agent", "human_commander", "monitor_officer", "field_inspector", "broadcaster", "platform"],
+      "description": "责任人角色（架构文件「责任人」）。agent 表示全自动执行。"
+    },
+    "trigger_refs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "maxLength": 256 },
+      "description": "命中的触发条件 ID（灾种本体 Rule 节点 ID），保证任务可溯源到触发依据。"
+    },
+    "input_data_refs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "id"],
+        "properties": {
+          "type": { "type": "string", "enum": ["telemetry", "entity", "case", "warning", "object", "snapshot"] },
+          "id": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "enum": ["risk_level", "warning_draft", "warning_released", "task_result", "feedback_report", "graph_update"] }
+    },
+    "dependencies": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "pattern": "^stu_[0-9a-f]{16}$" },
+      "description": "前置依赖 STU（架构文件「前置依赖」）。"
+    },
+    "fallback_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["retry", "transfer", "escalate", "degrade_to_rule", "skip"] },
+        "max_retries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+        "retry_backoff_ms": { "type": "integer", "minimum": 100, "default": 1000 },
+        "transfer_to": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,31}$" },
+        "escalate_to_role": { "type": "string", "enum": ["human_commander", "monitor_officer", "platform"] }
+      },
+      "description": "异常工况处置策略（架构文件 §4.2 重试/转移/升级）。"
+    },
+    "context_snapshot": {
+      "type": "object",
+      "description": "任务交接上下文快照（架构文件 §4.3「上下文快照与恢复」），弱网断点续传与人工接管时使用。",
+      "maxProperties": 16
+    },
+    "created_by": {
+      "type": "string",
+      "pattern": "^(platform|[a-z][a-z0-9_]{2,31})\\.[a-z][a-z0-9_-]{1,31}$",
+      "description": "创建者（决策智能体实例或 platform.task_parser）。"
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
