@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from aegis import __version__
+from aegis.api.workflow_api import build_router as build_workflow_router
 from aegis.bus import subjects
 from aegis.config import Settings, get_settings
 from aegis.container import PlatformContainer, create_container
@@ -221,6 +222,8 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
                     await sub.cancel()
 
         return StreamingResponse(_gen(), media_type="text/event-stream")
+
+    app.include_router(build_workflow_router())
 
     @app.exception_handler(AegisError)
     async def _aegis_error_handler(_: Request, exc: AegisError) -> Response:

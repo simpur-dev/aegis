@@ -80,6 +80,7 @@ class Action(StrEnum):
     AGENT_HEARTBEAT = "agent.heartbeat"
     # 数据面（平台 → 总线，非智能体动作）
     TELEMETRY_READING = "telemetry.reading"
+    NOTIFY_SENT = "notify.sent"
 
 
 REGISTERED_ACTIONS: frozenset[str] = frozenset(a.value for a in Action) - {

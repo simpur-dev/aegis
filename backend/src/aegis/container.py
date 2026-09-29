@@ -29,6 +29,9 @@ from aegis.services.task_parser import TaskParser
 from aegis.services.trigger_rules import RuleEngine
 from aegis.services.warning_service import WarningService
 from aegis.storage.store import PlatformStore
+from aegis.workflow.engine import WorkflowEngine
+from aegis.workflow.services_bridge import build_workflow_services
+from aegis.workflow.templates import register_builtin_templates
 
 log = logging.getLogger("aegis.container")
 
@@ -84,6 +87,7 @@ class PlatformContainer:
     ingest: IngestService
     dispatcher: DeliveryDispatcher
     exporter: MetricsExporter
+    workflow: WorkflowEngine
     simulator: HazardScenarioSimulator | None = None
     mock_agents: list[MockAgent] = field(default_factory=list)
     _tasks: list[asyncio.Task[None]] = field(default_factory=list)
@@ -108,6 +112,8 @@ class PlatformContainer:
 
         if with_mock_agents:
             self.mock_agents = await start_mock_agents(self.transport, heartbeat_interval=0.5)
+
+        await register_builtin_templates(self.workflow)
 
         if with_ingest_loop and self.ingest.sources:
             period = ingest_interval_seconds or self.settings.simulator_interval_seconds
@@ -207,6 +213,11 @@ def create_container(
         tracer,
         sla_reach_seconds=cfg.sla_reach_seconds,
     )
+    warning_service = WarningService(
+        tracer,
+        settings=cfg,
+        translator=gateway_llm.translate if gateway_llm is not None and gateway_llm.available else None,
+    )
     chain = HazardResponseChain(
         gateway=gateway,
         registry=registry,
@@ -216,11 +227,7 @@ def create_container(
         rule_engine=rule_engine,
         risk_engine=RiskEngine(rule_engine),
         task_parser=TaskParser(contracts, settings=cfg),
-        warning_service=WarningService(
-            tracer,
-            settings=cfg,
-            translator=gateway_llm.translate if gateway_llm is not None and gateway_llm.available else None,
-        ),
+        warning_service=warning_service,
         dispatcher=dispatcher,
         on_result=store.record_chain,
     )
@@ -231,6 +238,19 @@ def create_container(
         tracer=tracer,
         settings=cfg,
         sources=[simulator] if simulator else [],
+    )
+
+    workflow = WorkflowEngine(
+        services=build_workflow_services(
+            store=store,
+            rule_engine=rule_engine,
+            risk_engine=RiskEngine(rule_engine),
+            warning_service=warning_service,
+            dispatcher=dispatcher,
+            gateway=gateway,
+        ),
+        tracer=tracer,
+        settings=cfg,
     )
     container = PlatformContainer(
         settings=cfg,
@@ -244,6 +264,7 @@ def create_container(
         ingest=ingest,
         dispatcher=dispatcher,
         exporter=MetricsExporter(gateway, tracer),
+        workflow=workflow,
         simulator=simulator,
     )
 
