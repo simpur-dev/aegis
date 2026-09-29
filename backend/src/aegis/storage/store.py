@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Generic, Iterable, TypeVar
+from typing import Generic, TypeVar
 
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, parse_iso
 from aegis.pipeline.chain import ChainResult
