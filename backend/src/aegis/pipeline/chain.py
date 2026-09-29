@@ -90,6 +90,7 @@ class ChainResult:
             "trace_id": self.trace_id,
             "event_id": self.event_id,
             "ok": self.ok,
+            "acted": self.acted,
             "stages": [s.as_dict() for s in self.stages],
             "risk": self.verdict.as_payload() if self.verdict else None,
             "task_units": [u.task_unit_id for u in self.task_units],

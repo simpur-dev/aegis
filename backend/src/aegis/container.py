@@ -23,6 +23,7 @@ from aegis.observability.metrics import MetricsExporter
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import HazardResponseChain
 from aegis.services.delivery import ChannelAdapter, DeliveryDispatcher
+from aegis.services.llm_gateway import LlmGateway, build_gateway_if_configured
 from aegis.services.risk_engine import RiskEngine
 from aegis.services.task_parser import TaskParser
 from aegis.services.trigger_rules import RuleEngine
@@ -183,8 +184,10 @@ def create_container(
     contracts_dir=None,
     channels: dict[Channel, ChannelAdapter] | None = None,
     with_simulator: bool = True,
+    llm_gateway: LlmGateway | None = None,
 ) -> PlatformContainer:
     cfg = settings or get_settings()
+    gateway_llm = llm_gateway if llm_gateway is not None else build_gateway_if_configured(cfg)
     bus = transport or build_transport(cfg)
     registry = AgentRegistry(cfg)
     contracts = ContractRegistry(contracts_dir)
@@ -213,7 +216,11 @@ def create_container(
         rule_engine=rule_engine,
         risk_engine=RiskEngine(rule_engine),
         task_parser=TaskParser(contracts, settings=cfg),
-        warning_service=WarningService(tracer, settings=cfg),
+        warning_service=WarningService(
+            tracer,
+            settings=cfg,
+            translator=gateway_llm.translate if gateway_llm is not None and gateway_llm.available else None,
+        ),
         dispatcher=dispatcher,
         on_result=store.record_chain,
     )
