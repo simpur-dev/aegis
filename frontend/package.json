@@ -1,0 +1,33 @@
+{
+  "name": "aegis-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AEGIS 山地灾害多智能体协同调控平台 — Web 前端（纯 Web，无原生移动端）",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . --ext .ts,.vue"
+  },
+  "dependencies": {
+    "ant-design-vue": "^4.2.6",
+    "axios": "^1.7.9",
+    "echarts": "^5.5.1",
+    "vue": "^3.5.13",
+    "vue-router": "^4.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8",
+    "vue-tsc": "^2.1.10"
+  }
+}
