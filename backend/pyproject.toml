@@ -46,7 +46,8 @@ addopts = "-q --strict-markers"
 markers = [
     "contract: 契约一致性测试（Agent 接入规范门禁）",
     "e2e: 端到端链路测试（含时延量测）",
-    "slow: 需要外部基础设施（NATS/DB）的测试",
+    "nats: 需要真实 NATS JetStream 服务的集成测试",
+    "slow: 耗时较长的测试",
 ]
 
 [tool.ruff]
