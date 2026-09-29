@@ -53,6 +53,7 @@ class MockAgent:
     latency_ms: float = 30.0
     fail_rate: float = 0.0
     misbehavior: str = Misbehavior.NONE
+    max_concurrency: int = 4
     seed: int | None = None
     version: str = "mock-1.0.0"
     handled: int = 0
@@ -73,6 +74,7 @@ class MockAgent:
             agent_type=self.agent_type.value,
             capabilities=self.capabilities,
             hazard_types=self.hazard_types,
+            max_concurrency=self.max_concurrency,
             version=self.version,
         )
 
