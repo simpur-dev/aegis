@@ -1,0 +1,66 @@
+[project]
+name = "aegis-backend"
+version = "0.1.0"
+description = "AEGIS 山地灾害多智能体协同调控平台 — 后端（平台侧）/ Adaptive Emergency Geo-hazard Intelligence System"
+requires-python = ">=3.11"
+authors = [{ name = "AEGIS Project Team" }]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "nats-py>=2.8",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+    "httpx>=0.27",
+    "jsonschema>=4.23",
+    "prometheus-client>=0.20",
+    "orjson>=3.10",
+    "openai>=1.50",
+]
+
+[project.optional-dependencies]
+perf = ["uvloop>=0.21; sys_platform != 'win32'"]
+postgres = ["asyncpg>=0.30"]
+iot = ["aiomqtt>=2.2"]
+graph = ["neo4j>=5.26"]
+objectstore = ["minio>=7.2"]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aegis"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "contract: 契约一致性测试（Agent 接入规范门禁）",
+    "e2e: 端到端链路测试（含时延量测）",
+    "slow: 需要外部基础设施（NATS/DB）的测试",
+]
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+# 本项目文档与注释以简体中文为主：中文全角标点不应被视为歧义字符（RUF001/002/003）
+ignore = ["B008", "RUF001", "RUF002", "RUF003"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+disallow_untyped_defs = false
+ignore_missing_imports = true

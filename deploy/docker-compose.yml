@@ -1,0 +1,132 @@
+name: aegis
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    container_name: aegis-nats
+    command: ["--jetstream", "--store_dir", "/data", "--cluster_name", "aegis"]
+    ports:
+      - "4222:4222" # 客户端
+      - "6222:6222" # 路由
+      - "8222:8222" # 监控
+    volumes:
+      - nats_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  timescaledb:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: aegis-timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 需在 .env 中设置}
+      POSTGRES_DB: ${POSTGRES_DB:-aegis}
+    ports:
+      - "5432:5432"
+    volumes:
+      - tsdb_data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: aegis-neo4j
+    environment:
+      NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:?NEO4J_PASSWORD 需在 .env 中设置}
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: aegis-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-aegis}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 需在 .env 中设置}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: aegis-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  emqx:
+    image: emqx/emqx:5.8
+    container_name: aegis-emqx
+    environment:
+      EMQX_ALLOW_ANONYMOUS: "false"
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?EMQX_DASHBOARD_PASSWORD 需在 .env 中设置}
+    ports:
+      - "1883:1883" # MQTT
+      - "8083:8083" # MQTT over WS
+      - "18083:18083" # Dashboard
+    volumes:
+      - emqx_data:/data
+    restart: unless-stopped
+    profiles: ["iot"]
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: aegis-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: aegis-backend
+    env_file:
+      - ../.env
+    environment:
+      AEGIS_BUS_BACKEND: nats
+      AEGIS_NATS_URL: nats://nats:4222
+      AEGIS_DB_URL: postgresql+asyncpg://aegis:${POSTGRES_PASSWORD}@timescaledb:5432/aegis
+      AEGIS_HTTP_PORT: "8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      nats:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["app"]
+
+volumes:
+  nats_data:
+  tsdb_data:
+  neo4j_data:
+  minio_data:
+  redis_data:
+  emqx_data:
+  prometheus_data:

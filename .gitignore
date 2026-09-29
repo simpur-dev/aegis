@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 环境与凭据：任何 .env 均不入库（模板见 .env.example）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 运行态数据
+backend/data/
+data/
+*.db
+*.sqlite3
+logs/
+*.log
+uploads/
+storage/
+
+# Node / 前端
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# 编辑器与系统
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
