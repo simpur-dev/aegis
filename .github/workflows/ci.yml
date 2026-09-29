@@ -1,0 +1,79 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: 质量门禁（格式 / Lint / 类型 / 测试 / 演练）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-caching: true
+
+      - name: 安装依赖
+        run: uv sync --extra dev --extra perf
+
+      - name: 格式检查
+        run: uv run ruff format --check src tests scripts
+
+      - name: 静态检查
+        run: uv run ruff check src tests scripts
+
+      - name: 类型检查
+        run: uv run mypy src
+
+      - name: 单元 + 契约门禁 + 端到端
+        run: uv run pytest -q --maxfail=1
+
+      - name: 指标实测冒烟（Mock 智能体）
+        run: uv run python -m scripts.metrics_report --rounds 6 --agents --out reports/ci-metrics.json
+
+      - name: 上传指标报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-report
+          path: backend/reports/ci-metrics.json
+          if-no-files-found: ignore
+
+  integration-nats:
+    name: 真实 NATS 总线集成测试
+    runs-on: ubuntu-latest
+    needs: gate
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      nats:
+        image: nats:2.10-alpine
+        ports:
+          - 4222:4222
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8222/healthz || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      AEGIS_TEST_NATS_URL: nats://127.0.0.1:4222
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --extra dev
+        working-directory: backend
+      - name: NATS 总线往返与持久订阅
+        run: uv run pytest -q -m nats tests/integration
+        working-directory: backend
