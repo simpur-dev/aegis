@@ -11,7 +11,7 @@
 | L2 数据层 | 遥测/预警/任务/链路运行态存储；图谱与向量检索（M2 接入 Neo4j+Graphiti） | `backend/src/aegis/storage/` |
 | L3 智能层 | 五大智能体（**外部实现**，经契约接入） | `contracts/`、`backend/src/aegis/agents/`（Mock 参考） |
 | L4 服务层 | 触发规则、定级、任务拆解、预警生成、靶向触达、链路编排、HTTP API | `services/`、`pipeline/`、`api/` |
-| L5 应用层 | 态势大屏 / 预警门户 / 调度台（纯 Web，前端在 `frontend/`，M1 后启动） | `frontend/`（待建） |
+| L5 应用层 | 纯 Web：态势总览 / 监测预警 / 预警发布 / 指标量测（Vue3 + Vite + TS + AntD + ECharts） | `frontend/src/views/` |
 | 基座 | 总线、能力注册、时延账本、指标导出、配置与日志 | `bus/`、`observability/`、`config.py`、`logging.py` |
 
 ## 2. 一次灾害事件的真实数据流
@@ -73,11 +73,11 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 ## 6. 当前状态与下一步
 
 已完成（M1）：契约、总线与网关、能力注册、规则/定级/拆解/预警/触达、降级链路、运行态存储、HTTP API、
-单元/契约/端到端/性能四类测试、容器编排与 CI。
+Web 前端四页（含 SSE 实时事件）、单元/契约/端到端/API/性能五类测试、容器编排与 CI。
 
 进行中或未开始（诚实标注）：
-- 柔性可视化工作流引擎与 Vue Flow 画布（M2，指标 2 的完整口径）
+- 柔性可视化工作流引擎与 Vue Flow 画布（M2，指标 2 的完整口径；当前为固定流水线 + 降级双轨）
 - Neo4j 灾情知识图谱与 GraphRAG 检索（复用 NexusMind `graph_builder`/`vector_store` 资产，M2）
 - TimescaleDB 持久化替换内存存储（接口已解耦）
-- Web 前端四页（态势大屏 / 监测预警 / 编排台 / 预警发布）
+- GIS 三维一张图（Cesium）与风险网格真实行政区划叠加
 - 真实通道（短信/北斗/广播）对接与边缘弱网演练

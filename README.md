@@ -53,21 +53,35 @@ aegis/
 # 1) 配置
 cp .env.example backend/.env       # 至少填写 LLM 相关项（可留空走规则降级）
 
-# 2) 安装后端依赖（使用 uv）
+# 2) 后端依赖（uv）+ 前端依赖（npm）
 cd backend && uv sync --extra dev
+cd ../frontend && npm install
 
-# 3) 全量测试（离线可跑，总线使用内存实现）
-uv run pytest -q
+# 3) 后端全量测试（离线可跑，总线使用内存实现）
+cd ../backend && uv run pytest -q
 
-# 4) 起服务（内存总线，自带模拟场站数据与 Mock 智能体）
-uv run python -m aegis.main
+# 4) 前端类型检查与单测
+cd ../frontend && npm run typecheck && npm run test
 
-# 5) 需要真实基础设施时
+# 5) 起服务
+cd ../backend && uv run python -m aegis.main      # API: http://127.0.0.1:8000/docs
+cd ../frontend && npm run dev                     # Web: http://localhost:5173（代理 /api 到后端）
+
+# 6) 需要真实基础设施时
 docker compose -f deploy/docker-compose.yml up -d
 AEGIS_BUS_BACKEND=nats uv run python -m aegis.main
 ```
 
 接口文档：`http://localhost:8000/docs`　指标：`http://localhost:8000/metrics`
+
+### Web 页面（纯 Web，响应式，无原生移动端）
+
+| 页面 | 路由 | 内容 |
+| --- | --- | --- |
+| 态势总览 | `/dashboard` | KPI、风险区域网格、链路各段执行方式（agent/local）、智能体在线状态、SSE 实时事件 |
+| 监测预警 | `/monitor` | 遥测明细与时序曲线、劣化读数缺口显示、一键发起激增/背景演练 |
+| 预警发布 | `/warnings` | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |
+| 指标量测 | `/metrics` | 运行时埋点的 P50/P95/最大时延 vs 阈值判定、协同成功率、越限项 |
 
 ## 3. 一键演练
 
