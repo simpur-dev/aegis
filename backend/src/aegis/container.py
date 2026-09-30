@@ -19,6 +19,7 @@ from aegis.config import Settings, get_settings
 from aegis.connectors.base import DataSource, IngestService
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.domain.enums import Channel
+from aegis.observability.instrumentation import register_sla_budgets
 from aegis.observability.metrics import MetricsExporter
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import HazardResponseChain
@@ -124,6 +125,11 @@ class PlatformContainer:
             self._tasks.append(asyncio.create_task(_ingest_forever(), name="ingest-loop"))
         log.info("平台已启动", extra={"bus": self.transport.name, "mock_agents": len(self.mock_agents)})
 
+    @property
+    def stopping(self) -> bool:
+        """关停信号：SSE 这类长连接据此立即收摊，否则优雅退出会被 keep-alive 窗口拖住。"""
+        return self._stop.is_set()
+
     async def shutdown(self) -> None:
         self._stop.set()
         for task in self._tasks:
@@ -145,17 +151,10 @@ class PlatformContainer:
 
     def latency_report(self) -> dict[str, object]:
         s = self.settings
-        budgets_ms = {
-            "sync_agent_to_gateway_ms": s.sla_sync_ms,
-            "collab_txn": s.sla_reschedule_ms,
-            "stage_plan_ms": s.sla_schedule_ms,
-            "stage_assess_ms": s.sla_schedule_ms,
-            "warning_reach_ms": s.sla_reach_seconds * 1000,
-            "warning_generation_ms": s.sla_warning_gen_seconds * 1000,
-            "ingest_end_to_end_seconds": s.sla_ingest_seconds * 1000,
-        }
-        for name, budget in budgets_ms.items():
-            self.tracer.ledger.set_budget(name, budget)
+        # 预算表只允许有一处定义（instrumentation.register_sla_budgets）。本方法此前自带一份副本，
+        # 且把按"秒"记录的 ingest_end_to_end_seconds 乘了 1000 当毫秒预算，
+        # 结果是 ≤5min 接入指标在任何时延下都不会被判违约。
+        register_sla_budgets(self.tracer.ledger, s, self.exporter)
 
         metrics = {name: self.tracer.ledger.stats(name).as_dict() for name in self.tracer.ledger.names()}
         violations = {name: stats["breaches"] for name, stats in metrics.items() if isinstance(stats, dict) and stats.get("breaches")}
@@ -267,5 +266,8 @@ def create_container(
         workflow=workflow,
         simulator=simulator,
     )
+
+    # 进程启动即登记考核预算：违约判定不能等到第一次有人查指标才开始生效
+    register_sla_budgets(tracer.ledger, cfg, container.exporter)
 
     return container

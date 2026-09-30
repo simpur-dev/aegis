@@ -37,6 +37,7 @@ from aegis.domain.messages import (
     utc_now,
 )
 from aegis.errors import AegisError
+from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
 from aegis.services.delivery import AllChannelsFailedError, DeliveryDispatcher
 from aegis.services.risk_engine import RiskEngine, RiskVerdict
@@ -163,12 +164,65 @@ class HazardResponseChain:
         event_id: str | None = None,
         region_code: str | None = None,
     ) -> ChainResult:
+        """一次灾害事件（感知→研判→决策→执行→反馈）= 一条可第三方引用的链路。
+
+        根跨度 `hazard_chain` 只承载链路结构（父子关系、降级/故障状态），不另立计时口径：
+        各段时延仍由 `_run_chain` 里的 `self._tracer.span(...)` 落账，SLA 判定继续以时延账本为准。
+        根跨度在活动上下文里激活，因此其中的阶段跨度与网关协同事务跨度自动成为它的子节点，
+        整棵树的 traceID 由契约 trace_id 确定性映射而来（见 observability/instrumentation.py）。
+        """
+        trace = trace_id or new_trace_id()
+        async with instrumentation.span(
+            "hazard_chain",
+            trace_id=trace,
+            kind="server",
+            span_attrs={
+                "aegis.region_code": region_code or (readings[0].region_code if readings else "UNKNOWN"),
+                "aegis.readings": len(readings),
+            },
+        ) as root:
+            result = await self._run_chain(readings, trace_id=trace, event_id=event_id, region_code=region_code)
+            # 事件 ID 在链路内部才生成，回填到根跨度上，取证时可用 event_id 或 trace_id 双向检索
+            instrumentation.set_attributes(
+                root,
+                span_attrs={
+                    "aegis.event_id": result.event_id,
+                    "aegis.chain.ok": result.ok,
+                    "aegis.chain.stages": len(result.stages),
+                    "aegis.chain.degradations": len(result.degradations),
+                    "aegis.chain.errors": len(result.errors),
+                },
+            )
+            if result.errors:
+                instrumentation.mark_error(root, "；".join(result.errors)[:500], code="chain_errors")
+            elif result.degradations:
+                instrumentation.mark_degraded(root, "；".join(result.degradations)[:500])
+            return result
+
+    async def _run_chain(
+        self,
+        readings: list[TelemetryReading],
+        *,
+        trace_id: str | None = None,
+        event_id: str | None = None,
+        region_code: str | None = None,
+    ) -> ChainResult:
         trace = trace_id or new_trace_id()
         result = ChainResult(trace_id=trace, event_id=event_id or new_event_id())
         region = region_code or (readings[0].region_code if readings else "UNKNOWN")
 
-        with self._tracer.span("stage_perceive_ms", trace_id=trace) as sp:
-            hits, agent_hit_count = await self._perceive(readings, region, trace)
+        async with instrumentation.span("stage_perceive_ms", trace_id=trace) as perceive_span:
+            with self._tracer.span("stage_perceive_ms", trace_id=trace) as sp:
+                hits, agent_hit_count = await self._perceive(readings, region, trace)
+            # 阶段结论写在账本计时之外：跨度不参与任何时延测量
+            instrumentation.set_attributes(
+                perceive_span,
+                span_attrs={
+                    "aegis.hits": len(hits),
+                    "aegis.agent_hits": agent_hit_count,
+                    "aegis.mode": "hybrid" if agent_hit_count else "local",
+                },
+            )
         result.stages.append(
             StageResult(
                 "perceive",
@@ -184,8 +238,22 @@ class HazardResponseChain:
             result.stages.extend([StageResult(n, "skipped", True, 0.0, "无触发条件命中") for n in _STAGE_ORDER[1:]])
             return await self._finish(result)
 
-        with self._tracer.span("stage_assess_ms", trace_id=trace) as sp:
-            verdict = await self._assess(hits, region, result, trace)
+        assess_degradations = len(result.degradations)
+        async with instrumentation.span("stage_assess_ms", trace_id=trace) as assess_span:
+            with self._tracer.span("stage_assess_ms", trace_id=trace) as sp:
+                verdict = await self._assess(hits, region, result, trace)
+            if verdict is None:
+                instrumentation.mark_error(assess_span, "研判未产出定级结论", code="assess_failed")
+            elif len(result.degradations) > assess_degradations:
+                # 智能体缺位/超时/产出不合契约 → 平台规则引擎接管：降级，不是故障
+                instrumentation.mark_degraded(assess_span, result.degradations[-1])
+            instrumentation.set_attributes(
+                assess_span,
+                span_attrs={
+                    "aegis.assessed_by": verdict.assessed_by if verdict else "",
+                    "aegis.risk_level": int(verdict.risk_level) if verdict else 0,
+                },
+            )
         result.stages.append(
             StageResult(
                 "assess",
@@ -199,8 +267,15 @@ class HazardResponseChain:
             return await self._finish(result)
         result.verdict = verdict
 
-        with self._tracer.span("stage_plan_ms", trace_id=trace) as sp:
-            units = await self._plan(verdict, result, trace)
+        plan_degradations = len(result.degradations)
+        async with instrumentation.span("stage_plan_ms", trace_id=trace) as plan_span:
+            with self._tracer.span("stage_plan_ms", trace_id=trace) as sp:
+                units = await self._plan(verdict, result, trace)
+            if not units:
+                instrumentation.mark_error(plan_span, "决策未产出任务单元", code="plan_empty")
+            elif len(result.degradations) > plan_degradations:
+                instrumentation.mark_degraded(plan_span, result.degradations[-1])
+            instrumentation.set_attributes(plan_span, span_attrs={"aegis.task_units": len(units)})
         result.stages.append(
             StageResult(
                 "plan",
@@ -212,8 +287,18 @@ class HazardResponseChain:
         )
         result.task_units = units
 
-        with self._tracer.span("stage_execute_ms", trace_id=trace) as sp:
-            warning, used_agent = await self._execute(verdict, result, trace)
+        execute_degradations = len(result.degradations)
+        async with instrumentation.span("stage_execute_ms", trace_id=trace) as execute_span:
+            with self._tracer.span("stage_execute_ms", trace_id=trace) as sp:
+                warning, used_agent = await self._execute(verdict, result, trace)
+            if warning is None:
+                instrumentation.mark_error(execute_span, "预警发布失败", code="execute_failed")
+            elif len(result.degradations) > execute_degradations:
+                instrumentation.mark_degraded(execute_span, result.degradations[-1])
+            instrumentation.set_attributes(
+                execute_span,
+                span_attrs={"aegis.warning_id": warning.warning_id if warning else "", "aegis.used_agent": used_agent},
+            )
         result.stages.append(
             StageResult(
                 "execute",
@@ -227,8 +312,10 @@ class HazardResponseChain:
         if warning:
             self._warnings[warning.warning_id] = warning
 
-        with self._tracer.span("stage_feedback_ms", trace_id=trace) as sp:
-            await self._feedback(warning, trace)
+        async with instrumentation.span("stage_feedback_ms", trace_id=trace) as feedback_span:
+            with self._tracer.span("stage_feedback_ms", trace_id=trace) as sp:
+                await self._feedback(warning, trace)
+            instrumentation.set_attributes(feedback_span, span_attrs={"aegis.reach_expected": warning is not None})
         result.stages.append(StageResult("feedback", "local", True, sp.finished_ms or 0.0, "触达回执已归档"))
         return await self._finish(result)
 

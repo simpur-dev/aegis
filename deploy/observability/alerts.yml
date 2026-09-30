@@ -1,0 +1,190 @@
+# AEGIS 考核指标告警规则（课题6 考核口径）
+#
+# 指标名与标签值全部取自 backend/src/aegis/observability/metrics.py 的 MetricsExporter 实际输出，
+# 已在本地跑通 /metrics 校验（prometheus 抓取配置见 deploy/prometheus.yml 的 aegis-backend job）。
+# 单位口径：aegis_latency_ms 为毫秒直方图，标签 metric 取账本样本名；
+# 唯一例外 ingest_end_to_end_seconds 记录的是"秒"（connectors/base.py 用 total_seconds() 上报），
+# 因此该条阈值写作 300 而非 300000。
+#
+# 分位数口径沿用《NexusMind重构方案》§六：调度响应等时延指标按 P95 量测（与
+# PlatformContainer.latency_report() 输出的 p95_ms 同源，二者可对账）。
+#
+# 用法：
+#   prometheus: rule_files: ["observability/alerts.yml"]
+#   promtool check rules deploy/observability/alerts.yml
+
+groups:
+  - name: aegis-sla-考核指标
+    rules:
+      # 考核指标 3「多智能体协同联动成功率 ≥90%」：
+      # 协同事务 = 网关 request→response 一次往返，outcome ∈ ok|timeout|error|no_agent
+      # （bus/gateway.py TxnRecord）。这里用计数器比值而不是 aegis_collab_success_rate 仪表盘：
+      # 该 Gauge 在无事务时写 0，空闲时段会误报，故只在有事务量时判定。
+      - alert: AegisCollabSuccessRateBelowTarget
+        expr: |
+          (
+            sum(rate(aegis_collab_txn_total{outcome="ok"}[5m]))
+              /
+            sum(rate(aegis_collab_txn_total[5m]))
+          ) < 0.90
+          and sum(rate(aegis_collab_txn_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: aegis-platform
+          indicator: 协同事务成功率
+          target: ">=90%"
+        annotations:
+          summary: 多智能体协同联动成功率低于 90%
+          description: >-
+            近 5 分钟协同事务成功率 {{ $value | humanizePercentage }}，低于考核线 90%。
+            按 outcome 拆分定位：timeout 涨→智能体侧超期（deadline_ms），
+            no_agent 涨→能力注册中心无可用智能体，error 涨→智能体返回 E_* 回执。
+            取证：/api/v1/collaboration 事务明细 + Jaeger 按 aegis.trace_id 检索。
+
+      # 考核指标 3「多节点数据共享同步时延 ≤3s」：
+      # 埋点为 bus/gateway.py 的 sync_agent_to_gateway_ms（上行消息 ts → 网关处理时刻）。
+      - alert: AegisStateSyncLatencyOverBudget
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(aegis_latency_ms_bucket{metric="sync_agent_to_gateway_ms"}[5m]))) > 3000
+        for: 5m
+        labels:
+          severity: critical
+          team: aegis-platform
+          indicator: 状态同步时延
+          target: "<=3s"
+        annotations:
+          summary: 共享数据同步时延 P95 超过 3 秒
+          description: >-
+            近 5 分钟 sync_agent_to_gateway_ms 的 P95 为 {{ printf "%.0f" $value }} ms，超过 3000ms 考核线。
+            先看 aegis_gateway_events_total{kind="inbound"} 是否堆积（JetStream 背压），
+            再看 aegis_agents_online 是否掉线；Jaeger 里按 workflow_schedule_ms 的上游跨度核对时钟偏移。
+
+      # 考核指标 2「常规任务调度响应时延 ≤2s」：
+      # 埋点为 workflow/engine.py 的 workflow_schedule_ms（节点 READY→开始执行的 perf_counter 差）。
+      - alert: AegisWorkflowScheduleOverBudget
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(aegis_latency_ms_bucket{metric="workflow_schedule_ms"}[5m]))) > 2000
+        for: 5m
+        labels:
+          severity: critical
+          team: aegis-platform
+          indicator: 工作流调度响应
+          target: "<=2s"
+        annotations:
+          summary: 工作流调度响应时延 P95 超过 2 秒
+          description: >-
+            近 5 分钟 workflow_schedule_ms 的 P95 为 {{ printf "%.0f" $value }} ms，超过 2000ms 考核线。
+            常见成因：引擎信号量并发额度被长节点占满、或就绪节点数远超梯度压测规模；
+            对照 workflow_node_ms 的 P95 判定是排队慢还是执行慢。
+
+      # 考核指标 2「异常工况识别与重调度响应时长 ≤10s」：
+      # 埋点为 workflow/engine.py 的 workflow_reschedule_ms（首次失败→重调度完成）。
+      - alert: AegisWorkflowRescheduleOverBudget
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(aegis_latency_ms_bucket{metric="workflow_reschedule_ms"}[5m]))) > 10000
+        for: 5m
+        labels:
+          severity: critical
+          team: aegis-platform
+          indicator: 异常识别与重调度
+          target: "<=10s"
+        annotations:
+          summary: 异常工况重调度时长 P95 超过 10 秒
+          description: >-
+            近 5 分钟 workflow_reschedule_ms 的 P95 为 {{ printf "%.0f" $value }} ms，超过 10000ms 考核线。
+            多为 retry_backoff_ms 叠加 max_attempts 后超出预算，或降级/转派路径等不到可用智能体；
+            按 STU 的 fallback_policy 核对，必要时下调 backoff。
+
+      # 考核指标 4「多源数据接入时延 ≤5 分钟」：
+      # 埋点为 connectors/base.py 的 ingest_end_to_end_seconds（观测时刻 → 入库可查时刻，单位秒）。
+      - alert: AegisDataIngestLatencyOverBudget
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(aegis_latency_ms_bucket{metric="ingest_end_to_end_seconds"}[5m]))) > 300
+        for: 10m
+        labels:
+          severity: critical
+          team: aegis-platform
+          indicator: 多源数据接入时延
+          target: "<=5min"
+        annotations:
+          summary: 多源数据接入时延 P95 超过 5 分钟
+          description: >-
+            近 5 分钟 ingest_end_to_end_seconds 的 P95 为 {{ printf "%.0f" $value }} 秒，超过 300 秒考核线。
+            分段定位：ingest_store_ms（观测→入库）与 ingest_publish_ms（入库→发布）
+            可判断卡在连接器采集、存储写入还是总线发布；弱网时优先核对连接器 poll 周期。
+
+      # 考核指标 4「预警信息生成时间 ≤3 分钟」：
+      # 埋点为 services/warning_service.py 的 warning_generation_ms（研判→预警产物）。
+      - alert: AegisWarningGenerationOverBudget
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(aegis_latency_ms_bucket{metric="warning_generation_ms"}[5m]))) > 180000
+        for: 5m
+        labels:
+          severity: critical
+          team: aegis-platform
+          indicator: 预警信息生成
+          target: "<=3min"
+        annotations:
+          summary: 预警信息生成时长 P95 超过 3 分钟
+          description: >-
+            近 5 分钟 warning_generation_ms 的 P95 为 {{ printf "%.0f" $value }} ms，超过 180000ms 考核线。
+            通常是 LLM 文案/藏语翻译分支耗时（llm_timeout_seconds）；
+            平台规则引擎降级路径应在数秒内产出，若降级也慢则查 RuleEngine 输入规模。
+
+      # 考核指标 4「预警信息靶向触达 ≤20 分钟」：
+      # 埋点为 services/delivery.py 与 pipeline/chain.py 的 warning_reach_ms（发布→回执）。
+      # 这里不能用 histogram_quantile：1.2e+06ms 恰是 _BUCKETS_MS 的最高有限桶，
+      # 超出上界的样本无法插值回读，故直接取"超过最高桶的样本数"（le 标签按导出器实写的 "1.2e+06"）。
+      - alert: AegisTargetedReachOverBudget
+        expr: |
+          (
+            sum(rate(aegis_latency_ms_bucket{metric="warning_reach_ms", le="+Inf"}[5m]))
+              -
+            sum(rate(aegis_latency_ms_bucket{metric="warning_reach_ms", le="1.2e+06"}[5m]))
+          ) > 0
+        for: 2m
+        labels:
+          severity: critical
+          team: aegis-platform
+          indicator: 预警靶向触达
+          target: "<=20min"
+        annotations:
+          summary: 出现超过 20 分钟才触达的预警
+          description: >-
+            近 5 分钟有 {{ printf "%.4f" $value }} 条/秒的 warning_reach_ms 样本越过 1200000ms 考核线。
+            逐通道排查 delivery 回执：短信/北斗通道拥塞时 DeliveryDispatcher 的重试会把触达时间推后，
+            必要时提高优先级抢占或切换广播通道。
+
+      # 违约样本计数（辅助层）：与上面各条同口径，但按"每一条样本是否越界"逐条累计，
+      # 用于发现"P95 尚未超标但已有个别越限"的劣化前兆。
+      # 前置条件：进程启动时调用 register_sla_budgets(tracer.ledger, settings, exporter) 登记预算，
+      # 否则账本无预算可比，本条恒为空。
+      - alert: AegisSlaBreachObserved
+        expr: sum by (metric) (increase(aegis_sla_breaches_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: aegis-platform
+          indicator: 考核指标逐条违约
+        annotations:
+          summary: 考核指标 {{ $labels.metric }} 近 10 分钟出现越限样本
+          description: >-
+            {{ $labels.metric }} 累计违约 {{ printf "%.0f" $value }} 次（阈值取自 aegis_sla_threshold_seconds）。
+            P95 尚未告警说明劣化是间歇性的，先在 Jaeger 按 aegis.sla.breach=true 过滤跨度取证实例。
+
+      # 取证完整性（辅助层）：链路导出失败已在进程内降级为计数与告警日志，不影响业务，
+      # 但会削弱"第三方可引用"的证据链，因此单独告警而非静默。
+      - alert: AegisTelemetryEvidenceDropped
+        expr: increase(aegis_telemetry_dropped_spans_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: aegis-platform
+          indicator: 链路取证完整性
+        annotations:
+          summary: OTLP 跨度导出失败，SLA 取证链出现缺口
+          description: >-
+            近 10 分钟丢弃 {{ printf "%.0f" $value }} 条跨度（业务链路不受影响，遥测已按设计降级）。
+            检查 otlp 端点可达性与 BatchSpanProcessor 队列（4096 条 / 2s 批量 / 5s 超时）；
+            弱网演练期间可接受，正式验收量测窗口必须先消除该告警。

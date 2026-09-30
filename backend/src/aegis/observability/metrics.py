@@ -1,4 +1,4 @@
-"""Prometheus 指标导出：网关计数、协同事务、在线智能体、时延直方图。
+"""Prometheus 指标导出：网关计数、协同事务、在线智能体、时延直方图、SLA 违约与丢跨度。
 
 指标值来自运行时台账的增量灌入（不做二次采样），保证 /metrics 与验收量测报告同源。
 """
@@ -8,6 +8,7 @@ from __future__ import annotations
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 
 from aegis.bus.gateway import AgentGateway
+from aegis.observability import telemetry
 from aegis.observability.tracer import Tracer
 
 _BUCKETS_MS = (
@@ -62,9 +63,22 @@ class MetricsExporter:
             buckets=_BUCKETS_MS,
             registry=self._registry,
         )
+        # 违约与丢跨度都由台账/遥测既有事实增量灌入，不另建一套度量
+        self._breach = Counter(
+            "aegis_sla_breaches_total",
+            "考核指标违约次数",
+            ["metric"],
+            registry=self._registry,
+        )
+        self._spans_dropped = Counter(
+            "aegis_telemetry_dropped_spans_total",
+            "因导出失败丢弃的链路跨度数",
+            registry=self._registry,
+        )
         self._last_counters: dict[str, int] = {}
         self._txn_cursor = 0
         self._latency_cursor = 0
+        self._dropped_cursor = 0
 
     def set_sla_gauges(self, **values: float) -> None:
         for metric, seconds in values.items():
@@ -85,6 +99,14 @@ class MetricsExporter:
         samples, self._latency_cursor = self._tracer.ledger.iterate_since(self._latency_cursor)
         for sample in samples:
             self._latency.labels(metric=sample.name).observe(sample.ms)
+            budget = self._tracer.ledger.budget_for(sample.name)
+            if budget is not None and sample.ms > budget:
+                self._breach.labels(metric=sample.name).inc()
+
+        dropped = telemetry.dropped_span_count()
+        if dropped > self._dropped_cursor:
+            self._spans_dropped.inc(dropped - self._dropped_cursor)
+            self._dropped_cursor = dropped
 
         snapshot = self._gateway.snapshot()
         self._online.set(int(snapshot["agents_online"]))

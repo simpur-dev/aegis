@@ -43,6 +43,7 @@ from aegis.errors import (
     SchemaInvalidError,
     UnregisteredActionError,
 )
+from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
 
 log = logging.getLogger("aegis.bus.gateway")
@@ -233,6 +234,16 @@ class AgentGateway:
         ttl_ms: int = 30_000,
     ) -> AgentMessage:
         """发起一次协同事务。返回 response；失败抛类型化错误并同时记账。"""
+        # 跨度在计时窗口之外创建、在账本落点之后结束：建跨度/写属性的开销不进入 collab_txn 样本，
+        # SLA 判定仍以时延账本为准（跨度只提供可第三方引用的链路结构）。
+        txn_span = instrumentation.start_span(
+            "collab_txn",
+            trace_id=trace_id,
+            kind="client",
+            action=action.value,
+            agent_type=agent_type.value,
+            capability=capability or "",
+        )
         if (entry := self._registry.pick(agent_type.value, capability, hazard_type)) is None:
             self.counters["no_agent"] += 1
             self._record_txn(
@@ -247,6 +258,13 @@ class AgentGateway:
                     error_code=ErrorCode.NO_CAPABLE_AGENT.value,
                 )
             )
+            instrumentation.mark_error(
+                txn_span,
+                f"无可用智能体: type={agent_type.value} capability={capability}",
+                code=ErrorCode.NO_CAPABLE_AGENT.value,
+                outcome="no_agent",
+            )
+            instrumentation.end_span(txn_span)
             raise NoCapableAgentError(
                 f"无可用智能体: type={agent_type.value} capability={capability}",
                 detail={"agent_type": agent_type.value, "capability": capability},
@@ -267,12 +285,20 @@ class AgentGateway:
         )
         self.validate(request)
         self.counters["outbound"] += 1
+        instrumentation.set_attributes(
+            txn_span,
+            span_attrs={
+                instrumentation.MSG_ID_ATTR: request.msg_id,
+                "aegis.contract.span_id": request.span_id or "",
+                "agent_id": entry.agent_id,
+            },
+        )
 
         entry.inflight += 1
         started = time.perf_counter()
         try:
             response = await self._transport.request(subjects.agent_in(agent_type), request, timeout_ms=budget_ms)
-        except DeadlineExceededError:
+        except DeadlineExceededError as timeout_exc:
             latency = (time.perf_counter() - started) * 1000
             entry.failed += 1
             self._record_txn(
@@ -288,6 +314,14 @@ class AgentGateway:
                 )
             )
             self._tracer.record("collab_txn", latency, trace_id=trace_id, outcome="timeout", agent_id=entry.agent_id)
+            instrumentation.record_error(
+                txn_span,
+                timeout_exc,
+                code=ErrorCode.TIMEOUT.value,
+                outcome="timeout",
+                latency_ms=round(latency, 3),
+            )
+            instrumentation.end_span(txn_span)
             raise
         finally:
             entry.inflight = max(0, entry.inflight - 1)
@@ -295,6 +329,8 @@ class AgentGateway:
         latency = (time.perf_counter() - started) * 1000
         self.validate(response)
         self.counters["inbound"] += 1
+        # 回信 msg_id 作为链接（不是父子）：智能体侧若另起链路，取证时仍能从本次事务直接跳过去
+        instrumentation.add_link(txn_span, response.msg_id, trace_id)
         # 共享同步时延（≤3s 指标）：智能体发出时刻 → 网关接收处理时刻，响应与事件同口径
         self._tracer.record(
             "sync_agent_to_gateway_ms",
@@ -318,6 +354,15 @@ class AgentGateway:
                 )
             )
             self._tracer.record("collab_txn", latency, trace_id=trace_id, outcome="error", agent_id=entry.agent_id)
+            instrumentation.mark_error(
+                txn_span,
+                str(response.payload.get("message") or "智能体返回错误"),
+                code=str(response.payload.get("code")),
+                outcome="error",
+                latency_ms=round(latency, 3),
+                reply_msg_id=response.msg_id,
+            )
+            instrumentation.end_span(txn_span)
             raise AegisError(
                 f"智能体返回错误: {response.payload.get('message')}",
                 detail={"code": response.payload.get("code"), "agent_id": entry.agent_id},
@@ -337,6 +382,8 @@ class AgentGateway:
             )
         )
         self._tracer.record("collab_txn", latency, trace_id=trace_id, outcome="ok", agent_id=entry.agent_id)
+        instrumentation.set_attributes(txn_span, outcome="ok", reply_msg_id=response.msg_id, latency_ms=round(latency, 3))
+        instrumentation.end_span(txn_span)
         return response
 
     async def publish_to(self, subject: str, message: AgentMessage) -> None:
@@ -349,7 +396,12 @@ class AgentGateway:
         await self.publish_to(subjects.alert(int(risk_level), region_code), message)
 
     async def publish_telemetry(self, reading: TelemetryReading, message: AgentMessage) -> None:
-        """遥测上总线；同时记录"观测→入库→发布"两段时延，供 ≤5min 接入指标归因。"""
+        """遥测上总线；同时记录"观测→入库→发布"两段时延，供 ≤5min 接入指标归因。
+
+        每读数热点刻意不建跨度：只做进程内聚合计数（O(1)、零网络、零对象分配之外的开销），
+        跨度证据留在事务级（协同事务/上行事件），避免万级读数把链路淹成噪声。
+        """
+        instrumentation.count_hot_path("telemetry_publish")
         self.validate(message)
         await self._transport.publish(subjects.data(reading.station_id, reading.metric), message)
         self.counters["outbound"] += 1
@@ -387,21 +439,42 @@ class AgentGateway:
             log.debug("未知智能体心跳", extra={"agent_id": message.source})
 
     async def _on_agent_out(self, message: AgentMessage) -> None:
+        # 智能体 → 平台这一腿单独成跨度：它跑在订阅任务里、没有活动父节点，
+        # 靠契约 trace_id 接续到同一条链路，于是"平台→智能体→平台"在 Jaeger 里落在同一个 traceID 下。
+        uplink_span = instrumentation.start_span(
+            "agent_uplink",
+            trace_id=message.trace_id,
+            kind="server",
+            span_attrs={
+                instrumentation.MSG_ID_ATTR: message.msg_id,
+                "aegis.contract.span_id": message.span_id or "",
+                "aegis.agent_id": message.source,
+                "aegis.action": message.action,
+                "aegis.kind": message.kind.value,
+            },
+        )
         self.counters["inbound"] += 1
         try:
             self.validate(message)
         except AegisError as exc:
             self.counters["rejected"] += 1
             log.warning("上行消息被拒", extra={"reason": exc.message, "msg_id": message.msg_id})
+            instrumentation.record_error(uplink_span, exc, outcome="rejected")
+            instrumentation.end_span(uplink_span)
             return
 
         if message.ttl_ms and parse_iso(message.ts) + timedelta(seconds=message.ttl_ms / 1000) < utc_now():
             self.counters["dropped_ttl"] += 1
             log.debug("超期消息丢弃", extra={"msg_id": message.msg_id})
+            # 丢弃是网关的正常工作结果（幂等/超期治理），记为降级而不是故障
+            instrumentation.mark_degraded(uplink_span, "超期丢弃（ttl_ms 已过）", outcome="dropped_ttl")
+            instrumentation.end_span(uplink_span)
             return
 
         if self.is_duplicate(message.msg_id):
             log.debug("重复消息幂等丢弃", extra={"msg_id": message.msg_id})
+            instrumentation.mark_degraded(uplink_span, "幂等去重丢弃（msg_id 重复）", outcome="duplicate")
+            instrumentation.end_span(uplink_span)
             return
 
         sync_ms = max((utc_now() - parse_iso(message.ts)).total_seconds() * 1000, 0.0)
@@ -413,8 +486,10 @@ class AgentGateway:
         )
         self._registry.heartbeat(message.source)
 
+        instrumentation.set_attributes(uplink_span, sync_ms=round(sync_ms, 3), outcome="ok")
         if self._result_handler is not None:
             await self._result_handler(message)
+        instrumentation.end_span(uplink_span)
 
     # ---------- 台账 ----------
 

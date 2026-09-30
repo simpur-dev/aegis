@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from aegis.config import Settings, get_settings
 from aegis.domain.messages import now_iso
 from aegis.errors import AegisError
+from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
 from aegis.workflow.model import (
     EdgeDef,
@@ -297,15 +298,35 @@ class WorkflowEngine:
         事件驱动、无轮询等待：一轮 gather 只在"确有就绪节点"时挂起，就绪即执行。
         一旦实例进入 FAILED（abort 策略）或 WAITING（等待人工决策），立即停止调度，
         未触及的下游节点保持 pending —— 不得因为"暂时不可就绪"而被误判为级联跳过。
+
+        链路结构：一次驱动 = 一条 `workflow_instance` 跨度，其 traceID 由实例的契约 trace_id
+        确定性映射而来，本轮就绪执行的节点跨度自动成为它的子节点（见 observability/instrumentation.py）。
+        人工决策后续跑会再产生一条同 traceID 的驱动跨度——这恰好是"等待人工"那一段的真实证据。
         """
-        while True:
-            if instance.status in (InstanceStatus.FAILED, InstanceStatus.WAITING):
-                break
-            ready = self._collect_ready(instance)
-            if not ready:
-                break
-            await asyncio.gather(*(self._execute_node(instance, node_id) for node_id in ready))
-        self._finalise(instance)
+        async with instrumentation.span(
+            "workflow_instance",
+            trace_id=instance.trace_id,
+            kind="server",
+            span_attrs={
+                "aegis.workflow.id": instance.definition.workflow_id,
+                "aegis.workflow.version": instance.definition.version,
+                "aegis.workflow.instance_id": instance.instance_id,
+                "aegis.workflow.node_count": len(instance.nodes),
+            },
+        ) as instance_span:
+            while True:
+                if instance.status in (InstanceStatus.FAILED, InstanceStatus.WAITING):
+                    break
+                ready = self._collect_ready(instance)
+                if not ready:
+                    break
+                await asyncio.gather(*(self._execute_node(instance, node_id) for node_id in ready))
+            self._finalise(instance)
+            instrumentation.set_attributes(instance_span, span_attrs={"aegis.workflow.status": instance.status.value})
+            if instance.status is InstanceStatus.FAILED:
+                instrumentation.mark_error(instance_span, instance.error or "实例失败", code="workflow_failed")
+            elif instance.status is InstanceStatus.WAITING:
+                instrumentation.set_attributes(instance_span, span_attrs={"aegis.workflow.awaiting_human": True})
 
     def _collect_ready(self, instance: _MutableInstance) -> list[str]:
         ready: list[str] = []
@@ -361,12 +382,29 @@ class WorkflowEngine:
             trace_id=instance.trace_id,
         )
 
+        # 节点跨度在"调度时延已落账"之后创建：建跨度的开销不会算进 ≤2s 的 workflow_schedule_ms 样本，
+        # 跨度只承载结构证据（node_id / attempt / 终态），SLA 判定仍以时延账本为准。
+        node_span = instrumentation.start_span(
+            "workflow_node",
+            trace_id=instance.trace_id,
+            kind="internal",
+            span_attrs={
+                "aegis.workflow.instance_id": instance.instance_id,
+                "aegis.node.id": node_id,
+                "aegis.node.type": node.type,
+                "aegis.node.timeout_ms": node.timeout_ms,
+                "aegis.node.on_failure": node.on_failure,
+                "aegis.workflow.schedule_ms": round(max(run.schedule_latency_ms, 0.0), 3),
+            },
+        )
+
         run.state = NodeState.RUNNING
         run.started_mono = time.perf_counter()
         first_failure_mono: float | None = None
 
         while True:
             run.attempts += 1
+            instrumentation.set_attributes(node_span, span_attrs={"aegis.node.attempt": run.attempts})
             context = NodeContext(
                 payload=dict(instance.payload),
                 inputs={
@@ -393,6 +431,17 @@ class WorkflowEngine:
                 instance.pending_waits[node_id] = wait.prompt
                 instance.pending_options[node_id] = wait.options
                 self._record_node_latency(instance, run, node_id)
+                # 等人不等于失败：状态留空（中性），只把等待事实与尝试次数落到跨度上
+                instrumentation.set_attributes(
+                    node_span,
+                    span_attrs={
+                        "aegis.node.attempt": run.attempts,
+                        "aegis.node.state": run.state.value,
+                        "aegis.node.awaiting_human": True,
+                    },
+                )
+                instrumentation.add_event(node_span, "aegis.node.awaiting_human", prompt=str(wait.prompt)[:300])
+                instrumentation.end_span(node_span)
                 return
             except TimeoutError:
                 error: Exception = NodeError(f"节点超时 (>{node.timeout_ms}ms)", detail={"node_id": node_id}, retryable=True)
@@ -417,12 +466,26 @@ class WorkflowEngine:
                 run.state = NodeState.SUCCEEDED
                 run.error = None
                 self._record_node_latency(instance, run, node_id, first_failure_mono)
+                instrumentation.set_attributes(
+                    node_span,
+                    span_attrs={
+                        "aegis.node.attempt": run.attempts,
+                        "aegis.node.state": run.state.value,
+                        "aegis.node.duration_ms": round(run.duration_ms or 0.0, 3),
+                    },
+                )
+                instrumentation.mark_ok(node_span)
+                instrumentation.end_span(node_span)
                 return
 
             first_failure_mono = first_failure_mono or time.perf_counter()
             run.error = getattr(error, "message", str(error))
             run.notes.append(f"第 {run.attempts} 次失败: {run.error}")
             retryable = getattr(error, "retryable", True)
+            # 单次尝试失败只记事件：终态才决定跨度状态（重试后成功不该把节点染成故障）
+            instrumentation.add_event(
+                node_span, "aegis.node.attempt_failed", attempt=run.attempts, error=str(run.error)[:300], retryable=retryable
+            )
 
             if node.on_failure == "retry" and retryable and run.attempts <= node.retry.max_attempts:
                 await asyncio.sleep(node.retry.backoff_ms / 1000)
@@ -434,6 +497,21 @@ class WorkflowEngine:
             if handled == "degraded":
                 run.state = NodeState.DEGRADED
             self._record_node_latency(instance, run, node_id, first_failure_mono)
+            instrumentation.set_attributes(
+                node_span,
+                span_attrs={
+                    "aegis.node.attempt": run.attempts,
+                    "aegis.node.state": run.state.value,
+                    "aegis.node.duration_ms": round(run.duration_ms or 0.0, 3),
+                    "aegis.node.rescheduled": first_failure_mono is not None,
+                },
+            )
+            if run.state is NodeState.FAILED:
+                instrumentation.record_error(node_span, error)
+            elif run.state in (NodeState.DEGRADED, NodeState.SKIPPED):
+                # 降级/级联跳过：链路仍按策略继续，不按故障着色（与账本 outcome 口径一致）
+                instrumentation.mark_degraded(node_span, str(run.error or "节点按策略降级/跳过"))
+            instrumentation.end_span(node_span)
             return
 
     def _apply_failure_policy(

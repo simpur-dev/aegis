@@ -81,6 +81,10 @@ class LatencyLedger:
     def set_budget(self, name: str, budget_ms: float) -> None:
         self._budgets[name] = budget_ms
 
+    def budget_for(self, name: str) -> float | None:
+        """只读：取已登记的预算（无预算返回 None），供跨度助手与指标导出复用。"""
+        return self._budgets.get(name)
+
     def record(
         self,
         name: str,
