@@ -45,3 +45,7 @@ Thumbs.db
 # 生成产物
 backend/reports/
 reports/
+
+# Cesium 静态资源由 npm run prepare:cesium 从 node_modules 落盘，属依赖产物
+frontend/public/cesium/
+

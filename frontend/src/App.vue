@@ -48,6 +48,12 @@ onBeforeUnmount(() => {
         <a-menu-item key="warnings">
           <router-link to="/warnings">预警发布</router-link>
         </a-menu-item>
+        <a-menu-item key="map">
+          <router-link to="/map">一张图</router-link>
+        </a-menu-item>
+        <a-menu-item key="workflow">
+          <router-link to="/workflow">流程编排</router-link>
+        </a-menu-item>
         <a-menu-item key="metrics">
           <router-link to="/metrics">指标量测</router-link>
         </a-menu-item>

@@ -22,6 +22,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '预警发布' },
   },
   {
+    path: '/map',
+    name: 'map',
+    component: () => import('./views/MapView.vue'),
+    meta: { title: '一张图' },
+  },
+  {
+    path: '/workflow',
+    name: 'workflow',
+    component: () => import('./views/WorkflowView.vue'),
+    meta: { title: '流程编排' },
+  },
+  {
     path: '/metrics',
     name: 'metrics',
     component: () => import('./views/MetricsView.vue'),

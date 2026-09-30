@@ -11,12 +11,23 @@
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint . --ext .ts,.vue"
+    "lint": "eslint . --ext .ts,.vue",
+    "prepare:cesium": "node scripts/prepare-cesium.mjs",
+    "predev": "npm run prepare:cesium",
+    "prebuild": "npm run prepare:cesium"
   },
   "dependencies": {
+    "@vue-flow/background": "^1.3.2",
+    "@vue-flow/controls": "^1.1.3",
+    "@vue-flow/core": "^1.48.2",
+    "@vue-flow/minimap": "^1.5.4",
+    "@vueuse/core": "^15.0.0",
     "ant-design-vue": "^4.2.6",
     "axios": "^1.7.9",
+    "cesium": "^1.145.0",
     "echarts": "^5.5.1",
+    "pinia": "^4.0.3",
+    "pmtiles": "^4.5.0",
     "vue": "^3.5.13",
     "vue-router": "^4.4.5"
   },
