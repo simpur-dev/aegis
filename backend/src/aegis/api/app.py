@@ -210,13 +210,19 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         ]
 
         async def _gen() -> AsyncIterator[str]:
+            """长连接生命周期严格短于关停/断连窗口：否则 uvicorn 默认无限等待优雅退出。"""
+            idle = 0.0
             try:
-                while await _alive(request, queue):
+                while not ctn.stopping and not await request.is_disconnected():
                     try:
-                        item = await asyncio.wait_for(queue.get(), timeout=15.0)
-                        yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                        item = await asyncio.wait_for(queue.get(), timeout=_DISCONNECT_POLL_SECONDS)
                     except TimeoutError:
-                        yield ": keep-alive\n\n"
+                        idle += _DISCONNECT_POLL_SECONDS
+                        if idle >= _SSE_KEEPALIVE_SECONDS:
+                            idle = 0.0
+                            yield ": keep-alive\n\n"
+                        continue
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
             finally:
                 for sub in subs:
                     await sub.cancel()
@@ -236,10 +242,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
     return app
 
 
-async def _alive(request: Request, queue: asyncio.Queue[dict[str, Any]]) -> bool:
-    if await request.is_disconnected():
-        return False
-    while not queue.empty():
-        return True
-    await asyncio.sleep(0.05)
-    return True
+#: 断连轮询间隔：ASGI 不推送"客户端已断开"事件，只能轮询；0.25s 足够快且不必空转。
+_DISCONNECT_POLL_SECONDS = 0.25
+#: 空闲多久补一帧注释帧，防止中间设备掐掉长连接（不是业务事件，客户端会忽略）。
+_SSE_KEEPALIVE_SECONDS = 15.0

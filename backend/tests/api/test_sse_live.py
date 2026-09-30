@@ -28,7 +28,18 @@ def _free_port() -> int:
 async def live() -> AsyncIterator[httpx.AsyncClient]:
     port = _free_port()
     settings = Settings(env="dev", bus_backend="memory", delivery_mode="mock", http_port=port, simulator_seed=33)
-    server = uvicorn.Server(uvicorn.Config(create_app(settings), host="127.0.0.1", port=port, log_level="warning"))
+    # uvicorn 默认无限等待在途连接结束；SSE 长连接在 Windows 的 proactor 事件循环上
+    # 关闭后连接对象未必被判定为已断开，会让优雅退出永久挂起。给 1s 上限，让测试
+    # 断言的是"能在超时内退出"，而不是依赖平台清理时序。
+    server = uvicorn.Server(
+        uvicorn.Config(
+            create_app(settings),
+            host="127.0.0.1",
+            port=port,
+            log_level="warning",
+            timeout_graceful_shutdown=1,
+        )
+    )
     task = asyncio.create_task(server.serve())
     async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=20.0) as client:
         for _ in range(200):
