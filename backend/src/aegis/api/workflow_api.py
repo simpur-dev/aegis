@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aegis.container import PlatformContainer
 from aegis.domain.messages import new_trace_id
-from aegis.workflow.engine import WorkflowValidationError
+from aegis.workflow.engine import WorkflowEngine, WorkflowValidationError
 
 
 def get_container(request: Request) -> PlatformContainer:
@@ -89,7 +89,7 @@ class InsertNodeInput(BaseModel):
 def build_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1/workflow", tags=["workflow"])
 
-    def engine_of(container: PlatformContainer):  # noqa: ANN202
+    def engine_of(container: PlatformContainer) -> WorkflowEngine:
         return container.workflow
 
     @router.get("/node-types")
@@ -232,9 +232,7 @@ def build_router() -> APIRouter:
         container: PlatformContainer = Depends(get_container),
     ) -> dict[str, Any]:
         try:
-            return await engine_of(container).insert_node(
-                instance_id, after=payload.after, node=payload.node.model_dump()
-            )
+            return await engine_of(container).insert_node(instance_id, after=payload.after, node=payload.node.model_dump())
         except WorkflowValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

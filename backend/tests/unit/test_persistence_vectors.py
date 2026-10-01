@@ -120,6 +120,7 @@ class TestTopKSql:
         assert "embedding IS NOT NULL" in sql
         assert "hazard_type = " not in sql
         assert set(_placeholders(sql)) == {1, 2}
+        assert len(args) == 2
 
     def test_score_threshold_becomes_similarity_floor(self) -> None:
         sql, args = build_top_k(vector(), k=5, score_threshold=0.8)
