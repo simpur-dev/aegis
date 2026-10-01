@@ -95,7 +95,10 @@ class IngestService:
             return IngestReport()
 
         trace = trace_id or new_trace_id()
-        results = await asyncio.gather(*(self._collect(source) for source in self._sources), return_exceptions=False)
+        # return_exceptions=True 不是可选风格：False 时 gather 会把第一个异常直接抛出来，
+        # 下面那段"按源记 sources_failed"永远走不到——一个源断了整轮摄取就崩，
+        # 而本模块头部承诺的是"单源失败隔离（高原弱网常见）"。
+        results = await asyncio.gather(*(self._collect(source) for source in self._sources), return_exceptions=True)
 
         report = IngestReport()
         all_readings: list[TelemetryReading] = []

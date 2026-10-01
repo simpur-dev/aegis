@@ -5,7 +5,6 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BusBackend = Literal["memory", "nats"]
@@ -16,7 +15,6 @@ AnalyticsBackend = Literal["off", "clickhouse", "duckdb"]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AEGIS_", env_file=".env", extra="ignore")
 
-    app_name: str = "aegis"
     env: Literal["dev", "test", "prod"] = "dev"
     log_level: str = "INFO"
     http_host: str = "0.0.0.0"
@@ -63,8 +61,10 @@ class Settings(BaseSettings):
     mqtt_client_id: str = "aegis-platform"
     # 单次摄取轮次之间能攒多少条读数：满了丢最旧并计数，绝不无界吃内存
     mqtt_buffer_limit: int = 5_000
+    # 公开气象/水文接口（拉取腿）：留空则该腿在链路里完全不出现
     weather_api_base_url: str = ""
-    connector_poll_seconds: float = 60.0
+    weather_api_path: str = "/observation"
+    weather_api_timeout_ms: int = 4_000
 
     # LLM（可选；无密钥时研判走规则引擎降级路径）
     llm_api_key: str = ""
@@ -119,16 +119,6 @@ class Settings(BaseSettings):
     simulator_enabled: bool = True
     simulator_interval_seconds: float = 2.0
     simulator_seed: int = 20260929
-
-    hazard_scope: list[str] = Field(
-        default_factory=lambda: [
-            "landslide",
-            "rockfall",
-            "debris_flow",
-            "avalanche",
-            "lake_outburst",
-        ]
-    )
 
 
 @lru_cache(maxsize=1)

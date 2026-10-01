@@ -155,6 +155,10 @@ services:
       AEGIS_MQTT_PORT: "1883"
       AEGIS_MQTT_USERNAME: ${MQTT_USERNAME:-}
       AEGIS_MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      # 公开气象/水文拉取腿：默认留空=这条腿不存在。填了 base_url 才进摄取轮次，
+      # 采到的轮次/条数/失败次数由 /api/v1/integrations 的 weather 行说明。
+      AEGIS_WEATHER_API_BASE_URL: ${AEGIS_WEATHER_API_BASE_URL:-}
+      AEGIS_WEATHER_API_PATH: ${AEGIS_WEATHER_API_PATH:-/observation}
       # 端点走 OTel 官方环境变量。只在 observability profile 关闭时留空即可：
       # 跨度改为只记本地，业务链路不受影响（先起 observability 再起 app 就能拿到全量证据链）。
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_ENDPOINT:-}

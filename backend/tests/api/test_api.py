@@ -23,7 +23,7 @@ BASE = "http://testserver"
 
 @pytest.fixture
 async def container(settings: Settings) -> AsyncIterator[PlatformContainer]:
-    ctn = create_container(settings)  # 带模拟场站，供 /drill 端点使用
+    ctn = create_container(settings, with_simulator=True)  # 带模拟场站，供 /drill 端点使用（夹具的配置里模拟器是关的）
     await ctn.start()
     yield ctn
     await ctn.shutdown()

@@ -21,6 +21,7 @@ from aegis.config import Settings, get_settings
 from aegis.connectors.base import DataSource, IngestService
 from aegis.connectors.mqtt import MqttSource
 from aegis.connectors.simulator import HazardScenarioSimulator
+from aegis.connectors.weather_api import WeatherApiSource
 from aegis.domain.enums import Channel
 from aegis.domain.messages import TelemetryReading
 from aegis.integrations import (
@@ -32,6 +33,7 @@ from aegis.integrations import (
     build_mqtt,
     build_retrieval,
     build_store,
+    build_weather,
     start_store,
     stop_store,
     warm_retrieval,
@@ -119,6 +121,8 @@ class PlatformContainer:
     retrieval_state: IntegrationState | None = None
     mqtt: MqttSource | None = None
     mqtt_state: IntegrationState | None = None
+    weather: WeatherApiSource | None = None
+    weather_state: IntegrationState | None = None
     simulator: HazardScenarioSimulator | None = None
     mock_agents: list[MockAgent] = field(default_factory=list)
     _tasks: list[asyncio.Task[None]] = field(default_factory=list)
@@ -192,6 +196,9 @@ class PlatformContainer:
         if self.mqtt is not None:
             # 订阅腿停在摄取循环之后：摄取任务已取消，没有人再取缓冲，继续收只会攒成一堆过期读数
             await self.mqtt.stop()
+        if self.weather is not None:
+            # 只关连接器自己建的 httpx 客户端；注入进来的（测试）由注入方负责
+            await self.weather.aclose()
         await self.registry.stop_sweeper()
         await self.gateway.close()
         await self.transport.close()
@@ -228,6 +235,11 @@ class PlatformContainer:
                 detail["start_error"] = self._mqtt_start_error
             mqtt_state = replace(mqtt_state, detail=detail)
         rows.append(mqtt_state)
+        # 拉取腿同理：只配了 base_url 不代表采到数，"几轮、多少条、失败几次"才是事实。
+        weather_state = self.weather_state or IntegrationState(name="weather", enabled=False, driver="off")
+        if self.weather is not None:
+            weather_state = replace(weather_state, detail={**weather_state.detail, **self.weather.status()})
+        rows.append(weather_state)
         # 链路追踪不是"装了 OTel 就有证据"：没装配 provider 时跨度只落在本地，
         # 第三方在 Jaeger 里查不到任何东西。这一行让"上报中/仅本地"可判别。
         status = telemetry_status()
@@ -282,9 +294,16 @@ def create_container(
     transport: BusTransport | None = None,
     contracts_dir=None,
     channels: dict[Channel, ChannelAdapter] | None = None,
-    with_simulator: bool = True,
+    with_simulator: bool | None = None,
     llm_gateway: LlmGateway | None = None,
+    weather_client: object | None = None,
 ) -> PlatformContainer:
+    """装配一个平台容器。
+
+    `with_simulator=None`（默认）跟随配置面 `simulator_enabled`——那个旋钮在 .env.example 里
+    本来就承诺过的语义；显式传 True/False 是测试与演练的覆盖口。
+    `weather_client` 只给测试注入 httpx 传输用，生产留空。
+    """
     cfg = settings or get_settings()
     gateway_llm = llm_gateway if llm_gateway is not None else build_gateway_if_configured(cfg)
     bus = transport or build_transport(cfg)
@@ -306,6 +325,7 @@ def create_container(
     knowledge, knowledge_state = build_knowledge(cfg, tracer)
     retrieval, retrieval_state = build_retrieval(cfg, tracer, store=bundle.durability)
     mqtt_source, mqtt_state = build_mqtt(cfg)
+    weather_source, weather_state = build_weather(cfg, client=weather_client)
 
     async def on_result(result: ChainResult) -> None:
         """单一落库点 + 分析旁路扇出：旁路未启用时这条链只有一步，语义与接入前完全一致。"""
@@ -339,7 +359,8 @@ def create_container(
         knowledge=knowledge,
         retrieval=retrieval,
     )
-    simulator = HazardScenarioSimulator(seed=cfg.simulator_seed) if with_simulator else None
+    use_simulator = cfg.simulator_enabled if with_simulator is None else with_simulator
+    simulator = HazardScenarioSimulator(seed=cfg.simulator_seed) if use_simulator else None
 
     async def on_readings(readings: Sequence[TelemetryReading]) -> None:
         if analytics is not None:
@@ -350,7 +371,7 @@ def create_container(
         store=store,
         tracer=tracer,
         settings=cfg,
-        sources=[source for source in (simulator, mqtt_source) if source is not None],
+        sources=[source for source in (simulator, mqtt_source, weather_source) if source is not None],
         on_readings=on_readings if analytics is not None else None,
     )
 
@@ -387,6 +408,8 @@ def create_container(
         retrieval_state=retrieval_state,
         mqtt=mqtt_source,
         mqtt_state=mqtt_state,
+        weather=weather_source,
+        weather_state=weather_state,
         simulator=simulator,
     )
 

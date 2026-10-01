@@ -11,6 +11,7 @@
   **L3 五大智能体**由智能体方按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入
 - 架构依据：《课题6_项目架构设计》五层+一基座，融合"一张图 + 一总线 + 四预"扩展
 - 理论框架：MA-RIAEW（多智能体协同赋能的突发事件风险情报感知及预警模式）
+- 所有验收数字与"还没测到的"都记在 `docs/REPORT.md`（含可复跑的取证命令），不写进本文件
 
 ---
 
@@ -24,40 +25,46 @@ aegis/
 │   └── AGENT_INTEGRATION_SPEC.v1.md
 ├── backend/
 │   ├── src/aegis/
-│   │   ├── config.py          # 运行配置与考核指标阈值口径
+│   │   ├── config.py          # 运行配置与考核指标阈值口径（唯一配置面）
+│   │   ├── integrations.py    # 可选子系统的唯一装配点：内核不 import 任何可选后端
+│   │   ├── container.py       # 平台装配与指标量测出口
 │   │   ├── logging.py         # 结构化 JSON 日志 + trace_id 上下文
 │   │   ├── errors.py          # 类型化错误码（与规范 §5 对齐）
 │   │   ├── domain/            # 枚举与契约的 Python 镜像（AgentMessage / STU / 领域记录）
 │   │   ├── bus/               # 总线传输抽象、内存实现、NATS JetStream 实现、网关、能力注册中心
-│   │   ├── observability/     # 时延账本（分位数/SLA 判定）、Prometheus 导出
-│   │   ├── services/          # 触发规则引擎、风险定级、任务拆解、预警生成、靶向触达
-│   │   ├── connectors/        # 数据接入：模拟场站、公开气象 API、摄取服务
-│   │   ├── storage/           # 运行态存储（遥测/预警/任务/链路）
+│   │   ├── connectors/        # 数据接入：模拟场站、公开气象 API、MQTT 推送腿、摄取服务
+│   │   ├── storage/           # 运行态存储协议与内存实现（遥测/预警/任务/链路）
+│   │   ├── persistence/       # PostgreSQL+PostGIS+pgvector 实现、幂等 DDL、写缓冲与回放量测
+│   │   ├── analytics/         # 分析旁路：ClickHouse 分钟物化 / DuckDB 边缘离线分析
+│   │   ├── knowledge/         # 预案案例库 + Graphiti 时序图谱（读路径不含 LLM）
+│   │   ├── retrieval/         # 混合检索：bge-m3 + reranker（ONNX int8 CPU），缺权重时按腿降级
 │   │   ├── pipeline/          # 灾害响应链路（智能体优先、平台降级）
-│   │   ├── agents/            # Mock/参考智能体（开发与门禁用）
-│   │   ├── container.py       # 平台装配与指标量测出口
-│   │   └── api/               # FastAPI HTTP 接口与 SSE
-│   ├── tests/
-│   │   ├── unit/              # 单元测试与边界测试
-│   │   ├── contract/          # 智能体接入规范 §7 一致性门禁
-│   │   └── e2e/               # 端到端链路与指标实测
-│   └── pyproject.toml
-├── deploy/docker-compose.yml  # NATS / PostgreSQL 17+PostGIS+pgvector / Neo4j / MinIO / Redis / EMQX / Prometheus
+│   │   ├── services/          # 触发规则、风险定级、任务拆解、预警生成、靶向触达、LLM 网关
+│   │   ├── workflow/          # 自研 DAG 引擎（16 类节点）与内置模板
+│   │   ├── edge/              # 站端↔网关弱网链路（Eclipse Zenoh POC：有界缓冲 + 按序重放）
+│   │   ├── observability/     # 时延账本、OpenTelemetry 埋点与导出、Prometheus 导出
+│   │   ├── agents/            # 参考智能体（开发与门禁用）
+│   │   └── api/               # FastAPI HTTP/SSE 接口与工作流接口
+│   ├── scripts/               # drill / metrics_report / zenoh_poc
+│   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
+│   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / dev
+├── frontend/                  # Vue 3 + Vite；Cesium 一张图、Vue Flow 编排画布
+├── deploy/                    # docker-compose（含 profile）、镜像构建、Prometheus/Alertmanager 配置
 ├── docs/                      # 架构说明、ADR、实测记录（REPORT.md）、选型与许可证清单
-└── scripts/                   # 演练、指标报告、检索权重取件脚本
+└── scripts/                   # 检索权重预置脚本（内网/离线部署前跑一次）
 ```
 
 ## 2. 快速开始
 
 ```bash
-# 1) 配置
-cp .env.example backend/.env       # 至少填写 LLM 相关项（可留空走规则降级）
+# 1) 配置：LLM 与图谱项可留空，平台按规则引擎与内存案例库降级运行
+cp .env.example backend/.env
 
-# 2) 后端依赖（uv）+ 前端依赖（npm）
+# 2) 依赖（后端 uv / 前端 npm）
 cd backend && uv sync --extra dev
 cd ../frontend && npm install
 
-# 3) 后端全量测试（离线可跑，总线使用内存实现）
+# 3) 全量测试（离线可跑：总线用内存实现，可选腿一律关闭）
 cd ../backend && uv run pytest -q
 
 # 4) 前端类型检查与单测
@@ -66,32 +73,61 @@ cd ../frontend && npm run typecheck && npm run test
 # 5) 起服务
 cd ../backend && uv run python -m aegis.main      # API: http://127.0.0.1:8000/docs
 cd ../frontend && npm run dev                     # Web: http://localhost:5173（代理 /api 到后端）
-
-# 6) 需要真实基础设施时
-docker compose -f deploy/docker-compose.yml up -d
-AEGIS_BUS_BACKEND=nats uv run python -m aegis.main
 ```
 
-接口文档：`http://localhost:8000/docs`　指标：`http://localhost:8000/metrics`
+需要真实基础设施时按 profile 起（`observability` 先起，应用才不会把跨度只留在本地）：
+
+```bash
+docker compose -f deploy/docker-compose.yml --profile observability up -d
+docker compose -f deploy/docker-compose.yml --profile app --profile iot up -d
+# 混合检索需要权重，先在能联网的机器上预置到 backend/data/models/（约 1.1GB，只读挂载进容器）
+python scripts/fetch_retrieval_models.py
+```
+
+接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`
+装配事实（哪条腿在跑、哪条腿是瘸的）`http://localhost:8000/api/v1/integrations`
+告警链路取证口径 `deploy/observability/README.md`
 
 ### Web 页面（纯 Web，响应式，无原生移动端）
 
 | 页面 | 路由 | 内容 |
 | --- | --- | --- |
 | 态势总览 | `/dashboard` | KPI、风险区域网格、链路各段执行方式（agent/local）、智能体在线状态、SSE 实时事件 |
+| 一张图 | `/map` | Cesium 三维 + 站点/预警点位；底图 PMTiles、地形自建 quantized-mesh，零 Ion/谷歌依赖；缺瓦片时如实降级为"无底图 + 椭球地形" |
 | 监测预警 | `/monitor` | 遥测明细与时序曲线、劣化读数缺口显示、一键发起激增/背景演练 |
 | 预警发布 | `/warnings` | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |
+| 流程编排 | `/workflow` | Vue Flow 画布：16 类节点、版本化定义与实例运行、人工决策/改参/旁路 |
 | 指标量测 | `/metrics` | 运行时埋点的 P50/P95/最大时延 vs 阈值判定、协同成功率、越限项 |
 
-## 3. 一键演练
+## 3. 可选子系统：接得上、退得掉、看得见
+
+平台内核（总线/网关/链路/工作流）不 import 任何可选后端；`integrations.py` 是唯一装配点。
+"没装 extra / 连不上后端 / 配置关闭"三种情况都不改变链路语义，只改变状态表里的一行事实——
+**"装配时跳过"与"跑起来后降级"必须是两行不同的事实**，否则运维只能靠猜。
+
+| 腿 | 驱动取值 | 关闭 / 降级时的行为 |
+| --- | --- | --- |
+| `store` | `memory` \| `postgres` | 落库失败不换实现：内存读视图照常服务，写侧进有界缓冲重试并按计数暴露 |
+| `analytics` | `off` \| `clickhouse` \| `duckdb` | `off` 时链路里根本不出现 OLAP 代码路径；启用时只 write-behind 入队，热路径永不等 OLAP |
+| `knowledge` | `in_memory` \| `graphiti` | 图谱缺位时召回自动落到内置预案库（性质与逐条出处随召回结果一起外显），预案生成照旧完成 |
+| `retrieval` | `off` \| `hybrid` | 权重缺失时稠密腿换确定性词面近似并在 `driver/degraded` 上标出；该分数不得进任何准确率汇报 |
+| `mqtt` | `off` \| `mqtt` | 推送腿未起不阻断平台；broker 连接状态、读数与溢出计数、`last_error` 全部外显 |
+| `weather` | `off` \| `http` | 拉取腿未配 base_url 时完全不存在；启用时按源隔离失败，轮次/条数/失败次数进状态行 |
+| `tracing` | `local` \| `otlp` | 无 OTLP 端点时跨度只落本地——这一行必须说真话，否则"接了 Jaeger"是假的 |
+
+凭据一律不出现在状态接口与日志里：DSN/URI/端点都先脱敏（只留 `scheme://host[:port]/path`）再出口，
+客户端与导出器仍拿到完整值。
+
+## 4. 一键演练
 
 ```bash
 cd backend
 uv run python -m scripts.drill --scenario surge     # 注入激增监测数据并跑通全链路
-uv run python -m scripts.metrics_report            # 打印时延/成功率实测报告（对齐考核指标）
+uv run python -m scripts.metrics_report             # 打印时延/成功率实测报告（对齐考核指标）
+uv run python -m scripts.zenoh_poc                  # 站端↔网关弱网链路 POC（需要 zenoh 与本机端口）
 ```
 
-## 4. 关键设计约束
+## 5. 关键设计约束
 
 | 约束 | 说明 |
 | --- | --- |
@@ -100,13 +136,18 @@ uv run python -m scripts.metrics_report            # 打印时延/成功率实�
 | 指标必须实测 | `latency_report()` 输出运行时埋点的分位数与 SLA 判定，验收数字全部可追溯到样本 |
 | 降级留痕 | 降级写入 `ChainResult.degradations`（可归因），致命错误写入 `errors`（判失败） |
 | 双语不伪造 | 未接入可信翻译能力时预警仅中文并标记 `translation_pending`，不生成未经审核的藏语文本 |
+| 数据不编造 | 站点坐标、案例出处等缺失时如实返回 `null`／标注"自编预案模板"，绝不用看起来合理的值填空 |
+| 配置面无空旋钮 | `.env.example` 与 compose 里写下的每个 `AEGIS_*` 都必须被生产代码读到；暂未接线的必须响亮拒绝（`NotImplementedError`），不得静默走默认 |
+| 单源失败要隔离 | 摄取按源独立超时与失败记账：一个站端断了不拖垮整轮采集（高原弱网是常态） |
 
-## 5. 开发规范
+## 6. 开发规范
 
 - 提交遵循 Conventional Commits（`feat|fix|chore|test|docs|perf|refactor(scope): 描述`），不带 AI 生成尾注
-- 门禁：`ruff check` + `mypy` + `pytest` 全绿方可合并（见 `.github/workflows/ci.yml`）
+- 门禁：`ruff format` + `ruff check` + `mypy` + `pytest` 全绿方可合并（见 `.github/workflows/ci.yml`）
 - 契约变更：语义化版本 + 更新一致性测试套件 + 记录 ADR
+- 测试金字塔：单元测试（含边界/属性测试 hypothesis）→ 契约与模糊（schemathesis）→ 集成（真服务端，按环境变量开关）→ 压测（Locust）
 
-## 6. 许可
+## 7. 许可
 
-AGPL-3.0（与基线项目 NexusMind 保持一致）。
+AGPL-3.0（与基线项目 NexusMind 保持一致）。第三方组件许可证与版本逐条记录在
+`docs/技术选型与许可证清单.md`（按安装产物实测，不凭印象填写）。

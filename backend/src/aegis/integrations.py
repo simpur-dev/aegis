@@ -25,8 +25,9 @@ from urllib.parse import urlsplit
 
 from aegis.config import Settings, get_settings
 from aegis.connectors.mqtt import AiomqttClient, MqttSource  # MQTT 只在此装配层被 import；aiomqtt 本身延迟到建连时导入
+from aegis.connectors.weather_api import WeatherApiSource
 from aegis.domain.messages import TelemetryReading, utc_now
-from aegis.knowledge.cases import HazardCase, load_builtin_cases
+from aegis.knowledge.cases import DATASET_PROVENANCE, HazardCase, load_builtin_cases
 from aegis.knowledge.provider import KnowledgeProvider
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import ChainResult
@@ -224,6 +225,40 @@ def build_mqtt(settings: Settings | None = None) -> tuple[MqttSource | None, Int
     detail: dict[str, object] = {**client.status(), "buffer_limit": cfg.mqtt_buffer_limit}
     source = MqttSource(client, prefix=cfg.mqtt_topic_prefix, buffer_limit=cfg.mqtt_buffer_limit)
     return source, IntegrationState(name="mqtt", enabled=True, driver="mqtt", detail=detail)
+
+
+def build_weather(
+    settings: Settings | None = None,
+    *,
+    client: Any = None,
+) -> tuple[WeatherApiSource | None, IntegrationState]:
+    """装配公开气象/水文拉取腿：只在填了 base_url 时才存在这条腿。
+
+    与 MQTT 那条 push 腿互补：站端不上报、只有公开接口可查的区域靠这条腿补数。
+    `client` 参数是给测试注入 httpx.MockTransport 用的；生产不传，连接器在第一次采集时
+    才建连接池。采集失败按源隔离进 `IngestReport.sources_failed`，这里只报"这条腿在不在、
+    采了几轮、失败几次"。base_url 可能带着运营方 token，状态面只留 host[:port]。
+    """
+    cfg = settings or get_settings()
+    if not cfg.weather_api_base_url:
+        return None, IntegrationState(name="weather", enabled=False, driver="off")
+
+    source = WeatherApiSource(
+        cfg.weather_api_base_url,
+        client,
+        path=cfg.weather_api_path,
+        timeout_ms=cfg.weather_api_timeout_ms,
+    )
+    return source, IntegrationState(
+        name="weather",
+        enabled=True,
+        driver="http",
+        detail={
+            "target": target_of(cfg.weather_api_base_url),
+            "path": source.path,
+            "timeout_ms": cfg.weather_api_timeout_ms,
+        },
+    )
 
 
 def chain_facts(result: ChainResult) -> list[Any]:
@@ -456,7 +491,6 @@ def build_knowledge(settings: Settings | None = None, tracer: Tracer | None = No
     从来不该让预案变慢或失败——降级链在 `FallbackKnowledgeProvider` 内部，装配层不复制。
     这里只报告事实：驱动是什么、预算多少、兜底库有多少条、这些条目是什么性质的数据。
     """
-    from aegis.knowledge.cases import DATASET_PROVENANCE, load_builtin_cases
     from aegis.knowledge.provider import build_knowledge_provider
 
     cfg = settings or get_settings()

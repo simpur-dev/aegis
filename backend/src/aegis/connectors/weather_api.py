@@ -1,7 +1,10 @@
 """公开气象数据源适配器（httpx 异步、可注入客户端以便单测打桩）。
 
-真实接口因地区与授权而异，故本适配器只约定输入形状（见 _EXPECTED_SHAPE 注释），
-不可用时返回空集合而不抛错——弱网/无凭据场景下摄取轮次必须继续。
+真实接口因地区与授权而异，故本适配器只约定输入形状（见 `_METRIC_FIELDS` 上方注释）。
+采集失败**向上抛出**：摄取服务按源隔离失败并计入 `IngestReport.sources_failed`，
+在这里吞掉错误只会让"外部 API 挂了"变成"平台这边静默少了一批数"——那正是查不出来的那种故障。
+未注入客户端时，第一次采集才创建 httpx 客户端：容器构造阶段不建连接池，
+`aclose()` 也只关自己建的那个（注入进来的客户端归注入方所有）。
 """
 
 from __future__ import annotations
@@ -11,7 +14,8 @@ from typing import Any
 
 from aegis.connectors.base import DataSource
 from aegis.connectors.metrics import unit_for
-from aegis.domain.messages import TelemetryReading, now_iso, utc_now
+from aegis.domain.messages import TelemetryReading, now_iso, parse_iso, utc_now
+from aegis.errors import SchemaInvalidError
 
 log = logging.getLogger("aegis.connectors.weather")
 
@@ -34,6 +38,10 @@ _METRIC_FIELDS = (
 )
 
 
+DEFAULT_PATH = "/observation"
+DEFAULT_TIMEOUT_MS = 4_000
+
+
 class WeatherApiSource(DataSource):
     name = "weather_api"
 
@@ -42,32 +50,86 @@ class WeatherApiSource(DataSource):
         base_url: str,
         client: Any = None,
         *,
-        path: str = "/observation",
-        timeout_ms: int = 4_000,
+        path: str = DEFAULT_PATH,
+        timeout_ms: int = DEFAULT_TIMEOUT_MS,
     ) -> None:
-        if base_url and client is None:
-            raise ValueError("注入 httpx 客户端后才能启用 HTTP 采集")
         self._base_url = base_url.rstrip("/")
         self._client = client
-        self._path = path
+        # 注入进来的客户端归注入方所有：本类只关自己建的那个，绝不替别人 aclose。
+        self._owns_client = client is None
+        self._path = path if path.startswith("/") else f"/{path}"
         self._timeout_s = timeout_ms / 1000
+        self.rounds = 0
+        self.readings = 0
+        self.failures = 0
+        self.last_error: str | None = None
 
     @property
     def enabled(self) -> bool:
-        return bool(self._base_url and self._client is not None)
+        return bool(self._base_url)
+
+    @property
+    def path(self) -> str:
+        """采集路径：装配层要把它写进状态行，运维据此核对端点是否填对。"""
+        return self._path
 
     async def collect(self) -> list[TelemetryReading]:
         if not self.enabled:
             return []
-        response = await self._client.get(f"{self._base_url}{self._path}", timeout=self._timeout_s)
-        response.raise_for_status()
-        body = response.json()
-        return self._parse(body)
+        client = self._client if self._client is not None else self._new_client()
+        url = f"{self._base_url}{self._path}"
+        try:
+            response = await client.get(url, timeout=self._timeout_s)
+            response.raise_for_status()
+            readings = self._parse(response.json())
+        except Exception as exc:
+            # 计数与上抛同时发生：吞掉错误会让"外部 API 挂了"变成"平台静默少一批数"
+            self.failures += 1
+            self.last_error = _error_note(exc, url)
+            raise
+        self.rounds += 1
+        self.readings += len(readings)
+        return readings
 
-    def _parse(self, body: dict[str, Any]) -> list[TelemetryReading]:
+    def status(self) -> dict[str, Any]:
+        """给装配层并入状态行的事实：只看得到"这轮真的采到东西没有"，看不到端点与凭据。"""
+        return {
+            "rounds": self.rounds,
+            "readings": self.readings,
+            "failures": self.failures,
+            "last_error": self.last_error,
+            "timeout_ms": int(self._timeout_s * 1_000),
+        }
+
+    async def aclose(self) -> None:
+        if not self._owns_client or self._client is None:
+            return
+        client, self._client = self._client, None
+        await client.aclose()
+
+    def _new_client(self) -> Any:
+        self._client = self._build_client()
+        return self._client
+
+    def _build_client(self) -> Any:
+        """连接池构造点：测试通过覆盖它换掉真实网络，而不是去改私有字段。"""
+        import httpx
+
+        return httpx.AsyncClient(headers={"accept": "application/json"})
+
+    def _parse(self, body: Any) -> list[TelemetryReading]:
+        """形状不符约定就抛错，而不是当成"本轮没有数据"：上游改了字段必须看得见。"""
+        if not isinstance(body, dict):
+            raise SchemaInvalidError("气象接口响应不是 JSON 对象", detail={"type": type(body).__name__})
+        stations = body.get("stations")
+        if not isinstance(stations, list):
+            raise SchemaInvalidError(
+                "气象接口响应缺少 stations 数组",
+                detail={"keys": sorted(str(key) for key in body)[:8]},
+            )
         observed = _extract_observed(body)
         readings: list[TelemetryReading] = []
-        for station in body.get("stations", []):
+        for station in stations:
             if not isinstance(station, dict):
                 continue
             station_id = str(station.get("id", "")).strip()
@@ -103,9 +165,20 @@ def _extract_observed(body: dict[str, Any]) -> str:
     raw = body.get("observed_at")
     if isinstance(raw, str):
         try:
-            from aegis.domain.messages import parse_iso
-
             return parse_iso(raw).isoformat().replace("+00:00", "Z")
         except ValueError:
             pass
     return utc_now().isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _error_note(exc: BaseException, url: str) -> str:
+    """错误摘要：把完整请求 URL 换成占位符。
+
+    端点由运营方填写，可能带着 token 或 Basic 凭据，而 httpx 的异常文本会把 URL 原样带出来；
+    这条摘要会进 `/api/v1/integrations`，所以先抹掉 URL 再入账。
+    """
+    text = str(exc).replace(url, "<endpoint>")
+    return f"{type(exc).__name__}: {text}"[:240]
+
+
+__all__ = ["WeatherApiSource"]

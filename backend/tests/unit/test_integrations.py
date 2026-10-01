@@ -351,14 +351,16 @@ class TestContainerWiring:
         assert ctn.analytics is None
         assert ctn.bundle.durability is None
         assert ctn.mqtt is None
+        assert ctn.weather is None
         # 按名字断言而不是按位置：状态列表是对外契约，加一条腿不该把既有断言整体挪位
         status = {state.name: state for state in ctn.integration_status()}
-        assert set(status) == {"store", "analytics", "knowledge", "retrieval", "mqtt", "tracing"}
+        assert set(status) == {"store", "analytics", "knowledge", "retrieval", "mqtt", "weather", "tracing"}
         assert (status["store"].enabled, status["store"].driver) == (True, "memory")
         assert status["analytics"].enabled is False
         assert status["knowledge"].enabled is True
         assert (status["retrieval"].enabled, status["retrieval"].driver) == (False, "off")
         assert (status["mqtt"].enabled, status["mqtt"].driver) == (False, "off")
+        assert (status["weather"].enabled, status["weather"].driver) == (False, "off")
         # 没配 OTLP 端点时链路追踪只留本地：这一行必须说真话，否则"接了 Jaeger"是假的
         assert (status["tracing"].enabled, status["tracing"].driver) == (False, "local")
 
