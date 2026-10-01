@@ -72,12 +72,31 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 
 ## 6. 当前状态与下一步
 
-已完成（M1）：契约、总线与网关、能力注册、规则/定级/拆解/预警/触达、降级链路、运行态存储、HTTP API、
-Web 前端四页（含 SSE 实时事件）、单元/契约/端到端/API/性能五类测试、容器编排与 CI。
+已完成：
 
-进行中或未开始（诚实标注）：
-- 柔性可视化工作流引擎与 Vue Flow 画布（M2，指标 2 的完整口径；当前为固定流水线 + 降级双轨）
-- Neo4j 灾情知识图谱与 GraphRAG 检索（复用 NexusMind `graph_builder`/`vector_store` 资产，M2）
-- TimescaleDB 持久化替换内存存储（接口已解耦）
-- GIS 三维一张图（Cesium）与风险网格真实行政区划叠加
-- 真实通道（短信/北斗/广播）对接与边缘弱网演练
+- **M1 内核**：契约、总线与网关、能力注册、规则/定级/拆解/预警/触达、降级链路、运行态存储、
+  HTTP API、单元/契约/端到端/API/性能测试、容器编排与 CI。
+- **M2 工作流**（ADR-0004 已落地）：DAG + 状态机引擎、版本化模板与实例、运行中改图、
+  异常三段处置；注册节点类型 16 类；Vue Flow 画布（`WorkflowView`）。
+  调度响应与重调度时延为实测，见 `docs/REPORT.md`。
+- **持久层**（ADR-0003 修订版）：PostgreSQL 17 + PostGIS + pgvector（asyncpg 直连、无 ORM）、
+  有界写缓冲与重放去重；内存读视图保留，连接故障不换实现。
+- **知识与检索**：Graphiti 双时态案例图谱（读写分离，LLM 只在写路径）、
+  bge-m3 + bge-reranker int8/CPU 混合检索（dense + BM25 + RRF，LLM 不进检索回路），
+  两者都接进预案生成链路并对外暴露只读接口。
+- **分析旁路**：ClickHouse 分钟级物化与 DuckDB 边缘单文件离线分析（write-behind，热路径不等 OLAP）。
+- **可观测**：OpenTelemetry 链路 + 自研时延账本 + Prometheus/Alertmanager 规则；
+  `GET /api/v1/integrations` 把每条可选腿的启用/降级事实对外报出。
+- **一张图**：Cesium + 自建 quantized-mesh 地形 + PMTiles 离线底图（不依赖 Ion/谷歌），
+  含离线与底图守卫的前端测试。
+
+未完成或待取证（诚实标注）：
+
+- 真库在线取证：PostGIS/pgvector 的容器内 DDL + 空间/向量查询、ClickHouse 的 DDL + 物化视图、
+  Jaeger 按 trace_id 的端到端找回与 `promtool check rules` —— 代码与规则齐备，一次真实跑证还没做。
+- 真实通道对接（短信/北斗/广播）与边缘弱网实链路演练：目前分别是 mock 通道与本机 Zenoh POC。
+- Zenoh 目前是站端↔网关链路的 POC，平台侧总线仍是 NATS JetStream（未替换）。
+- MQTT 字段设备接入：`connectors` 里没有 MQTT 数据源，配置里的 `mqtt_*` 与 compose 的 EMQX
+  属于"已声明未实现"，实现或移除二选一（见任务清单）。
+
+复现命令与数字口径统一收录在 `docs/REPORT.md`。

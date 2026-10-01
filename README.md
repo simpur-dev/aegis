@@ -42,9 +42,9 @@ aegis/
 │   │   ├── contract/          # 智能体接入规范 §7 一致性门禁
 │   │   └── e2e/               # 端到端链路与指标实测
 │   └── pyproject.toml
-├── deploy/docker-compose.yml  # NATS / TimescaleDB / Neo4j / MinIO / Redis / EMQX / Prometheus
-├── docs/                      # 架构说明与 ADR
-└── scripts/                   # 演练、压测、演示脚本
+├── deploy/docker-compose.yml  # NATS / PostgreSQL 17+PostGIS+pgvector / Neo4j / MinIO / Redis / EMQX / Prometheus
+├── docs/                      # 架构说明、ADR、实测记录（REPORT.md）、选型与许可证清单
+└── scripts/                   # 演练、指标报告、检索权重取件脚本
 ```
 
 ## 2. 快速开始
