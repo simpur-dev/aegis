@@ -45,7 +45,7 @@ aegis/
 │   │   ├── observability/     # 时延账本、OpenTelemetry 埋点与导出、Prometheus 导出
 │   │   ├── agents/            # 参考智能体（开发与门禁用）
 │   │   └── api/               # FastAPI HTTP/SSE 接口与工作流接口
-│   ├── scripts/               # drill / metrics_report / zenoh_poc
+│   ├── scripts/               # drill / metrics_report / load_curve / zenoh_poc
 │   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
 │   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / dev
 ├── frontend/                  # Vue 3 + Vite；Cesium 一张图、Vue Flow 编排画布
@@ -125,6 +125,8 @@ cd backend
 uv run python -m scripts.drill --scenario surge     # 注入激增监测数据并跑通全链路
 uv run python -m scripts.metrics_report             # 打印时延/成功率实测报告（对齐考核指标）
 uv run python -m scripts.zenoh_poc                  # 站端↔网关弱网链路 POC（需要 zenoh 与本机端口）
+uv run python -m scripts.load_curve --levels 1,10,30,60 --duration 25s
+                                                    # 并发曲线：自己起服务、按梯度跑 Locust、报出拐点
 uv run python -m scripts.metrics_report --dataset labels.jsonl
                                                     # 附现场标注案例集才算得出"预警准确率"；不附则如实写"未测得"
 ```

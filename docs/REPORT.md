@@ -104,10 +104,46 @@
 路由分组键与抑制对齐键必须在每条告警 labels 上取得到值）与上面那条在线用例一起钉住。
 取证环境与四道校验的操作口径写在 `deploy/observability/README.md`。
 
+## 并发曲线实测（2026-10-01，Locust）
+
+命令：`uv run python -m scripts.load_curve --levels 1,10,30,60 --duration 25s`
+与 `uv run python -m scripts.load_curve --levels 120,200 --duration 30s`
+（脚本自己拉起 uvicorn 子进程、跑完收摊；每个点断言"请求数 > 0"）。
+环境：本机单 uvicorn worker、内存总线、mock 通道、模拟器开启；服务冷启动到 `/healthz` 可答 **1.12s**。
+
+| 并发用户 | 请求数 | RPS | 整体失败率 | 聚合 P50/P95 (ms) | 演练 `drill_run` P95 | 站点清单 P95 | 就绪探针 P95 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 11 | 0.48 | 0% | 110 / 130 | 130 | — | — |
+| 10 | 266 | 10.83 | 0% | 5 / 130 | 170 | 9 | 18 |
+| 30 | 769 | 30.71 | 0% | 12 / 130 | 190 | 23 | 21 |
+| 60 | 1363 | 54.32 | 0% | 32 / 260 | 710 | 95 | 100 |
+| 120 | 2505 | 83.46 | 0% | 180 / 1000 | 2200 | 300 | 300 |
+| 200 | 1918 | 63.82 | 2.50% | 850 / 4600 | 5800 | 1500 | 1300 |
+
+判据与告警同源（`aegis.observability.load_policy`：只读端点 4000ms、一次完整演练 5000ms）。结论：
+
+- 1→120 并发全程零失败，RPS 随并发近线性上升（10.83 → 83.46）；
+- **拐点落在 120→200 之间**：RPS 不升反降（83.46 → 63.82），演练段 P95 从 2200ms 涨到 5800ms 越过预算，
+  演练路径失败率 12.37%（整体 2.50%）；同期只读端点仍在预算内（1500/1300ms < 4000ms）。
+- 所以这一版实现能对外承诺的容量口径是：**本机单 worker + 内存总线下，≤120 并发的"读 + 演练"混合负载全部达阈**。
+- 口径边界：这不是 Linux + uvloop + 4 workers + NATS JetStream 的部署形态，部署环境那条曲线仍需重跑。
+
+**这一轮的先决条件是压测档案本身能被修好**：`tests/load/locustfile.py` 里写着
+`float(response.elapsed)`，而 locust 2.46 底下层是 httpx、`elapsed` 是 `timedelta` —— 每次任务都抛
+`TypeError`，Locust 把它记成 task error，汇总表却是 `Aggregated 0 requests, 0(0.00%)` + 退出码 0。
+也就是说这份档案从写下到今晚**一次请求都没发出去过，而它在 CI 里是绿的**。
+阈值与判定口径因此挪进 `aegis/observability/load_policy.py`（locust 一 import 就 monkey-patch ssl，
+测试进程没法 import 档案，判定逻辑必须住在产品包里才测得到），两侧钉住：
+`tests/unit/test_load_policy.py` 测行为（耗时换算、等于预算判合格、预算与 `Settings` 同源），
+`tests/perf/test_load_profile.py` 走 AST 测结构（档案必须调预算函数、
+`float(response.elapsed)` 不得回潮、清单里列出的端点必须真的被任务打到——
+`/readyz` 与站点清单原本就列了却没有任务打）。
+
 ## 还没测到的（诚实清单）
 
-1. **压测绝对值**：Locust 的阈值是从 `Settings` 的 SLA 反推的（防止指标漂移），
-   真实并发曲线需要在部署环境按站点数量梯度再量一轮。
+1. **部署形态的并发曲线**：上表是本机单 worker + 内存总线 + mock 通道；
+   生产形态（Linux + uvloop + 4 workers + NATS JetStream + PostgreSQL 落库）的曲线、
+   以及"按站数梯度"的资源占用还没量过。
 2. **弱网工况**：Zenoh 链路已在真实运行时上验过互通、请求-响应、边缘存留与按序重放
    （见上表），但还没在真实丢包/高时延链路（4G/卫星回传）上量过；`poc_report.py` 的丢包梯度是
    本机注入的合成时延，不是空口实测。

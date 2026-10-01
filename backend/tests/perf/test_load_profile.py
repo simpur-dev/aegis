@@ -72,16 +72,53 @@ def test_read_user_declares_read_tasks(tree: ast.Module) -> None:
 
 
 def test_thresholds_are_derived_from_settings_not_hardcoded(tree: ast.Module) -> None:
-    """阈值一旦写回常数，压测与告警就会漂移成两套口径。"""
+    """阈值一旦写回常数，压测与告警就会漂移成两套口径。
+
+    2026-10-01 起换算住在 `aegis.observability.load_policy`（档案里 import locust 就没法在
+    本进程做行为测试，判定逻辑因此上移）：档案侧只允许出现"调用预算函数"，
+    Settings 字段名的检查随之下移到 load_policy 的源码上。
+    """
     assignments = _module_assignments(tree)
-    for key, field in (("SCHEDULE_SLA_MS", "sla_schedule_ms"), ("SYNC_SLA_MS", "sla_sync_ms")):
+    for key, factory in (("READ_SLA_MS", "read_budget_ms"), ("DRILL_BUDGET_MS", "drill_budget_ms")):
         value = assignments.get(key)
         assert value is not None, f"{key} 必须存在"
-        assert field in _names_used(value), f"{key} 必须取 Settings.{field}，不得写常数"
+        assert factory in _called_names(value), f"{key} 必须来自 load_policy.{factory}()，不得写常数"
 
     text = LOCUSTFILE.read_text(encoding="utf-8")
+    assert "from aegis.observability.load_policy import" in text
     for literal in ("= 2000", "= 3000", "= 2_000", "= 3_000"):
         assert literal not in text, f"locustfile 里出现硬编码阈值 {literal!r}"
+
+    policy = LOCUSTFILE.parents[2] / "src" / "aegis" / "observability" / "load_policy.py"
+    policy_text = policy.read_text(encoding="utf-8")
+    assert "sla_schedule_ms" in policy_text and "sla_sync_ms" in policy_text, "预算函数必须读 Settings 字段"
+
+
+def _called_names(node: ast.AST) -> list[str]:
+    return [item.func.id for item in ast.walk(node) if isinstance(item, ast.Call) and isinstance(item.func, ast.Name)]
+
+
+def test_profile_reads_response_timing_through_the_policy_helper(tree: ast.Module) -> None:
+    """`float(response.elapsed)` 会让每个任务抛 TypeError，而 locust 仍报"0 请求 + 退出码 0"。
+
+    这条断言守的是那类静默零流量：耗时换算必须走 load_policy.elapsed_ms，判定必须走 over_budget。
+    """
+    text = LOCUSTFILE.read_text(encoding="utf-8")
+    assert "float(response.elapsed)" not in text
+    assert "elapsed_ms(response)" in text and "over_budget(" in text
+
+
+def test_every_listed_endpoint_is_actually_hit(tree: ast.Module) -> None:
+    """清单里列了却没有任务打到 = 曲线上悄悄少一条可引用样本（`/readyz` 与站点清单曾就是这样）。"""
+    assignments = _module_assignments(tree)
+    value = assignments.get("READ_ENDPOINTS")
+    assert isinstance(value, ast.Tuple) and value.elts, "READ_ENDPOINTS 必须是字面量元组"
+    endpoints = [str(element.value) for element in value.elts]
+    assert "/api/v1/integrations" in endpoints and any(e.startswith("/api/v1/stations") for e in endpoints)
+    assert "/readyz" in endpoints
+    text = LOCUSTFILE.read_text(encoding="utf-8")
+    for endpoint in endpoints:
+        assert text.count(endpoint) >= 2, f"{endpoint} 在清单里但没有任务打到"
 
 
 def test_settings_carry_the_official_indicator_values() -> None:
