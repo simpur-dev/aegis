@@ -9,6 +9,8 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BusBackend = Literal["memory", "nats"]
+StoreBackend = Literal["memory", "postgres"]
+AnalyticsBackend = Literal["off", "clickhouse", "duckdb"]
 
 
 class Settings(BaseSettings):
@@ -25,6 +27,26 @@ class Settings(BaseSettings):
     nats_stream_prefix: str = "AEGIS"
 
     db_url: str = "sqlite+aiosqlite:///./data/aegis.db"
+
+    # 运行态存储面：memory 只保留内存读视图；postgres 在同一读视图前加 PostGIS/pgvector 落库。
+    # 选 postgres 但连不上时不降级成另一种实现，而是保留读视图 + 有界写缓冲重试（见 integrations）。
+    store_backend: StoreBackend = "memory"
+    pg_dsn: str = ""  # 空则回落到 db_url；此时 db_url 必须是 PostgreSQL DSN
+    pg_pool_min_size: int = 1
+    pg_pool_max_size: int = 8
+    pg_apply_migrations_on_start: bool = True
+
+    # 分析旁路：write-behind 消费者，off 时链路里完全不出现 OLAP 代码路径。
+    analytics_backend: AnalyticsBackend = "off"
+    clickhouse_host: str = "127.0.0.1"
+    clickhouse_port: int = 8123
+    clickhouse_database: str = "aegis"
+    clickhouse_username: str = "default"
+    clickhouse_password: str = ""
+    clickhouse_secure: bool = False
+    duckdb_path: str = "./data/edge_analytics.duckdb"
+    analytics_apply_schema: bool = False
+    analytics_close_grace_ms: int = 2_000
 
     # 基座层：接入网关
     mqtt_host: str = "127.0.0.1"

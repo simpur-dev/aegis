@@ -1,7 +1,8 @@
-"""运行态存储：遥测 / 预警 / 任务单元 / 链路结果 的有界内存存储。
+"""运行态存储：遥测 / 预警 / 任务单元 / 链路结果 的有界内存存储 + 本层的存储面。
 
-选型说明：M1 用内存存储换取零外部依赖与可复现的单测；SQLAlchemy/TimescaleDB 持久化
-在 M2 与 workflow 引擎一同引入（接口 `StoreProtocol` 保持不变，替换实现即可）。
+内存实现（`PlatformStore`）与持久实现（`aegis.persistence.PostgresStore`）都满足这里声明的
+`StoreProtocol`：调用方只依赖面，换后端不改调用方。内存实现保留为**读视图**——
+热路径读要零跳数，落库交给持久层的有界写缓冲异步补写。
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import asyncio
 from collections import deque
 from collections.abc import Iterable
 from datetime import datetime
-from typing import Generic, TypeVar
+from typing import Generic, Protocol, TypeVar
 
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, parse_iso
 from aegis.pipeline.chain import ChainResult
@@ -159,6 +160,73 @@ class PlatformStore:
             "task_count": self.tasks.size,
             "chain_count": len(self.chains),
         }
+
+
+# ---------- 存储面：调用方只依赖这张面，不依赖具体实现 ----------
+#
+# 放在这里而不是持久层适配器里，是本模块头那句承诺的兑现：抽象归被依赖的一侧，
+# 换成 PostgreSQL 实现时上游代码不必改动，也不该被迫 import 某个具体后端。
+
+
+class TelemetryPort(Protocol):
+    async def add(self, readings: Iterable[TelemetryReading]) -> int: ...
+
+    def query(
+        self,
+        *,
+        station_id: str | None = None,
+        metric: str | None = None,
+        region_code: str | None = None,
+        since: datetime | str | None = None,
+        until: datetime | str | None = None,
+        limit: int = 500,
+    ) -> list[TelemetryReading]: ...
+
+    @property
+    def size(self) -> int: ...
+
+
+class WarningPort(Protocol):
+    async def put(self, record: WarningRecord) -> None: ...
+
+    def get(self, warning_id: str) -> WarningRecord | None: ...
+
+    def list(self, *, limit: int = 50, region_code: str | None = None) -> list[WarningRecord]: ...
+
+    @property
+    def size(self) -> int: ...
+
+
+class TaskPort(Protocol):
+    async def put_many(self, units: Iterable[StandardizedTaskUnit]) -> int: ...
+
+    def get(self, task_unit_id: str) -> StandardizedTaskUnit | None: ...
+
+    def by_event(self, event_id: str) -> list[StandardizedTaskUnit]: ...
+
+    @property
+    def size(self) -> int: ...
+
+
+class StoreProtocol(Protocol):
+    """存储面。四个子集合声明为只读：调用方只取用、从不替换，
+    写成可写属性会让协议变成不变匹配，内存实现反而过不了类型检查。"""
+
+    @property
+    def telemetry(self) -> TelemetryPort: ...
+
+    @property
+    def warnings(self) -> WarningPort: ...
+
+    @property
+    def tasks(self) -> TaskPort: ...
+
+    @property
+    def chains(self) -> BoundedCollection[ChainResult]: ...
+
+    async def record_chain(self, result: ChainResult) -> None: ...
+
+    def snapshot(self) -> dict[str, object]: ...
 
 
 def _to_iso(moment: datetime | str | None) -> str | None:

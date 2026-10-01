@@ -98,6 +98,20 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "store": ctn.store.snapshot(),
         }
 
+    @app.get("/api/v1/integrations", tags=["ops"])
+    async def integrations(ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
+        """可选子系统的装配事实：未启用 / 已启用 / 启用了但降级，三者必须能被外部区分。
+
+        这不是健康检查的重复：`/readyz` 只答"总线通不通"，这里答"哪条腿是瘸的"。
+        """
+        rows = ctn.integration_status()
+        degraded = [state.name for state in rows if state.enabled and "degraded" in state.detail]
+        return {
+            "items": [state.as_dict() for state in rows],
+            "degraded": degraded,
+            "all_enabled": all(state.enabled for state in rows),
+        }
+
     @app.get("/api/v1/telemetry", tags=["data"])
     async def list_telemetry(
         ctn: PlatformContainer = Depends(get_container),

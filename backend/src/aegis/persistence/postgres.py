@@ -22,7 +22,7 @@ import logging
 from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
@@ -49,7 +49,14 @@ from aegis.persistence.write_buffer import (
     WriteBuffer,
     WriteRequest,
 )
-from aegis.storage.store import BoundedCollection, PlatformStore, TaskStore, TelemetryStore, WarningStore
+from aegis.storage.store import (
+    BoundedCollection,
+    PlatformStore,
+    StoreProtocol,
+    TaskPort,
+    TelemetryPort,
+    WarningPort,
+)
 from aegis.workflow.model import WorkflowDef, WorkflowInstance
 
 if TYPE_CHECKING:  # 仅用于类型标注：ChainResult 的载荷只在写出时按方法调用取用
@@ -155,66 +162,16 @@ def checksum(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:32]
 
 
-# ---------- 运行态存储面（与 storage/store.py 同名同签） ----------
-
-
-class TelemetryPort(Protocol):
-    async def add(self, readings: Iterable[TelemetryReading]) -> int: ...
-
-    def query(
-        self,
-        *,
-        station_id: str | None = None,
-        metric: str | None = None,
-        region_code: str | None = None,
-        since: datetime | str | None = None,
-        until: datetime | str | None = None,
-        limit: int = 500,
-    ) -> list[TelemetryReading]: ...
-
-    @property
-    def size(self) -> int: ...
-
-
-class WarningPort(Protocol):
-    async def put(self, record: WarningRecord) -> None: ...
-
-    def get(self, warning_id: str) -> WarningRecord | None: ...
-
-    def list(self, *, limit: int = 50, region_code: str | None = None) -> list[WarningRecord]: ...
-
-    @property
-    def size(self) -> int: ...
-
-
-class TaskPort(Protocol):
-    async def put_many(self, units: Iterable[StandardizedTaskUnit]) -> int: ...
-
-    def get(self, task_unit_id: str) -> StandardizedTaskUnit | None: ...
-
-    def by_event(self, event_id: str) -> list[StandardizedTaskUnit]: ...
-
-    @property
-    def size(self) -> int: ...
-
-
-class StoreProtocol(Protocol):
-    """`storage/store.py` 模块头承诺"保持不变"的那张面。"""
-
-    telemetry: TelemetryPort
-    warnings: WarningPort
-    tasks: TaskPort
-    chains: BoundedCollection[ChainResult]
-
-    async def record_chain(self, result: ChainResult) -> None: ...
-
-    def snapshot(self) -> dict[str, object]: ...
+# ---------- 运行态存储面 ----------
+#
+# 面定义在 `aegis.storage.store`（被依赖的一侧），本模块只提供实现：
+# 上游按 `StoreProtocol` 编程即可在内存与 PostgreSQL 之间无痛切换。
 
 
 class _TelemetryFacade:
     """读侧转发内存模型，写侧同时投递缓冲：调用方看不出差别。"""
 
-    def __init__(self, store: PostgresStore, inner: TelemetryStore) -> None:
+    def __init__(self, store: PostgresStore, inner: TelemetryPort) -> None:
         self._store = store
         self._inner = inner
 
@@ -241,7 +198,7 @@ class _TelemetryFacade:
 
 
 class _WarningFacade:
-    def __init__(self, store: PostgresStore, inner: WarningStore) -> None:
+    def __init__(self, store: PostgresStore, inner: WarningPort) -> None:
         self._store = store
         self._inner = inner
 
@@ -262,7 +219,7 @@ class _WarningFacade:
 
 
 class _TaskFacade:
-    def __init__(self, store: PostgresStore, inner: TaskStore) -> None:
+    def __init__(self, store: PostgresStore, inner: TaskPort) -> None:
         self._store = store
         self._inner = inner
 
@@ -290,7 +247,7 @@ class PostgresStore:
         *,
         dsn: str | None = None,
         settings: Settings | None = None,
-        read_model: PlatformStore | None = None,
+        read_model: StoreProtocol | None = None,
         pool_min_size: int = 1,
         pool_max_size: int = 8,
         command_timeout_seconds: float = 30.0,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from aegis.bus.gateway import AgentGateway
@@ -17,7 +18,7 @@ from aegis.domain.enums import Action
 from aegis.domain.messages import TelemetryReading, make_event, new_trace_id, now_iso, parse_iso, utc_now
 from aegis.errors import AegisError
 from aegis.observability.tracer import Tracer
-from aegis.storage.store import PlatformStore
+from aegis.storage.store import StoreProtocol
 
 log = logging.getLogger("aegis.connectors")
 
@@ -57,12 +58,13 @@ class IngestService:
         self,
         *,
         gateway: AgentGateway,
-        store: PlatformStore,
+        store: StoreProtocol,
         tracer: Tracer,
         settings: Settings | None = None,
         sources: list[DataSource] | None = None,
         per_source_timeout_ms: int = 5_000,
         sla_ingest_seconds: float | None = None,
+        on_readings: Callable[[Sequence[TelemetryReading]], Awaitable[None]] | None = None,
     ) -> None:
         self._gateway = gateway
         self._store = store
@@ -71,6 +73,8 @@ class IngestService:
         self._sources: list[DataSource] = list(sources or [])
         self._timeout_s = per_source_timeout_ms / 1000
         self._sla = sla_ingest_seconds if sla_ingest_seconds is not None else self._settings.sla_ingest_seconds
+        # 旁路观察点：分析层需要读数事实，但摄取语义不该因为多一个消费者而改变。
+        self._on_readings = on_readings
 
     @property
     def sources(self) -> list[DataSource]:
@@ -108,6 +112,9 @@ class IngestService:
             report.readings = len(all_readings)
             report.published = await self._publish(all_readings, trace)
             report.max_ingest_latency_seconds = self._record_latency(all_readings, trace)
+            # 旁路放在关键路径之后：摄取与发布的时序不受分析消费者影响。
+            if self._on_readings is not None:
+                await self._on_readings(all_readings)
 
         return report
 

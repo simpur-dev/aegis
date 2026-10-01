@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from aegis.agents.mock import MockAgent, start_mock_agents
@@ -19,17 +20,27 @@ from aegis.config import Settings, get_settings
 from aegis.connectors.base import DataSource, IngestService
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.domain.enums import Channel
+from aegis.domain.messages import TelemetryReading
+from aegis.integrations import (
+    AnalyticsRecorder,
+    IntegrationState,
+    StoreBundle,
+    build_analytics,
+    build_store,
+    start_store,
+    stop_store,
+)
 from aegis.observability.instrumentation import register_sla_budgets
 from aegis.observability.metrics import MetricsExporter
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.chain import HazardResponseChain
+from aegis.pipeline.chain import ChainResult, HazardResponseChain
 from aegis.services.delivery import ChannelAdapter, DeliveryDispatcher
 from aegis.services.llm_gateway import LlmGateway, build_gateway_if_configured
 from aegis.services.risk_engine import RiskEngine
 from aegis.services.task_parser import TaskParser
 from aegis.services.trigger_rules import RuleEngine
 from aegis.services.warning_service import WarningService
-from aegis.storage.store import PlatformStore
+from aegis.storage.store import StoreProtocol
 from aegis.workflow.engine import WorkflowEngine
 from aegis.workflow.services_bridge import build_workflow_services
 from aegis.workflow.templates import register_builtin_templates
@@ -83,17 +94,20 @@ class PlatformContainer:
     contracts: ContractRegistry
     tracer: Tracer
     gateway: AgentGateway
-    store: PlatformStore
+    store: StoreProtocol
     chain: HazardResponseChain
     ingest: IngestService
     dispatcher: DeliveryDispatcher
     exporter: MetricsExporter
     workflow: WorkflowEngine
+    bundle: StoreBundle
+    analytics: AnalyticsRecorder | None = None
     simulator: HazardScenarioSimulator | None = None
     mock_agents: list[MockAgent] = field(default_factory=list)
     _tasks: list[asyncio.Task[None]] = field(default_factory=list)
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _started: bool = False
+    _store_state: IntegrationState | None = None
 
     async def start(
         self,
@@ -106,6 +120,11 @@ class PlatformContainer:
             log.debug("容器已启动，忽略重复调用")
             return
         self._started = True
+        # 可选子系统先接线再放行：持久层与分析旁路的可用性在 start 结束时就是已知事实，
+        # 而不是第一次有人查指标时才暴露。二者都不阻断启动。
+        self._store_state = await start_store(self.bundle, self.settings)
+        if self.analytics is not None:
+            await self.analytics.open()
         await self.transport.connect()
         await self.gateway.start()
         self.gateway.set_result_handler(self.chain.handle_agent_message)
@@ -143,9 +162,25 @@ class PlatformContainer:
         await self.registry.stop_sweeper()
         await self.gateway.close()
         await self.transport.close()
+        # 旁路最后关：分析缓冲要先把已受理的行排空，落库可以晚到，不能凭空消失。
+        if self.analytics is not None:
+            await self.analytics.close()
+        await stop_store(self.bundle, grace_ms=float(self.settings.analytics_close_grace_ms))
 
     def add_source(self, source: DataSource) -> None:
         self.ingest.add_source(source)
+
+    def integration_status(self) -> list[IntegrationState]:
+        """可选子系统的当前事实：没启用、已启用、或启用了但降级，三者必须可区分。
+
+        返回强类型事实而不是字典：序列化留给 API 边界，内部判定不靠 `object` 猜类型。
+        """
+        rows: list[IntegrationState] = [self._store_state if self._store_state is not None else self.bundle.state]
+        if self.analytics is not None:
+            rows.append(self.analytics.state())
+        else:
+            rows.append(IntegrationState(name="analytics", enabled=False, driver=self.settings.analytics_backend))
+        return rows
 
     # ---------- 指标量测出口 ----------
 
@@ -205,7 +240,17 @@ def create_container(
         allow_unregistered_action=cfg.gateway_allow_unregistered_action,
         default_deadline_ms=cfg.default_request_deadline_ms,
     )
-    store = PlatformStore()
+    bundle = build_store(cfg)
+    store = bundle.store
+    analytics_sink, analytics_state = build_analytics(cfg)
+    analytics = AnalyticsRecorder(analytics_sink, driver=analytics_state.driver, settings=cfg) if analytics_sink is not None else None
+
+    async def on_result(result: ChainResult) -> None:
+        """单一落库点 + 分析旁路扇出：旁路未启用时这条链只有一步，语义与接入前完全一致。"""
+        await store.record_chain(result)
+        if analytics is not None:
+            await analytics.record_chain(result)
+
     rule_engine = RuleEngine()
     dispatcher = DeliveryDispatcher(
         channels or default_channels(cfg),
@@ -228,15 +273,21 @@ def create_container(
         task_parser=TaskParser(contracts, settings=cfg),
         warning_service=warning_service,
         dispatcher=dispatcher,
-        on_result=store.record_chain,
+        on_result=on_result,
     )
     simulator = HazardScenarioSimulator(seed=cfg.simulator_seed) if with_simulator else None
+
+    async def on_readings(readings: Sequence[TelemetryReading]) -> None:
+        if analytics is not None:
+            await analytics.record_readings(readings)
+
     ingest = IngestService(
         gateway=gateway,
         store=store,
         tracer=tracer,
         settings=cfg,
         sources=[simulator] if simulator else [],
+        on_readings=on_readings if analytics is not None else None,
     )
 
     workflow = WorkflowEngine(
@@ -264,6 +315,8 @@ def create_container(
         dispatcher=dispatcher,
         exporter=MetricsExporter(gateway, tracer),
         workflow=workflow,
+        bundle=bundle,
+        analytics=analytics,
         simulator=simulator,
     )
 

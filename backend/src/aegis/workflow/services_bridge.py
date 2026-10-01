@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from aegis.services.risk_engine import RiskEngine
     from aegis.services.trigger_rules import RuleEngine
     from aegis.services.warning_service import WarningService
-    from aegis.storage.store import PlatformStore
+    from aegis.storage.store import StoreProtocol
 
 
 def _to_trigger_hits(raw: Any, *, default_region: str) -> list[TriggerHit]:
@@ -53,7 +53,7 @@ def _to_trigger_hits(raw: Any, *, default_region: str) -> list[TriggerHit]:
 
 def build_workflow_services(
     *,
-    store: PlatformStore,
+    store: StoreProtocol,
     rule_engine: RuleEngine,
     risk_engine: RiskEngine,
     warning_service: WarningService,
