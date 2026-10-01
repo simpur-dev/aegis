@@ -404,13 +404,17 @@ def build_retrieval(
     corpus = docs_from_cases(cases if cases is not None else load_builtin_cases())
     embedder, embedder_note = _select_embedder(cfg)
     reranker, reranker_note = _select_reranker(cfg)
+    index, index_note = _select_index(cfg)
     acquire = getattr(store, "acquire", None)
-    notes = [note for note in (embedder_note, reranker_note) if note]
+    notes = [note for note in (embedder_note, reranker_note, index_note) if note]
 
     service = HybridRetrievalService(
         embedder=embedder,
         lexicon=build_lexical_index(corpus),
         acquire=acquire,
+        index=index,
+        # 只有外部索引才需要启动期灌数；本地腿直接吃 lexicon，白存一份语料只会让人以为它在被用。
+        corpus=corpus if index is not None else (),
         reranker=reranker,
         tracer=tracer,
         default_budget_ms=cfg.retrieval_budget_ms,
@@ -426,12 +430,40 @@ def build_retrieval(
             "budget_ms": cfg.retrieval_budget_ms,
             "corpus_docs": len(corpus),
             # 密集腿是 pgvector 上的历史任务单元，没有连接时服务会把它记成"跳过"而不是失败
-            "dense_leg": bool(acquire is not None),
+            "dense_leg": bool(acquire is not None) or index is not None,
             "rerank_leg": reranker.enabled,
             "model_dir": cfg.retrieval_model_dir,
+            "index_backend": cfg.retrieval_index_backend,
+            **({"index": index.status()} if index is not None else {}),
             "degraded": ";".join(notes),
         },
     )
+
+
+def _select_index(cfg: Settings) -> tuple[Any | None, str | None]:
+    """检索索引引擎选择：`local` 不建外部索引（两腿留在 pgvector + 进程内 BM25）。
+
+    选 seekdb 时这里只构造对象、不碰网络：建表与灌数留在启动期的 `prepare_index()`，
+    连接失败会作为降级原因出现在装配行上，而不是让进程起不来。
+    """
+    if cfg.retrieval_index_backend != "seekdb":
+        return None, None
+    try:
+        from aegis.retrieval.seekdb import SeekdbConfig, SeekdbKnowledgeIndex
+    except ImportError as exc:  # pragma: no cover - 可选依赖缺失
+        return None, f"seekdb 适配层不可导入（{type(exc).__name__}），两腿回落本地实现"
+
+    index = SeekdbKnowledgeIndex(
+        SeekdbConfig(
+            host=cfg.seekdb_host,
+            port=cfg.seekdb_port,
+            user=cfg.seekdb_user,
+            password=cfg.seekdb_password,
+            database=cfg.seekdb_database,
+            table=cfg.seekdb_table,
+        )
+    )
+    return index, None
 
 
 async def warm_retrieval(service: HybridRetrievalService | None) -> str | None:
@@ -443,6 +475,12 @@ async def warm_retrieval(service: HybridRetrievalService | None) -> str | None:
     """
     if service is None:
         return None
+    try:
+        # 外部索引（seekdb）先建表灌数：这一步没做成，两腿检索会全部记降级而不是"能跑但很慢"。
+        await service.prepare_index()
+    except Exception as exc:
+        log.warning("检索索引预热失败，两腿将在运行期降级", extra={"err": type(exc).__name__})
+        return f"索引预热失败: {type(exc).__name__}"
     try:
         await asyncio.to_thread(service.embedder.embed, ["预警检索预热"])
         reranker = service.reranker

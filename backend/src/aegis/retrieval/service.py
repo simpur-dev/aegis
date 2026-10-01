@@ -36,6 +36,7 @@ from aegis.retrieval.embedder import Embedder, embed_one
 from aegis.retrieval.fusion import RRF_K, FusedHit, Ranking, fuse
 from aegis.retrieval.lexical import LexicalIndex, rank
 from aegis.retrieval.onnx_io import RetrievalArgumentError
+from aegis.retrieval.port import HybridIndex, IndexedRow, IndexFilter, IndexWriter
 from aegis.retrieval.reranker import Reranker
 
 log = logging.getLogger("aegis.retrieval.service")
@@ -189,6 +190,21 @@ class _Candidate:
             updated_at=doc.updated_at,
         )
 
+    @classmethod
+    def from_row(cls, leg: LegName, row: IndexedRow) -> _Candidate:
+        """外部索引（seekdb）返回的候选：腿由调用方给，正文与列都在索引里，不再回查案例库。"""
+        doc = row.doc
+        return cls(
+            doc_id=doc.doc_id,
+            leg=leg,
+            score=row.score,
+            text=doc.text,
+            hazard_type=doc.hazard_type,
+            region_code=doc.region_code,
+            source=doc.source or f"{leg}_index",
+            updated_at=doc.updated_at,
+        )
+
 
 class HybridRetrievalService:
     """混合检索装配体：无全局可变状态，依赖全部注入，同一实例可并发复用。"""
@@ -200,6 +216,8 @@ class HybridRetrievalService:
         lexicon: LexicalIndex,
         conn: Any | None = None,
         acquire: Callable[[], Any] | None = None,
+        index: HybridIndex | None = None,
+        corpus: Sequence[KnowledgeDoc] = (),
         reranker: Reranker | None = None,
         tracer: Tracer | None = None,
         default_budget_ms: float = DEFAULT_BUDGET_MS,
@@ -215,6 +233,8 @@ class HybridRetrievalService:
         self._lexicon = lexicon
         self._conn = conn
         self._acquire = acquire
+        self._index = index
+        self._corpus = tuple(corpus)
         self._reranker = reranker
         self._tracer = tracer
         self._default_budget_ms = float(default_budget_ms)
@@ -240,6 +260,30 @@ class HybridRetrievalService:
     def _has_connection(self) -> bool:
         return self._conn is not None or self._acquire is not None
 
+    @property
+    def index(self) -> HybridIndex | None:
+        return self._index
+
+    async def prepare_index(self) -> int:
+        """启动期建表并把语料与向量灌进外部索引；没有外部索引时这一步是空操作。
+
+        放进启动期而不是第一次检索里：灌 16 条案例要一次嵌入往返 + 一次批量写，
+        让它落在第一条预警的请求路径上，等于让第一条预警替所有人付装配费。
+        引擎不可达会抛 `SeekdbIndexError` 之类的类型化错误，由调用方记成降级原因。
+        """
+        if self._index is None:
+            return 0
+        if not isinstance(self._index, IndexWriter):
+            raise RetrievalArgumentError(
+                "外部索引不支持写入（缺 prepare_schema/upsert）",
+                detail={"index": type(self._index).__name__},
+            )
+        await self._index.prepare_schema()
+        if not self._corpus:
+            return 0
+        vectors = await asyncio.to_thread(self._embedder.embed, [doc.text for doc in self._corpus])
+        return await self._index.upsert(self._corpus, vectors)
+
     async def retrieve(self, query: RetrievalQuery) -> RetrievalOutcome:
         """一次混合检索：永远返回 outcome，运行故障记成 degradation。"""
         started = self._clock()
@@ -258,12 +302,16 @@ class HybridRetrievalService:
         # 而不是把它塞进协程里再靠异常捕获——捕获到的降级和异常降级混在一起就查不动了。
         legs: list[LegName] = []
         jobs: list[Callable[[], Awaitable[Sequence[_Candidate]]]] = []
-        if self._has_connection:
+        # 外部索引（seekdb）一条腿都不缺：两腿都在同一个引擎里取数，
+        # 此时 pgvector 连接与进程内语料都不再是可用性前提。
+        if self._index is not None or self._has_connection:
             legs.append(LEG_DENSE)
             jobs.append(lambda: self._dense_leg(query))
         else:
-            degradations.append(Degradation(leg=LEG_DENSE, reason="未注入连接（conn/acquire），密集腿跳过", outcome=_OUTCOME_SKIPPED))
-        if not self._lexicon.is_empty:
+            degradations.append(
+                Degradation(leg=LEG_DENSE, reason="未注入连接（conn/acquire）也没有外部索引，密集腿跳过", outcome=_OUTCOME_SKIPPED)
+            )
+        if self._index is not None or not self._lexicon.is_empty:
             legs.append(LEG_LEXICAL)
             jobs.append(lambda: self._lexical_leg(query))
         else:
@@ -348,9 +396,16 @@ class HybridRetrievalService:
         return tuple(rows)
 
     async def _dense_leg(self, query: RetrievalQuery) -> Sequence[_Candidate]:
-        """密集腿：query -> 嵌入（工作线程）-> pgvector 余弦 top-k（真 SQL 路径）。"""
+        """密集腿：query -> 嵌入（工作线程）-> 向量 top-k（外部索引或 pgvector）。"""
         # 先嵌入再借连接：CPU 推理可能跑几百毫秒，握着池里的连接等推理等于白占协同链路的槽位。
         embedding = await asyncio.to_thread(embed_one, self._embedder, query.text)
+        if self._index is not None:
+            rows = await self._index.dense_topk(
+                embedding,
+                limit=query.candidate_k(self._candidate_multiplier),
+                filter=_index_filter(query),
+            )
+            return [_Candidate.from_row(LEG_DENSE, row) for row in rows]
         async with self._connection() as conn:
             hits = await search_top_k(
                 conn,
@@ -365,7 +420,14 @@ class HybridRetrievalService:
         return [_Candidate.from_hit(hit) for hit in hits]
 
     async def _lexical_leg(self, query: RetrievalQuery) -> Sequence[_Candidate]:
-        """词法腿：进程内 BM25；灾种/区域过滤用谓词，与密集腿的 WHERE 同语义。"""
+        """词法腿：外部索引按引擎自己的相关性打分，否则进程内 BM25；过滤语义两边一致。"""
+        if self._index is not None:
+            rows = await self._index.lexical_topk(
+                query.text,
+                limit=query.candidate_k(self._candidate_multiplier),
+                filter=_index_filter(query),
+            )
+            return [_Candidate.from_row(LEG_LEXICAL, row) for row in rows]
         if self._lexicon.is_empty:
             return ()
         hits = await asyncio.to_thread(
@@ -562,6 +624,17 @@ def _filter_for(query: RetrievalQuery) -> Callable[[KnowledgeDoc], bool]:
         return doc.matches(hazard_type=query.hazard_type, region_code=query.region_code)
 
     return predicate
+
+
+def _index_filter(query: RetrievalQuery) -> IndexFilter:
+    """同一个查询条件翻译成外部索引的过滤面：字段一一对应，不新增口径。"""
+    return IndexFilter(
+        hazard_type=query.hazard_type,
+        region_code=query.region_code,
+        since=query.since,
+        until=query.until,
+        score_threshold=query.score_threshold,
+    )
 
 
 def _text_or_none(value: Any) -> str | None:

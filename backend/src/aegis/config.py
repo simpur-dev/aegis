@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BusBackend = Literal["memory", "nats"]
 StoreBackend = Literal["memory", "postgres"]
 AnalyticsBackend = Literal["off", "clickhouse", "duckdb"]
+RetrievalIndexBackend = Literal["local", "seekdb"]
 
 
 class Settings(BaseSettings):
@@ -88,6 +89,16 @@ class Settings(BaseSettings):
     # 权重根目录：由仓库根 scripts/fetch_retrieval_models.py 预置（默认写 backend/data/models），
     # 其下按 bge-m3-int8/ 与 bge-reranker-v2-m3-int8/ 分目录。路径基准是后端进程的工作目录。
     retrieval_model_dir: str = "./data/models"
+    # 索引引擎：local = pgvector 密集腿 + 进程内 BM25；seekdb = 两腿都进 seekdb
+    # （VECTOR + HNSW 余弦 ANN 与 ngram 中文全文同库同表，见 retrieval/seekdb.py 头注释）。
+    retrieval_index_backend: RetrievalIndexBackend = "local"
+    seekdb_host: str = "127.0.0.1"
+    seekdb_port: int = 2881
+    seekdb_user: str = "root"
+    # 只在驱动里存在，不进任何对外面（状态行只报 host:port/库/表）
+    seekdb_password: str = ""
+    seekdb_database: str = "test"
+    seekdb_table: str = "aegis_knowledge_doc"
     # 预算取自本机实测（int8 ONNX + CPU ExecutionProvider，2026-10-01，语料为真实案例正文 ~305 字）：
     # 查询侧单条短文本嵌入热态 26ms；交叉编码 5 对 4201ms、10 对 8361ms（代价随序列长度接近平方）。
     # 5000ms 让"取回的 5 条全部重排"能在预算内跑完；相对 180s 的预警口径只占 2.8%。

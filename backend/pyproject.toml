@@ -42,6 +42,9 @@ dev = [
     # 告警链路与 compose 的一致性用例要真解析 YAML（规则文件/抓取配置/分发路由都是 YAML）
     "PyYAML>=6.0",
 ]
+seekdb = [
+    "pymysql>=1.1",
+]
 
 [build-system]
 requires = ["hatchling"]

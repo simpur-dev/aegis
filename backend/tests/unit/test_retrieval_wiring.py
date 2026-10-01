@@ -443,9 +443,44 @@ class _WarmReranker:
 
 
 class _WarmService:
-    def __init__(self, embedder: _WarmEmbedder, reranker: _WarmReranker) -> None:
+    """检索服务的启动期替身：只模拟 `warm_retrieval` 真的会碰到的三件事。"""
+
+    def __init__(self, embedder: _WarmEmbedder, reranker: _WarmReranker, *, index_error: Exception | None = None) -> None:
         self.embedder = embedder
         self.reranker = reranker
+        self.index_error = index_error
+        self.index_prepared = 0
+
+    async def prepare_index(self) -> int:
+        if self.index_error is not None:
+            raise self.index_error
+        self.index_prepared += 1
+        return 0
+
+
+class _StatusIndex:
+    """带 `status()` 的替身外部索引：够测"启动期建表灌数之后状态行说什么"。"""
+
+    def __init__(self) -> None:
+        self.analyzer = "未建表"
+        self.docs = 0
+
+    async def prepare_schema(self) -> dict[str, object]:
+        self.analyzer = "ngram(2)"
+        return {"analyzer": self.analyzer}
+
+    async def upsert(self, docs: list[Any], vectors: list[list[float]]) -> int:
+        self.docs = len(docs)
+        return self.docs
+
+    async def dense_topk(self, vector: Any, *, limit: int, filter: Any) -> list[Any]:
+        return []
+
+    async def lexical_topk(self, text: str, *, limit: int, filter: Any) -> list[Any]:
+        return []
+
+    def status(self) -> dict[str, object]:
+        return {"analyzer": self.analyzer, "indexed_docs": self.docs, "target": "127.0.0.1:2881/test.aegis_doc"}
 
 
 class TestPrewarm:
@@ -454,10 +489,22 @@ class TestPrewarm:
 
     async def test_both_sessions_load_before_the_first_request(self) -> None:
         embedder, reranker = _WarmEmbedder(), _WarmReranker()
-        reason = await warm_retrieval(_WarmService(embedder, reranker))  # type: ignore[arg-type]
+        service = _WarmService(embedder, reranker)
+        reason = await warm_retrieval(service)  # type: ignore[arg-type]
 
         assert reason is None
         assert embedder.batches and reranker.calls == 1
+        assert service.index_prepared == 1, "外部索引的建表与灌数也属于启动期，不能拖到第一次检索"
+
+    async def test_index_bootstrap_failure_is_reported_before_sessions(self) -> None:
+        """索引没就位时不能继续预热会话：那会把"两腿其实都不可用"读成"预热成功"。"""
+        embedder = _WarmEmbedder()
+        service = _WarmService(embedder, _WarmReranker(), index_error=RuntimeError("seekdb 拒绝建全文索引"))
+
+        reason = await warm_retrieval(service)  # type: ignore[arg-type]
+
+        assert reason is not None and reason.startswith("索引预热失败")
+        assert embedder.batches == []
 
     async def test_a_disabled_reranker_is_not_warmed(self) -> None:
         embedder, reranker = _WarmEmbedder(), _WarmReranker(enabled=False)
@@ -477,6 +524,28 @@ class TestPrewarm:
         ctn._retrieval_warm_error = "ModelUnavailableError"
         state = {item.name: item for item in ctn.integration_status()}["retrieval"]
         assert state.detail["warm_error"] == "ModelUnavailableError"
+
+    async def test_index_status_is_read_live_not_snapshotted_at_assembly(self, tmp_path: Path) -> None:
+        """状态行必须报索引的现值。
+
+        装配时的快照会把"启动期已建表、已灌 16 条"的索引写成 `未建表 / indexed_docs=0`——
+        那等于在运维面板上把一条正在工作的腿读成没工作，和本行要防的其他"看起来没跑"同一大类。
+        """
+        index = _StatusIndex()
+        service = HybridRetrievalService(
+            embedder=HashingEmbedder(),
+            lexicon=build_lexical_index([]),
+            index=index,
+            corpus=[doc_from_case(builtin_case())],
+        )
+        ctn = create_container(base_settings(retrieval_enabled=True, retrieval_model_dir=str(tmp_path)), with_simulator=False)
+        ctn.retrieval = service
+        assert ctn.integration_status()  # 先取一次，确认"未建表"是装配期的初值而不是终值
+        await service.prepare_index()
+
+        detail = {item.name: item for item in ctn.integration_status()}["retrieval"].detail
+        assert detail["index"]["analyzer"] == "ngram(2)"
+        assert detail["index"]["indexed_docs"] == 1
 
     def test_default_budget_covers_a_measured_rerank_round(self) -> None:
         """本机实测（真实案例正文 ~305 字）：重排 5 对中位 4201ms。

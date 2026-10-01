@@ -222,9 +222,16 @@ class PlatformContainer:
             rows.append(IntegrationState(name="analytics", enabled=False, driver=self.settings.analytics_backend))
         rows.append(self.knowledge_state or IntegrationState(name="knowledge", enabled=False, driver="off"))
         retrieval_state = self.retrieval_state or IntegrationState(name="retrieval", enabled=False, driver="off")
+        retrieval_detail: dict[str, object] = dict(retrieval_state.detail)
+        # 外部索引的形态在启动期才成立（建表 + 灌数），装配时快照会得到"未建表 / 0 条"，
+        # 那等于在状态面上把一条已经工作的腿读成没工作。
+        if self.retrieval is not None and self.retrieval.index is not None:
+            retrieval_detail["index"] = self.retrieval.index.status()
         if self._retrieval_warm_error is not None:
             # 权重在位但装载失败：装配事实是"启用了但这条腿跑不起来"，只写日志外部看不见
-            retrieval_state = replace(retrieval_state, detail={**retrieval_state.detail, "warm_error": self._retrieval_warm_error})
+            retrieval_detail["warm_error"] = self._retrieval_warm_error
+        if retrieval_detail != retrieval_state.detail:
+            retrieval_state = replace(retrieval_state, detail=retrieval_detail)
         rows.append(retrieval_state)
         # MQTT 腿把运行期计数一并带出来：broker 是否连着、收了多少条、被拒/溢出各多少，
         # 这些正是"站端在发但平台没数"时唯一能区分故障位置的证据。

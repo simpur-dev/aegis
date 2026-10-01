@@ -87,7 +87,10 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
   三条腿共用同一摄取服务，按源独立超时与失败隔离。
 - **知识与检索**：Graphiti 双时态案例图谱（读写分离，LLM 只在写路径）、
   bge-m3 + bge-reranker int8/CPU 混合检索（dense + BM25 + RRF，LLM 不进检索回路），
-  两者都接进预案生成链路并对外暴露只读接口。内置 16 条是**自编预案模板**（骨架移植自
+  两者都接进预案生成链路并对外暴露只读接口。两条腿的**去哪儿取数**收在 `retrieval/port.py`
+  一个索引端口后面：默认 `local`（pgvector + 进程内 BM25），可整体换成 seekdb
+  （`VECTOR` + HNSW 余弦 ANN 与 ngram 中文全文同库），换引擎不改两腿语义与凭证结构。
+  内置 16 条是**自编预案模板**（骨架移植自
   NexusMind 干预库），其性质与逐条出处随 `/api/v1/integrations` 与每条召回命中一起外显。
 - **分析旁路**：ClickHouse 分钟级物化与 DuckDB 边缘单文件离线分析（write-behind，热路径不等 OLAP）。
 - **可观测**：OpenTelemetry 链路（应用生命周期装配）+ 自研时延账本 + Prometheus 规则求值 +
