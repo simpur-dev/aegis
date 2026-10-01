@@ -89,6 +89,15 @@ class Degradation:
     outcome: str = _OUTCOME_ERROR
     detail: Mapping[str, object] = field(default_factory=dict)
 
+    @property
+    def is_skipped(self) -> bool:
+        """跳过是装配状态（缺连接、缺语料、重排未启用），不是本次请求的运行故障。
+
+        调用方据此决定要不要记账：把"这台盒子没有 pgvector"写进每一次预警的降级列表，
+        只会把真正的故障淹没。
+        """
+        return self.outcome == _OUTCOME_SKIPPED
+
     def as_dict(self) -> dict[str, object]:
         return {"leg": self.leg, "reason": self.reason, "outcome": self.outcome, "detail": dict(self.detail)}
 

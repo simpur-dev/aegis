@@ -3,6 +3,7 @@
 分层（依赖只向下，任何文件都不导入 aegis.api / aegis.services）：
 
     docs.py       语料记录与召回产物的数据形状（纯数据）
+    corpus.py     案例库 -> 语料记录的唯一映射（检索层读案例，案例层不认识检索）
     onnx_io.py    ONNX 运行时窄 I/O 面 + 本包类型化错误（叶子模块，可选依赖在此延迟导入）
     embedder.py   Embedder 协议 + OnnxEmbedder（bge-m3 int8/CPU）+ HashingEmbedder（降级件）
     lexical.py    中文 BM25（字 bigram + ASCII 词），纯函数、无 I/O、无新 Postgres 扩展
@@ -20,6 +21,7 @@ LLM 不出现在本包的 import 图上——检索必须在 3 分钟预警生�
 
 from __future__ import annotations
 
+from aegis.retrieval.corpus import CASES_SOURCE, doc_from_case, docs_from_cases
 from aegis.retrieval.docs import (
     LEG_DENSE,
     LEG_LEXICAL,
@@ -55,6 +57,7 @@ from aegis.retrieval.service import (
 )
 
 __all__ = [
+    "CASES_SOURCE",
     "DEFAULT_BUDGET_MS",
     "LEG_DENSE",
     "LEG_LEXICAL",
@@ -90,6 +93,8 @@ __all__ = [
     "TokenizerFactory",
     "TokenizerLike",
     "build_lexical_index",
+    "doc_from_case",
+    "docs_from_cases",
     "embed_one",
     "fuse",
     "rank",

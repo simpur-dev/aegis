@@ -15,7 +15,7 @@ import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway, ContractRegistry
@@ -46,11 +46,17 @@ from aegis.services.task_parser import TaskParser
 from aegis.services.trigger_rules import RuleEngine
 from aegis.services.warning_service import WarningService
 
+if TYPE_CHECKING:
+    # 只在类型面出现：链路运行时不 import 检索层（装配层守住"内核不依赖持久/检索实现"这条边界）。
+    from aegis.retrieval.service import HybridRetrievalService
+
 log = logging.getLogger("aegis.pipeline")
 
 _STAGE_ORDER = ("perceive", "assess", "plan", "execute", "feedback")
 # 参考案例条数：3 条足够支撑"凭什么这么判"的可解释性，再多会把规划 payload 撑成噪声
 _CASE_RECALL_LIMIT = 3
+# 注入的检索上下文块数：与案例召回分开计数，块越长下游研判读的越多但预算也吃得更紧
+_CONTEXT_DOC_LIMIT = 5
 
 
 @dataclass(slots=True)
@@ -78,6 +84,8 @@ class ChainResult:
     degradations: list[str] = field(default_factory=list)
     # 本次规划参考过的历史案例 id：可解释性证据，不是"提示词装饰"——报告里要能回答"凭什么这么判"。
     reference_cases: list[str] = field(default_factory=list)
+    # 本次规划注入的检索上下文块 id：与案例召回分开记账，因为两者的语料面不同（案例库 vs 历史任务单元）
+    context_docs: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -104,6 +112,7 @@ class ChainResult:
             "errors": self.errors,
             "degradations": self.degradations,
             "reference_cases": self.reference_cases,
+            "context_docs": self.context_docs,
         }
 
 
@@ -124,6 +133,7 @@ class HazardResponseChain:
         agent_hit_window: int = 512,
         on_result: Callable[[ChainResult], Awaitable[None]] | None = None,
         knowledge: KnowledgeProvider | None = None,
+        retrieval: HybridRetrievalService | None = None,
     ) -> None:
         self._gateway = gateway
         self._registry = registry
@@ -139,6 +149,7 @@ class HazardResponseChain:
         self._warnings: dict[str, WarningRecord] = {}
         self._on_result = on_result
         self._knowledge = knowledge
+        self._retrieval = retrieval
 
     async def _finish(self, result: ChainResult) -> ChainResult:
         if self._on_result is not None:
@@ -398,6 +409,8 @@ class HazardResponseChain:
         local = self._task_parser.parse(verdict, event_id=result.event_id)
         if self._registry.pick(AgentType.PLAN.value, "task_decompose") is None:
             return local
+        # 检索块只在智能体在场时取：本地剧本不消费正文块，为它付一次 CPU 推理不值。
+        context = await self._retrieve_context(verdict, result)
         try:
             response = await self._gateway.dispatch(
                 AgentType.PLAN,
@@ -408,6 +421,7 @@ class HazardResponseChain:
                     "objective": "按灾种处置剧本生成标准化任务单元",
                     "constraints": {"sla_warning_gen_seconds": self._settings.sla_warning_gen_seconds},
                     "reference_cases": references,
+                    "retrieved_context": context,
                 },
                 trace_id=trace,
                 capability="task_decompose",
@@ -441,7 +455,7 @@ class HazardResponseChain:
         """
         if self._knowledge is None:
             return []
-        query = f"{verdict.hazard_type.cn} {verdict.region_code} {verdict.rationale}"
+        query = self._planning_query(verdict)
         try:
             matches: list[CaseMatch] = await self._knowledge.recall(
                 query,
@@ -457,6 +471,43 @@ class HazardResponseChain:
 
         result.reference_cases = [match.case_id for match in matches]
         return [match.planning_brief() for match in matches]
+
+    @staticmethod
+    def _planning_query(verdict: RiskVerdict) -> str:
+        """案例召回与检索上下文共用同一句查询串：两处各拼一遍迟早漂成两个口径。"""
+        return f"{verdict.hazard_type.cn} {verdict.region_code} {verdict.rationale}"
+
+    async def _retrieve_context(self, verdict: RiskVerdict, result: ChainResult) -> list[dict[str, Any]]:
+        """规划前的混合检索上下文：dense + 词法 + RRF，LLM 一次都不进这条回路。
+
+        与案例召回的分工写在字段上就清楚了：`reference_cases` 是结构化的历史处置方案，
+        `context_docs` 是按语义排好序的上下文块（当前是 pgvector 上的历史任务单元 + 案例语料）。
+        预算来自 retrieval_budget_ms；密集腿因缺少连接而被"跳过"时不记降级——那是装配状态，
+        已由 `/api/v1/integrations` 报出，写进每一条预警只会淹没真正的故障。
+        """
+        if self._retrieval is None:
+            return []
+        from aegis.retrieval.service import RetrievalQuery  # 延迟导入：链路不因此依赖检索层的 I/O 面
+
+        try:
+            outcome = await self._retrieval.retrieve(
+                RetrievalQuery(
+                    text=self._planning_query(verdict),
+                    k=_CONTEXT_DOC_LIMIT,
+                    trace_id=result.trace_id,
+                    budget_ms=self._settings.retrieval_budget_ms,
+                )
+            )
+        except Exception as exc:  # 检索是增强腿：任何异常都降级，不外抛到预警路径
+            log.warning("检索上下文降级", extra={"trace_id": result.trace_id, "err": type(exc).__name__})
+            result.degradations.append(f"检索上下文降级: {type(exc).__name__}")
+            return []
+
+        for item in outcome.degradations:
+            if not item.is_skipped:
+                result.degradations.append(f"检索腿降级: {item.leg}/{item.reason}"[:160])
+        result.context_docs = [doc.doc_id for doc in outcome.docs]
+        return [doc.as_reference() for doc in outcome.docs]
 
     async def _execute(
         self,

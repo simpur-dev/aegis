@@ -26,6 +26,18 @@ from typing import Any, Final, Protocol, TypeAlias, runtime_checkable
 
 from aegis.errors import AegisError, ErrorCode
 
+# --------------------------------------------------------------------------- 模型卷布局
+# 子目录名与文件名是装配层与取件脚本之间唯一的约定面，因此在这里定义一次、两边引用：
+# `scripts/fetch_retrieval_models.py` 落盘的目录必须与此相同（tests/unit/test_retrieval_wiring.py 守着）。
+# 两个模型的权重同名（model_int8.onnx + tokenizer.json），所以必须分目录存放。
+# 根目录本身由 `Settings.retrieval_model_dir` 决定（脚本默认写 backend/data/models）。
+
+EMBEDDER_MODEL_DIR: Final = "bge-m3-int8"
+RERANKER_MODEL_DIR: Final = "bge-reranker-v2-m3-int8"
+MODEL_WEIGHTS_FILE: Final = "model_int8.onnx"
+MODEL_TOKENIZER_FILE: Final = "tokenizer.json"
+
+
 # --------------------------------------------------------------------------- 类型化错误
 
 

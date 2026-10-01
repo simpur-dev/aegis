@@ -86,6 +86,24 @@ class RetrievedDoc:
     def hit_by_lexical(self) -> bool:
         return LEG_LEXICAL in self.provenance.legs
 
+    def as_reference(self, *, max_chars: int = 240) -> dict[str, Any]:
+        """给链路 payload 与 HTTP API 的唯一切片：正文按长度收口，凭证原样保留。
+
+        文本必须截断（这条块是喂给下游的上下文，不是文档全文），但分数与腿不能省——
+        "为什么这条排在前面"是预警正文引用依据时要能回答的问题。
+        链路与 API 共用这一份映射，避免两处各抄一遍字段而漂移。
+        """
+        return {
+            "doc_id": self.doc_id,
+            "rank": self.rank,
+            "score": round(self.score, 6),
+            "source": self.source,
+            "text": self.text.strip()[:max_chars],
+            "legs": list(self.provenance.legs),
+            "leg_scores": {str(key): round(float(value), 6) for key, value in self.provenance.leg_scores.items()},
+            "degraded_legs": list(self.provenance.degraded_legs),
+        }
+
 
 def to_embedding_input(doc: KnowledgeDoc, *, with_context: bool = True, max_chars: int = MAX_INPUT_CHARS) -> str:
     """把语料记录映射为送进嵌入模型的文本。

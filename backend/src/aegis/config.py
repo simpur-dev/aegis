@@ -68,8 +68,15 @@ class Settings(BaseSettings):
 
     # 混合检索：稠密腿依赖 pgvector 连接，词法腿零依赖。默认关闭，开启需要模型与库连接都就位。
     retrieval_enabled: bool = False
-    retrieval_model_dir: str = "./models"
-    retrieval_budget_ms: float = 800.0
+    # 权重根目录：由仓库根 scripts/fetch_retrieval_models.py 预置（默认写 backend/data/models），
+    # 其下按 bge-m3-int8/ 与 bge-reranker-v2-m3-int8/ 分目录。路径基准是后端进程的工作目录。
+    retrieval_model_dir: str = "./data/models"
+    # 预算取自本机实测（int8 ONNX + CPU ExecutionProvider，2026-10-01，语料为真实案例正文 ~305 字）：
+    # 查询侧单条短文本嵌入热态 26ms；交叉编码 5 对 4201ms、10 对 8361ms（代价随序列长度接近平方）。
+    # 5000ms 让"取回的 5 条全部重排"能在预算内跑完；相对 180s 的预警口径只占 2.8%。
+    # 想压到 1s 量级要把 reranker 的 max_length 从 512 降到 128——那是拿正文后半段的排序质量换时延，
+    # 必须由现场显式决定，所以这里不默认这么做。
+    retrieval_budget_ms: float = 5_000.0
 
     # 交付通道：默认 mock，避免真实短信/北斗凭据缺失时阻塞开发
     delivery_mode: Literal["mock", "http"] = "mock"

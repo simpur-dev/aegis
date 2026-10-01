@@ -143,6 +143,25 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "items": [m.planning_brief() for m in matches],
         }
 
+    @app.get("/api/v1/retrieval/search", tags=["knowledge"], responses={503: {"description": "检索层未启用"}})
+    async def search_context(
+        ctn: PlatformContainer = Depends(get_container),
+        q: str = Query(min_length=1, max_length=500),
+        k: int = Query(default=5, ge=1, le=20),
+        rerank: bool = True,
+    ) -> dict[str, Any]:
+        """混合检索的审计出口：同一条查询给出排序结果、命中的腿、各腿分数与降级记录。
+
+        读路径不含 LLM；`provenance` 原样返回，是为了让"这条为什么排在前面"能被第三方复核——
+        只给名次不给分的检索结果不能进预警正文。
+        """
+        if ctn.retrieval is None:
+            raise HTTPException(status_code=503, detail="检索层未启用")
+        from aegis.retrieval.service import RetrievalQuery  # 延迟导入：HTTP 层不因此依赖检索实现
+
+        outcome = await ctn.retrieval.retrieve(RetrievalQuery(text=q, k=k, rerank=rerank))
+        return {"query": q, **outcome.as_dict(), "items": [doc.as_reference() for doc in outcome.docs]}
+
     @app.get("/api/v1/telemetry", tags=["data"])
     async def list_telemetry(
         ctn: PlatformContainer = Depends(get_container),
