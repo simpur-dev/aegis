@@ -118,6 +118,47 @@ def parse_summary(stdout: str) -> dict[str, Any]:
     return {"stats": stats, "percentiles": percentiles}
 
 
+def merge_streams(*chunks: str | None) -> str:
+    """合并 locust 子进程的 stdout 与 stderr。
+
+    汇总表与分位数表在 stderr 上（stdout 只有零星日志）：只读 stdout 会把
+    "跑出了一场真流量"读成"零请求"，这正是本脚本曾经整场绿着什么都没测到的成因。
+    """
+    return "\n".join(chunk for chunk in chunks if chunk)
+
+
+def point_from(parsed: dict[str, Any], *, users: int, exit_code: int) -> dict[str, Any]:
+    """一个并发点的结论。请求数为零直接判失败，不出具一份"看起来量过了"的空表。"""
+    aggregated = parsed["stats"].get("Aggregated", {})
+    requests = int(aggregated.get("requests", 0))
+    if requests <= 0:
+        raise RuntimeError(f"users={users} 一个请求都没发出去：这份结果不能当成量测")
+    return {
+        "users": users,
+        "requests": requests,
+        "fail_pct": aggregated.get("fail_pct", 0.0),
+        "success_rate": round(1.0 - aggregated.get("fail_pct", 0.0) / 100.0, 4),
+        "rps": aggregated.get("rps", 0.0),
+        "aggregated_ms": {
+            "avg": aggregated.get("avg_ms", 0.0),
+            "median": aggregated.get("median_ms", 0.0),
+            "max": aggregated.get("max_ms", 0.0),
+        },
+        "percentiles_ms": parsed["percentiles"].get("Aggregated", {}),
+        "by_endpoint": {
+            name: {
+                "requests": int(spec.get("requests", 0)),
+                "fail_pct": spec.get("fail_pct", 0.0),
+                "p95": parsed["percentiles"].get(name, {}).get("p95"),
+                "median": spec.get("median_ms", 0.0),
+            }
+            for name, spec in parsed["stats"].items()
+            if name != "Aggregated"
+        },
+        "locust_exit": exit_code,
+    }
+
+
 def run_point(*, base: str, users: int, duration: str, spawn_rate: int, csv_prefix: Path) -> dict[str, Any]:
     command = [
         sys.executable,
@@ -141,41 +182,13 @@ def run_point(*, base: str, users: int, duration: str, spawn_rate: int, csv_pref
         "0",
     ]
     completed = subprocess.run(command, capture_output=True, text=True, timeout=1_200, check=False)
-    # locust 把汇总表与分位数表写在 stderr（stdout 只有零星日志）：只读 stdout 会把
-    # "跑出了一场真流量"读成"零请求"，所以合并两条流再解析。
-    report_text = "\n".join([completed.stdout or "", completed.stderr or ""])
-    parsed = parse_summary(report_text)
-    aggregated = parsed["stats"].get("Aggregated", {})
-    requests = int(aggregated.get("requests", 0))
-    if requests <= 0:  # 静默零流量的压测比不跑更糟：它会让人觉得"量过了"
+    report_text = merge_streams(completed.stdout, completed.stderr)
+    try:
+        return point_from(parse_summary(report_text), users=users, exit_code=completed.returncode)
+    except RuntimeError as exc:
+        # 判失败之外还要给出现场：这份输出是唯一能区分"没打到流量"和"解析没认出台账"的东西。
         tail = [line for line in report_text.splitlines() if line.strip()][-5:]
-        raise RuntimeError(f"users={users} 一个请求都没发出去；输出尾部：{tail}")
-
-    point: dict[str, Any] = {
-        "users": users,
-        "requests": requests,
-        "fail_pct": aggregated.get("fail_pct", 0.0),
-        "success_rate": round(1.0 - aggregated.get("fail_pct", 0.0) / 100.0, 4),
-        "rps": aggregated.get("rps", 0.0),
-        "aggregated_ms": {
-            "avg": aggregated.get("avg_ms", 0.0),
-            "median": aggregated.get("median_ms", 0.0),
-            "max": aggregated.get("max_ms", 0.0),
-        },
-        "percentiles_ms": parsed["percentiles"].get("Aggregated", {}),
-        "by_endpoint": {
-            name: {
-                "requests": int(spec.get("requests", 0)),
-                "fail_pct": spec.get("fail_pct", 0.0),
-                "p95": parsed["percentiles"].get(name, {}).get("p95"),
-                "median": spec.get("median_ms", 0.0),
-            }
-            for name, spec in parsed["stats"].items()
-            if name != "Aggregated"
-        },
-        "locust_exit": completed.returncode,
-    }
-    return point
+        raise RuntimeError(f"{exc}；输出尾部：{tail}") from exc
 
 
 def run_curve(

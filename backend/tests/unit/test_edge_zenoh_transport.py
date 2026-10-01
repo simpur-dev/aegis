@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -328,7 +329,7 @@ class TestSubscribe:
         holder = session.subscribers[0]
 
         holder.callback(sample({"msg_id": "m-1"}))
-        await asyncio.sleep(0.05)
+        await _wait_for(lambda: bool(received))
 
         assert received == [json.dumps({"msg_id": "m-1"}, separators=(",", ":")).encode()]
         assert subscription.id.startswith("zenohs_")
@@ -406,7 +407,7 @@ class TestRequestReply:
         request = self._request()
 
         task = asyncio.create_task(bus.request_reply(SUBJECT, request, timeout_ms=400))
-        await asyncio.sleep(0.02)
+        await _wait_for(lambda: bool(session.gets))
         selector, on_reply, _kwargs = session.gets[0]
 
         on_reply(error_reply())  # 错误应答不能被当成成功
@@ -443,8 +444,8 @@ class TestRequestReply:
         bus, session = bus_with_session
         message = event()
 
-        task = asyncio.create_task(bus.query(SUBJECT, message, timeout_ms=80))
-        await asyncio.sleep(0.02)
+        task = asyncio.create_task(bus.query(SUBJECT, message, timeout_ms=400))
+        await _wait_for(lambda: bool(session.gets))
         _selector, on_reply, _kwargs = session.gets[0]
         for index in range(3):
             on_reply(reply_of(_reply_bytes(message, {"i": index})))
@@ -462,7 +463,7 @@ class TestServe:
 
         subscription = await bus.serve(SUBJECT, _echo_handler)
         session.queryables[0].callback(query)
-        await asyncio.sleep(0.05)
+        await _wait_for(lambda: bool(query.replies))
 
         assert query.replies and query.replies[0][0] == KEYEXPR
         assert json.loads(query.replies[0][1])["payload"]["handled"] is True
@@ -477,7 +478,7 @@ class TestServe:
 
         subscription = await bus.serve("station.*.telemetry", _echo_handler)
         session.queryables[0].callback(query)
-        await asyncio.sleep(0.05)
+        await _wait_for(lambda: bool(query.replies))
 
         assert query.replies[0][0] == queried, "通配 queryable 的应答必须落到查询带来的具体 ke，回在通配上没人收"
         await subscription._cancel()
@@ -489,7 +490,7 @@ class TestServe:
         subscription = await bus.serve("station.*.telemetry", _echo_handler)
         query = _FakeQuery(key_expr="station/*/telemetry", payload=event().encode())
         session.queryables[0].callback(query)
-        await asyncio.sleep(0.05)
+        await _wait_for(lambda: bool(query.errors))
 
         assert query.replies == []
         assert json.loads(query.errors[0])["error"], "无法应答的原因要写进错误应答"
@@ -503,7 +504,7 @@ class TestServe:
         broken = _FakeQuery(key_expr=KEYEXPR, payload=b"{not json")
         session.queryables[0].callback(empty)
         session.queryables[0].callback(broken)
-        await asyncio.sleep(0.05)
+        await _wait_for(lambda: bool(empty.errors) and bool(broken.errors))
 
         assert "缺少请求载荷" in json.loads(empty.errors[0])["error"]
         assert "契约解析失败" in json.loads(broken.errors[0])["error"]
@@ -518,7 +519,7 @@ class TestServe:
         subscription = await bus.serve(SUBJECT, raising)
         query = _FakeQuery(key_expr=KEYEXPR, payload=event().encode())
         session.queryables[0].callback(query)
-        await asyncio.sleep(0.05)
+        await _wait_for(lambda: bool(query.errors))
 
         assert json.loads(query.errors[0])["error"] == "研判失败"
         await subscription._cancel()
@@ -533,7 +534,7 @@ class TestEdgeBufferQueryable:
         subscription = await bus.serve_edge_buffer()
         query = _FakeQuery(key_expr=subject_to_keyexpr(BUFFER_QUERY_SUBJECT), params=[("subject", SUBJECT), ("limit", "10")])
         session.queryables[0].callback(query)
-        await asyncio.sleep(0.05)
+        await _wait_for(lambda: bool(query.replies))
 
         assert len(query.replies) == 1, "一次查询一份完整应答：逐条 reply 在本版本会被吞掉"
         answer = json.loads(query.replies[0][1])
@@ -556,8 +557,8 @@ class TestEdgeBufferQueryable:
         bus, session = bus_with_session
         await bus.publish(SUBJECT, event())
 
-        task = asyncio.create_task(bus.query_edge_buffer(SUBJECT, limit=5, timeout_ms=60))
-        await asyncio.sleep(0.02)
+        task = asyncio.create_task(bus.query_edge_buffer(SUBJECT, limit=5, timeout_ms=400))
+        await _wait_for(lambda: bool(session.gets))
         _selector, on_reply, _kwargs = session.gets[0]
         on_reply(reply_of({"station": "edge01", "pattern": SUBJECT, "count": 1, "items": [{"seq": 1, "subject": SUBJECT, "size": 12}]}))
         on_reply(error_reply())
@@ -684,6 +685,14 @@ async def _echo_handler(message: AgentMessage) -> AgentMessage:
     return message.model_copy(update={"payload": {"handled": True, "echo": message.payload}, "causation_id": message.msg_id})
 
 
-async def _wait_for(predicate) -> None:
+async def _wait_for(predicate, *, timeout: float = 2.0) -> None:
+    """等到条件成立；到点不成立就报错，而不是让整场会话挂着。
+
+    这里不用固定 sleep：整套用例跑在 150s+ 的会话里，20ms 足够被别的任务挤掉，
+    于是 `session.gets[0]` 在 CI 上随机 IndexError（本地单跑永远发现不了）。
+    """
+    deadline = time.monotonic() + timeout
     while not predicate():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"等待条件超时（{timeout}s）")
         await asyncio.sleep(0.02)

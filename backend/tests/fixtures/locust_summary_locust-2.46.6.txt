@@ -1,0 +1,35 @@
+[2026-10-01 20:10:39,349] LAPTOP-B1VCC01U/INFO/locust.main: Starting Locust 2.46.6
+[2026-10-01 20:10:39,352] LAPTOP-B1VCC01U/INFO/locust.main: Run time limit set to 8 seconds
+[2026-10-01 20:10:39,353] LAPTOP-B1VCC01U/INFO/locust.runners: Ramping to 2 users at a rate of 2.00 per second
+[2026-10-01 20:10:39,354] LAPTOP-B1VCC01U/INFO/locust.runners: All users spawned: {"AegisDrillUser": 1, "AegisReadUser": 1} (2 total users)
+[2026-10-01 20:10:46,831] LAPTOP-B1VCC01U/INFO/locust.main: --run-time limit reached, shutting down
+[2026-10-01 20:10:47,567] LAPTOP-B1VCC01U/INFO/locust.main: Shutting down (exit code 0)
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      agents                                                                             2     0(0.00%) |      8       4      12     12 |    0.28        0.00
+POST     drill_run                                                                          3     0(0.00%) |    138     108     179    130 |    0.42        0.00
+GET      integrations                                                                       2     0(0.00%) |      3       2       3      3 |    0.28        0.00
+GET      latency                                                                            2     0(0.00%) |      6       5       7      7 |    0.28        0.00
+GET      node_types                                                                         1     0(0.00%) |     58      58      58     58 |    0.14        0.00
+GET      readyz                                                                             1     0(0.00%) |      3       3       3      3 |    0.14        0.00
+GET      stations                                                                           2     0(0.00%) |      2       2       3      3 |    0.28        0.00
+GET      telemetry                                                                          1     0(0.00%) |      5       5       5      5 |    0.14        0.00
+GET      warnings                                                                           3     0(0.00%) |      3       3       3      3 |    0.42        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                        17     0(0.00%) |     31       2     179      5 |    2.39        0.00
+
+Response time percentiles (approximated)
+Type     Name                                                                                  50%    66%    75%    80%    90%    95%    98%    99%  99.9% 99.99%   100% # reqs
+--------|--------------------------------------------------------------------------------|--------|------|------|------|------|------|------|------|------|------|------|------
+GET      agents                                                                                 13     13     13     13     13     13     13     13     13     13     13      2
+POST     drill_run                                                                             130    130    180    180    180    180    180    180    180    180    180      3
+GET      integrations                                                                            3      3      3      3      3      3      3      3      3      3      3      2
+GET      latency                                                                                 8      8      8      8      8      8      8      8      8      8      8      2
+GET      node_types                                                                             59     59     59     59     59     59     59     59     59     59     59      1
+GET      readyz                                                                                  3      3      3      3      3      3      3      3      3      3      3      1
+GET      stations                                                                                3      3      3      3      3      3      3      3      3      3      3      2
+GET      telemetry                                                                               5      5      5      5      5      5      5      5      5      5      5      1
+GET      warnings                                                                                3      3      4      4      4      4      4      4      4      4      4      3
+--------|--------------------------------------------------------------------------------|--------|------|------|------|------|------|------|------|------|------|------|------
+         Aggregated                                                                              5      8     13     59    130    180    180    180    180    180    180     17
+

@@ -139,6 +139,28 @@
 `float(response.elapsed)` 不得回潮、清单里列出的端点必须真的被任务打到——
 `/readyz` 与站点清单原本就列了却没有任务打）。
 
+**读数层自己也曾是"没被测过的那层"**：`scripts/load_curve.py` 把 locust 的两张表解析成结论，
+这 100 多行解析/合并/零流量判定今晚之前没有任何用例。现在由
+`tests/unit/test_load_curve_report.py`（14 项）钉住，fixture 是提交进仓库的**真 locust 2.46.6 输出**
+（`tests/fixtures/locust_summary_locust-2.46.6.txt`，本机 2 并发 8s 原样落盘），
+断言的数字全部来自它，而不是想象的表格长相。
+
+同时记录两条不好听的：
+1. `tests/unit/test_accuracy_replay_report.py` 落地时 `scripts` 不在 pytest 的 `sys.path` 上，
+   收集期直接 `ModuleNotFoundError`——而 pytest 在收集阶段报错是**整场中断**，不是少跑一个文件。
+   我在 `ab3c683`/`ccc800e` 两次推送前只跑了筛选过的命令，于是"全绿"这句话当时是错的。
+   现在 `pyproject.toml` 显式 `pythonpath = ["."]`，并由
+   `test_repo_hygiene.py::test_scripts_imports_are_backed_by_pythonpath` 守住这行配置；
+   全量 `uv run pytest` 现为 **1839 passed / 49 skipped**。
+2. `tests/unit/test_edge_zenoh_transport.py` 里"起任务后固定 sleep 20ms 再取 `session.gets[0]`"
+   在整套会话里被别的任务挤掉过，随机 `IndexError`（单跑该文件三次全过，抓不到）。
+   已改为条件等待 `_wait_for(...)`（带 2s 上限，超时判失败），并把三处采集类用例的响应窗口
+   从 60–80ms 放到 400ms——那些用例断言的是"应答收得全"，超时边界另有专门的用例守。
+
+重构后端到端复跑了一次真流量：`--levels 1,10 --duration 8s --port 8138`
+→ users=1 requests=4 P50/P95=130/130ms、users=10 requests=84 P50/P95=7/170ms、零失败、退出码 0、
+无残留服务进程。
+
 ## 还没测到的（诚实清单）
 
 1. **部署形态的并发曲线**：上表是本机单 worker + 内存总线 + mock 通道；

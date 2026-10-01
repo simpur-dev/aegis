@@ -53,6 +53,9 @@ packages = ["src/aegis"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# 脚本层（scripts/）里住着有判定逻辑的量测出口（metrics_report / load_curve），它们的用例要直接 import。
+# 不写这行，那些用例会在收集阶段 ModuleNotFoundError——整场 pytest 直接中断，而不是跳过那一个文件。
+pythonpath = ["."]
 addopts = "-q --strict-markers"
 markers = [
     "contract: 契约一致性测试（Agent 接入规范门禁）",
