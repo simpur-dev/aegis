@@ -86,7 +86,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
     async def healthz() -> dict[str, Any]:
         return {"status": "ok", "version": __version__, "contract": "agent_message.v1"}
 
-    @app.get("/readyz", tags=["ops"])
+    @app.get("/readyz", tags=["ops"], responses={503: {"description": "总线未连接，平台尚未就绪"}})
     async def readyz(ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
         ready = ctn.transport.connected
         if not ready:
