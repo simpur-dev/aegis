@@ -9,9 +9,11 @@
 # 分位数口径沿用《NexusMind重构方案》§六：调度响应等时延指标按 P95 量测（与
 # PlatformContainer.latency_report() 输出的 p95_ms 同源，二者可对账）。
 #
-# 用法：
-#   prometheus: rule_files: ["observability/alerts.yml"]
-#   promtool check rules deploy/observability/alerts.yml
+# 用法：deploy/prometheus.yml 的 rule_files 指向容器内 /etc/prometheus/rules/alerts.yml，
+#   该路径由 docker-compose.yml 的 observability profile 挂载本文件（改一处必须同步改另一处，
+#   tests/unit/test_alerting_topology.py 会把"配置写的路径"与"compose 挂的路径"对账）。
+#   静态校验：promtool check rules deploy/observability/alerts.yml
+#   改分组或抑制键时要同步改 observability/alertmanager.yml。
 
 groups:
   - name: aegis-sla-考核指标

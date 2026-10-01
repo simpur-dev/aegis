@@ -41,6 +41,8 @@ dev = [
     "mypy>=1.13",
     "hypothesis>=6.168",
     "schemathesis>=4.28",
+    # 告警链路与 compose 的一致性用例要真解析 YAML（规则文件/抓取配置/分发路由都是 YAML）
+    "PyYAML>=6.0",
 ]
 
 [build-system]

@@ -1,0 +1,34 @@
+# AEGIS 告警分发（Alertmanager 配置口径，与 deploy/observability/alerts.yml 同版本演进）
+#
+# 路由树只按 alerts.yml 实际写出的标签分层：severity ∈ {critical, warning}，
+# indicator 是考核指标名（协同成功率/接入时延/预警生成…），分组按它才能让一条指标的多个告警合并成一次通知。
+#
+# 通知渠道（短信网关 / 钉钉 / 企业微信 webhook）要现场对接时才确定，因此 receiver 里不放 webhook_configs：
+# 宁可"告警在 Alertmanager 里可见但暂不外发"，也不写一个占位 URL，让"通知已送达"变成无法验证的说法。
+# 现场补齐渠道后必须重新跑 `amtool check-config`，并在 /api/v2/alerts 里确认该告警进入 active 状态。
+
+inhibit_rules:
+  # 同一台实例已经在报 critical 时，压掉它同实例的 warning 前兆告警：
+  # alerts.yml 的两条 warning（逐条越限、取证丢弃）本就是"P95 还没超标时的劣化提示"，
+  # 硬指标已经违约就不再重复打扰。按 instance+team 对齐而不是按 indicator：
+  # 两组告警的 indicator 取值不同，用 indicator 相等来匹配等于一条永远不生效的规则。
+  - source_matchers: ["severity = critical"]
+    target_matchers: ["severity = warning"]
+    equal: ["instance", "team"]
+
+route:
+  receiver: platform-oncall
+  group_by: ["indicator", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # critical 对应考核硬指标违约：等 10 秒就发、每小时重提，直到违约消除。
+    - matchers: ["severity = critical"]
+      receiver: duty-escalation
+      group_wait: 10s
+      repeat_interval: 1h
+
+receivers:
+  - name: platform-oncall
+  - name: duty-escalation

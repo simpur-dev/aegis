@@ -87,13 +87,32 @@ services:
     profiles: ["iot"]
 
   prometheus:
-    image: prom/prometheus:v2.55.0
+    image: prom/prometheus@sha256:378f4e03703557d1c6419e6caccf922f96e6d88a530f7431d66a4c4f4b1000fe # v2.55.0
     container_name: aegis-prometheus
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # 考核规则必须挂进容器：prometheus.yml 的 rule_files 指的就是这个路径，
+      # 少了这条挂载，九条 SLA 规则永不求值，Alertmanager 也就永远收不到告警。
+      - ./observability/alerts.yml:/etc/prometheus/rules/alerts.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  # 告警分发：Prometheus 的 alerting 段指向这里，路由与抑制口径见 observability/alertmanager.yml。
+  # 验收时的取证入口是 GET :9093/api/v2/alerts——能列出告警才说明"规则→告警→通知"这条链真的通。
+  alertmanager:
+    image: prom/alertmanager@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5 # v0.27.0
+    container_name: aegis-alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "9093:9093"
     restart: unless-stopped
     profiles: ["observability"]
 
@@ -154,3 +173,4 @@ volumes:
   redis_data:
   emqx_data:
   prometheus_data:
+  alertmanager_data:

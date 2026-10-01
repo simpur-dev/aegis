@@ -1,6 +1,20 @@
+# AEGIS 指标抓取与告警装配。
+#
+# rule_files 里的九条规则就是考核口径本身（deploy/observability/alerts.yml）：不挂进来，
+# Prometheus 只会照抄抓取样本，SLA 违约永远不会成为告警，Alertmanager 也就无事可路由。
+# 容器内路径与 docker-compose.yml 的只读挂载一一对应，改一处必须改两处。
+
 global:
   scrape_interval: 10s
   evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
 
 scrape_configs:
   - job_name: aegis-backend
