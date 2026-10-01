@@ -13,6 +13,7 @@ import json
 import sys
 from typing import Any
 
+from aegis.bus.transport import drain_pending
 from aegis.config import Settings
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.container import create_container
@@ -56,7 +57,7 @@ async def run_drill(*, scenario: str, rounds: int, with_agents: bool, seed: int)
             readings = simulator.collect_at(utc_now())
             results = await container.chain.process_many(_grouped(readings))
             summaries.extend(_summarize(r) for r in results)
-            await container.transport.idle(timeout=3.0)
+            await drain_pending(container.transport, timeout=3.0)
             await asyncio.sleep(0.05)
     finally:
         latency = container.latency_report()

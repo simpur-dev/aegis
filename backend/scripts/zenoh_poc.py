@@ -151,13 +151,16 @@ async def main() -> None:
         latency_row("inmemory", m_large, pattern="large", payload_bytes=20_480),
     ]
     environment = {"os": "windows", "link": "localhost TCP", "samples_per_cell": args.samples}
+    weak_network = weak_network_summary(**replay)
     report = build_report(
         rows=rows,
-        weak_network=weak_network_summary(**replay),
+        weak_network=weak_network,
         environment=environment,
         plateau_link_measured=False,
     )
-    report["verdict"] = verdict(weak_network=report["weak_network"], plateau_link_measured=False)
+    # 结论直接吃同一份事实对象，而不是从 dict[str, object] 的报表里再取一次：
+    # 绕一圈字典只会让类型丢掉，判据本身没有变
+    report["verdict"] = verdict(weak_network=weak_network, plateau_link_measured=False)
     print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
 
 

@@ -125,6 +125,8 @@ cd backend
 uv run python -m scripts.drill --scenario surge     # 注入激增监测数据并跑通全链路
 uv run python -m scripts.metrics_report             # 打印时延/成功率实测报告（对齐考核指标）
 uv run python -m scripts.zenoh_poc                  # 站端↔网关弱网链路 POC（需要 zenoh 与本机端口）
+uv run python -m scripts.metrics_report --dataset labels.jsonl
+                                                    # 附现场标注案例集才算得出"预警准确率"；不附则如实写"未测得"
 ```
 
 ## 5. 关键设计约束

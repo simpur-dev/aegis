@@ -161,3 +161,15 @@ class BusTransport(abc.ABC):
     def _require_ready(self) -> None:
         if not self._connected:
             raise BusNotReadyError(f"总线未连接: {self.name}")
+
+
+async def drain_pending(transport: BusTransport, *, timeout: float = 5.0) -> None:
+    """等本地在途投递排空——演练/压测计时前必须做一次，否则量到的是"投递还没跑完"而不是链路时延。
+
+    只有内存总线有"本地在途队列"这个概念：NATS JetStream 在 publish 侧就要到 ack，
+    客户端没有可排空的东西。所以这里对不支持 idle 的传输直接返回，而不是让脚本
+    在换成真实总线时撞一个 AttributeError。
+    """
+    idle = getattr(transport, "idle", None)
+    if callable(idle):
+        await idle(timeout=timeout)

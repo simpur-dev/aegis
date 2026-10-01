@@ -10,7 +10,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aegis.agents.mock import MockAgent, start_mock_agents
 from aegis.bus.gateway import AgentGateway, ContractRegistry
@@ -255,7 +255,7 @@ class PlatformContainer:
 
     # ---------- 指标量测出口 ----------
 
-    def latency_report(self) -> dict[str, object]:
+    def latency_report(self) -> dict[str, Any]:  # JSON 形状的报表载体：字段异构，交给 API 边界序列化
         s = self.settings
         # 预算表只允许有一处定义（instrumentation.register_sla_budgets）。本方法此前自带一份副本，
         # 且把按"秒"记录的 ingest_end_to_end_seconds 乘了 1000 当毫秒预算，

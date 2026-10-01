@@ -81,22 +81,35 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
   调度响应与重调度时延为实测，见 `docs/REPORT.md`。
 - **持久层**（ADR-0003 修订版）：PostgreSQL 17 + PostGIS + pgvector（asyncpg 直连、无 ORM）、
   有界写缓冲与重放去重；内存读视图保留，连接故障不换实现。
+  站点清单经 `GET /api/v1/stations` 对外：坐标只认站点维表，未登记的站一律返回 `null`。
+- **接入层三条腿**：模拟场站（演练/门禁）、MQTT 推送腿（站端 publish → 平台 subscribe，
+  有界缓冲、满则丢最旧并计数）、公开气象拉取腿（形状不符即抛错，凭据不进状态面）。
+  三条腿共用同一摄取服务，按源独立超时与失败隔离。
 - **知识与检索**：Graphiti 双时态案例图谱（读写分离，LLM 只在写路径）、
   bge-m3 + bge-reranker int8/CPU 混合检索（dense + BM25 + RRF，LLM 不进检索回路），
-  两者都接进预案生成链路并对外暴露只读接口。
+  两者都接进预案生成链路并对外暴露只读接口。内置 16 条是**自编预案模板**（骨架移植自
+  NexusMind 干预库），其性质与逐条出处随 `/api/v1/integrations` 与每条召回命中一起外显。
 - **分析旁路**：ClickHouse 分钟级物化与 DuckDB 边缘单文件离线分析（write-behind，热路径不等 OLAP）。
-- **可观测**：OpenTelemetry 链路 + 自研时延账本 + Prometheus/Alertmanager 规则；
-  `GET /api/v1/integrations` 把每条可选腿的启用/降级事实对外报出。
+- **可观测**：OpenTelemetry 链路（应用生命周期装配）+ 自研时延账本 + Prometheus 规则求值 +
+  Alertmanager 分发与抑制；`GET /api/v1/integrations` 把七条腿
+  （store/analytics/knowledge/retrieval/mqtt/weather/tracing）的启用与降级事实对外报出。
 - **一张图**：Cesium + 自建 quantized-mesh 地形 + PMTiles 离线底图（不依赖 Ion/谷歌），
   含离线与底图守卫的前端测试。
+- **弱网链路（P1 POC）**：Eclipse Zenoh 站端↔网关通道，边缘有界缓冲 + 按序重放 +
+  重放前可查（store/query at edge）；真运行时用例见 `tests/integration/test_edge_zenoh_live.py`。
 
-未完成或待取证（诚实标注）：
+未完成或待取证（诚实标注，完整清单以 `docs/REPORT.md` 的"还没测到的"为准）：
 
-- 真库在线取证：PostGIS/pgvector 的容器内 DDL + 空间/向量查询、ClickHouse 的 DDL + 物化视图、
-  Jaeger 按 trace_id 的端到端找回与 `promtool check rules` —— 代码与规则齐备，一次真实跑证还没做。
-- 真实通道对接（短信/北斗/广播）与边缘弱网实链路演练：目前分别是 mock 通道与本机 Zenoh POC。
-- Zenoh 目前是站端↔网关链路的 POC，平台侧总线仍是 NATS JetStream（未替换）。
-- MQTT 字段设备接入：`connectors` 里没有 MQTT 数据源，配置里的 `mqtt_*` 与 compose 的 EMQX
-  属于"已声明未实现"，实现或移除二选一（见任务清单）。
+- **真实并发曲线**：Locust 阈值由 `Settings` 的 SLA 反推，绝对值仍需在部署环境按站点数量梯度再量。
+- **弱网工况**：Zenoh 已在真实运行时验过互通与按序重放，但丢包/高时延数字来自本机合成注入，
+  不是空口实测。
+- **真实通道对接**：交付侧 `delivery_mode=http` 尚未接线，会显式抛 `NotImplementedError`
+  而不是静默回落 mock；当前触达时延里的 1.2s 是 mock 适配器注入的模拟链路耗时。
+- **图谱在线**：Graphiti/Neo4j 的读写分离在单测里由替身驱动，还没在真实 neo4j 实例上跑过
+  一次 `learn` + `recall`。
+- **数据侧欠的三样**：离线底图/地形瓦片未烘焙；站点台账需现场导入（`upsert_station` 没有生产调用方）；
+  预警准确率缺**现场标注案例集**——算式与报表出口（`scripts.metrics_report --dataset`）都已就位，
+  没有 `kind=field` 的数据集就永远如实标 `not_measured`。
+- **平台侧总线未替换**：Zenoh 只做站端↔网关这一段，灾害总线仍是 NATS JetStream。
 
 复现命令与数字口径统一收录在 `docs/REPORT.md`。
