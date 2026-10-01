@@ -15,7 +15,7 @@ import threading
 from contextlib import nullcontext
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 try:  # 遥测是可选能力：SDK/API 缺席时平台必须照常启动
     from opentelemetry import trace as otel_trace
@@ -181,11 +181,30 @@ def _resolve_endpoint(explicit: str | None) -> str:
     if not raw:
         return ""
     if not raw.startswith(("http://", "https://")):
-        log.warning("OTLP 端点非 HTTP(S)，遥测降级为本地记录", extra={"stage": "otlp", "endpoint": raw})
+        log.warning("OTLP 端点非 HTTP(S)，遥测降级为本地记录", extra={"stage": "otlp", "endpoint": _public_endpoint(raw)})
         return ""
     if urlparse(raw).path.strip("/"):
         return raw
     return raw.rstrip("/") + _TRACES_PATH
+
+
+def _public_endpoint(endpoint: str) -> str:
+    """对外可见的端点形式：只留 scheme://host:port/path。
+
+    端点来自运维侧环境变量，可能写成带 `user:token@` 或 `?access_token=` 的形式；导出器需要完整值，
+    而日志与 /api/v1/integrations 只需要"跨度去了哪儿"——凭据一律不往外带。
+    """
+    if not endpoint:
+        return ""
+    try:
+        parts = urlsplit(endpoint)
+        host = parts.hostname or ""
+        port = parts.port
+    except ValueError:
+        return "<无法解析的端点>"
+    authority = f"[{host}]" if ":" in host else host  # IPv6 字面量必须带回括号，否则展示出来的地址是畸形的
+    netloc = f"{authority}:{port}" if port else authority
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
 def _resource_attributes(service_name: str, service_version: str, deployment_environment: str) -> dict[str, str]:
@@ -231,7 +250,7 @@ def init_telemetry(
     global _global_provider_installed, _state
     with _lock:
         if _state is not None:
-            log.debug("链路追踪已装配，忽略重复调用", extra={"stage": "otlp", "endpoint": _state.endpoint or "-"})
+            log.debug("链路追踪已装配，忽略重复调用", extra={"stage": "otlp", "endpoint": _public_endpoint(_state.endpoint) or "-"})
             return _state.exporting
 
         endpoint = _resolve_endpoint(otlp_endpoint)
@@ -263,7 +282,7 @@ def init_telemetry(
                 "stage": "otlp",
                 "service": resource_attrs["service.name"],
                 "environment": resource_attrs["deployment.environment.name"],
-                "endpoint": endpoint or "本地记录（不上报）",
+                "endpoint": _public_endpoint(endpoint) or "本地记录（不上报）",
                 "exporting": bool(endpoint and provider is not None),
             },
         )
@@ -336,6 +355,31 @@ def is_telemetry_exporting() -> bool:
     """只读：当前是否会把跨度发往 OTLP 端点。"""
     state = _state
     return bool(state and state.exporting)
+
+
+def telemetry_status() -> dict[str, object]:
+    """只读快照：SLA 证据链当前到底往哪儿走、丢了多少。
+
+    单看 `/readyz` 是绿的并不能证明跨度真的到了 Jaeger；这一份快照让"上报中/仅本地/
+    导出在丢"三种状态对外可判别，未装配时给一份结构相同的"未初始化"事实而不是抛错。
+    """
+    state = _state
+    if state is None:
+        return {
+            "initialized": False,
+            "exporting": False,
+            "endpoint": "",
+            "service_name": DEFAULT_SERVICE_NAME,
+            "dropped_spans": _spans_dropped,
+        }
+    return {
+        "initialized": True,
+        "exporting": state.exporting,
+        "endpoint": _public_endpoint(state.endpoint),
+        "service_name": state.resource_attrs.get("service.name", DEFAULT_SERVICE_NAME),
+        "environment": state.resource_attrs.get("deployment.environment.name", ""),
+        "dropped_spans": _spans_dropped,
+    }
 
 
 def note_export_failure(spans: int) -> None:

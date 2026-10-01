@@ -25,6 +25,7 @@ from aegis.container import PlatformContainer, create_container
 from aegis.domain.enums import HazardType
 from aegis.domain.messages import AgentMessage, TelemetryReading
 from aegis.errors import AegisError
+from aegis.observability import telemetry
 
 log = logging.getLogger("aegis.api")
 
@@ -56,6 +57,9 @@ def get_container(request: Request) -> PlatformContainer:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
+    # 链路追踪在每个进程各装配一次（uvicorn workers>1 时子进程也走这里）：
+    # 端点由 OTEL_EXPORTER_OTLP_* 决定，未配置就是"只记本地不上报"，不阻断启动。
+    telemetry.init_telemetry(deployment_environment=settings.env)
     container: PlatformContainer = getattr(app.state, "container", None) or create_container(settings)
     app.state.container = container
     await container.start(with_mock_agents=settings.env != "prod", with_ingest_loop=True)
@@ -63,6 +67,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await container.shutdown()
+        # 先停产生跨度的主体，再刷跨度：反了会把仍在生成的跨度丢在关闭之后
+        telemetry.shutdown_telemetry()
 
 
 def create_app(settings: Settings | None = None, *, container: PlatformContainer | None = None) -> FastAPI:

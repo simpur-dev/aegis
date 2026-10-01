@@ -74,16 +74,29 @@
 时延见上表"异常工况识别与重调度""常规任务调度响应"两行；证据与对照分析在
 `docs/adr/0004-self-built-dag-workflow.md`。
 
+## 在线取证（2026-10-01，Docker 真实服务端）
+
+| 取证对象 | 服务端实测版本 | 命令 | 结果 |
+| --- | --- | --- | --- |
+| PostgreSQL + PostGIS + pgvector | PostgreSQL 17.5 / PostGIS 3.5.2 / pgvector 0.8.6（`deploy/postgres` 镜像） | `AEGIS_TEST_PG_DSN=... pytest tests/integration/test_persistence_postgres.py` | 19 项全通过：扩展 DDL、`ST_DWithin` 按米、多边形覆盖、pgvector 余弦排序、写缓冲在库不可达时保住热路径 |
+| ClickHouse 分钟物化 | ClickHouse 26.9.5.2 | `AEGIS_TEST_CLICKHOUSE_HOST=... pytest tests/integration/test_analytics_clickhouse_live.py` | 8 项全通过，并**因此发现并修掉两个真缺陷**：MV 的 SELECT 缺 `AS` 别名（THERE_IS_NO_COLUMN）、聚合列类型没跟服务端推断的 `Nullable` 状态类型对齐（CANNOT_CONVERT_TYPE）。服务端聚合与 Python 参考实现 `materialize_minutes` 逐键对账一致 |
+| Jaeger 链路找回 | all-in-one（镜像摘要 `ab6f1a1f…`） | `AEGIS_TEST_OTEL_ENDPOINT=http://127.0.0.1:4318 pytest -m slow tests/integration/test_telemetry_otel.py`；另跑一条真实灾害链路 | 3 项通过；真实链路以 `hazard_chain` 为根导出 6 个跨度（根 + perceive/assess/plan/execute/feedback），可用 `/api/traces/<traceID>` 找回，`aegis.*` 属性（region/readings/risk_level/stages/ok/degradations）在 UI 侧可读 |
+| 告警规则与采集配置 | promtool（prom/prometheus v2.55.0） | `docker run --entrypoint /bin/promtool ... check rules deploy/observability/alerts.yml` | `SUCCESS: 9 rules found`；`check config deploy/prometheus.yml` 亦通过 |
+
+同一轮还纠正了一处装配缺陷：`telemetry.init_telemetry()` 过去只有测试在调用，生产进程从未装配 provider，
+导致"接了 OpenTelemetry + Jaeger"实际是跨度全留本地。现由应用生命周期负责装配/关停，
+并在 `GET /api/v1/integrations` 增加 `tracing` 一行（`otlp`/`local` + 端点 + 丢弃跨度数）；
+端点在这一行与启动日志里统一只留 `scheme://host:port/path`，采集器凭据不进任何对外面（导出器仍拿完整值）。
+
 ## 还没测到的（诚实清单）
 
-1. **真库落库的在线验证**：PostgreSQL 17 + PostGIS + pgvector 镜像已按本机 `apt-cache policy` 确认包可用，
-   但 `tests/integration/test_persistence_postgres.py` 尚未跑过一次真实的容器内 DDL + 空间/向量查询。
-2. **ClickHouse 在线验证**：DDL 与分钟级物化视图只在单测里用替身驱动校验过，未在真实服务上建过表。
-3. **Jaeger 端到端 + promtool**：`deploy/observability/alerts.yml` 与 OTLP 导出链路已就位，
-   但还没有一次"跑一条链路 → 在 Jaeger 里按 trace_id 找回 → promtool 校验告警规则"的完整取证。
-4. **压测绝对值**：Locust 的阈值是从 `Settings` 的 SLA 反推的（防止指标漂移），
+1. **压测绝对值**：Locust 的阈值是从 `Settings` 的 SLA 反推的（防止指标漂移），
    真实并发曲线需要在部署环境按站点数量梯度再量一轮。
-5. **弱网链路**：Zenoh POC 的实测在 `backend/src/aegis/edge/poc_report.py` 产出的报告里，
+2. **弱网链路**：Zenoh POC 的实测在 `backend/src/aegis/edge/poc_report.py` 产出的报告里，
    还没在真实丢包/高时延链路上跑过。
+3. **真实通道对接**（短信/北斗/广播）：目前 `delivery_mode=mock`，`warning_reach_ms` 里的 1.2s
+   是 mock 适配器注入的模拟链路耗时，不是真实触达时延。
+4. **图谱在线**：Graphiti/Neo4j 的读写分离与召回映射在单测里用替身驱动覆盖，
+   还没在真实 neo4j 实例上跑过一次 `learn` + `recall`。
 
-上述 1—3 是交付前必须补的取证项；补完后把命令、日期和输出摘要追加到本文件，并删掉对应条目。
+上述四项补完后把命令、日期和输出摘要追加到上一节，并删掉对应条目。

@@ -37,6 +37,7 @@ from aegis.integrations import (
 from aegis.knowledge.provider import KnowledgeProvider
 from aegis.observability.instrumentation import register_sla_budgets
 from aegis.observability.metrics import MetricsExporter
+from aegis.observability.telemetry import telemetry_status
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import ChainResult, HazardResponseChain
 from aegis.services.delivery import ChannelAdapter, DeliveryDispatcher
@@ -202,6 +203,17 @@ class PlatformContainer:
             # 权重在位但装载失败：装配事实是"启用了但这条腿跑不起来"，只写日志外部看不见
             retrieval_state = replace(retrieval_state, detail={**retrieval_state.detail, "warm_error": self._retrieval_warm_error})
         rows.append(retrieval_state)
+        # 链路追踪不是"装了 OTel 就有证据"：没装配 provider 时跨度只落在本地，
+        # 第三方在 Jaeger 里查不到任何东西。这一行让"上报中/仅本地"可判别。
+        status = telemetry_status()
+        rows.append(
+            IntegrationState(
+                name="tracing",
+                enabled=bool(status["exporting"]),
+                driver="otlp" if status["exporting"] else "local",
+                detail=dict(status),
+            )
+        )
         return rows
 
     # ---------- 指标量测出口 ----------

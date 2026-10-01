@@ -97,6 +97,19 @@ services:
     restart: unless-stopped
     profiles: ["observability"]
 
+  # 链路追踪取证件：跨度经 OTLP/HTTP 进来，验收时用 /api/traces/<traceID> 原样找回。
+  # 镜像按摘要锁定（本机实测：python -> OTLP -> Jaeger -> 查询 API 全链路通了 6 个跨度）。
+  jaeger:
+    image: jaegertracing/all-in-one@sha256:ab6f1a1f0fb49ea08bcd19f6b84f6081d0d44b364b6de148e1798eb5816bacac
+    container_name: aegis-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # 查询 UI / API
+      - "4318:4318" # OTLP/HTTP
+    restart: unless-stopped
+    profiles: ["observability"]
+
   backend:
     build:
       context: ..
@@ -116,6 +129,9 @@ services:
       AEGIS_NEO4J_USER: ${NEO4J_USERNAME:-neo4j}
       AEGIS_NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD 需在 .env 中设置}
       AEGIS_RETRIEVAL_ENABLED: "true"
+      # 端点走 OTel 官方环境变量。只在 observability profile 关闭时留空即可：
+      # 跨度改为只记本地，业务链路不受影响（先起 observability 再起 app 就能拿到全量证据链）。
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_ENDPOINT:-}
       AEGIS_HTTP_PORT: "8000"
     ports:
       - "8000:8000"

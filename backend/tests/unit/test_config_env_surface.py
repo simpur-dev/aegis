@@ -20,6 +20,9 @@ CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 # compose 的 service 环境变量固定缩进 6 空格；.env.example 是行首 KEY=
 _COMPOSE_KEY = re.compile(r"^ {6}(AEGIS_[A-Z0-9_]+):", re.MULTILINE)
 _DOTENV_KEY = re.compile(r"^(AEGIS_[A-Z0-9_]+)=", re.MULTILINE)
+_ANY_DOTENV_KEY = re.compile(r"^([A-Z][A-Z0-9_]*)=", re.MULTILINE)
+# ${VAR} 与 ${VAR:?说明} 没有默认值，缺了 compose 直接失败；${VAR:-默认} 有默认值，可以留空
+_COMPOSE_INTERPOLATION = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?::([^}]*))?\}")
 
 
 def settings_field_for(name: str) -> str | None:
@@ -36,6 +39,16 @@ def dotenv_keys() -> list[str]:
     return _DOTENV_KEY.findall(ENV_EXAMPLE.read_text(encoding="utf-8"))
 
 
+def mandatory_interpolations() -> set[str]:
+    """compose 里"必须提供、否则起不来"的变量：`${VAR}` 与 `${VAR:?说明}` 都没有默认值。"""
+    text = COMPOSE.read_text(encoding="utf-8")
+    return {name for name, modifier in _COMPOSE_INTERPOLATION.findall(text) if modifier is None or modifier.startswith("?")}
+
+
+def all_dotenv_keys() -> set[str]:
+    return set(_ANY_DOTENV_KEY.findall(ENV_EXAMPLE.read_text(encoding="utf-8")))
+
+
 class TestDeploymentEnvKeys:
     def test_the_files_under_test_actually_exist(self) -> None:
         """先确认文件在：路径挪动会让上面的正则空匹配，而"零变量"看起来一样是绿的。"""
@@ -50,6 +63,17 @@ class TestDeploymentEnvKeys:
     def test_env_example_documents_only_real_settings_knobs(self) -> None:
         unknown = [key for key in dotenv_keys() if settings_field_for(key) is None]
         assert not unknown, f".env.example 里写了不存在的配置项: {unknown}"
+
+    def test_every_mandatory_compose_variable_is_documented(self) -> None:
+        """compose 用 `${VAR:?…}` 强制要求的变量，照抄 .env.example 起的环境必须一个不缺。
+
+        真实教训：`EMQX_DASHBOARD_PASSWORD` 只在 compose 里要求、示例里没有，`docker compose config`
+        当场解析失败——这种错误发生在部署阶段，单测不盯就只剩运维在客户现场碰。
+        """
+        mandatory = mandatory_interpolations()
+        assert len(mandatory) >= 4, f"没抓到必需变量，正则可能已随 compose 结构失效: {mandatory}"
+        missing = sorted(mandatory - all_dotenv_keys())
+        assert not missing, f".env.example 缺少 compose 必需变量: {missing}"
 
     def test_no_sqlalchemy_era_dsn_knob_survives(self) -> None:
         """`db_url` 已随 Postgres 接线一并删除：它默认指向 sqlite，而持久层只认 PostgreSQL。"""
