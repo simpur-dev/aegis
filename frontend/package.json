@@ -11,7 +11,6 @@
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint . --ext .ts,.vue",
     "prepare:cesium": "node scripts/prepare-cesium.mjs",
     "predev": "npm run prepare:cesium",
     "prebuild": "npm run prepare:cesium"

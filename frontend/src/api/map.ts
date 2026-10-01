@@ -7,8 +7,9 @@
  * 后端事实（决定本模块能声明什么字段，不臆造）：
  * - 带坐标的实体只存在于 Postgres 表 `monitoring_stations`
  *   （`persistence/geo.py:31` 的 STATION_FIELDS + `geom`，geom 文本口径见 `geo.py:71` point_text），
- *   但 `api/app.py` 未开放任何站点/区划/灾面路由 —— 所以 `stations()` 命中 404 是**预期路径**，
- *   上层据此降级为「无坐标」，而不是伪造经纬度；
+ *   经 `GET /api/v1/stations`（`api/app.py:171`）开放：只有维表真的写了经纬度才返回坐标，
+ *   报过数但未登记的站返回 `lon/lat = null`。区划与灾面**没有**后端路由，只能取离线静态资产；
+ *   坐标缺失时上层降级为「未定位」，而不是按区划中心猜一个经纬度；
  * - `GET /api/v1/telemetry` 的 `TelemetryReading` 只有 `station_id`/`region_code`，无经纬度；
  * - `GET /api/v1/warnings` 的 `WarningRecord` 只有 `region_codes`，无经纬度；
  * - `GET /api/v1/events` 的 `ChainSummary.risk` 提供 `region_code` 级 `risk_level`（区域风险的唯一来源）。

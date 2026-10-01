@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 import api, { ApiError } from '@/api/client'
 import type { AgentInfo, ChainSummary, LatencyReport, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
+import LegStatusPanel from '@/components/system/LegStatusPanel.vue'
 import { useEventStream } from '@/composables/useEventStream'
 
 const ready = ref<{ agents_online: number; store: Record<string, number> } | null>(null)
@@ -153,6 +154,14 @@ const agentColumns = [
             <a-empty v-if="!events.length" description="暂无事件" />
           </a-timeline>
         </a-card>
+      </a-col>
+    </a-row>
+
+    <a-row style="margin-top: 12px">
+      <a-col :span="24">
+        <!-- 垫在明细之后：KPI 与链路要先占住首屏，但这块必须和它们在同一页——
+             判"预案为什么变慢"时翻的是这个，不是日志。 -->
+        <LegStatusPanel />
       </a-col>
     </a-row>
   </div>

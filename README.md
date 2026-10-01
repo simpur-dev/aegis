@@ -85,14 +85,14 @@ python scripts/fetch_retrieval_models.py
 ```
 
 接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`
-装配事实（哪条腿在跑、哪条腿是瘸的）`http://localhost:8000/api/v1/integrations`
+装配事实（哪条腿在跑、哪条腿是瘸的）`http://localhost:8000/api/v1/integrations`——`/dashboard` 页底有同源面板
 告警链路取证口径 `deploy/observability/README.md`
 
 ### Web 页面（纯 Web，响应式，无原生移动端）
 
 | 页面 | 路由 | 内容 |
 | --- | --- | --- |
-| 态势总览 | `/dashboard` | KPI、风险区域网格、链路各段执行方式（agent/local）、智能体在线状态、SSE 实时事件 |
+| 态势总览 | `/dashboard` | KPI、风险区域网格、链路各段执行方式（agent/local）、智能体在线状态、SSE 实时事件、页底七条可选腿的三态面板 |
 | 一张图 | `/map` | Cesium 三维 + 站点/预警点位；底图 PMTiles、地形自建 quantized-mesh，零 Ion/谷歌依赖；缺瓦片时如实降级为"无底图 + 椭球地形" |
 | 监测预警 | `/monitor` | 遥测明细与时序曲线、劣化读数缺口显示、一键发起激增/背景演练 |
 | 预警发布 | `/warnings` | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |

@@ -62,7 +62,7 @@ describe('地图客户端：路径与参数', () => {
     expect(MAP_ASSET_PATHS.basemapTemplate).toContain('{z}/{x}/{y}')
   })
 
-  it('后端尚无 /api/v1/stations：404 被识别为"资源缺失"而非故障', async () => {
+  it('路由缺失时（旧版后端或未开放该路由的部署）404 识别为"资源缺失"而非故障', async () => {
     const { client } = clientWith((config) => (String(config.url).endsWith('/stations') ? { status: 404, data: { detail: 'Not Found' } } : { status: 200, data: {} }))
     const error = await client.stations().catch((caught: unknown) => caught)
     expect(error).toBeInstanceOf(MapApiError)
