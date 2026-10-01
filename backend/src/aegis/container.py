@@ -19,6 +19,7 @@ from aegis.bus.registry import AgentRegistry
 from aegis.bus.transport import BusTransport
 from aegis.config import Settings, get_settings
 from aegis.connectors.base import DataSource, IngestService
+from aegis.connectors.mqtt import MqttSource
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.domain.enums import Channel
 from aegis.domain.messages import TelemetryReading
@@ -28,6 +29,7 @@ from aegis.integrations import (
     StoreBundle,
     build_analytics,
     build_knowledge,
+    build_mqtt,
     build_retrieval,
     build_store,
     start_store,
@@ -115,6 +117,8 @@ class PlatformContainer:
     knowledge_state: IntegrationState | None = None
     retrieval: HybridRetrievalService | None = None
     retrieval_state: IntegrationState | None = None
+    mqtt: MqttSource | None = None
+    mqtt_state: IntegrationState | None = None
     simulator: HazardScenarioSimulator | None = None
     mock_agents: list[MockAgent] = field(default_factory=list)
     _tasks: list[asyncio.Task[None]] = field(default_factory=list)
@@ -122,6 +126,7 @@ class PlatformContainer:
     _started: bool = False
     _store_state: IntegrationState | None = None
     _retrieval_warm_error: str | None = None
+    _mqtt_start_error: str | None = None
 
     async def start(
         self,
@@ -142,6 +147,14 @@ class PlatformContainer:
         if self.retrieval is not None:
             # 装载 568MB 权重要几秒：放在启动期，别让第一条预警替后续所有请求付这笔钱
             self._retrieval_warm_error = await warm_retrieval(self.retrieval)
+        if self.mqtt is not None:
+            # 订阅腿起不来不阻断平台启动（broker 可能在站端那边还没起来），
+            # 但失败必须成为 /api/v1/integrations 上的一行事实，而不是只进日志。
+            try:
+                await self.mqtt.start()
+            except Exception as exc:
+                self._mqtt_start_error = f"{type(exc).__name__}: {exc}"
+                log.warning("MQTT 订阅腿启动失败，平台继续运行", extra={"error": self._mqtt_start_error})
         await self.transport.connect()
         await self.gateway.start()
         self.gateway.set_result_handler(self.chain.handle_agent_message)
@@ -176,6 +189,9 @@ class PlatformContainer:
         for agent in self.mock_agents:
             await agent.stop()
         self.mock_agents = []
+        if self.mqtt is not None:
+            # 订阅腿停在摄取循环之后：摄取任务已取消，没有人再取缓冲，继续收只会攒成一堆过期读数
+            await self.mqtt.stop()
         await self.registry.stop_sweeper()
         await self.gateway.close()
         await self.transport.close()
@@ -203,6 +219,15 @@ class PlatformContainer:
             # 权重在位但装载失败：装配事实是"启用了但这条腿跑不起来"，只写日志外部看不见
             retrieval_state = replace(retrieval_state, detail={**retrieval_state.detail, "warm_error": self._retrieval_warm_error})
         rows.append(retrieval_state)
+        # MQTT 腿把运行期计数一并带出来：broker 是否连着、收了多少条、被拒/溢出各多少，
+        # 这些正是"站端在发但平台没数"时唯一能区分故障位置的证据。
+        mqtt_state = self.mqtt_state or IntegrationState(name="mqtt", enabled=False, driver="off")
+        if self.mqtt is not None:
+            detail: dict[str, object] = {**mqtt_state.detail, **self.mqtt.status()}
+            if self._mqtt_start_error is not None:
+                detail["start_error"] = self._mqtt_start_error
+            mqtt_state = replace(mqtt_state, detail=detail)
+        rows.append(mqtt_state)
         # 链路追踪不是"装了 OTel 就有证据"：没装配 provider 时跨度只落在本地，
         # 第三方在 Jaeger 里查不到任何东西。这一行让"上报中/仅本地"可判别。
         status = telemetry_status()
@@ -280,6 +305,7 @@ def create_container(
     analytics = AnalyticsRecorder(analytics_sink, driver=analytics_state.driver, settings=cfg) if analytics_sink is not None else None
     knowledge, knowledge_state = build_knowledge(cfg, tracer)
     retrieval, retrieval_state = build_retrieval(cfg, tracer, store=bundle.durability)
+    mqtt_source, mqtt_state = build_mqtt(cfg)
 
     async def on_result(result: ChainResult) -> None:
         """单一落库点 + 分析旁路扇出：旁路未启用时这条链只有一步，语义与接入前完全一致。"""
@@ -324,7 +350,7 @@ def create_container(
         store=store,
         tracer=tracer,
         settings=cfg,
-        sources=[simulator] if simulator else [],
+        sources=[source for source in (simulator, mqtt_source) if source is not None],
         on_readings=on_readings if analytics is not None else None,
     )
 
@@ -359,6 +385,8 @@ def create_container(
         knowledge_state=knowledge_state,
         retrieval=retrieval,
         retrieval_state=retrieval_state,
+        mqtt=mqtt_source,
+        mqtt_state=mqtt_state,
         simulator=simulator,
     )
 

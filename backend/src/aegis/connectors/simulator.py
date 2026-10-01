@@ -12,6 +12,7 @@ import random
 from dataclasses import dataclass, field
 
 from aegis.connectors.base import DataSource
+from aegis.connectors.metrics import unit_for
 from aegis.domain.messages import TelemetryReading, now_iso, utc_now
 
 # (station_id, region_code, 指标集)
@@ -23,21 +24,6 @@ STATIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("SNW-540321-01", "540321", ("new_snow_cm", "wind_speed_ms", "air_temperature_c", "snow_water_equivalent_mm")),
     ("RCK-540321-02", "540321", ("crack_aperture_mm", "freeze_thaw_cycles")),
 )
-
-_UNITS = {
-    "rain_10min": "mm",
-    "rain_cumulative_24h": "mm",
-    "debris_level": "m",
-    "displacement_mm": "mm",
-    "lake_level_m": "m",
-    "dam_seepage_turbidity_ntu": "NTU",
-    "new_snow_cm": "cm",
-    "wind_speed_ms": "m/s",
-    "air_temperature_c": "C",
-    "snow_water_equivalent_mm": "mm",
-    "crack_aperture_mm": "mm",
-    "freeze_thaw_cycles": "count",
-}
 
 # 正常基线与激增上限
 _BASELINE = {
@@ -112,7 +98,7 @@ class HazardScenarioSimulator(DataSource):
                         station_id=station_id,
                         metric=metric,
                         value=round(value, 3),
-                        unit=_UNITS.get(metric, "unit"),
+                        unit=unit_for(metric),
                         region_code=region_code,
                         observed_at=observed,
                         ingested_at=now_iso(),

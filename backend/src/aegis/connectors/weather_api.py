@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 from aegis.connectors.base import DataSource
+from aegis.connectors.metrics import unit_for
 from aegis.domain.messages import TelemetryReading, now_iso, utc_now
 
 log = logging.getLogger("aegis.connectors.weather")
@@ -87,7 +88,7 @@ class WeatherApiSource(DataSource):
                         station_id=station_id,
                         metric=metric,
                         value=numeric,
-                        unit=_unit(metric),
+                        unit=unit_for(metric),
                         region_code=region_code[:24],
                         observed_at=observed,
                         ingested_at=now_iso(),
@@ -108,20 +109,3 @@ def _extract_observed(body: dict[str, Any]) -> str:
         except ValueError:
             pass
     return utc_now().isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
-def _unit(metric: str) -> str:
-    return {
-        "rain_10min": "mm",
-        "rain_cumulative_24h": "mm",
-        "debris_level": "m",
-        "displacement_mm": "mm",
-        "lake_level_m": "m",
-        "dam_seepage_turbidity_ntu": "NTU",
-        "new_snow_cm": "cm",
-        "wind_speed_ms": "m/s",
-        "air_temperature_c": "C",
-        "snow_water_equivalent_mm": "mm",
-        "crack_aperture_mm": "mm",
-        "freeze_thaw_cycles": "count",
-    }.get(metric, "unit")

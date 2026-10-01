@@ -148,6 +148,13 @@ services:
       AEGIS_NEO4J_USER: ${NEO4J_USERNAME:-neo4j}
       AEGIS_NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD 需在 .env 中设置}
       AEGIS_RETRIEVAL_ENABLED: "true"
+      # MQTT 推送腿：broker 就是本文件 iot profile 里的 emqx。默认关；开启需要镜像装了 [iot] extra。
+      # 关掉时这条腿在链路里完全不存在，开启与否、连到哪儿都由 /api/v1/integrations 的 mqtt 行说明。
+      AEGIS_MQTT_ENABLED: ${AEGIS_MQTT_ENABLED:-false}
+      AEGIS_MQTT_HOST: ${AEGIS_MQTT_HOST:-emqx}
+      AEGIS_MQTT_PORT: "1883"
+      AEGIS_MQTT_USERNAME: ${MQTT_USERNAME:-}
+      AEGIS_MQTT_PASSWORD: ${MQTT_PASSWORD:-}
       # 端点走 OTel 官方环境变量。只在 observability profile 关闭时留空即可：
       # 跨度改为只记本地，业务链路不受影响（先起 observability 再起 app 就能拿到全量证据链）。
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_ENDPOINT:-}

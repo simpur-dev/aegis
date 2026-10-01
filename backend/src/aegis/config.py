@@ -50,9 +50,19 @@ class Settings(BaseSettings):
     analytics_close_grace_ms: int = 2_000
 
     # 基座层：接入网关
+    # MQTT 推送腿默认关闭：开启需要 `[iot]` extra（aiomqtt）与一个真 broker；
+    # 未开启时链路里完全不出现 MQTT 代码路径（与分析旁路同一套"关掉就没有这层"的口径）。
+    mqtt_enabled: bool = False
     mqtt_host: str = "127.0.0.1"
     mqtt_port: int = 1883
     mqtt_topic_prefix: str = "field"
+    mqtt_username: str = ""
+    mqtt_password: str = ""
+    mqtt_qos: int = 1
+    mqtt_keepalive_seconds: int = 30
+    mqtt_client_id: str = "aegis-platform"
+    # 单次摄取轮次之间能攒多少条读数：满了丢最旧并计数，绝不无界吃内存
+    mqtt_buffer_limit: int = 5_000
     weather_api_base_url: str = ""
     connector_poll_seconds: float = 60.0
 
