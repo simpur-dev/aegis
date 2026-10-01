@@ -334,10 +334,11 @@ class ZenohEdgeBus(BusTransport):
             config.insert_json5("scouting/multicast/enabled", "true")
             config.insert_json5("scouting/multicast/listen", "true")
             config.insert_json5("scouting/multicast/autoconnect", json.dumps(["peer", "router"]))
-            config.insert_json5("scouting/multicast/join_interval", "0")
-            config.insert_json5("scouting/multicast/join_messages", "5")
             if self._multicast_loop:
-                config.insert_json5("scouting/multicast/interface", json.dumps(["loopback/127.0.0.1"]))
+                # 键名与取值类型按 eclipse-zenoh 1.10.1 实测：
+                # join_interval / join_messages 在这一版根本不存在（insert 直接 "unknown key"），
+                # interface 只收字符串（写数组报 invalid type），故这里用 json.dumps(str)。
+                config.insert_json5("scouting/multicast/interface", json.dumps("loopback/127.0.0.1"))
         else:
             config.insert_json5("scouting/multicast/autoconnect", "[]")
         return config
@@ -622,7 +623,14 @@ class ZenohEdgeBus(BusTransport):
             await self._worker.call(query.reply_err, _json_bytes({"error": str(exc)}))
             return
         if reply is not None:
-            await self._worker.call(query.reply, self._reply_key(keyexpr, query), reply.encode(), encoding=JSON_ENCODING)
+            try:
+                key = self._reply_key(keyexpr, query)
+            except KeyExprMappingError as exc:
+                # 应答不下去也要让对端知道原因：静默不回会让对方的 query 一直等到超时，
+                # 看上去像"链路慢"，实际是"这条查询本来就无法应答"。
+                await self._worker.call(query.reply_err, _json_bytes({"error": exc.message, "detail": exc.detail}))
+                return
+            await self._worker.call(query.reply, key, reply.encode(), encoding=JSON_ENCODING)
 
     @staticmethod
     def _reply_key(queryable_keyexpr: str, query: Any) -> str:
@@ -739,6 +747,14 @@ class ZenohEdgeBus(BusTransport):
         return subscription
 
     def _declare_buffer_queryable(self, keyexpr: str, holder: dict[str, Any]) -> None:
+        """一次查询一份完整应答：边缘缓冲的内容是一个集合，不是一个流。
+
+        本版本 zenoh 的 queryable 对同一 ke 连发多条 reply 时，请求侧只收得到其中一条
+        （本机实测：rows 有 1 条、两次 reply 都执行了，callback 只被触发一次）。
+        逐条 reply 还会让"查到一半"看起来像"就这么多"，改成整份一次返回：
+        要么拿到完整清单，要么什么都没有——弱网里后者的判断价值高得多。
+        """
+
         def _on_query(query: Any) -> None:
             self.callback_thread_names.add(threading.current_thread().name)
             params = selector_params(query)
@@ -751,21 +767,23 @@ class ZenohEdgeBus(BusTransport):
                 include_in_flight=include_in_flight,
             )
             holder["queries"] = int(holder.get("queries", 0)) + 1
-            for row in rows:
-                record = {
-                    "seq": row.seq,
-                    "subject": row.subject,
-                    "msg_id": row.msg_id,
-                    "enqueued_at": row.enqueued_at,
-                    "size": len(row.payload),
-                    "payload": _maybe_json(bytes(row.payload)),
-                }
-                query.reply(keyexpr, _json_bytes(record), encoding=JSON_ENCODING)
-            query.reply(
-                keyexpr,
-                _json_bytes({"done": True, "count": len(rows), "station": self._buffer.station_id}),
-                encoding=JSON_ENCODING,
-            )
+            answer = {
+                "station": self._buffer.station_id,
+                "pattern": pattern,
+                "count": len(rows),
+                "items": [
+                    {
+                        "seq": row.seq,
+                        "subject": row.subject,
+                        "msg_id": row.msg_id,
+                        "enqueued_at": row.enqueued_at,
+                        "size": len(row.payload),
+                        "payload": _maybe_json(bytes(row.payload)),
+                    }
+                    for row in rows
+                ],
+            }
+            query.reply(keyexpr, _json_bytes(answer), encoding=JSON_ENCODING)
             query.drop()
 
         queryable = self._session.declare_queryable(keyexpr, _on_query, complete=True)
@@ -785,7 +803,7 @@ class ZenohEdgeBus(BusTransport):
         if limit is not None:
             params["limit"] = limit
         selector = selector_for(BUFFER_QUERY_SUBJECT, params)
-        rows: list[dict[str, Any]] = []
+        found: list[dict[str, Any]] = []
 
         def _on_reply(reply: Any) -> None:
             sample = reply.ok
@@ -795,12 +813,19 @@ class ZenohEdgeBus(BusTransport):
                 record = _decode_json(bytes(sample.payload))
             except Exception:
                 return
-            if isinstance(record, dict) and not record.get("done"):
-                rows.append(record)
+            if isinstance(record, dict) and isinstance(record.get("items"), list):
+                found.extend(item for item in record["items"] if isinstance(item, dict))
 
-        await self._worker.call(self._session.get, selector, _on_reply, timeout=timeout_ms / 1000)
+        await self._worker.call(
+            self._session.get,
+            selector,
+            _on_reply,
+            payload=b"{}",
+            encoding=JSON_ENCODING,
+            timeout=timeout_ms / 1000,
+        )
         await asyncio.sleep(timeout_ms / 1000 + 0.05)
-        return rows
+        return found
 
     # ---------- 链路监视与重放 ----------
 
