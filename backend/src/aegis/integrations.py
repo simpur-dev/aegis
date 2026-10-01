@@ -9,6 +9,8 @@
   连接失败**不换实现**——读视图照常服务，写侧交给有界缓冲重试并按计数暴露故障。
 - 分析：`off` 时链路里根本不出现 OLAP 代码路径；启用时只做 write-behind 入队，
   摄取与研判热路径永不等 OLAP。
+- 知识：图谱缺位时召回自动落到内存案例库，预案生成照旧完成；召回失败只记一条降级，
+  绝不把异常抛进预警路径。
 """
 
 from __future__ import annotations
@@ -17,9 +19,12 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from aegis.config import Settings, get_settings
 from aegis.domain.messages import TelemetryReading, utc_now
+from aegis.knowledge.provider import KnowledgeProvider
+from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import ChainResult
 from aegis.storage.store import PlatformStore, StoreProtocol
 
@@ -280,14 +285,67 @@ class AnalyticsRecorder:
             log.warning("分析 sink 关停异常", extra={"err": type(exc).__name__})
 
 
+# --------------------------------------------------------------------- 知识与检索
+
+
+def build_knowledge(settings: Settings | None = None, tracer: Tracer | None = None) -> tuple[KnowledgeProvider | None, IntegrationState]:
+    """案例知识提供者：预案生成前的历史案例召回（读路径，结构上不含 LLM）。
+
+    未配置 graphiti URI 时是纯内存提供者：零外部依赖、内置西藏案例，所以"图谱没起"
+    从来不该让预案变慢或失败——降级链在 `FallbackKnowledgeProvider` 内部，装配层不复制。
+    这里只报告事实：驱动是什么、预算多少、兜底库有多少条。
+    """
+    from aegis.knowledge.cases import load_builtin_cases
+    from aegis.knowledge.provider import build_knowledge_provider
+
+    cfg = settings or get_settings()
+    provider = build_knowledge_provider(
+        cfg,
+        graphiti_uri=cfg.knowledge_graphiti_uri or None,
+        recall_budget_ms=cfg.knowledge_recall_budget_ms,
+        tracer=tracer,
+    )
+    return provider, IntegrationState(
+        name="knowledge",
+        enabled=True,
+        driver="graphiti" if cfg.knowledge_graphiti_uri else "in_memory",
+        detail={
+            "recall_budget_ms": cfg.knowledge_recall_budget_ms,
+            # 兜底库存量：图谱不可用时召回还能给出多少条案例，这是降级后的真实能力上限
+            "fallback_cases": len(load_builtin_cases()),
+            # URI 只报 host:port——连接串里的凭据绝不进状态接口
+            "graphiti": target_of(cfg.knowledge_graphiti_uri),
+        },
+    )
+
+
+def target_of(uri: str) -> str:
+    """连接串的可公开目标段（host[:port]）：scheme、凭据、路径与参数一律丢弃。
+
+    用 `urlsplit` 而不是按 '@' 切串：手写切分很容易把凭据段当成主机名（这里曾错过一次），
+    而状态接口是匿名可读的。主机名取不到就返回空串——宁可少报，不猜。
+    """
+    if not uri:
+        return ""
+    parts = urlsplit(uri if "://" in uri else f"aegis://{uri}")
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    host = parts.hostname or ""
+    return f"{host}:{port}" if host and port else host
+
+
 __all__ = [
     "AnalyticsRecorder",
     "IntegrationState",
     "StoreBundle",
     "build_analytics",
+    "build_knowledge",
     "build_store",
     "chain_facts",
     "reading_facts",
     "start_store",
     "stop_store",
+    "target_of",
 ]

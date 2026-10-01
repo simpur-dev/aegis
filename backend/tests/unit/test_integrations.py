@@ -350,9 +350,12 @@ class TestContainerWiring:
         ctn = create_container(base_settings(), with_simulator=False)
         assert ctn.analytics is None
         assert ctn.bundle.durability is None
-        status = ctn.integration_status()
-        assert [state.name for state in status] == ["store", "analytics"]
-        assert status[1].enabled is False
+        # 按名字断言而不是按位置：状态列表是对外契约，加一条腿不该把既有断言整体挪位
+        status = {state.name: state for state in ctn.integration_status()}
+        assert set(status) == {"store", "analytics", "knowledge"}
+        assert (status["store"].enabled, status["store"].driver) == (True, "memory")
+        assert status["analytics"].enabled is False
+        assert status["knowledge"].enabled is True
 
     def test_analytics_sink_receives_chain_and_reading_facts(self, tmp_path: Path) -> None:
         """容器里的扇出真的接上了：链路落库与分析入队共用同一个 on_result 出口。"""
@@ -362,7 +365,7 @@ class TestContainerWiring:
         )
         assert ctn.analytics is not None
         assert ctn.analytics.state().driver == "duckdb"
-        assert ctn.integration_status()[1].driver == "duckdb"
+        assert {state.name: state for state in ctn.integration_status()}["analytics"].driver == "duckdb"
 
     def test_store_degradation_is_visible_through_the_container(self) -> None:
         ctn = create_container(pg_settings(), with_simulator=False)

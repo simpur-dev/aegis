@@ -24,7 +24,7 @@ from aegis.container import PlatformContainer, create_container
 
 # /readyz 不在模糊集合里：503 是它的语义本身（未就绪就该 503），
 # 由下面的显式用例分别验证"未就绪 503 / 已就绪 200"，比随机撞更准确。
-READ_ONLY = r"^/healthz$|^/api/v1/(telemetry|warnings|agents|collaboration|metrics/latency|integrations)$"
+READ_ONLY = r"^/healthz$|^/api/v1/(telemetry|warnings|agents|collaboration|metrics/latency|integrations|cases/recall)$"
 TASK_LOOKUP = r"^/api/v1/tasks/"
 BASE_URL = "http://testserver"
 
@@ -54,6 +54,7 @@ def test_the_openapi_document_covers_the_sla_bearing_endpoints() -> None:
 def test_filter_patterns_are_regex_and_select_real_operations() -> None:
     """过滤器静默失配会让整层契约测试空转，所以先把"确实选到了操作"钉成断言。"""
     assert re.compile(READ_ONLY).match("/api/v1/telemetry")
+    assert re.compile(READ_ONLY).match("/api/v1/cases/recall")
     assert not re.compile(READ_ONLY).match("/api/v1/drill/run")
     assert not re.compile(READ_ONLY).match("/api/v1/events/stream")
     assert len(list(SCHEMA.include(path_regex=READ_ONLY).get_all_operations())) >= 5

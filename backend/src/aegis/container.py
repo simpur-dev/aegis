@@ -26,10 +26,12 @@ from aegis.integrations import (
     IntegrationState,
     StoreBundle,
     build_analytics,
+    build_knowledge,
     build_store,
     start_store,
     stop_store,
 )
+from aegis.knowledge.provider import KnowledgeProvider
 from aegis.observability.instrumentation import register_sla_budgets
 from aegis.observability.metrics import MetricsExporter
 from aegis.observability.tracer import Tracer
@@ -102,6 +104,8 @@ class PlatformContainer:
     workflow: WorkflowEngine
     bundle: StoreBundle
     analytics: AnalyticsRecorder | None = None
+    knowledge: KnowledgeProvider | None = None
+    knowledge_state: IntegrationState | None = None
     simulator: HazardScenarioSimulator | None = None
     mock_agents: list[MockAgent] = field(default_factory=list)
     _tasks: list[asyncio.Task[None]] = field(default_factory=list)
@@ -180,6 +184,7 @@ class PlatformContainer:
             rows.append(self.analytics.state())
         else:
             rows.append(IntegrationState(name="analytics", enabled=False, driver=self.settings.analytics_backend))
+        rows.append(self.knowledge_state or IntegrationState(name="knowledge", enabled=False, driver="off"))
         return rows
 
     # ---------- 指标量测出口 ----------
@@ -244,6 +249,7 @@ def create_container(
     store = bundle.store
     analytics_sink, analytics_state = build_analytics(cfg)
     analytics = AnalyticsRecorder(analytics_sink, driver=analytics_state.driver, settings=cfg) if analytics_sink is not None else None
+    knowledge, knowledge_state = build_knowledge(cfg, tracer)
 
     async def on_result(result: ChainResult) -> None:
         """单一落库点 + 分析旁路扇出：旁路未启用时这条链只有一步，语义与接入前完全一致。"""
@@ -274,6 +280,7 @@ def create_container(
         warning_service=warning_service,
         dispatcher=dispatcher,
         on_result=on_result,
+        knowledge=knowledge,
     )
     simulator = HazardScenarioSimulator(seed=cfg.simulator_seed) if with_simulator else None
 
@@ -317,6 +324,8 @@ def create_container(
         workflow=workflow,
         bundle=bundle,
         analytics=analytics,
+        knowledge=knowledge,
+        knowledge_state=knowledge_state,
         simulator=simulator,
     )
 

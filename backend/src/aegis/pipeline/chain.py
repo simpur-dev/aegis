@@ -37,6 +37,7 @@ from aegis.domain.messages import (
     utc_now,
 )
 from aegis.errors import AegisError
+from aegis.knowledge.provider import CaseMatch, KnowledgeProvider
 from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
 from aegis.services.delivery import AllChannelsFailedError, DeliveryDispatcher
@@ -48,6 +49,8 @@ from aegis.services.warning_service import WarningService
 log = logging.getLogger("aegis.pipeline")
 
 _STAGE_ORDER = ("perceive", "assess", "plan", "execute", "feedback")
+# 参考案例条数：3 条足够支撑"凭什么这么判"的可解释性，再多会把规划 payload 撑成噪声
+_CASE_RECALL_LIMIT = 3
 
 
 @dataclass(slots=True)
@@ -73,6 +76,8 @@ class ChainResult:
     warning: WarningRecord | None = None
     errors: list[str] = field(default_factory=list)
     degradations: list[str] = field(default_factory=list)
+    # 本次规划参考过的历史案例 id：可解释性证据，不是"提示词装饰"——报告里要能回答"凭什么这么判"。
+    reference_cases: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -98,6 +103,7 @@ class ChainResult:
             "warning_id": self.warning.warning_id if self.warning else None,
             "errors": self.errors,
             "degradations": self.degradations,
+            "reference_cases": self.reference_cases,
         }
 
 
@@ -117,6 +123,7 @@ class HazardResponseChain:
         dispatcher: DeliveryDispatcher | None = None,
         agent_hit_window: int = 512,
         on_result: Callable[[ChainResult], Awaitable[None]] | None = None,
+        knowledge: KnowledgeProvider | None = None,
     ) -> None:
         self._gateway = gateway
         self._registry = registry
@@ -131,6 +138,7 @@ class HazardResponseChain:
         self._agent_hits: deque[TriggerHit] = deque(maxlen=agent_hit_window)
         self._warnings: dict[str, WarningRecord] = {}
         self._on_result = on_result
+        self._knowledge = knowledge
 
     async def _finish(self, result: ChainResult) -> ChainResult:
         if self._on_result is not None:
@@ -384,6 +392,9 @@ class HazardResponseChain:
         )
 
     async def _plan(self, verdict: RiskVerdict, result: ChainResult, trace: str) -> list[StandardizedTaskUnit]:
+        # 召回放在取本地剧本之前：无论最终由智能体还是本地剧本产出任务单元，
+        # "参考过哪些历史案例"都是这条链路的证据，不该只在智能体在线时才存在。
+        references = await self._recall_cases(verdict, result)
         local = self._task_parser.parse(verdict, event_id=result.event_id)
         if self._registry.pick(AgentType.PLAN.value, "task_decompose") is None:
             return local
@@ -396,6 +407,7 @@ class HazardResponseChain:
                     "risk": verdict.as_payload(),
                     "objective": "按灾种处置剧本生成标准化任务单元",
                     "constraints": {"sla_warning_gen_seconds": self._settings.sla_warning_gen_seconds},
+                    "reference_cases": references,
                 },
                 trace_id=trace,
                 capability="task_decompose",
@@ -419,6 +431,32 @@ class HazardResponseChain:
             result.degradations.append(f"STU 解析失败: {exc}，采用本地剧本")
             return local
         return units or local
+
+    async def _recall_cases(self, verdict: RiskVerdict, result: ChainResult) -> list[dict[str, Any]]:
+        """规划前的案例召回：LLM 与图谱都不进这条路径的必需依赖，失败只记降级、绝不阻断预警。
+
+        预算来自 knowledge_recall_budget_ms：宁可少给几条参考案例，也不能让一次知识检索
+        把"≤3min 预警生成"的窗口吃掉。命中切片由 `CaseMatch.planning_brief()` 给出，
+        与案例知识 API 共用同一份映射（链路不自己抄一遍字段）。
+        """
+        if self._knowledge is None:
+            return []
+        query = f"{verdict.hazard_type.cn} {verdict.region_code} {verdict.rationale}"
+        try:
+            matches: list[CaseMatch] = await self._knowledge.recall(
+                query,
+                hazard_type=verdict.hazard_type.value,
+                region_code=verdict.region_code,
+                limit=_CASE_RECALL_LIMIT,
+                budget_ms=self._settings.knowledge_recall_budget_ms,
+            )
+        except Exception as exc:  # 知识层是增强腿：任何异常都降级，不外抛到预警路径
+            log.warning("案例召回降级", extra={"trace_id": result.trace_id, "err": type(exc).__name__})
+            result.degradations.append(f"案例召回降级: {type(exc).__name__}")
+            return []
+
+        result.reference_cases = [match.case_id for match in matches]
+        return [match.planning_brief() for match in matches]
 
     async def _execute(
         self,

@@ -61,6 +61,16 @@ class Settings(BaseSettings):
     llm_model: str = "qwen-plus"
     llm_timeout_seconds: float = 20.0
 
+    # 案例知识层：默认纯内存提供者（零外部依赖，16 条西藏案例内置）。
+    # 给了 graphiti URI 才走图谱主路径，并在图谱不可用时自动回落到内存（降级链由 provider 保证）。
+    knowledge_graphiti_uri: str = ""
+    knowledge_recall_budget_ms: float = 400.0
+
+    # 混合检索：稠密腿依赖 pgvector 连接，词法腿零依赖。默认关闭，开启需要模型与库连接都就位。
+    retrieval_enabled: bool = False
+    retrieval_model_dir: str = "./models"
+    retrieval_budget_ms: float = 800.0
+
     # 交付通道：默认 mock，避免真实短信/北斗凭据缺失时阻塞开发
     delivery_mode: Literal["mock", "http"] = "mock"
     delivery_http_base_url: str = ""

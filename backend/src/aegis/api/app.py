@@ -22,6 +22,7 @@ from aegis.api.workflow_api import build_router as build_workflow_router
 from aegis.bus import subjects
 from aegis.config import Settings, get_settings
 from aegis.container import PlatformContainer, create_container
+from aegis.domain.enums import HazardType
 from aegis.domain.messages import AgentMessage, TelemetryReading
 from aegis.errors import AegisError
 
@@ -110,6 +111,36 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "items": [state.as_dict() for state in rows],
             "degraded": degraded,
             "all_enabled": all(state.enabled for state in rows),
+        }
+
+    @app.get("/api/v1/cases/recall", tags=["knowledge"])
+    async def recall_cases(
+        ctn: PlatformContainer = Depends(get_container),
+        q: str = Query(default="", max_length=300),
+        hazard_type: HazardType | None = None,
+        region_code: str | None = Query(default=None, pattern=r"^[0-9A-Z]{4,24}$"),
+        limit: int = Query(default=3, ge=1, le=20),
+    ) -> dict[str, Any]:
+        """案例召回：与预案生成链路走同一个 provider、同一个预算，因此这里看到的就是链路看到的。
+
+        只读、不触发 LLM（图谱的 LLM 调用只在写路径 `learn`）。`degraded` 逐条标注本条
+        是否来自降级兜底——前端要能区分"图谱命中"与"图谱挂了、内存案例顶上"。
+        """
+        if ctn.knowledge is None:
+            raise HTTPException(status_code=503, detail="知识层未装配")
+        matches = await ctn.knowledge.recall(
+            q or (hazard_type.cn if hazard_type else ""),
+            hazard_type=hazard_type.value if hazard_type else None,
+            region_code=region_code,
+            limit=limit,
+            budget_ms=ctn.settings.knowledge_recall_budget_ms,
+        )
+        return {
+            "query": q,
+            "count": len(matches),
+            "degraded_count": sum(1 for m in matches if m.degraded),
+            "budget_ms": ctn.settings.knowledge_recall_budget_ms,
+            "items": [m.planning_brief() for m in matches],
         }
 
     @app.get("/api/v1/telemetry", tags=["data"])

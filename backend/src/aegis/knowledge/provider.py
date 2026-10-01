@@ -17,7 +17,7 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -78,6 +78,24 @@ class CaseMatch(BaseModel):
     def usable(self) -> bool:
         """只有带回案例本体的命中才能直接被预案编排消费。"""
         return self.case is not None
+
+    def planning_brief(self) -> dict[str, Any]:
+        """命中证据 + 案例可执行字段的统一切片。
+
+        链路规划与 HTTP API 共用这一份映射：字段清单若在两处各写一遍，
+        迟早会漂移成"接口里有的动作，智能体 payload 里没有"。
+        图谱侧只回节点摘要（`case=None`）时只给命中证据，不编造处置动作。
+        """
+        entry: dict[str, Any] = {
+            "case_id": self.case_id,
+            "score": round(self.score, 4),
+            "source": self.source,
+            "matched_on": list(self.matched_on),
+            "degraded": self.degraded,
+        }
+        if self.case is not None:
+            entry.update(self.case.plan_brief())
+        return entry
 
     @classmethod
     def from_case(
@@ -297,8 +315,9 @@ def build_knowledge_provider(
 ) -> KnowledgeProvider:
     """装配入口：未给 `graphiti_uri` 时返回纯内存提供者（降级链形态，零外部依赖）。
 
-    图谱开关目前由调用方（container）决定是否给出 URI：`config.py` 尚未新增 knowledge 相关字段，
-    这里不猜测不存在的配置项，需要哪些字段见交付说明。
+    URI 与预算由 `config.py` 的 `knowledge_graphiti_uri` / `knowledge_recall_budget_ms` 提供，
+    由装配层（`integrations.build_knowledge`）传入；本函数不读环境变量以外的配置源，
+    `recall_budget_ms=None` 时才回落到 `AEGIS_KNOWLEDGE_RECALL_BUDGET_MS`（现场调参用）。
     """
     from aegis.knowledge.memory_store import InMemoryKnowledgeProvider
 
