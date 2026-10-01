@@ -13,6 +13,10 @@
     public_trust       群众对预警的信任与响应度（越高越好）
     resource_strain    应急资源挤占（越低越好）
 值域 [-1, 1]，表示该预案执行后各分量的相对变化方向与幅度。
+
+数据集性质必须写在数据旁边（见 `DATASET_PROVENANCE`）：这 16 条是**平台自编的预案模板**，
+不是从灾害记录里清洗出来的真实案例。召回结果会被写进预警正文的依据链，
+读者分不清"实战复盘"与"编制预案"，就等于把编制判断冒充成经验证据。
 """
 
 from __future__ import annotations
@@ -168,7 +172,11 @@ class HazardCase(BaseModel):
         return "\n".join(lines)
 
     def plan_brief(self) -> dict[str, Any]:
-        """给预案生成环节的直接可用切片（不含图谱细节）。"""
+        """给预案生成环节的直接可用切片（不含图谱细节）。
+
+        `source_note` 必须在切片里：这份 brief 会进链路 payload 与预警依据链，
+        读者据此判断"这条经验来自真实复盘还是我们自编的预案"——去掉它就是抹掉出处。
+        """
         return {
             "case_id": self.case_id,
             "title": self.title,
@@ -182,10 +190,20 @@ class HazardCase(BaseModel):
             "estimated_delay_hours": self.estimated_delay_hours,
             "confidence": self.confidence,
             "state_effects": dict(self.state_effects),
+            "source_note": self.source_note,
         }
 
 
 DEFAULT_CASES_PATH = Path(__file__).resolve().parent / "data" / "hazard_cases.json"
+
+# 一句话把数据集性质送到对外可见的地方（/api/v1/integrations 与每条召回命中）。
+# 关键在"不美化"：confidence 与 estimated_delay_hours 是编制时的判断值，observed_at 是
+# 双时态里的"经验生效时刻"（用于图谱 reference_time 与语料 updated_at），不是事件发生日期。
+DATASET_PROVENANCE = (
+    "内置预案模板：字段骨架移植自 NexusMind 干预库，处置内容为川藏沿线实战口径；"
+    "confidence 与 estimated_delay_hours 为编制判断值，observed_at 为经验生效时刻而非事件日期；"
+    "不是真实灾害事件记录，未经现场复盘校准。"
+)
 
 
 def load_cases(path: Path) -> list[HazardCase]:

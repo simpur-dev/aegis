@@ -184,6 +184,7 @@ class TestRenderers:
             "estimated_delay_hours",
             "confidence",
             "state_effects",
+            "source_note",
         }
 
     def test_region_and_hazard_predicates(self) -> None:

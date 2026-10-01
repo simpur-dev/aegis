@@ -23,6 +23,11 @@ htmlcov/
 # 运行态数据
 backend/data/
 data/
+# 例外：内置预案案例库随包发布（源码目录里的 data/，不是运行态数据）。
+# `data/` 会匹配任意层级的同名目录，命中的是"整个目录不进仓库"，所以必须先放行目录再放行文件；
+# 漏了这一条，新克隆就没有降级可兜底的案例，而本地测试因为文件在盘上照样全绿。
+!backend/src/aegis/knowledge/data/
+!backend/src/aegis/knowledge/data/hazard_cases.json
 *.db
 *.sqlite3
 logs/

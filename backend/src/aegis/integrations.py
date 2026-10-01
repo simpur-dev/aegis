@@ -452,11 +452,11 @@ def _weights_present(root: Path) -> bool:
 def build_knowledge(settings: Settings | None = None, tracer: Tracer | None = None) -> tuple[KnowledgeProvider | None, IntegrationState]:
     """案例知识提供者：预案生成前的历史案例召回（读路径，结构上不含 LLM）。
 
-    未配置 graphiti URI 时是纯内存提供者：零外部依赖、内置西藏案例，所以"图谱没起"
+    未配置 graphiti URI 时是纯内存提供者：零外部依赖、内置预案模板，所以"图谱没起"
     从来不该让预案变慢或失败——降级链在 `FallbackKnowledgeProvider` 内部，装配层不复制。
-    这里只报告事实：驱动是什么、预算多少、兜底库有多少条。
+    这里只报告事实：驱动是什么、预算多少、兜底库有多少条、这些条目是什么性质的数据。
     """
-    from aegis.knowledge.cases import load_builtin_cases
+    from aegis.knowledge.cases import DATASET_PROVENANCE, load_builtin_cases
     from aegis.knowledge.provider import build_knowledge_provider
 
     cfg = settings or get_settings()
@@ -474,6 +474,8 @@ def build_knowledge(settings: Settings | None = None, tracer: Tracer | None = No
             "recall_budget_ms": cfg.knowledge_recall_budget_ms,
             # 兜底库存量：图谱不可用时召回还能给出多少条案例，这是降级后的真实能力上限
             "fallback_cases": len(load_builtin_cases()),
+            # 案例库是自编预案模板还是真实事件复盘，决定预警依据链的可信度口径，必须外显
+            "dataset": DATASET_PROVENANCE,
             # URI 只报 host:port——连接串里的凭据绝不进状态接口
             "graphiti": target_of(cfg.knowledge_graphiti_uri),
         },
