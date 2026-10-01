@@ -25,7 +25,9 @@ jobs:
           enable-caching: true
 
       - name: 安装依赖
-        run: uv sync --extra dev --extra perf
+        # 各可选子系统（持久层/分析/检索/边缘/图谱）的离线单测需要真驱动才能跑起来：
+        # 只装 dev 会让这些用例静默跳过，绿色 CI 等于什么都没测。
+        run: uv sync --extra dev --extra perf --extra postgres --extra analytics --extra retrieval --extra edge --extra graph
 
       - name: 格式检查
         run: uv run ruff format --check src tests scripts

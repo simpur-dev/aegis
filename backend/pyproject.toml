@@ -17,14 +17,20 @@ dependencies = [
     "prometheus-client>=0.20",
     "orjson>=3.10",
     "openai>=1.50",
+    # 可观测性是平台的考核面（SLA 证据链需可被第三方引用），不是可插拔装饰：
+    # 缺席时 aegis.observability 会退化成空操作，因此必须在基础依赖里声明，
+    # 让任何一次干净安装都真的带上 OTLP 导出能力。
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
 ]
 
 [project.optional-dependencies]
-perf = ["uvloop>=0.21; sys_platform != 'win32'"]
-postgres = ["asyncpg>=0.30", "pgvector>=0.8"]
+perf = ["uvloop>=0.21; sys_platform != 'win32'", "locust>=2.30"]
+postgres = ["asyncpg>=0.30", "pgvector>=0.5"]
 analytics = ["clickhouse-connect>=1.9", "duckdb>=1.5"]
-edge = ["eclipse-zenoh>=0.4"]
-retrieval = ["onnxruntime>=1.30", "tokenizers>=0.21"]
+edge = ["eclipse-zenoh>=1.10"]
+retrieval = ["onnxruntime>=1.30", "tokenizers>=0.21", "numpy>=1.26"]
 iot = ["aiomqtt>=2.2"]
 graph = ["neo4j>=5.26", "graphiti-core>=0.30"]
 objectstore = ["minio>=7.2"]
