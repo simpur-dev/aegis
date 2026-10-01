@@ -18,9 +18,12 @@ services:
       timeout: 3s
       retries: 5
 
-  timescaledb:
-    image: timescale/timescaledb:2.17.2-pg16
-    container_name: aegis-timescaledb
+  postgres:
+    # PostgreSQL 17 + PostGIS + pgvector 同镜像（P0 选型）。DDL 不在这里执行：
+    # 唯一事实源是 backend/src/aegis/persistence/sql/*.sql，由平台启动时按序应用并记校验和。
+    build:
+      context: ./postgres
+    container_name: aegis-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-aegis}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 需在 .env 中设置}
@@ -28,14 +31,8 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - tsdb_data:/var/lib/postgresql/data
-      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - pg_data:/var/lib/postgresql/data
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   neo4j:
     image: neo4j:5-community
@@ -110,21 +107,32 @@ services:
     environment:
       AEGIS_BUS_BACKEND: nats
       AEGIS_NATS_URL: nats://nats:4222
-      AEGIS_DB_URL: postgresql+asyncpg://aegis:${POSTGRES_PASSWORD}@timescaledb:5432/aegis
+      # 三条可选腿必须显式选上：不写就等于在生产里静默跑内存视图/无图谱/无检索，
+      # 而 /readyz 依旧是绿的。启用事实一律经 /api/v1/integrations 对外可见。
+      AEGIS_STORE_BACKEND: postgres
+      AEGIS_PG_DSN: postgresql://aegis:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aegis}
+      AEGIS_PG_APPLY_MIGRATIONS_ON_START: "true"
+      AEGIS_KNOWLEDGE_GRAPHITI_URI: bolt://neo4j:7687
+      AEGIS_NEO4J_USER: ${NEO4J_USERNAME:-neo4j}
+      AEGIS_NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD 需在 .env 中设置}
+      AEGIS_RETRIEVAL_ENABLED: "true"
       AEGIS_HTTP_PORT: "8000"
     ports:
       - "8000:8000"
+    volumes:
+      # 检索权重只读挂载（~1.1GB，不烧进镜像）：由仓库根 scripts/fetch_retrieval_models.py 预置
+      - ../backend/data/models:/models:ro
     depends_on:
       nats:
         condition: service_healthy
-      timescaledb:
+      postgres:
         condition: service_healthy
     restart: unless-stopped
     profiles: ["app"]
 
 volumes:
   nats_data:
-  tsdb_data:
+  pg_data:
   neo4j_data:
   minio_data:
   redis_data:

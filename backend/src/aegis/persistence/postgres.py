@@ -259,7 +259,7 @@ class PostgresStore:
         jitter_ratio: float = DEFAULT_JITTER_RATIO,
     ) -> None:
         cfg = settings or get_settings()
-        self._dsn = normalize_dsn(dsn or cfg.db_url)
+        self._dsn = normalize_dsn(dsn or cfg.pg_dsn)
         self._pool_min_size = pool_min_size
         self._pool_max_size = pool_max_size
         self._command_timeout = command_timeout_seconds

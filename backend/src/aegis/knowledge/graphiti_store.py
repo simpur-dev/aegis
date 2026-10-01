@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -65,7 +64,7 @@ class LlmCallInRecallError(AegisError):
 
 @dataclass(frozen=True, slots=True)
 class GraphitiConfig:
-    """连接参数：LLM 侧复用现有 `Settings` 字段，图谱侧凭据暂走环境变量（见交付说明）。"""
+    """连接参数：LLM 侧与图谱侧凭据都取自 `Settings`，配置面只有一份。"""
 
     uri: str
     user: str = "neo4j"
@@ -89,17 +88,21 @@ class GraphitiConfig:
         embedding_model: str | None = None,
         embedding_dim: int | None = None,
     ) -> GraphitiConfig:
-        """图谱凭据未进 `Settings` 前的取值口径：显式参数 > AEGIS_NEO4J_* 环境变量 > 默认值。"""
+        """取值口径：显式参数 > `Settings` 字段 > 类默认值。
+
+        配置面只有 `Settings` 一处：图谱凭据若改成直接读环境变量，deploy 里的键就脱离了
+        配置声明，compose/.env.example 的一致性校验也管不到它（见 tests/unit/test_config_env_surface.py）。
+        """
         return cls(
             uri=uri,
-            user=user or os.getenv("AEGIS_NEO4J_USER") or "neo4j",
-            password=password or os.getenv("AEGIS_NEO4J_PASSWORD") or "",
-            database=database or os.getenv("AEGIS_NEO4J_DATABASE") or "neo4j",
+            user=user or str(getattr(settings, "neo4j_user", "") or "") or "neo4j",
+            password=password or str(getattr(settings, "neo4j_password", "") or ""),
+            database=database or str(getattr(settings, "neo4j_database", "") or "") or "neo4j",
             llm_api_key=str(getattr(settings, "llm_api_key", "") or ""),
             llm_base_url=str(getattr(settings, "llm_base_url", "") or ""),
             llm_model=str(getattr(settings, "llm_model", "") or ""),
-            embedding_model=embedding_model or os.getenv("AEGIS_KNOWLEDGE_EMBEDDING_MODEL") or "text-embedding-v3",
-            embedding_dim=embedding_dim or int(os.getenv("AEGIS_KNOWLEDGE_EMBEDDING_DIM") or "1024"),
+            embedding_model=embedding_model or str(getattr(settings, "knowledge_embedding_model", "") or "") or "text-embedding-v3",
+            embedding_dim=embedding_dim or int(getattr(settings, "knowledge_embedding_dim", 0) or 0) or 1024,
         )
 
 

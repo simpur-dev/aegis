@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from aegis.config import Settings
 from aegis.errors import AegisError, DeadlineExceededError
 from aegis.knowledge import graphiti_store
 from aegis.knowledge.cases import HazardCase, load_builtin_cases
@@ -431,15 +432,28 @@ class TestAssembly:
         assert all(fake.closed for fake in registry.values())
         assert provider.instance_of(GraphitiRole.read) is None
 
-    def test_config_from_parts_falls_back_to_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("AEGIS_NEO4J_USER", "aegis")
-        monkeypatch.setenv("AEGIS_NEO4J_PASSWORD", "secret")
-        monkeypatch.setenv("AEGIS_KNOWLEDGE_EMBEDDING_MODEL", "text-embedding-v4")
-        settings = SimpleNamespace(llm_api_key="sk-x", llm_base_url="https://example.invalid/v1", llm_model="qwen-plus")
-        built = GraphitiConfig.from_parts(uri="bolt://x:7687", settings=settings)
-        assert (built.user, built.password) == ("aegis", "secret")
-        assert built.embedding_model == "text-embedding-v4"
+    def test_config_from_parts_reads_the_declared_settings_fields(self) -> None:
+        """图谱凭据与嵌入口径都从配置面读：字段名一旦写错，deploy 一致性测试就会红，
+        而不是静默用默认值连到错误的库上。"""
+        cfg = Settings(
+            env="test",
+            neo4j_user="aegis",
+            neo4j_password="secret",
+            neo4j_database="aegis_kg",
+            knowledge_embedding_model="text-embedding-v4",
+            knowledge_embedding_dim=2048,
+            llm_api_key="sk-x",
+            llm_model="qwen-plus",
+        )
+        built = GraphitiConfig.from_parts(uri="bolt://x:7687", settings=cfg)
+
+        assert (built.user, built.password, built.database) == ("aegis", "secret", "aegis_kg")
+        assert (built.embedding_model, built.embedding_dim) == ("text-embedding-v4", 2048)
         assert (built.llm_api_key, built.llm_model) == ("sk-x", "qwen-plus")
+
+    def test_explicit_arguments_beat_the_settings(self) -> None:
+        built = GraphitiConfig.from_parts(uri="bolt://x:7687", settings=Settings(env="test"), user="override", database="db2")
+        assert (built.user, built.database) == ("override", "db2")
 
     def test_config_ignores_absent_settings_fields(self) -> None:
         assert GraphitiConfig.from_parts(uri="bolt://x:7687", settings=object()).llm_api_key == ""

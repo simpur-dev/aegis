@@ -26,12 +26,13 @@ class Settings(BaseSettings):
     nats_url: str = "nats://127.0.0.1:4222"
     nats_stream_prefix: str = "AEGIS"
 
-    db_url: str = "sqlite+aiosqlite:///./data/aegis.db"
-
     # 运行态存储面：memory 只保留内存读视图；postgres 在同一读视图前加 PostGIS/pgvector 落库。
     # 选 postgres 但连不上时不降级成另一种实现，而是保留读视图 + 有界写缓冲重试（见 integrations）。
     store_backend: StoreBackend = "memory"
-    pg_dsn: str = ""  # 空则回落到 db_url；此时 db_url 必须是 PostgreSQL DSN
+    # 唯一的 PostgreSQL 连接串入口（asyncpg 口径；SQLAlchemy 的 +asyncpg 后缀由 persistence.dsn 收敛）。
+    # store_backend=postgres 而这里留空是配置错误，容器构造即报错——静默回落到内存视图会把
+    # "以为在落库、其实没有"变成最难查的一类事故。
+    pg_dsn: str = ""
     pg_pool_min_size: int = 1
     pg_pool_max_size: int = 8
     pg_apply_migrations_on_start: bool = True
@@ -65,6 +66,12 @@ class Settings(BaseSettings):
     # 给了 graphiti URI 才走图谱主路径，并在图谱不可用时自动回落到内存（降级链由 provider 保证）。
     knowledge_graphiti_uri: str = ""
     knowledge_recall_budget_ms: float = 400.0
+    # 图谱凭据与嵌入口径都在配置面里声明：只在这里有一份，compose/.env.example 的键才能被测试校验
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = ""
+    neo4j_database: str = "neo4j"
+    knowledge_embedding_model: str = "text-embedding-v3"
+    knowledge_embedding_dim: int = 1024
 
     # 混合检索：稠密腿依赖 pgvector 连接，词法腿零依赖。默认关闭，开启需要模型与库连接都就位。
     retrieval_enabled: bool = False

@@ -1,7 +1,7 @@
 """DSN 归一化：把运行配置里的连接串收敛成 asyncpg 能直接吃的形式。
 
-deploy/docker-compose.yml 注入的是 SQLAlchemy 口径的 `postgresql+asyncpg://…`，
-asyncpg 只认 `postgresql://`；这层差异在此收敛，并顺带提供口令脱敏供日志使用。
+`Settings.pg_dsn` 允许现场写 SQLAlchemy 口径的 `postgresql+asyncpg://…`（deploy 里就是这么发的），
+而 asyncpg 只认 `postgresql://`；这层差异在此收敛，并顺带提供口令脱敏供日志使用。
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ def normalize_dsn(raw: str) -> str:
     """归一化连接串：剥离 SQLAlchemy 驱动后缀、校验协议与目标库，查询串原样透传给 asyncpg。"""
     text = (raw or "").strip()
     if not text:
-        raise DsnError("DSN 为空：需要 AEGIS_DB_URL 或显式 dsn 参数")
+        raise DsnError("DSN 为空：store_backend=postgres 需要 AEGIS_PG_DSN", detail={"hint": "或显式传入 dsn 参数"})
     scheme, separator, rest = text.partition("://")
     if not separator or not rest:
         raise DsnError("DSN 缺少 :// 分隔符", detail={"dsn": redact_dsn(text)})

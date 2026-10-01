@@ -64,8 +64,9 @@ class StoreBundle:
 def build_store(settings: Settings | None = None, *, read_model: PlatformStore | None = None) -> StoreBundle:
     """按配置组装存储面。
 
-    构造 `PostgresStore` 不建连接（惰性建池），因此没装 `[postgres]` extra 或库不可达时
-    这里也不抛错——连通性判定留给 `start_store`。
+    构造 `PostgresStore` 不建连接（惰性建池），所以没装 `[postgres]` extra 或库不可达时这里不抛错
+    ——连通性判定留给 `start_store`。但缺 DSN 是配置错误，构造阶段就报：
+    让它静默退化成"只有内存视图"的部署，比开不起来难查一个量级。
     """
     cfg = settings or get_settings()
     read = read_model or PlatformStore()

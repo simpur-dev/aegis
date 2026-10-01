@@ -316,8 +316,9 @@ def build_knowledge_provider(
     """装配入口：未给 `graphiti_uri` 时返回纯内存提供者（降级链形态，零外部依赖）。
 
     URI 与预算由 `config.py` 的 `knowledge_graphiti_uri` / `knowledge_recall_budget_ms` 提供，
-    由装配层（`integrations.build_knowledge`）传入；本函数不读环境变量以外的配置源，
-    `recall_budget_ms=None` 时才回落到 `AEGIS_KNOWLEDGE_RECALL_BUDGET_MS`（现场调参用）。
+    由装配层（`integrations.build_knowledge`）传入；`recall_budget_ms=None` 时退到本模块声明的
+    `DEFAULT_RECALL_BUDGET_MS`——配置面不留第二条"直接读环境变量"的路，否则 deploy 里的键
+    就脱离了 Settings 的声明，也没法被一致性测试管住。
     """
     from aegis.knowledge.memory_store import InMemoryKnowledgeProvider
 
@@ -328,7 +329,7 @@ def build_knowledge_provider(
 
     from aegis.knowledge.graphiti_store import GraphitiConfig, GraphitiKnowledgeProvider  # 延迟导入：降级模式不要求 neo4j/graphiti
 
-    budget = recall_budget_ms if recall_budget_ms is not None else _recall_budget_from_env()
+    budget = recall_budget_ms if recall_budget_ms is not None else DEFAULT_RECALL_BUDGET_MS
     primary = GraphitiKnowledgeProvider(
         config=GraphitiConfig.from_parts(uri=graphiti_uri, settings=cfg),
         cases=cases,
@@ -341,15 +342,3 @@ def build_knowledge_provider(
         on_degradation=on_degradation,
         tracer=tracer,
     )
-
-
-def _recall_budget_from_env() -> float:
-    """预算可由 AEGIS_KNOWLEDGE_RECALL_BUDGET_MS 覆盖：不改 config.py 也能现场调参。"""
-    import os
-
-    raw = os.getenv("AEGIS_KNOWLEDGE_RECALL_BUDGET_MS", "")
-    try:
-        value = float(raw) if raw else DEFAULT_RECALL_BUDGET_MS
-    except ValueError:
-        return DEFAULT_RECALL_BUDGET_MS
-    return value if value > 0 else DEFAULT_RECALL_BUDGET_MS
