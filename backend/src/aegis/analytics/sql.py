@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from aegis.analytics.port import FACT_COLUMNS
 
 DEFAULT_DATABASE = "aegis"
@@ -47,14 +49,56 @@ _FACT_COLUMN_DDL = """    event_id String,
 # 明细表的可写入列块（16 列，逐行一名）：`fact_column_names()` 从这里解析，与 FACT_COLUMNS 对账。
 FACT_COLUMN_DDL = _FACT_COLUMN_DDL
 
-# (输出列, 明细上的 -State 表达式, 聚合表列类型, -Merge 表达式)
-AGGREGATE_STATES: tuple[tuple[str, str, str, str], ...] = (
-    ("cnt", "countState()", "AggregateFunction(count, UInt64)", "countMerge(cnt)"),
-    ("total", "sumState(measure)", "AggregateFunction(sum, Float64)", "sumMerge(total)"),
-    ("peak", "maxState(measure)", "AggregateFunction(max, Float64)", "maxMerge(peak)"),
-    ("floor", "minState(measure)", "AggregateFunction(min, Float64)", "minMerge(floor)"),
-    ("measured", "countState(measure)", "AggregateFunction(count, UInt64)", "countMerge(measured)"),
-    ("p95", "quantileState(0.95)(measure)", "AggregateFunction(quantile(0.95), Float64)", "quantileMerge(0.95)(p95)"),
+
+@dataclass(frozen=True, slots=True)
+class AggregateSpec:
+    """一个分钟聚合列的四种写法，放在一起以免它们各漂各的。
+
+    `state` 进物化视图的 SELECT；`agg_type` 是聚合表列类型；`merge` 从聚合表读终值；
+    `detail` 从明细表直接算终值（回算/对账用）。
+    """
+
+    column: str
+    state: str
+    agg_type: str
+    merge: str
+    detail: str
+
+
+# 聚合口径的唯一真源。
+#
+# `agg_type` 必须等于**服务端自己推断出来的类型**（对真 ClickHouse 量过才看清：26.9 会报
+# "Conversion from AggregateFunction(sum, Nullable(Float64)) to AggregateFunction(sum, Float64)
+# is not supported"）。`measure` 是 Nullable，所以 sum/max/min/quantile 的状态参数都带 Nullable；
+# 写成非空类型时 MV 根本写不进目标表，而替身驱动的测试发现不了这一点。
+#
+# `merge`/`detail` 两侧统一 `ifNull(..., 0)`：与 `port.materialize_minutes` 同口径——
+# 一个桶里全是缺测时 total/peak/floor/p95 取 0.0、measured 取 0，两侧对账才有意义。
+AGGREGATE_STATES: tuple[AggregateSpec, ...] = (
+    AggregateSpec("cnt", "countState()", "AggregateFunction(count)", "countMerge(cnt)", "count()"),
+    AggregateSpec(
+        "total", "sumState(measure)", "AggregateFunction(sum, Nullable(Float64))", "ifNull(sumMerge(total), 0)", "ifNull(sum(measure), 0)"
+    ),
+    AggregateSpec(
+        "peak", "maxState(measure)", "AggregateFunction(max, Nullable(Float64))", "ifNull(maxMerge(peak), 0)", "ifNull(max(measure), 0)"
+    ),
+    AggregateSpec(
+        "floor", "minState(measure)", "AggregateFunction(min, Nullable(Float64))", "ifNull(minMerge(floor), 0)", "ifNull(min(measure), 0)"
+    ),
+    AggregateSpec(
+        "measured",
+        "countState(measure)",
+        "AggregateFunction(count, Nullable(Float64))",
+        "countMerge(measured)",
+        "count(measure)",
+    ),
+    AggregateSpec(
+        "p95",
+        "quantileState(0.95)(measure)",
+        "AggregateFunction(quantile(0.95), Nullable(Float64))",
+        "ifNull(quantileMerge(0.95)(p95), 0)",
+        "ifNull(quantile(0.95)(measure), 0)",
+    ),
 )
 
 # 分钟聚合的分组键：与明细表 ORDER BY 一致（minute 优先、region_code 次之），再加 kind 区分三类事实。
@@ -94,29 +138,39 @@ GROUP BY {", ".join(MINUTE_KEYS)}"""
 
 
 def _agg_column_defs() -> str:
-    return ",\n".join(f"    {column} {agg_type}" for column, _state, agg_type, _merge in AGGREGATE_STATES)
+    return ",\n".join(f"    {spec.column} {spec.agg_type}" for spec in AGGREGATE_STATES)
+
+
+# 目标表形态的 MV 按**列名**对齐 SELECT 输出：少了 AS 别名，真服务端会直接报
+# THERE_IS_NO_COLUMN（`countState()` 不是列名）。别名与 `MINUTE_TABLE` 的列定义同源于
+# AGGREGATE_STATES，所以两者不会各写一份而漂移。
+def _mv_state_columns() -> str:
+    return ", ".join(f"{spec.state} AS {spec.column}" for spec in AGGREGATE_STATES)
 
 
 def minute_select_from_detail(database: str = DEFAULT_DATABASE) -> str:
-    """直接从明细表回算分钟值（与物化视图同源），用于历史回填 / 对账 / 集成测试比对。"""
-    states = ", ".join(state for _column, state, _agg_type, _merge in AGGREGATE_STATES)
-    return f"SELECT {', '.join(MINUTE_KEYS)}, {states} FROM {database}.{FACT_TABLE} GROUP BY {', '.join(MINUTE_KEYS)}"
+    """从明细表直接回算分钟终值（历史回填 / 对账 / 集成测试比对）。
+
+    刻意用普通聚合函数而不是 `-State`：状态列的序列化 clickhouse-connect 读不了
+    （`AggregateFunction(count) deserialization not supported`），回算要拿到能直接读的值。
+    """
+    columns = ", ".join(f"{spec.detail} AS {spec.column}" for spec in AGGREGATE_STATES)
+    return f"SELECT {', '.join(MINUTE_KEYS)}, {columns} FROM {database}.{FACT_TABLE} GROUP BY {', '.join(MINUTE_KEYS)}"
 
 
 def minute_select_from_agg(database: str = DEFAULT_DATABASE) -> str:
     """从聚合表读分钟值（读时合并 -State/-Merge），是查询侧默认出口。"""
-    merges = ", ".join(f"{merge} AS {column}" for column, _state, _agg_type, merge in AGGREGATE_STATES)
+    merges = ", ".join(f"{spec.merge} AS {spec.column}" for spec in AGGREGATE_STATES)
     return f"SELECT {', '.join(MINUTE_KEYS)}, {merges} FROM {database}.{MINUTE_TABLE} GROUP BY {', '.join(MINUTE_KEYS)}"
 
 
 def build_clickhouse_ddl(database: str = DEFAULT_DATABASE) -> tuple[str, ...]:
     """按执行顺序渲染建表语句（全 IF NOT EXISTS，幂等、可反复执行）。"""
-    mv_states = ", ".join(state for _column, state, _agg_type, _merge in AGGREGATE_STATES)
     return (
         DATABASE_DDL.format(database=database),
         FACT_DDL.format(database=database),
         MINUTE_DDL.format(database=database, agg_columns=_agg_column_defs()),
-        MV_DDL.format(database=database, mv_states=mv_states),
+        MV_DDL.format(database=database, mv_states=_mv_state_columns()),
     )
 
 

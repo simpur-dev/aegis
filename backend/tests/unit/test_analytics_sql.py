@@ -114,19 +114,48 @@ class TestClickHouseDdl:
 
 class TestAggregateStateSingleSource:
     def test_agg_columns_and_states_share_names(self) -> None:
-        names = [column for column, _state, _agg, _merge in AGGREGATE_STATES]
+        names = [spec.column for spec in AGGREGATE_STATES]
         assert names == ["cnt", "total", "peak", "floor", "measured", "p95"]
         assert len(names) == len(set(names))
 
     def test_agg_table_declares_every_state_column(self) -> None:
         agg_ddl = CLICKHOUSE_DDL[2]
-        for column, _state, agg_type, _merge in AGGREGATE_STATES:
-            assert f"{column} {agg_type}" in agg_ddl, column
+        for spec in AGGREGATE_STATES:
+            assert f"{spec.column} {spec.agg_type}" in agg_ddl, spec.column
+
+    def test_nullable_measure_forces_nullable_state_types(self) -> None:
+        """`measure` 是 Nullable(Float64)，除 countState() 外的状态类型必须带 Nullable。
+
+        真服务端会拒绝把 `AggregateFunction(sum, Nullable(Float64))` 写进
+        `AggregateFunction(sum, Float64)` 列，替身驱动发现不了这一点。
+        """
+        for spec in AGGREGATE_STATES:
+            if spec.state.startswith("countState()"):
+                continue
+            assert "Nullable(Float64)" in spec.agg_type, spec.column
+
+    def test_mv_select_aliases_every_state_to_its_column(self) -> None:
+        """`TO 目标表` 的 MV 按列名对齐 SELECT 输出：漏 AS 就是 THERE_IS_NO_COLUMN。"""
+        mv = CLICKHOUSE_DDL[3]
+        for spec in AGGREGATE_STATES:
+            assert f"{spec.state} AS {spec.column}" in mv, spec.column
+
+    def test_detail_recompute_reads_final_values_not_states(self) -> None:
+        """回算 SQL 必须用普通聚合函数：clickhouse-connect 读不了 AggregateFunction 列。"""
+        detail = minute_select_from_detail()
+        for spec in AGGREGATE_STATES:
+            assert spec.detail in detail, spec.column
+            assert spec.state not in detail, spec.column
+
+    def test_detail_and_merge_sides_share_the_null_convention(self) -> None:
+        """空测桶两侧都得给 0：一侧 ifNull 一侧不给，对账就会把口径差异读成数据错。"""
+        for spec in AGGREGATE_STATES:
+            assert spec.merge.startswith("ifNull") == spec.detail.startswith("ifNull"), spec.column
 
     def test_mv_select_uses_state_functions(self) -> None:
         mv = CLICKHOUSE_DDL[3]
-        for _column, state, _agg, _merge in AGGREGATE_STATES:
-            assert state in mv, state
+        for spec in AGGREGATE_STATES:
+            assert spec.state in mv, spec.state
 
     def test_detail_recompute_and_agg_read_are_dual_path(self) -> None:
         """回填/对账走明细回算，查询走聚合读：两条 SQL 都必须在，且分组键一致。"""
@@ -134,7 +163,7 @@ class TestAggregateStateSingleSource:
         agg = minute_select_from_agg()
         for expr in (detail, agg):
             assert expr.count(", ".join(MINUTE_KEYS)) >= 1
-        assert "quantileState(0.95)(measure)" in detail
+        assert "quantile(0.95)(measure)" in detail
         assert "quantileMerge(0.95)(p95)" in agg
 
     def test_custom_database_propagates(self) -> None:
