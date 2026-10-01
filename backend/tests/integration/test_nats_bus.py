@@ -12,13 +12,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+import uuid
+from collections.abc import AsyncIterator
 
+import nats
 import pytest
 
 from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway, ContractRegistry
-from aegis.bus.nats_bus import NatsBus
+from aegis.bus.nats_bus import _STREAMS, NatsBus  # 删流要照同一份清单来，测试里不抄第二份
 from aegis.bus.registry import AgentRegistry
 from aegis.config import Settings
 from aegis.domain.enums import Action, AgentType, RiskLevel
@@ -36,11 +40,29 @@ def _settings() -> Settings:
 
 
 @pytest.fixture
-def stream_prefix() -> str:
-    """每次运行使用独立流前缀，避免 CI 并发运行互相污染。"""
-    import uuid
+async def stream_prefix() -> AsyncIterator[str]:
+    """每条用例一套自己的持久流，用完删掉。
 
-    return f"AEGIST_{uuid.uuid4().hex[:8]}"
+    NATS 2.10 会拒绝"主题与既有流重叠"的新流（err_code 10065），所以"每条换前缀"
+    必须搭配"每条删干净"——否则同一台服务器上从第二条用例起就再也建不出流。
+    今晚接上真实 JetStream 才把这条暴露出来：旧代码把建流失败咽在 debug 里，
+    于是这些用例看着"连上了"，实际每条发布都在失败。
+    """
+    prefix = f"AEGIST_{uuid.uuid4().hex[:8]}"
+    yield prefix
+    await _drop_streams(prefix)
+
+
+async def _drop_streams(prefix: str) -> None:
+    client = await nats.connect(NATS_URL)
+    jetstream = client.jetstream()
+    try:
+        for suffix, _patterns in _STREAMS:
+            # 建流就没成功的用例本来没有这条流：删不到不算问题。
+            with contextlib.suppress(Exception):
+                await jetstream.delete_stream(f"{prefix}_{suffix}")
+    finally:
+        await client.close()
 
 
 async def _make_bus(stream_prefix: str) -> NatsBus:
@@ -85,7 +107,10 @@ class TestNatsBus:
 
         try:
             await gateway.start()
-            await agent_bus.subscribe(subjects.agent_in(AgentType.ASSESS), agent_handler, queue="cg-assess")
+            # durable 而不是临时队列订阅：订阅注册是一次往返，dispatch 紧跟着发出去时
+            # 临时订阅可能还没生效，消息只留在流里没人收——这条用例就会偶发超时。
+            # 站端在生产里用的本来就是 durable 消费者，这里按生产形态订。
+            await agent_bus.subscribe(subjects.agent_in(AgentType.ASSESS), agent_handler, queue="cg-assess", durable="cg-assess")
             reply = await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, {"region_code": "540121"}, trace_id=TRACE)
             assert reply.payload["confidence"] == pytest.approx(0.77)
             assert gateway.success_rate() == 1.0
@@ -108,6 +133,9 @@ class TestNatsBus:
 
         try:
             await gateway.start()
+            # 这条订阅原本只是定义了 capture 却没订上去，于是 received 永远是空表：
+            # 断言看着严格，其实没有任何东西会往里写。真实 JetStream 上跑第一次就露馅。
+            await agent_bus.subscribe(subjects.agent_out(AgentType.PERCEIVE), capture, durable="cg_capture")
             await asyncio.sleep(0.2)  # 等 JetStream 消费者注册完成
             from aegis.domain.messages import make_event
 

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from aegis.bus.subjects import subject_matches
 from aegis.bus.transport import BusTransport, RawCallback, Subscription
+from aegis.errors import BusNotReadyError
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NatsClient
@@ -27,6 +28,10 @@ _STREAMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("OPS", ("ops.>", "platform.alert.>")),
     ("REPLY", ("reply.>",)),
 )
+
+# 服务端按 msg_id 去重的窗口，单位**秒**：nats-py 序列化时再换算成纳秒，
+# 直接传纳秒会被乘第二次（1.2e20）顶出 int64，JetStream 回 "invalid JSON" 拒绝建流。
+DUPLICATE_WINDOW_SECONDS = 120
 
 
 class NatsBus(BusTransport):
@@ -53,7 +58,7 @@ class NatsBus(BusTransport):
         try:
             import nats
             from nats.js import api as js_api
-            from nats.js.errors import Error as JetStreamError
+            from nats.js.errors import APIError as NatsAPIError
         except ImportError as exc:  # pragma: no cover - 依赖缺失时给出明确指引
             raise RuntimeError("NATS 总线需要 nats-py 依赖：uv sync --extra nats") from exc
 
@@ -68,13 +73,21 @@ class NatsBus(BusTransport):
             config = js_api.StreamConfig(
                 name=f"{self._prefix}_{suffix}",
                 subjects=list(patterns),
-                duplicate_window=120_000_000_000,  # 60s（纳秒）：服务端按 msg 去重
+                duplicate_window=DUPLICATE_WINDOW_SECONDS,
                 max_msgs=1_000_000,
             )
             try:
                 await self._js.add_stream(config)
-            except JetStreamError as exc:  # 已存在或并发创建：视为幂等成功
-                log.debug("stream 已存在或复用", extra={"stream": config.name, "reason": str(exc)})
+            except NatsAPIError as exc:
+                # STREAM.CREATE 对"同名同配置的既存流"是幂等的（服务端直接 200）。
+                # 因此走到这里就是真失败：JetStream 没启用、同名流配置冲突、无响应节点。
+                # 把它咽进 debug 会带出一条"已连接但每条发布都失败"的总线——
+                # 现场只会看到预警迟迟不出现，而查不到是总线没起来。
+                await self.close()
+                raise BusNotReadyError(
+                    f"NATS 流 {config.name} 创建失败: {exc}",
+                    detail={"stream": config.name, "server_code": getattr(exc, "code", None)},
+                ) from exc
         self._connected = True
         log.info("NATS 已连接", extra={"url": self._url})
 
@@ -90,7 +103,9 @@ class NatsBus(BusTransport):
         self._connected = False
 
     @staticmethod
-    def _on_error(exc: Exception) -> None:  # pragma: no cover - NATS 回调
+    async def _on_error(exc: Exception) -> None:
+        # 必须是协程：nats-py 在 connect() 里就地校验回调类型，同步函数会抛
+        # InvalidCallbackTypeError——真实总线连不上，而替身客户端永远发现不了。
         log.error("NATS 连接异常", extra={"error": str(exc)})
 
     # ---------- 收发 ----------
@@ -132,7 +147,10 @@ class NatsBus(BusTransport):
             js_sub = await self._js.subscribe(
                 subject,
                 stream=stream,
-                queue=queue or "",
+                # nats-py 里 queue 就是消费者名：同时给 queue 与 durable 且两者不等会被直接拒绝
+                # （"cannot create queue subscription ... to consumer ..."）。一个 durable 消费者
+                # 本身就是一个队列组，组名沿用消费者名，多实例用同一 durable 订阅即负载均衡。
+                queue=durable if queue else "",
                 durable=durable,
                 cb=_cb,
                 manual_ack=False,
