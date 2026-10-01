@@ -56,6 +56,7 @@ from aegis.storage.store import (
     TaskPort,
     TelemetryPort,
     WarningPort,
+    station_ledger_row,
 )
 from aegis.workflow.model import WorkflowDef, WorkflowInstance
 
@@ -496,6 +497,49 @@ class PostgresStore:
     async def stations_within(self, *, lon: float, lat: float, radius_m: float, limit: int = 50) -> list[dict[str, Any]]:
         async with self.acquire() as conn:
             return await geo.stations_within(conn, lon=lon, lat=lat, radius_m=radius_m, limit=limit)
+
+    async def list_stations(self, *, region_code: str | None = None, limit: int = 500) -> list[dict[str, object]]:
+        """站点清单：维表行（有名称与坐标）优先，再用"报过数但不在维表"的站点补齐。
+
+        合并而不是二选一：维表由运维导入，遥测会自己冒出没登记过的站，只回一边必然对不上真实站数。
+        维表缺坐标的站照样出现在清单里（坐标为 None），前端把它们列进"未定位"，
+        这比按猜想的坐标把它们画上地图要好——错的坐标会被当成实测证据。
+        库不可达时退回读视图：清单是只读事实，不该因一次网络抖动变成 503。
+        """
+        if limit <= 0:
+            raise QueryFailedError("limit 必须为正", detail={"limit": limit})
+
+        rows: list[dict[str, object]] = []
+        seen: set[str] = set()
+        if self.connected:
+            try:
+                async with self.acquire() as conn:
+                    fetched = await geo.stations_list(conn, region_code=region_code, limit=limit)
+            except Exception as exc:
+                log.warning("站点维表读取失败，清单退回读视图", extra={"error": f"{type(exc).__name__}: {exc}"})
+            else:
+                for record in fetched:
+                    station_id = str(record["station_id"])
+                    seen.add(station_id)
+                    rows.append(
+                        station_ledger_row(
+                            station_id,
+                            str(record.get("region_code") or ""),
+                            name_zh=str(record.get("name_zh") or ""),
+                            hazard_focus=record.get("hazard_focus") or (),
+                            elevation_m=record.get("elevation_m"),
+                            lon=record.get("lon"),
+                            lat=record.get("lat"),
+                            geom=record.get("geom"),
+                        )
+                    )
+
+        for row in await self._read.list_stations(region_code=region_code, limit=limit):
+            if row["station_id"] not in seen:
+                rows.append(row)
+        # 两个来源各排各的序，拼起来就不是序；清单要能逐轮对账，必须按同一口径重排
+        rows.sort(key=lambda row: str(row["station_id"]))
+        return rows[:limit]
 
     async def hazard_trace_summary(self, *, polygon_wkt: str, since: datetime, until: datetime | None = None) -> dict[str, Any]:
         async with self.acquire() as conn:

@@ -32,7 +32,7 @@ from aegis.domain.messages import (
     now_iso,
     utc_now,
 )
-from aegis.persistence.errors import ConnectionFailedError, VectorEmbeddingError
+from aegis.persistence.errors import ConnectionFailedError, QueryFailedError, VectorEmbeddingError
 from aegis.persistence.postgres import PostgresStore
 
 DSN = os.getenv("AEGIS_TEST_PG_DSN", "")
@@ -176,6 +176,44 @@ class TestSpatialQueries:
         summary = await store.hazard_trace_summary(polygon_wkt=ZONE, since=since)
         assert summary["station_count"] == 2  # S3 在面外
         assert summary["readings"] == 1  # 只有面内站点的读数
+
+
+class TestStationInventory:
+    """`GET /api/v1/stations` 背后的合并语义：维表给身份与坐标，遥测证明存在。"""
+
+    async def test_ledger_rows_carry_names_and_coordinates(self, store: PostgresStore) -> None:
+        await store.upsert_station("PG-S1", "540102", 91.28, 29.896, name_zh="拉萨河站", hazard_focus=("泥石流",), elevation_m=3650.0)
+        await store.upsert_station("PG-S2", "540102", 91.30, 29.90)
+
+        rows = await store.list_stations()
+
+        assert [row["station_id"] for row in rows] == ["PG-S1", "PG-S2"]
+        assert rows[0]["name_zh"] == "拉萨河站" and rows[0]["hazard_focus"] == ["泥石流"]
+        assert rows[0]["elevation_m"] == 3650.0
+        assert round(rows[0]["lon"], 3) == 91.28 and round(rows[0]["lat"], 3) == 29.896
+        assert str(rows[0]["geom"]).startswith("SRID=4326;POINT(91.28")
+        assert rows[1]["name_zh"] == "" and rows[1]["elevation_m"] is None, "维表没写的字段必须是空值，不能补默认"
+
+    async def test_stations_seen_only_in_telemetry_are_merged_without_coordinates(self, store: PostgresStore) -> None:
+        await store.upsert_station("PG-S1", "540102", 91.28, 29.896, name_zh="拉萨河站")
+        await store.telemetry.add([_reading("PG-S9", 12.0)])
+
+        rows = await store.list_stations()
+        by_id = {row["station_id"]: row for row in rows}
+
+        assert set(by_id) == {"PG-S1", "PG-S9"}, "报过数但未登记的站必须进清单，否则地图比真实站数少"
+        assert by_id["PG-S9"]["lon"] is None and by_id["PG-S9"]["name_zh"] == ""
+        assert list(by_id) == sorted(by_id), "两个来源合并后仍要按 station_id 升序，否则两轮清单无法逐行对账"
+
+    async def test_region_filter_and_limit_apply_to_the_merged_list(self, store: PostgresStore) -> None:
+        await store.upsert_station("PG-S1", "540102", 91.28, 29.896)
+        await store.upsert_station("PG-S2", "540121", 91.5, 29.6)
+        await store.telemetry.add([_reading("PG-S3", 5.0, region="540121")])
+
+        assert [row["station_id"] for row in await store.list_stations(region_code="540121")] == ["PG-S2", "PG-S3"]
+        assert len(await store.list_stations(limit=1)) == 1
+        with pytest.raises(QueryFailedError):
+            await store.list_stations(limit=0)
 
 
 class TestTelemetryPersistence:

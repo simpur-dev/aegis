@@ -108,6 +108,32 @@ def build_stations_in_polygon(*, polygon_wkt: str, region_code: str | None = Non
     return sql, args
 
 
+def build_stations_list(*, region_code: str | None = None, limit: int = MAX_LIMIT) -> tuple[str, list[Any]]:
+    """站点维表清单：与半径/面查询不同，这里不带任何距离条件，唯一要求是 `station_id` 稳定升序。
+
+    坐标是这一路的重点，所以必须把 `geom` 显式取回来（`STATION_FIELDS` 那四条查询不带坐标，
+    它们只回答"哪些站在范围内"）。geom 是 geography，取经纬度与 EWKT 都要先转 geometry。
+    """
+    check_limit(limit)
+    args: list[Any] = []
+    where = "1=1"
+    if region_code:
+        args.append(region_code)
+        where = f"region_code = ${len(args)}"
+    args.append(limit)
+    sql = (
+        f"SELECT {STATION_FIELDS},\n"
+        f"       ST_X(geom::geometry) AS lon,\n"
+        f"       ST_Y(geom::geometry) AS lat,\n"
+        f"       ST_AsEWKT(geom::geometry) AS geom\n"
+        f"FROM monitoring_stations\n"
+        f"WHERE {where}\n"
+        f"ORDER BY station_id\n"
+        f"LIMIT ${len(args)}\n"
+    )
+    return sql, args
+
+
 def build_trace_reading_count(*, polygon_wkt: str, since: datetime, until: datetime | None) -> tuple[str, list[Any]]:
     """轨迹面内的读数计数。
 
@@ -165,6 +191,11 @@ async def stations_within(
 
 async def stations_in_polygon(conn: Connection, *, polygon_wkt: str, region_code: str | None = None) -> list[dict[str, Any]]:
     sql, args = build_stations_in_polygon(polygon_wkt=polygon_wkt, region_code=region_code)
+    return [dict(row) for row in await conn.fetch(sql, *args)]
+
+
+async def stations_list(conn: Connection, *, region_code: str | None = None, limit: int = MAX_LIMIT) -> list[dict[str, Any]]:
+    sql, args = build_stations_list(region_code=region_code, limit=limit)
     return [dict(row) for row in await conn.fetch(sql, *args)]
 
 

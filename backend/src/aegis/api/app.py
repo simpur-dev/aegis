@@ -168,6 +168,22 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         outcome = await ctn.retrieval.retrieve(RetrievalQuery(text=q, k=k, rerank=rerank))
         return {"query": q, **outcome.as_dict(), "items": [doc.as_reference() for doc in outcome.docs]}
 
+    @app.get("/api/v1/stations", tags=["data"])
+    async def list_stations(
+        ctn: PlatformContainer = Depends(get_container),
+        region_code: str | None = Query(default=None, pattern=r"^[0-9A-Z]{6,24}$"),
+        limit: int = Query(default=200, ge=1, le=1_000),
+    ) -> dict[str, Any]:
+        """站点清单：维表里登记的站（带名称与坐标）+ 报过数但还没登记的站。
+
+        坐标只有在维表真的写了才返回：地图宁可把该站列进"未定位"，也不按区划中心或站点编号
+        猜一个经纬度——演示里看不出差别，验收时被当成实测坐标就是事故。
+        `region_code` 的格式与 `monitoring_stations` 的 CHECK 同口径，写错了直接 422，
+        免得一次笔误变成"这个区一个站都没有"。
+        """
+        rows = await ctn.store.list_stations(region_code=region_code, limit=limit)
+        return {"count": len(rows), "items": rows}
+
     @app.get("/api/v1/telemetry", tags=["data"])
     async def list_telemetry(
         ctn: PlatformContainer = Depends(get_container),

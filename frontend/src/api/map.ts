@@ -181,8 +181,9 @@ export function createMapApiClient(instance: AxiosInstance) {
       request<EventsResponse>({ url: '/api/v1/events', params: { limit } }),
 
     /**
-     * 站点台账（后端**尚无**该路由，404 属预期）：形状按 `monitoring_stations` 表声明。
-     * 一旦后端补上 `GET /api/v1/stations`，本页无需改动即可把站点从「未定位」变成实点。
+     * 站点台账（后端 `GET /api/v1/stations`）：维表登记的站带名称与经纬度，
+     * 只报过数、尚未登记的站只有 station_id + region_code，坐标为 null。
+     * 后者由上层归入「未定位」列表——这是真实数据缺口，不能拿区划中心点补一个坐标上去。
      */
     stations: (query: StationQuery = {}) =>
       request<StationsResponse>({ url: '/api/v1/stations', params: query }),

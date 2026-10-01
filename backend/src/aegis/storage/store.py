@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Generic, Protocol, TypeVar
 
@@ -55,9 +55,20 @@ class BoundedCollection(Generic[T]):
 class TelemetryStore:
     def __init__(self, maxlen: int = 50_000) -> None:
         self._collection: BoundedCollection[TelemetryReading] = BoundedCollection(maxlen)
+        # 站点存在性台账：station_id -> region_code（首次见到该站读数时登记）。
+        # 读数被有界淘汰时这条登记**不撤回**——"这个站报过数"是发生过的事实，不该随窗口滑动消失。
+        self._stations: dict[str, str] = {}
 
     async def add(self, readings: Iterable[TelemetryReading]) -> int:
-        return await self._collection.add_many(readings)
+        items = list(readings)
+        for reading in items:
+            if reading.station_id:
+                self._stations.setdefault(reading.station_id, reading.region_code or "")
+        return await self._collection.add_many(items)
+
+    def observed_stations(self) -> list[tuple[str, str]]:
+        """报过数的站点，按 station_id 升序：这是"清单"的唯一稳定顺序口径。"""
+        return sorted(self._stations.items())
 
     def query(
         self,
@@ -138,6 +149,34 @@ class TaskStore:
         return len(self._collection)
 
 
+def station_ledger_row(
+    station_id: str,
+    region_code: str = "",
+    *,
+    name_zh: str = "",
+    hazard_focus: Sequence[str] = (),
+    elevation_m: float | None = None,
+    lon: float | None = None,
+    lat: float | None = None,
+    geom: str | None = None,
+) -> dict[str, object]:
+    """站点清单的统一行形状。
+
+    两个后端（内存视图与 PostgreSQL 维表）必须逐键一致：字段缺失就写 None/空表，
+    少一列和多一列都会让前端把"没有坐标"和"这一行不存在"混成同一件事。
+    """
+    return {
+        "station_id": station_id,
+        "name_zh": name_zh,
+        "region_code": region_code,
+        "hazard_focus": list(hazard_focus),
+        "elevation_m": elevation_m,
+        "lon": lon,
+        "lat": lat,
+        "geom": geom,
+    }
+
+
 class PlatformStore:
     """平台运行态聚合入口。"""
 
@@ -146,6 +185,19 @@ class PlatformStore:
         self.warnings = WarningStore()
         self.tasks = TaskStore()
         self.chains: BoundedCollection[ChainResult] = BoundedCollection(2_000)
+
+    async def list_stations(self, *, region_code: str | None = None, limit: int = 500) -> list[dict[str, object]]:
+        """站点清单（内存视图）：只回答"哪些站报过数、报在哪个行政区"。
+
+        站点名称、经纬度与高程来自维表，内存视图里没有就是没有——绝不拿遥测字段拼一个看似完整的
+        站点出来。缺坐标的条目由前端归入"未定位"列表，而不是从地图上凭空消失。
+        """
+        if limit <= 0:
+            raise ValueError("limit 必须为正")
+        rows = [station_ledger_row(station_id, region) for station_id, region in self.telemetry.observed_stations()]
+        if region_code:
+            rows = [row for row in rows if row["region_code"] == region_code]
+        return rows[:limit]
 
     async def record_chain(self, result: ChainResult) -> None:
         await self.chains.add(result)
@@ -225,6 +277,8 @@ class StoreProtocol(Protocol):
     def chains(self) -> BoundedCollection[ChainResult]: ...
 
     async def record_chain(self, result: ChainResult) -> None: ...
+
+    async def list_stations(self, *, region_code: str | None = None, limit: int = 500) -> list[dict[str, object]]: ...
 
     def snapshot(self) -> dict[str, object]: ...
 
