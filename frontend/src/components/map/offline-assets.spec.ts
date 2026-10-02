@@ -24,6 +24,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { PMTiles } from 'pmtiles'
 
+import { insideWebMercator, FakeWebMercatorTilingScheme, fakeRectangle, WEB_MERCATOR_MAX_LATITUDE_DEG } from '@/testing/cesiumBasemapStub'
+
 import {
   DEFAULT_BASEMAP_CONFIG,
   PmtilesImageryProvider,
@@ -147,8 +149,8 @@ function stubCesium(): BasemapCesium {
   return {
     ImageryLayer,
     UrlTemplateImageryProvider,
-    Rectangle: { fromDegrees: (west: number, south: number, east: number, north: number) => ({ west, south, east, north }) },
-    WebMercatorTilingScheme: class {},
+    Rectangle: fakeRectangle,
+    WebMercatorTilingScheme: FakeWebMercatorTilingScheme,
     Credit,
     Event: class {
       readonly addEventListener = () => undefined
@@ -174,6 +176,11 @@ describe('生成的 PMTiles 归档被真读取器读通', () => {
     expect(header.clustered).toBe(true)
     expect(header.minLon).toBeCloseTo(-180, 4)
     expect(header.maxLon).toBeCloseTo(180, 4)
+    // 纬度必须留在 Web Mercator 切片方案内：越界不是"显示不全"，而是渲染循环直接崩
+    // （浏览器实测的 undefined.x）。生成器因此把 1e7 定点量化写成往框内缩。
+    expect(header.minLat).toBeGreaterThanOrEqual(-WEB_MERCATOR_MAX_LATITUDE_DEG)
+    expect(header.maxLat).toBeLessThanOrEqual(WEB_MERCATOR_MAX_LATITUDE_DEG)
+    expect(header.maxLat).toBeCloseTo(WEB_MERCATOR_MAX_LATITUDE_DEG, 6)
     expect(header.numTileEntries).toBe(21)
   })
 
@@ -226,6 +233,8 @@ describe('前端自己的底图装配吃的就是这些真字节', () => {
     expect(provider.maximumLevel).toBe(2)
     expect(provider.hasTile(1, 1, 1)).toBe(true)
     expect(provider.hasTile(3, 3, 3)).toBe(false)
+    // 装配出来的 provider 矩形是渲染循环真正拿去算瓦号的东西：界内才算这条链没埋雷。
+    expect(insideWebMercator(provider.rectangle)).toBe(true)
     expect(requestedUrls.every((url) => url.startsWith(origin))).toBe(true)
   })
 

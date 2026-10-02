@@ -6,6 +6,9 @@
 import { TileType } from 'pmtiles'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { readRepoFile } from '@/testing/repoSource'
+import { FakeWebMercatorTilingScheme, fakeRectangle, insideWebMercator, WEB_MERCATOR_MAX_LATITUDE_DEG } from '@/testing/cesiumBasemapStub'
+
 import type { BasemapCesium, TileReader } from './basemap'
 import {
   BASEMAP_ATTRIBUTION,
@@ -137,8 +140,8 @@ function fakeCesium() {
         log.push('UrlTemplateImageryProvider')
       }
     },
-    Rectangle: { fromDegrees: (west: number, south: number, east: number, north: number) => ({ west, south, east, north }) },
-    WebMercatorTilingScheme: class {},
+    Rectangle: fakeRectangle,
+    WebMercatorTilingScheme: FakeWebMercatorTilingScheme,
     Credit: class {
       constructor(public html: string) {}
     },
@@ -243,5 +246,100 @@ describe('栅格 PMTiles provider', () => {
       attribution: 'x',
     })
     expect(await instance.requestImage(1, 1, 6)).toEqual({ kind: 'blank' })
+  })
+
+  /** provider 矩形越出切片方案 = 浏览器里 `undefined.x` 打死渲染循环；这条前提写成断言。 */
+  function providerFor(headInput: PmtilesHead) {
+    const { cesium } = fakeCesium()
+    return new PmtilesImageryProvider({
+      cesium,
+      reader: { getZxy: async () => undefined },
+      verdict: describePmtilesHead(headInput),
+      attribution: 'AEGIS 离线底图',
+    })
+  }
+
+  it('退化边界（全世界 ±90）被裁进切片方案，不把越界矩形交给渲染循环', () => {
+    const rect = providerFor(head({ minLon: 0, minLat: 0, maxLon: 0, maxLat: 0 })).rectangle
+    expect(rect).toEqual({
+      west: -180,
+      south: -WEB_MERCATOR_MAX_LATITUDE_DEG,
+      east: 180,
+      north: WEB_MERCATOR_MAX_LATITUDE_DEG,
+    })
+    expect(insideWebMercator(rect)).toBe(true)
+  })
+
+  it('压在 Web Mercator 上界外侧的归档也被裁回来（PMTiles 边界是 1e7 定点数，取整必然越界）', () => {
+    // 85.0511288 就是我们自己烘的 aegis.pmtiles 头部里的读数：
+    // 生成器写的是 85.05112877980659，按 round(north*1e7) 存成 850511288 → 读回反而变大 2e-8°。
+    // 浏览器实测的渲染崩溃就是这个数值造成的，断言用同一个数，防止改了代码却没改口径。
+    const rect = providerFor(head({ minLon: -180, minLat: -85.0511288, maxLon: 180, maxLat: 85.0511288 })).rectangle
+    expect(rect.north).toBe(WEB_MERCATOR_MAX_LATITUDE_DEG)
+    expect(rect.south).toBe(-WEB_MERCATOR_MAX_LATITUDE_DEG)
+    expect(insideWebMercator(rect)).toBe(true)
+  })
+
+  it('与切片方案无交集的归档 → 响亮抛错，由装配层降级为不挂影像', () => {
+    const { cesium } = fakeCesium()
+    expect(
+      () =>
+        new PmtilesImageryProvider({
+          cesium,
+          reader: { getZxy: async () => undefined },
+          verdict: describePmtilesHead(head({ minLat: 86, maxLat: 89 })),
+          attribution: 'x',
+        }),
+    ).toThrow('无交集')
+  })
+})
+
+/**
+ * 上面三条裁切用例依赖 Cesium 的两条内部事实（provider 矩形必须被切片方案完全包含、
+ * 切片方案矩形来自 ±半长轴·π 米的反投影）。它们是私有实现细节，升级就可能变，
+ * 所以读真源做门禁：前提没了要改代码，而不是把断言删掉。
+ */
+describe('Cesium 影像矩形前提没有漂移', () => {
+  function cesiumSource(...parts: string[]): string {
+    return readRepoFile('frontend', 'node_modules', '@cesium', 'engine', 'Source', ...parts)
+  }
+
+  /** 摊平成一行好做子串断言；行首的 `//` 必须一起去掉，否则注释里的句子被斜杠切成几段，断言会假红。 */
+  function flatten(text: string): string {
+    return text
+      .split('\n')
+      .map((line) => line.replace(/^\s*\/\/\s*/, ''))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+  }
+
+  it('ImageryLayer 仍要求切片方案矩形完全包含 provider 矩形，且未判空就解引用瓦片坐标', () => {
+    const flat = flatten(cesiumSource('Scene', 'ImageryLayer.js'))
+    expect(flat).toContain(
+      "The imagery TilingScheme's rectangle always fully contains the ImageryProvider's rectangle",
+    )
+    expect(flat).toContain('imageryTilingScheme.positionToTileXY( Rectangle.northwest(rectangle), imageryLevel, )')
+    expect(flat).toContain('imageryTilingScheme.tileXYToRectangle( northwestTileCoordinates.x,')
+  })
+
+  it('WebMercatorTilingScheme 的矩形仍来自 ±(半长轴·π) 米反投影（即 85.05112877980659°）', () => {
+    const flat = flatten(cesiumSource('Core', 'WebMercatorTilingScheme.js'))
+    expect(flat).toContain('const semimajorAxisTimesPi = this._ellipsoid.maximumRadius * Math.PI;')
+    expect(flat).toContain('this._projection.unproject(southwestCartesianScratch')
+  })
+
+  it('Rectangle.intersection 仍是「无交集返回 undefined」', () => {
+    const flat = flatten(cesiumSource('Core', 'Rectangle.js'))
+    expect(flat).toContain('static intersection(rectangle, otherRectangle, result) {')
+    expect(flat).toContain('const north = Math.min(rectangle.north, otherRectangle.north);')
+  })
+
+  it('造假切片方案的纬度上界就是真实反投影的结果，不是抄来的数', () => {
+    // 切片方案把 y = ±(椭球半长轴·π) 米交给 WebMercatorProjection.unproject，
+    // 纬度 = atan(sinh(y/a)) = atan(sinh(π)) —— 逐位相同，所以这里敢用 toBe。
+    // 顺序也要照写：先 `180 / Math.PI` 再乘会差出 1 ULP（85.0511287798066 ≠ …59），
+    // 而这条界线的越界幅度本来就只有 2e-8°，一个 ULP 的量级差别正是要防的东西。
+    expect(Math.atan(Math.sinh(Math.PI)) * 180 / Math.PI).toBe(WEB_MERCATOR_MAX_LATITUDE_DEG)
+    expect(new FakeWebMercatorTilingScheme().rectangle.north).toBe(WEB_MERCATOR_MAX_LATITUDE_DEG)
   })
 })

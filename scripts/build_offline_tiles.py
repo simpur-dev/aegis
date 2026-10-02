@@ -46,6 +46,12 @@ PMTILES_TILE_TYPE_PNG = 2
 PMTILES_HEADER_BYTES = 127
 # 读取器一次性拿前 16384 字节并从里面切出根目录（getHeaderAndRoot），所以根目录必须落在这里面。
 PMTILES_FIRST_CHUNK_BYTES = 16384
+# 头部经纬度是 1e7 定点 int32，量化只能往框内缩：见 pmtiles_header 的边界那段。
+PMTILES_COORD_FIXED_POINT = 1e7
+
+# Web Mercator 的纬度上界（度）= atan(sinh(π))：切片方案把 y = ±(椭球半长轴·π) 米反投影就得到它。
+# 烘全世界覆盖的影像归档时必须留在这个值以内，见 pmtiles_header 的注释。
+WEB_MERCATOR_MAX_LATITUDE_DEG = math.atan(math.sinh(math.pi)) * 180.0 / math.pi
 
 # Cesium extension id（QuantizedMeshExtensionIds.OCT_VERTEX_NORMALS）
 EXTENSION_OCT_VERTEX_NORMALS = 1
@@ -588,11 +594,15 @@ def pmtiles_header(
     header[99] = PMTILES_TILE_TYPE_PNG
     header[100] = min_zoom
     header[101] = max_zoom
+    # 边界量化只准往框内缩（west/south 向上取整、east/north 向下取整）。四舍五入会出界：
+    # round(85.05112877980659 * 1e7) = 850511288 → 读回 85.0511288，比 Web Mercator 的纬度上界
+    # 还大 2e-8°，而 Cesium 要求影像 provider 的矩形被切片方案**完全包含**（ImageryLayer.js 注释原文），
+    # 越界让 positionToTileXY 返回 undefined，`undefined.x` 直接把渲染循环打死（浏览器实测过）。
     west, south, east, north = bounds
-    struct.pack_into("<i", header, 102, round(west * 1e7))
-    struct.pack_into("<i", header, 106, round(south * 1e7))
-    struct.pack_into("<i", header, 110, round(east * 1e7))
-    struct.pack_into("<i", header, 114, round(north * 1e7))
+    struct.pack_into("<i", header, 102, math.ceil(west * PMTILES_COORD_FIXED_POINT))
+    struct.pack_into("<i", header, 106, math.ceil(south * PMTILES_COORD_FIXED_POINT))
+    struct.pack_into("<i", header, 110, math.floor(east * PMTILES_COORD_FIXED_POINT))
+    struct.pack_into("<i", header, 114, math.floor(north * PMTILES_COORD_FIXED_POINT))
     header[118] = center[0]
     struct.pack_into("<i", header, 119, round(center[1] * 1e7))
     struct.pack_into("<i", header, 123, round(center[2] * 1e7))
@@ -652,7 +662,7 @@ def build_pmtiles(z_max: int, dest: Path) -> int:
         num_contents=len(entries),
         min_zoom=0,
         max_zoom=z_max,
-        bounds=(-180.0, -85.05112877980659, 180.0, 85.05112877980659),
+        bounds=(-180.0, -WEB_MERCATOR_MAX_LATITUDE_DEG, 180.0, WEB_MERCATOR_MAX_LATITUDE_DEG),
         center=(max(0, z_max - 1), 0.0, 0.0),
     )
     dest.parent.mkdir(parents=True, exist_ok=True)

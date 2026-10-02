@@ -418,6 +418,28 @@ def test_pmtiles_header_declares_raster_and_zooms() -> None:
     assert "合成" in decoded["metadata"]["attribution"]
 
 
+def test_pmtiles_header_bounds_stay_inside_web_mercator() -> None:
+    """头部边界会被前端直接当成影像 provider 的矩形：越出 Web Mercator 纬度上界，
+    Cesium 的 positionToTileXY 返回 undefined，`undefined.x` 当场打死渲染循环（浏览器实测）。
+    1e7 定点量化必须往框内缩，且不能缩出可见的空隙（只允许差一个量化单位）。
+    """
+    header = decode_pmtiles(PMTILES_PATH.read_bytes())["header"]
+    limit = BUILDER.WEB_MERCATOR_MAX_LATITUDE_DEG
+    assert -limit <= header["minLat"] < header["maxLat"] <= limit
+    assert limit - 1e-7 < header["maxLat"]
+    assert header["minLat"] < -limit + 1e-7
+    # 反面教材写成断言：当初就是 round 把 85.05112877980659 写成 850511288（=85.0511288）才越界的。
+    assert round(limit * BUILDER.PMTILES_COORD_FIXED_POINT) / BUILDER.PMTILES_COORD_FIXED_POINT > limit
+
+
+def test_web_mercator_latitude_limit_matches_the_frontend_stub() -> None:
+    """这个数在烘焙脚本和前端测试替身里各写了一份；两份不一致就等于自己跟自己核对。
+    读源对源，而不是把它抄进第三个地方。"""
+    stub = REPO_ROOT / "frontend" / "src" / "testing" / "cesiumBasemapStub.ts"
+    assert stub.is_file(), f"跨端门禁要读的前端替身不在位：{stub}"
+    assert f"{BUILDER.WEB_MERCATOR_MAX_LATITUDE_DEG!r}" in stub.read_text(encoding="utf-8")
+
+
 def test_pmtiles_tiles_are_decodable_png_of_right_size() -> None:
     decoded = decode_pmtiles(PMTILES_PATH.read_bytes())
     for tile_id_value, payload in decoded["tiles"].items():

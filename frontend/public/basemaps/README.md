@@ -34,7 +34,12 @@ public/basemaps/aegis.pmtiles
 * 格式：**PMTiles v3**，`TileType` 必须是**栅格**（PNG=2 / JPEG=3 / WebP=4 / AVIF=5）。
   矢量 MVT(=1) 不能当影像用，代码会直接拒收并提示走形态 C；
 * 切片方案：EPSG:3857（`WebMercatorTilingScheme`），`minZoom=0`，`maxZoom` 建议 12–14；
-* 边界：可写西藏范围；写成全 0 会被当作全世界（`describePmtilesHead()` 的退化分支）；
+* 边界：可写西藏范围；写成全 0 会被当作全世界（`describePmtilesHead()` 的退化分支）。
+  **纬度必须留在 ±85.05112877980659°（Web Mercator 上界）以内**：头部经纬度是 1e7 定点 int32，
+  四舍五入会把 85.05112877980659 写成 850511288（读回 85.0511288，越界 2e-8°），而 Cesium 要求
+  影像 provider 的矩形被切片方案完全包含，越界不是"显示不全"而是渲染循环直接崩（浏览器实测）。
+  `scripts/build_offline_tiles.py` 因此把边界量化写成**只往框内缩**；运行时 `PmtilesImageryProvider`
+  还会再取一次交集，不信任上游工具写什么。
 * 应用探针：`HEAD /basemaps/aegis.pmtiles`。运行时只按 Range 取需要的字节，弱网友好。
 
 生成（本地，不连任何第三方瓦片服务）：

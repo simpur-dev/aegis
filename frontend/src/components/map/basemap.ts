@@ -249,8 +249,25 @@ export class PmtilesImageryProvider {
     this.contentType = verdict.contentType
     this.minimumLevel = verdict.minimumLevel
     this.maximumLevel = Math.max(verdict.maximumLevel, verdict.minimumLevel)
-    this.rectangle = cesium.Rectangle.fromDegrees(verdict.bounds.west, verdict.bounds.south, verdict.bounds.east, verdict.bounds.north)
     this.tilingScheme = new cesium.WebMercatorTilingScheme()
+    // Cesium 的渲染前提写得很直白：「imagery TilingScheme 的 rectangle 总是完全包含
+    // ImageryProvider 的 rectangle」——`_createTileImagerySkeletons` 会拿本 provider 矩形四角去
+    // `positionToTileXY`，落在切片方案之外就返回 undefined，然后 `undefined.x` 直接把渲染循环打死
+    // （浏览器里实测过：底图一挂上就 "An error occurred while rendering. Rendering has stopped."）。
+    // 越界不需要谁写错数据：PMTiles 的边界是 1e7 定点 int32，全世界覆盖的归档按四舍五入量化就会
+    // 落到 85.0511288°，比 Web Mercator 的纬度上界 85.05112877980659° 大 2e-8°。所以这里取交集，
+    // 不假设上游工具守规矩（自己的生成器同样在 `build_offline_tiles.py` 里改成往框内缩）。
+    const declared = cesium.Rectangle.fromDegrees(
+      verdict.bounds.west,
+      verdict.bounds.south,
+      verdict.bounds.east,
+      verdict.bounds.north,
+    )
+    const clipped = cesium.Rectangle.intersection(declared, this.tilingScheme.rectangle)
+    if (!clipped) {
+      throw new Error(`归档边界 ${JSON.stringify(verdict.bounds)} 与 Web Mercator 切片方案无交集，本层不挂影像`)
+    }
+    this.rectangle = clipped
     this.credit = new cesium.Credit(options.attribution)
     this.errorEvent = new cesium.Event()
   }
