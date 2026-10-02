@@ -125,7 +125,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 因此没做过一次"停服—起服—回读参数"；② 迁移期空闲日志长到的 629MB 还没滚掉，因为文件句柄在服务进程手里，
 需要"停服→删→起服"一趟，这条已经写成可复跑的 `D:\seekdb\migration-evidence\roll-server-log.ps1`
 （归档-回读校验-才删，与旧日志那条同一口径），但**尚未执行**。
-| 地图渲染的两道门禁（无头真 Cesium 解析 + Playwright 真机画面） | 本机 `@cesium/engine`/`cesium@1.145`（与浏览器同一份模块）+ `node:http` 本机静态服务；Playwright 1.5x chromium（Chrome for Testing 153.0.8010.12，SwiftShader 软件 GL，本机跑、不用任何云测服务）+ `vite preview` 构建产物 | `npx vitest run src/components/map/terrain-parse.spec.ts`（14 项）；`npm run test:e2e`（4 项，13.0s）；`npm run typecheck` + 前端 **323 项**全绿 | 上一轮的教训是"实现+替身测试"不等于"真跑通"，这轮把两层都变成常驻门禁。**第一层（零新依赖）**：真 Cesium 逐瓦解析 42 张 `.terrain`，除"能解析"外还钉住三条不变量——① 按 `maxShort=32767` 反算的顶点高程必须铺满头部声明的高度界（我一开始用 65535 反算，得出"高度只有一半"的**假故障**，所以这个数由门禁对着已安装源码核）；② 峰必须落在它该在的瓦角落（v 口径一旦翻转就会偏十几度，而按瓦最大值判是判不出来的）；③ 邻瓦同经线接缝高差 < 1 m（实测 0）。另有三档缺件都得响亮：老实 404 → `RequestErrorEvent`，`vite preview` 的 `200 text/html` → `RangeError: Invalid typed array length`（证明 HTML 真被喂进了 quantized-mesh 解析器），以及"layer.json 声明可用但瓦不在位"→ reject 而不是静默出平地形。**第二层（真 GPU 画面）**：`/map?mapDebug=1` 打开构建产物，实测画布 720×490、2861 种颜色、主色占 17.2%、亮度 1.1..255，无 `An error occurred while rendering` 遮罩；6 张地形瓦响应各 22,609B、全 2xx、无一张是 HTML；场景侧 `globe.getHeight(85°E,31°N)=4196m`（椭球面只会给 0，所以这条就是"provider 是谁"的行为证据——生产包里类名已被压成 `hd`，看名字判不出）。**因此改掉的装配面事实**：新增显式 opt-in 的只读场景句柄 `debugHandle.ts`（URL 不带 `?mapDebug` 就不挂，销毁必清），此前 e2e 只能"看截图猜"；`vite preview` 默认只绑 `[::1]`（实测 netstat），门禁命令里补 `--host 127.0.0.1`。**照实记**：① 贴瓦边取到 -8243m 这类负值是引擎裙边（`skirtHeight = 该层几何误差 × 5`，maxzoom 2 时 L2 误差还有 19km），不是资产坏了，所以画面侧只判"这里没有高原"不判下界；② CI 仍只跑 `npm run test`，e2e 需要下载浏览器与真 GL，按"本机/现场交付前跑"的口径提供 `npm run test:e2e`，不进云端门禁；③ 截图里出现了 Cesium 默认的 "Cesium ion" 署名，与"不依赖 Ion"的口径相悖，属待修项（见下面清单第 6 条） |
+| 地图渲染的两道门禁（无头真 Cesium 解析 + Playwright 真机画面） | 本机 `@cesium/engine`/`cesium@1.145`（与浏览器同一份模块）+ `node:http` 本机静态服务；Playwright 1.5x chromium（Chrome for Testing 153.0.8010.12，SwiftShader 软件 GL，本机跑、不用任何云测服务）+ `vite preview` 构建产物 | `npx vitest run src/components/map/terrain-parse.spec.ts`（14 项）；`npm run test:e2e`（4 项，13.0s）；`npm run typecheck` + 前端 **323 项**全绿 | 上一轮的教训是"实现+替身测试"不等于"真跑通"，这轮把两层都变成常驻门禁。**第一层（零新依赖）**：真 Cesium 逐瓦解析 42 张 `.terrain`，除"能解析"外还钉住三条不变量——① 按 `maxShort=32767` 反算的顶点高程必须铺满头部声明的高度界（我一开始用 65535 反算，得出"高度只有一半"的**假故障**，所以这个数由门禁对着已安装源码核）；② 峰必须落在它该在的瓦角落（v 口径一旦翻转就会偏十几度，而按瓦最大值判是判不出来的）；③ 邻瓦同经线接缝高差 < 1 m（实测 0）。另有三档缺件都得响亮：老实 404 → `RequestErrorEvent`，`vite preview` 的 `200 text/html` → `RangeError: Invalid typed array length`（证明 HTML 真被喂进了 quantized-mesh 解析器），以及"layer.json 声明可用但瓦不在位"→ reject 而不是静默出平地形。**第二层（真 GPU 画面）**：`/map?mapDebug=1` 打开构建产物，实测画布 720×490、2861 种颜色、主色占 17.2%、亮度 1.1..255，无 `An error occurred while rendering` 遮罩；6 张地形瓦响应各 22,609B、全 2xx、无一张是 HTML；场景侧 `globe.getHeight(85°E,31°N)=4196m`（椭球面只会给 0，所以这条就是"provider 是谁"的行为证据——生产包里类名已被压成 `hd`，看名字判不出）。**因此改掉的装配面事实**：新增显式 opt-in 的只读场景句柄 `debugHandle.ts`（URL 不带 `?mapDebug` 就不挂，销毁必清），此前 e2e 只能"看截图猜"；`vite preview` 默认只绑 `[::1]`（实测 netstat），门禁命令里补 `--host 127.0.0.1`。**照实记**：① 贴瓦边取到 -8243m 这类负值是引擎裙边（`skirtHeight = 该层几何误差 × 5`，maxzoom 2 时 L2 误差还有 19km），不是资产坏了，所以画面侧只判"这里没有高原"不判下界；② CI 仍只跑 `npm run test`，e2e 需要下载浏览器与真 GL，按"本机/现场交付前跑"的口径提供 `npm run test:e2e`，不进云端门禁；③ 同一批截图还暴露一条口径矛盾：画面左下角固定画着引擎自带的厂商署名（一段带外链的 `<a target="_blank">` + 图片），而本项目一张托管资产都不取——已用公开访问器把它换成"自托管、无第三方瓦片服务"（`applyOfflineCredits`），署名容器仍说清出处，e2e 与 `credits.spec.ts` 各钉一条；④ 只烘到 maxzoom 2 的浅金字塔让引擎裙边深达 96km，贴瓦边采样会取到几万米负值，这不是资产坏了（逐顶点反算已证），修法与口径见清单第 6 条 |
 
 ## 并发曲线实测（2026-10-01，Locust）
 
@@ -205,15 +205,19 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
    两份 README 里；站点坐标同理——平台侧没有任何生产代码向
    `monitoring_stations` 写站名/经纬度（`upsert_station` 只被测试与运维导入路径调用），
    所以地图上点位的多少取决于现场导入的站点台账，不是代码能力。
-6. **一张图在真浏览器里的观感还不对（已定位到"浅金字塔 + 引擎裙边"，未修）**：原来这条写的是"挂上地形就视野内不出几何"。
-   现在用两道门禁把它推翻了：地形几何**确实在场景里**（`globe.getHeight(85°E,31°N)=4196m`、渲染中的瓦跑到层级 3–4、
-   画布 2861 种颜色、无渲染错误遮罩），字节侧也逐顶点核过（反算高程铺满头部界、邻瓦接缝 0 差）。
-   剩下的真问题是**取景与起伏观感**：截图里地表铺成一片浅色、只看得见经纬网，因为仓库烘的是全球 maxzoom 2 的浅金字塔——
-   Cesium 的裙边高度取 `该层几何误差 × 5`，L2 误差还有 19km，裙边就深 96km，贴边插值取到 -8243m 就是这么来的。
-   该做的修法写进了 `public/terrain/README.md`：**关注区域加密**（西藏一带多烘 2–3 层、全球其余保持浅层，
-   `layer.json` 的 `available` 按区域写），而不是把全球烘深（maxzoom 5 就是 2730 张 ≈ 62MB）。
-   另有一条同批发现待修：画面左下角出现 Cesium 默认的 "Cesium ion" 署名，与"不依赖 Ion/令牌"的对外口径相悖，
-   需要只去掉那条默认署名、保留我们自己的合成数据出处说明。
+6. **一张图的取景观感仍偏淡（链路本身已证通，剩下的不是缺陷而是数据与取景）**：
+   原来这条写的是"挂上地形就视野内不出几何"。两道门禁把它推翻了：地形几何**确实在场景里**
+   （`globe.getHeight(85°E,31°N)=4196m`、渲染瓦到层级 4、`globe.tilesLoaded=true`），
+   截图逐格取色也量到了分层设色 + 山体阴影的暗橄榄（21,34,16）与瓦片底色（224,216,188），
+   字节侧另有三条不变量兜着（反算高程铺满头部界、峰落在该在的角落、邻瓦接缝 0 差）。
+   残留的是**观感**：画面左上一带偏淡（相机 1.7e6m、视野 37°×36° 时地表只占下半部），
+   以及贴瓦边采样会落到引擎裙边上（`skirtHeight = 该层几何误差 × 5`，全球 maxzoom 2 的浅金字塔
+   里 L2 误差还有 19km → 裙边 96km，实测贴边取到 -8243m）。两条的根因同一个：
+   **仓库里是合成高程面 + 只烘到 3 层的全球浅金字塔**。该做的修法写进了 `public/terrain/README.md`：
+   换真实 DEM 并按关注区域加密（西藏一带多烘 2–3 层、`layer.json` 的 `available` 按区域写），
+   而不是把全球烘深（maxzoom 5 就是 2730 张 ≈ 62MB）。同批发现的一条署名问题已修：
+   画面左下角原本固定画 Cesium 厂商 logo（带外链），与"零托管服务"口径矛盾，
+   现由 `applyOfflineCredits` 换成"自托管、无第三方瓦片服务"，并由 `credits.spec.ts` + e2e 各钉一条。
 7. **案例库的经验侧**：`hazard_cases.json` 的 16 条是**自编预案模板**（骨架移植自 NexusMind 干预库，
    处置内容为川藏沿线实战口径），`confidence` 与 `estimated_delay_hours` 是编制判断值。
    召回、排序、图谱摄取三条路径都在真实数据上跑通了，但"预警准确率"意义上的**案例命中率**

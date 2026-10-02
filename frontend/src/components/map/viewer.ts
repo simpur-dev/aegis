@@ -28,7 +28,7 @@ import type {
 } from 'cesium'
 
 import type { BasemapConfig, BasemapSource } from './basemap'
-import { chooseBasemapSource, createBasemapSetup, DEFAULT_BASEMAP_CONFIG } from './basemap'
+import { BASEMAP_ATTRIBUTION, chooseBasemapSource, createBasemapSetup, DEFAULT_BASEMAP_CONFIG } from './basemap'
 import { clearMapDebugHandle, publishMapDebugHandle } from './debugHandle'
 import type {
   BBox,
@@ -114,6 +114,20 @@ function ensureCesiumBaseUrl(): void {
 
 function rectArray(box: BBox): [number, number, number, number] {
   return [box.west, box.south, box.east, box.north]
+}
+
+/**
+ * 把 Cesium 默认的厂商 logo 署名换成本项目自己的说明。
+ *
+ * 默认那条署名是一段带外链的 `<a target="_blank">` + 厂商图片（Playwright 截图实测画在左下角）。
+ * 本项目一张托管资产都不取（底图与地形都是自托管烘焙），留着它既与"零托管服务、零令牌"的
+ * 对外口径自相矛盾，又往一个宣称离线可用的页面里塞外链表单。
+ *
+ * 换掉而不是把整个署名容器隐藏：出处说明必须仍然可见（合成高程那句随瓦片信用进容器，
+ * 这里再补一条"自托管、无第三方瓦片服务"），去掉的只是厂商品牌。
+ */
+export function applyOfflineCredits(cesium: CesiumModule): void {
+  cesium.CreditDisplay.cesiumCredit = new cesium.Credit(BASEMAP_ATTRIBUTION)
 }
 
 /** 站点：有台账高程时用绝对高度（地形缺失也不贴地），否则钳地。高危等级才出文字标签。 */
@@ -258,6 +272,7 @@ function createLayerHandles(cesium: CesiumModule, viewer: CesiumViewer): LayerHa
 export async function createMapScene(el: HTMLElement, options: MapSceneOptions = {}): Promise<MapScene> {
   ensureCesiumBaseUrl()
   const cesium = await import('cesium')
+  applyOfflineCredits(cesium)
 
   const basemapConfig: BasemapConfig = { ...DEFAULT_BASEMAP_CONFIG, ...options.basemap }
   const terrainUrl = options.terrainUrl ?? DEFAULT_TERRAIN_URL

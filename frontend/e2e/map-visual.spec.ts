@@ -172,6 +172,17 @@ test('场景里的高程是真的：高原有起伏，另一处低瓦没有', as
   console.log(`[视觉门禁] 渲染中的瓦 ${facts.renderedTileCount} 张，层级 ${facts.renderedLevels.join(',') || '无'}，相机高 ${facts.cameraHeightMeters?.toFixed(0)} m`)
 })
 
+test('画面上的默认署名是自托管说明，不是 Cesium ion 的 logo', async ({ page }) => {
+  await settle(page)
+
+  const credits = page.locator('.cesium-widget-credits').first()
+  await expect(credits).toBeVisible()
+  await expect(credits).toContainText('自托管')
+  // P0 口径是"不依赖 Ion/令牌"：代码里没取 ion 资产不算数，画面上写着 ion 就是自相矛盾的证据。
+  const html = await credits.innerHTML()
+  expect(html).not.toMatch(/cesium\.com|ion-credit|Cesium ion/i)
+})
+
 test('整条链路没有把渲染相关异常吞进 console', async ({ page }) => {
   await settle(page)
 
