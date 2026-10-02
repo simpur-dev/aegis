@@ -70,6 +70,29 @@ jobs:
       - run: npm run test
       - run: npm run build
 
+  deploy-artifacts:
+    # 部署面的工件此前只有人手工跑过一次：compose 能不能解析、告警规则与分发配置过不过校验。
+    # "文件存在"和"链路能起"是两件事——这条 job 把它们钉成构建失败，而不是交付后现场才发现。
+    name: 部署面工件校验（compose 解析 / promtool / amtool）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: compose 三个 profile 必须能解析（凭据取自 .env.example）
+        run: |
+          cp .env.example .env
+          docker compose --env-file .env -f deploy/docker-compose.yml \
+            --profile observability --profile app --profile iot config --quiet
+      - name: Prometheus 规则与采集配置校验
+        run: |
+          docker run --rm -v "$PWD/deploy:/cfg:ro" --entrypoint /bin/promtool \
+            prom/prometheus:v2.55.0 check rules /cfg/observability/alerts.yml
+          docker run --rm -v "$PWD/deploy:/cfg:ro" --entrypoint /bin/promtool \
+            prom/prometheus:v2.55.0 check config /cfg/prometheus.yml
+      - name: Alertmanager 分发与抑制配置校验
+        run: |
+          docker run --rm -v "$PWD/deploy:/cfg:ro" --entrypoint /bin/amtool \
+            prom/alertmanager:v0.27.0 check-config /cfg/observability/alertmanager.yml
+
   integration-nats:
     name: 真实 NATS JetStream 总线集成测试
     runs-on: ubuntu-latest

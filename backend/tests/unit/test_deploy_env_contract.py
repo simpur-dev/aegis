@@ -81,3 +81,18 @@ class TestComposeEnvContract:
         assert re.search(r"^\s*-\s*\.\./\.env\s*$", compose_text(), re.MULTILINE), (
             "backend 容器的 env_file 应指向仓库根 .env（与 --env-file .env 同一份），改成别的路径要连 README 一起改"
         )
+
+    def test_ci_validates_the_deploy_surface(self) -> None:
+        """文档命令与告警配置都必须在 CI 里被真跑一次，否则这里的对账只守住了一半。
+
+        踩过的形状：`alerts.yml` 单独过过 promtool，但 `prometheus.yml` 里既没 rule_files
+        也没 alerting 段——"规则文件存在"与"告警链路在跑"是两件事，构建必须验后者。
+        """
+        ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        assert "cp .env.example .env" in ci, "CI 得按文档的路径造 .env，再校验 compose"
+        assert re.search(r"docker compose --env-file \.env -f deploy/docker-compose\.yml[\s\S]{0,120}config --quiet", ci), (
+            "CI 必须解析带三个 profile 的 compose 文件"
+        )
+        assert "promtool" in ci and "check rules" in ci, "告警规则要由 promtool 在 CI 里校验"
+        assert "check config" in ci, "采集配置（rule_files / alerting 段）要在 CI 里过 promtool"
+        assert "amtool" in ci and "check-config" in ci, "分发与抑制配置要在 CI 里过 amtool"
