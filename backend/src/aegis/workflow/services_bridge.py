@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from aegis.services.trigger_rules import RuleEngine
     from aegis.services.warning_service import WarningService
     from aegis.storage.store import StoreProtocol
+    from aegis.workflow.outbound import OutboundCaller
 
 
 def _to_trigger_hits(raw: Any, *, default_region: str) -> list[TriggerHit]:
@@ -59,7 +60,14 @@ def build_workflow_services(
     warning_service: WarningService,
     dispatcher: DeliveryDispatcher,
     gateway: AgentGateway,
+    outbound: OutboundCaller | None = None,
 ) -> WorkflowServices:
+    """装配节点服务。
+
+    `outbound` 缺席或未配白名单时 `http_call` 留 None：`api_call`/`device_control`
+    会按"缺少依赖服务"响亮失败，而不是悄悄往画布上填的任意地址发请求。
+    """
+
     async def telemetry_query(
         *,
         region_code: str | None = None,
@@ -174,4 +182,5 @@ def build_workflow_services(
         publish_warning=publish_warning,
         collect_feedback=collect_feedback,
         notify=notify,
+        http_call=outbound if outbound is not None and outbound.enabled else None,
     )

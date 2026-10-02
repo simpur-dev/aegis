@@ -123,6 +123,12 @@ python scripts/fetch_retrieval_models.py
 | `weather` | `off` \| `http` | 拉取腿未配 base_url 时完全不存在；启用时按源隔离失败，轮次/条数/失败次数进状态行 |
 | `tracing` | `local` \| `otlp` | 无 OTLP 端点时跨度只落本地——这一行必须说真话，否则"接了 Jaeger"是假的 |
 
+工作流里的 `api_call` / `device_control` 两类节点要向**画布上填写的 URL** 发请求，因此它们由一条
+独立的闸管着：`AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS`（逗号分隔的主机白名单，默认空）与
+`AEGIS_WORKFLOW_HTTP_TIMEOUT_MS`。留空即整条外呼腿不接入，这两类节点按"缺少依赖服务"响亮失败；
+配上白名单后仍只放行 http/https、不跟随重定向、拒绝 URL 内嵌凭据，且异常与状态里只留
+`scheme://host`。注意这条腿目前只在装配日志与用例里可见，还没进 `GET /api/v1/integrations` 的腿表。
+
 凭据一律不出现在状态接口与日志里：DSN/URI/端点都先脱敏（只留 `scheme://host[:port]/path`）再出口，
 客户端与导出器仍拿到完整值。
 

@@ -52,6 +52,7 @@ from aegis.services.trigger_rules import RuleEngine
 from aegis.services.warning_service import WarningService
 from aegis.storage.store import StoreProtocol
 from aegis.workflow.engine import WorkflowEngine
+from aegis.workflow.outbound import OutboundCaller, OutboundPolicy
 from aegis.workflow.services_bridge import build_workflow_services
 from aegis.workflow.templates import register_builtin_templates
 
@@ -123,6 +124,7 @@ class PlatformContainer:
     mqtt_state: IntegrationState | None = None
     weather: WeatherApiSource | None = None
     weather_state: IntegrationState | None = None
+    outbound: OutboundCaller | None = None
     simulator: HazardScenarioSimulator | None = None
     mock_agents: list[MockAgent] = field(default_factory=list)
     _tasks: list[asyncio.Task[None]] = field(default_factory=list)
@@ -199,6 +201,8 @@ class PlatformContainer:
         if self.weather is not None:
             # 只关连接器自己建的 httpx 客户端；注入进来的（测试）由注入方负责
             await self.weather.aclose()
+        if self.outbound is not None:
+            await self.outbound.aclose()
         await self.registry.stop_sweeper()
         await self.gateway.close()
         await self.transport.close()
@@ -304,12 +308,15 @@ def create_container(
     with_simulator: bool | None = None,
     llm_gateway: LlmGateway | None = None,
     weather_client: object | None = None,
+    outbound_client: object | None = None,
 ) -> PlatformContainer:
     """装配一个平台容器。
 
     `with_simulator=None`（默认）跟随配置面 `simulator_enabled`——那个旋钮在 .env.example 里
     本来就承诺过的语义；显式传 True/False 是测试与演练的覆盖口。
     `weather_client` 只给测试注入 httpx 传输用，生产留空。
+    `outbound_client` 同理，注入的是工作流节点外呼（`api_call`/`device_control`）的传输；
+    白名单为空时这条腿整体不接入节点，外呼会响亮失败而不是发出请求。
     """
     cfg = settings or get_settings()
     gateway_llm = llm_gateway if llm_gateway is not None else build_gateway_if_configured(cfg)
@@ -333,6 +340,11 @@ def create_container(
     retrieval, retrieval_state = build_retrieval(cfg, tracer, store=bundle.durability)
     mqtt_source, mqtt_state = build_mqtt(cfg)
     weather_source, weather_state = build_weather(cfg, client=weather_client)
+    outbound = OutboundCaller(OutboundPolicy.from_settings(cfg), client=outbound_client)
+    if not outbound.enabled:
+        # 不是错误，但必须说清楚：画布上摆了 api_call/device_control 却没人配白名单时，
+        # 运维要的是一句"这条腿没开"，而不是节点失败之后再猜为什么。
+        log.info("工作流外呼未启用：AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS 为空，api_call/device_control 按缺少依赖服务失败")
 
     async def on_result(result: ChainResult) -> None:
         """单一落库点 + 分析旁路扇出：旁路未启用时这条链只有一步，语义与接入前完全一致。"""
@@ -390,6 +402,7 @@ def create_container(
             warning_service=warning_service,
             dispatcher=dispatcher,
             gateway=gateway,
+            outbound=outbound,
         ),
         tracer=tracer,
         settings=cfg,
@@ -417,6 +430,7 @@ def create_container(
         mqtt_state=mqtt_state,
         weather=weather_source,
         weather_state=weather_state,
+        outbound=outbound,
         simulator=simulator,
     )
 

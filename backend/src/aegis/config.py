@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     weather_api_base_url: str = ""
     weather_api_path: str = "/observation"
     weather_api_timeout_ms: int = 4_000
+    # 工作流节点外呼（api_call / device_control）的主机白名单，逗号分隔。
+    # 留空 = 这两类节点在产品形态下不可用（装配桥不注入 http_call，节点响亮失败）；
+    # 之所以默认关：URL 由编排画布填写，放开就是把平台变成任意内网地址的代理。
+    workflow_http_allowed_hosts: str = ""
+    workflow_http_timeout_ms: int = 4_000
 
     # LLM（可选；无密钥时研判走规则引擎降级路径）
     llm_api_key: str = ""

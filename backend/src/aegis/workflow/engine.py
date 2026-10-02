@@ -147,6 +147,14 @@ class WorkflowEngine:
         """画布节点面板需要读取节点元数据，提供只读访问而非私有属性。"""
         return self._registry
 
+    @property
+    def services(self) -> WorkflowServices:
+        """装配给节点的外部能力：状态面与用例据此核对"某类节点在这套装配里到底能不能跑"。
+
+        这条腿此前只能从 `_services` 猜——审计就是靠它发现 `http_call` 从未被装配。
+        """
+        return self._services
+
     def validate_definition(self, definition: WorkflowDef) -> None:
         """静态校验：节点类型已注册、配置合法、图无环、边引用存在。
 
