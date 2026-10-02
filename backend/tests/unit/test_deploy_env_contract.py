@@ -168,3 +168,19 @@ def test_镜像里声明的每个AEGIS环境变量都是配置面真有的键() 
     fields = set(Settings.model_fields)
     missing = sorted(key for key in keys if key.removeprefix("AEGIS_").lower() not in fields)
     assert not missing, f"这些键配置面不认，容器里会被静默忽略：{missing}（Settings 字段共 {len(fields)} 个）"
+
+
+def test_retrieval_model_dir_matches_the_mounted_weights_target() -> None:
+    """compose 的 `environment` 必须把权重目录钉成它自己挂载的那个目标路径。
+
+    实测过的静默失效：镜像里 `ENV AEGIS_RETRIEVAL_MODEL_DIR=/models`，而 `env_file: ../.env`
+    带着 `./data/models`——`environment`/`env_file` 的优先级高于镜像 ENV，于是容器去
+    `/app/backend/data/models` 找权重（那里什么都没有），密集腿静默换成 HashingEmbedder，
+    `/api/v1/integrations` 的 retrieval 行变成 `driver=hashing-ngram-1024`，而 `/readyz` 照旧 200。
+    """
+    text = COMPOSE.read_text(encoding="utf-8")
+    mount = re.search(r"\.\./backend/data/models:(/[A-Za-z0-9_./-]+)", text)
+    pinned = re.search(r"AEGIS_RETRIEVAL_MODEL_DIR:\s*(\S+)", text)
+    assert mount, "compose 里找不到权重挂载：密集腿在部署形态就没有来源"
+    assert pinned, "compose 没钉 AEGIS_RETRIEVAL_MODEL_DIR：镜像 ENV 会被 .env 的值盖掉"
+    assert pinned.group(1) == mount.group(1), f"权重挂在 {mount.group(1)} 却告诉进程去 {pinned.group(1)} 找"

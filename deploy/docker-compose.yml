@@ -151,6 +151,12 @@ services:
       AEGIS_NEO4J_USER: ${NEO4J_USERNAME:-neo4j}
       AEGIS_NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD 需在仓库根 .env 中设置（compose 命令带 --env-file .env）}
       AEGIS_RETRIEVAL_ENABLED: "true"
+      # 权重目录必须在 compose 里钉死成挂载点：镜像里的 ENV AEGIS_RETRIEVAL_MODEL_DIR=/models 会被
+      # `env_file: ../.env` 带来的 `./data/models` 覆盖掉（environment > env_file > 镜像 ENV），
+      # 而容器里并没有 /app/backend/data/models——密集腿于是静默换成 HashingEmbedder，
+      # /api/v1/integrations 的 retrieval 行变成 driver=hashing-ngram-1024（实测踩过），
+      # 而 /readyz 依旧 200：bge-m3 int8 这条 P0 腿就在"全绿"里没了。
+      AEGIS_RETRIEVAL_MODEL_DIR: /models
       # MQTT 推送腿：broker 就是本文件 iot profile 里的 emqx。默认关；开启需要镜像装了 [iot] extra。
       # 关掉时这条腿在链路里完全不存在，开启与否、连到哪儿都由 /api/v1/integrations 的 mqtt 行说明。
       AEGIS_MQTT_ENABLED: ${AEGIS_MQTT_ENABLED:-false}
