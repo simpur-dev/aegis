@@ -9,6 +9,7 @@ import {
   classifyFacts,
   collectFacts,
   initialMachine,
+  isHtmlResponse,
   isLocalAssetUrl,
   PROBE_TIMEOUT_MS,
   probeSource,
@@ -153,6 +154,24 @@ describe('探针', () => {
     expect(await probeSource(async () => ({ ok: false, status: 404 }), '/x')).toBe(false)
     expect(await probeSource(async () => Promise.reject(new Error('ECONNREFUSED')), '/x')).toBe(false)
     expect(await probeSource(ok, '')).toBe(false)
+  })
+
+  it('200 但是 HTML 不算可用：SPA 兜底页与 captive portal 都会把未知路径回成 200 text/html', async () => {
+    // 浏览器实测到的口径：`vite preview` 对不存在的 /basemaps/0/0/0.png 回 200 + text/html，
+    // 只看状态码就会把一个 HTML 页面当成瓦片源挂上影像层。
+    const withType = (mime: string): ProbeFetch => async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name: string) => (name === 'content-type' ? mime : null) },
+    })
+    expect(await probeSource(withType('text/html; charset=utf-8'), '/basemaps/0/0/0.png')).toBe(false)
+    expect(await probeSource(withType('application/xhtml+xml'), '/x')).toBe(false)
+    expect(await probeSource(withType('image/png'), '/basemaps/0/0/0.png')).toBe(true)
+    expect(await probeSource(withType('application/vnd.pmtiles'), '/basemaps/aegis.pmtiles')).toBe(true)
+    // HEAD 常常不带 content-type：这种"不知道"按可用处理，不误杀真资产。
+    expect(await probeSource(withType(''), '/terrain/layer.json')).toBe(true)
+    expect(isHtmlResponse(undefined)).toBe(false)
+    expect(isHtmlResponse({ get: () => null })).toBe(false)
   })
 
   it('超时被 abort 吞掉，返回 false 而不是挂住', async () => {

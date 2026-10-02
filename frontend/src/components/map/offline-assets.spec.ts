@@ -35,7 +35,7 @@ import {
   type PmtilesHead,
 } from './basemap'
 import { chooseTerrainMode, terrainProbeUrl } from './terrain'
-import { probeSource } from './offline'
+import { probeSource, tileUrlForTemplate } from './offline'
 
 const CONTENT_TYPES: Record<string, string> = {
   '.json': 'application/json',
@@ -71,6 +71,13 @@ function handler(request: IncomingMessage, response: ServerResponse): void {
   requestedUrls.push(url.href)
   const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '')
   void (async () => {
+    // 仿 SPA 兜底：`vite preview` 对不存在的 `/basemaps/0/0/0.png` 回的是 `200 text/html`
+    // （浏览器实测），探针若只看状态码就会把 HTML 页面当成瓦片源挂上去。
+    if (relative.startsWith('spa/')) {
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      response.end(request.method === 'HEAD' ? undefined : '<!doctype html><title>index.html</title>')
+      return
+    }
     let info
     try {
       info = await stat(join(PUBLIC_DIR, relative))
@@ -236,6 +243,18 @@ describe('前端自己的底图装配吃的就是这些真字节', () => {
     // 装配出来的 provider 矩形是渲染循环真正拿去算瓦号的东西：界内才算这条链没埋雷。
     expect(insideWebMercator(provider.rectangle)).toBe(true)
     expect(requestedUrls.every((url) => url.startsWith(origin))).toBe(true)
+  })
+
+  it('SPA 兜底页（200 text/html）不被当成瓦片源：真归档仍是首选，只剩兜底页时判"没有底图"', async () => {
+    const fetchLike = (input: RequestInfo | URL, init?: RequestInit) => fetch(String(input), init)
+    const fallbackTemplate = `${origin}/spa/basemaps/{z}/{x}/{y}.png`
+    const config = { ...DEFAULT_BASEMAP_CONFIG, template: fallbackTemplate, pmtilesUrl: `${origin}/basemaps/aegis.pmtiles` }
+
+    // 两条路都是 200，差别只在 content-type：探针必须把 HTML 那路判死。
+    expect(await probeSource(fetchLike, tileUrlForTemplate(fallbackTemplate))).toBe(false)
+    expect(await probeSource(fetchLike, config.pmtilesUrl)).toBe(true)
+    expect(chooseBasemapSource({ templateReachable: false, pmtilesReachable: true }, config, origin).kind).toBe('pmtiles')
+    expect(chooseBasemapSource({ templateReachable: await probeSource(fetchLike, tileUrlForTemplate(fallbackTemplate)), pmtilesReachable: false }, config, origin).kind).toBe('none')
   })
 
   it('requestImage 交给位图解码器的字节 = 归档里那一瓦（缺瓦则给 1×1 透明瓦）', async () => {

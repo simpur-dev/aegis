@@ -140,7 +140,7 @@ export const PROBE_TIMEOUT_MS = 4_000
 export type ProbeFetch = (
   url: string,
   init?: { method?: string; signal?: AbortSignal },
-) => Promise<{ ok: boolean; status: number }>
+) => Promise<{ ok: boolean; status: number; headers?: { get(name: string): string | null } }>
 
 export interface ProbeTargets {
   api: string
@@ -179,7 +179,20 @@ export function isLocalAssetUrl(url: string, origin = 'http://localhost'): boole
 }
 
 /**
- * 单路探针：HEAD 成功或 405（不少静态服务器不接 HEAD）都算可用；
+ * HTML 响应不能算"资产在位"。SPA 兜底服务会把任意未知路径回成 `200 text/html`
+ * （`vite preview` 实测：`HEAD /basemaps/0/0/0.png` → 200 text/html），公共 WiFi 的
+ * captive portal 也长这样。只看状态码就会把一个 HTML 页面当成瓦片源挂上影像层，
+ * 错误要到解码那一刻才暴露——而那一刻已经在渲染循环里了。
+ * 没带 content-type 头（不少服务器 HEAD 就是这样）时按原口径放行：宁可少判不误杀。
+ */
+export function isHtmlResponse(headers?: { get(name: string): string | null }): boolean {
+  const mime = (headers?.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+  return mime === 'text/html' || mime === 'application/xhtml+xml'
+}
+
+/**
+ * 单路探针：HEAD 成功或 405（不少静态服务器不接 HEAD）都算可用，
+ * **但响应是 HTML 就不算**（见 `isHtmlResponse`）；
  * 任何异常/超时/404 都算不可用（探针**永不抛错**——弱网下探测失败是常态而不是事故）。
  */
 export async function probeSource(
@@ -192,7 +205,7 @@ export async function probeSource(
   const timer = setTimeout(() => controller?.abort(), Math.max(1, timeoutMs))
   try {
     const response = await fetchLike(url, { method: 'HEAD', signal: controller?.signal })
-    return response.ok || response.status === 405
+    return (response.ok || response.status === 405) && !isHtmlResponse(response.headers)
   } catch {
     return false
   } finally {
