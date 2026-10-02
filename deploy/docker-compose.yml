@@ -26,7 +26,7 @@ services:
     container_name: aegis-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-aegis}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 需在 .env 中设置}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 需在仓库根 .env 中设置（compose 命令带 --env-file .env）}
       POSTGRES_DB: ${POSTGRES_DB:-aegis}
     ports:
       - "5432:5432"
@@ -38,7 +38,7 @@ services:
     image: neo4j:5-community
     container_name: aegis-neo4j
     environment:
-      NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:?NEO4J_PASSWORD 需在 .env 中设置}
+      NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:?NEO4J_PASSWORD 需在仓库根 .env 中设置（compose 命令带 --env-file .env）}
       NEO4J_PLUGINS: '["apoc"]'
     ports:
       - "7474:7474"
@@ -53,7 +53,7 @@ services:
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-aegis}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 需在 .env 中设置}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 需在仓库根 .env 中设置（compose 命令带 --env-file .env）}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -76,7 +76,7 @@ services:
     container_name: aegis-emqx
     environment:
       EMQX_ALLOW_ANONYMOUS: "false"
-      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?EMQX_DASHBOARD_PASSWORD 需在 .env 中设置}
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?EMQX_DASHBOARD_PASSWORD 需在仓库根 .env 中设置（compose 命令带 --env-file .env）}
     ports:
       - "1883:1883" # MQTT
       - "8083:8083" # MQTT over WS
@@ -146,7 +146,7 @@ services:
       AEGIS_PG_APPLY_MIGRATIONS_ON_START: "true"
       AEGIS_KNOWLEDGE_GRAPHITI_URI: bolt://neo4j:7687
       AEGIS_NEO4J_USER: ${NEO4J_USERNAME:-neo4j}
-      AEGIS_NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD 需在 .env 中设置}
+      AEGIS_NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD 需在仓库根 .env 中设置（compose 命令带 --env-file .env）}
       AEGIS_RETRIEVAL_ENABLED: "true"
       # MQTT 推送腿：broker 就是本文件 iot profile 里的 emqx。默认关；开启需要镜像装了 [iot] extra。
       # 关掉时这条腿在链路里完全不存在，开启与否、连到哪儿都由 /api/v1/integrations 的 mqtt 行说明。

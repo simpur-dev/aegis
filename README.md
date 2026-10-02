@@ -81,8 +81,13 @@ cd ../frontend && npm run dev                     # Web: http://localhost:5173�
 需要真实基础设施时按 profile 起（`observability` 先起，应用才不会把跨度只留在本地）：
 
 ```bash
-docker compose -f deploy/docker-compose.yml --profile observability up -d
-docker compose -f deploy/docker-compose.yml --profile app --profile iot up -d
+# compose 的变量插值默认只在 compose 文件所在目录找 .env，
+# 而凭据模板在仓库根：不显式指过去，`up` 会在 POSTGRES_PASSWORD 这类必填项上直接失败。
+cp .env.example .env
+docker compose --env-file .env -f deploy/docker-compose.yml --profile observability up -d
+docker compose --env-file .env -f deploy/docker-compose.yml --profile app --profile iot up -d
+# 两份 .env 各有用途：仓库根这份给 compose 插值与容器 env_file，backend/.env 给本机直接跑进程；
+# 别把实验开关写进 backend/.env——pytest 也会读它（见上面"快速开始"里的提醒）。
 # 混合检索需要权重，先在能联网的机器上预置到 backend/data/models/（约 1.1GB，只读挂载进容器）
 python scripts/fetch_retrieval_models.py
 ```
