@@ -45,7 +45,7 @@ aegis/
 │   │   ├── observability/     # 时延账本、OpenTelemetry 埋点与导出、Prometheus 导出
 │   │   ├── agents/            # 参考智能体（开发与门禁用）
 │   │   └── api/               # FastAPI HTTP/SSE 接口与工作流接口
-│   ├── scripts/               # drill / metrics_report / accuracy_replay / load_curve / zenoh_poc
+│   ├── scripts/               # drill / metrics_report / accuracy_replay / load_curve / zenoh_poc / import_stations / ingest_cases
 │   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
 │   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / dev
 ├── frontend/                  # Vue 3 + Vite；Cesium 一张图、Vue Flow 编排画布
@@ -117,24 +117,31 @@ python scripts/fetch_retrieval_models.py
 | --- | --- | --- |
 | `store` | `memory` \| `postgres` | 落库失败不换实现：内存读视图照常服务，写侧进有界缓冲重试并按计数暴露 |
 | `analytics` | `off` \| `clickhouse` \| `duckdb` | `off` 时链路里根本不出现 OLAP 代码路径；启用时只 write-behind 入队，热路径永不等 OLAP |
-| `knowledge` | `in_memory` \| `graphiti` | 图谱缺位时召回自动落到内置预案库（性质与逐条出处随召回结果一起外显），预案生成照旧完成。写入侧有生产调用点：`POST /api/v1/knowledge/cases` 是唯一入口，响应里的 `driver/degraded/reason` 说清这条案例究竟落在图谱还是只在内存；启动期还会建一次图谱索引，失败作为 `schema_error` 出现在这一行 |
+| `knowledge` | `in_memory` \| `graphiti` | 图谱缺位时召回自动落到内置预案库（性质与逐条出处随召回结果一起外显），预案生成照旧完成。写入侧有生产调用点：单条 `POST /api/v1/knowledge/cases` 与整批 `scripts.ingest_cases`，两者响应里的 `driver/degraded/reason` 说清这条案例究竟落在图谱还是只在内存；启动期建一次图谱索引（失败作为 `schema_error`），停服期关一次图谱连接（关不上作为 `close_error`），两件事都出现在这一行 |
 | `retrieval` | `off` \| `hybrid` | 权重缺失时稠密腿换确定性词面近似并在 `driver/degraded` 上标出；该分数不得进任何准确率汇报。索引引擎可切 `local`（pgvector + 进程内 BM25）或 `seekdb`（向量 ANN 与 ngram 中文全文同库），切换只改装配，两腿语义与凭证结构不变。**默认是 `local`**：2026-10-02 实测过 seekdb 的几何/约束/LATERAL 能力后，它仍只作为显式 POC 打开，`tests/unit/test_retrieval_wiring.py::TestSeekdbIsNotInTheDefaultShape` 用双向变异把"local 装配去碰 seekdb 代码路径"钉成红 |
 | `mqtt` | `off` \| `mqtt` | 推送腿未起不阻断平台；broker 连接状态、读数与溢出计数、`last_error` 全部外显 |
 | `weather` | `off` \| `http` | 拉取腿未配 base_url 时完全不存在；启用时按源隔离失败，轮次/条数/失败次数进状态行 |
 | `outbound` | `off` \| `http` | 工作流外呼（`api_call` / `device_control` 的出口）：主机白名单为空时整条不接入，节点按"缺少依赖服务"响亮失败；开着时调用/拒发/失败三个计数与 `last_error` 全进状态行，白名单命中的拒发会把这条腿标成降级运行 |
 | `tracing` | `local` \| `otlp` | 无 OTLP 端点时跨度只落本地——这一行必须说真话，否则"接了 Jaeger"是假的 |
 
-案例入库走 `POST /api/v1/knowledge/cases`（知识层唯一的写入口）：
+案例入库有两条入口，走的是同一个装配点：单条 `POST /api/v1/knowledge/cases`，整批
+`uv run python -m scripts.ingest_cases`（内置 16 条预案模板，或 `--source cases.json` 换外部库）。
 
 ```bash
 curl -s -X POST http://localhost:8000/api/v1/knowledge/cases \
   -H 'Content-Type: application/json' -d @case.json
 # {"case_id":"case_…","driver":"graphiti","degraded":false,"reason":"","title":"…"}
+
+uv run python -m scripts.ingest_cases --dry-run    # 只看要灌哪些条
+uv run python -m scripts.ingest_cases              # 整库回填，逐条报落点并回读验证
+# {"total":16,"landed":16,"degraded":0,"by_driver":{"graphiti":16},"recall_checked":16,…}
 ```
 
-响应必须回答"落在哪一侧"，因为图谱写失败时降级链仍会把案例收进进程内库——只看 200 会读成
-"案例时序知识已更新"，而图其实是空的。这条写路径刻意不挂进任何自动链路：Graphiti 的一次
-`add_episode` ≈ 4—7 次 LLM 调用，塞进预警/研判路径就直接把 ≤3min 指标买掉。
+两条入口的响应都必须回答"落在哪一侧"，因为图谱写失败时降级链仍会把案例收进进程内库——只看
+200 会读成"案例时序知识已更新"，而图其实是空的。批量命令因此还做一次回读（`--no-verify` 可跳过）：
+写入返回成功只说明驱动收了字节，能被召回查回来才说明预案真的进了回路；写进去了却召回不到会以
+退出码 4 单独报出来。内存形态默认拒绝（`--allow-memory` 才灌，结果里写明 `durable=false`）。
+这条写路径刻意不挂进任何自动链路：Graphiti 的一次 `add_episode` ≈ 4—7 次 LLM 调用，塞进预警/研判路径就直接把 ≤3min 指标买掉。
 
 工作流里的 `api_call` / `device_control` 两类节点要向**画布上填写的 URL** 发请求，因此它们由一条
 独立的闸管着：`AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS`（逗号分隔的主机白名单，默认空）与

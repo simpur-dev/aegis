@@ -124,6 +124,57 @@ class TestGraphitiLiveWithoutCredentials:
         finally:
             await provider.close()
 
+    def test_batch_backfill_tells_the_truth_on_a_real_graph_without_llm(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """批量回填命令对着真 Neo4j + 缺模型凭据跑一遍：它必须说"一条都没进图"，而不是"导入 16 条"。
+
+        这条值得用真图，因为替身给不出这个现场：图连得上、索引建不成、写入按类型化异常回落内存——
+        三种情况混在一起时，`total` 与 `landed` 谁说了算就是这台机器上唯一能验的事。
+
+        刻意写成同步用例：命令自己起事件循环（`asyncio.run`），在 async 用例里调用会撞进
+        "running event loop"——那测的就不是这条命令了。
+        """
+        import json as jsonlib
+
+        from scripts.ingest_cases import EXIT_DEGRADED, main
+
+        from aegis import integrations
+        from aegis.integrations import IntegrationState
+        from aegis.knowledge.memory_store import InMemoryKnowledgeProvider
+        from aegis.knowledge.provider import FallbackKnowledgeProvider
+
+        settings = get_settings()
+        if settings.llm_api_key:
+            pytest.skip("已配置模型凭据，降级路径不成立（这条只在缺凭据时有意义）")
+        case_ids = ["case_df_gully_evacuate", "case_lo_chain_watch"]
+        chain = FallbackKnowledgeProvider(
+            primary=GraphitiKnowledgeProvider(config=GraphitiConfig.from_parts(uri=NEO4J_URI, settings=settings)),
+            fallback=InMemoryKnowledgeProvider(cases=[]),
+        )
+        monkeypatch.setattr(
+            integrations,
+            "build_knowledge",
+            lambda *_args, **_kwargs: (chain, IntegrationState(name="knowledge", enabled=True, driver="graphiti")),
+        )
+
+        argv = [arg for case_id in case_ids for arg in ("--case-id", case_id)]
+        code = main(argv)
+        out = capsys.readouterr().out
+        body = jsonlib.loads(out[out.index("{") :])
+        assert code == EXIT_DEGRADED, f"一条都没进图却回了 {code}"
+        assert (body["total"], body["landed"], body["degraded"]) == (2, 0, 2)
+        assert body["durable"] is False, "目标是图谱不等于落在图谱"
+        assert {item["driver"] for item in body["outcomes"]} == {"in_memory"}, "落点被读成图谱就是假事实"
+        assert all("llm_api_key" in item["detail"] for item in body["outcomes"]), body["outcomes"]
+        # 图谱腿"没凭据"与"库没起"必须能分开读：这一行点名的是凭据
+        assert "llm_api_key" in str(body["schema_error"])
+        # 关不掉只会在真驱动上出现：半截实例也要能干净退出
+        assert body["close_error"] is None
+        assert body["recalled_from"] == {case_id: ["in_memory"] for case_id in case_ids}
+
 
 @needs_llm
 class TestGraphitiLive:
