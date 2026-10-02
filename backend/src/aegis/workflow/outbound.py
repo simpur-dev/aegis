@@ -36,14 +36,29 @@ class OutboundTargetError(AegisError):
     code = ErrorCode.DATA_FORBIDDEN
 
 
+def normalize_host(entry: str) -> str | None:
+    """把一条白名单条目收敛成主机名——**与匹配侧用同一条规则**。
+
+    运维写 `https://api.example.com/v1/`、`user:pw@host`、`host:8443` 都是常见笔误。这里直接借
+    `urlsplit().hostname` 取值，好处是白名单的规范化口径与 `refusal_reason` 里比对目标 URL 的
+    口径是同一份代码：两份各写一半时，"配了白名单却永远匹配不上"这种故障几乎查不出来。
+    凭据与端口一律不进结果：白名单是主机粒度的，而这条列表会原样进
+    `GET /api/v1/integrations`（匿名可读），留 userinfo 等于把口令贴出去。
+    """
+    text = str(entry or "").strip()
+    if not text:
+        return None
+    try:
+        host = urlsplit(text if "://" in text else f"aegis://{text}").hostname
+    except ValueError:
+        return None
+    return (host or "").rstrip(".").lower() or None
+
+
 def parse_host_list(raw: str) -> tuple[str, ...]:
-    """把配置里的主机白名单读成规范化的元组：去空白、去重、小写、丢空项。"""
-    seen: list[str] = []
-    for item in str(raw or "").split(","):
-        host = item.strip().rstrip(".").lower()
-        if host and host not in seen:
-            seen.append(host)
-    return tuple(seen)
+    """把配置里的主机白名单读成规范化元组：去空白、去重、小写、丢空项。"""
+    hosts = [host for host in (normalize_host(item) for item in str(raw or "").split(",")) if host]
+    return tuple(dict.fromkeys(hosts))
 
 
 @dataclass(frozen=True, slots=True)

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -354,15 +355,70 @@ class TestContainerWiring:
         assert ctn.weather is None
         # 按名字断言而不是按位置：状态列表是对外契约，加一条腿不该把既有断言整体挪位
         status = {state.name: state for state in ctn.integration_status()}
-        assert set(status) == {"store", "analytics", "knowledge", "retrieval", "mqtt", "weather", "tracing"}
+        assert set(status) == {"store", "analytics", "knowledge", "retrieval", "mqtt", "weather", "outbound", "tracing"}
         assert (status["store"].enabled, status["store"].driver) == (True, "memory")
         assert status["analytics"].enabled is False
         assert status["knowledge"].enabled is True
         assert (status["retrieval"].enabled, status["retrieval"].driver) == (False, "off")
         assert (status["mqtt"].enabled, status["mqtt"].driver) == (False, "off")
         assert (status["weather"].enabled, status["weather"].driver) == (False, "off")
+        # 工作流外呼（api_call / device_control）同样必须是一行事实：白名单为空时它是"没开"，
+        # 而不是节点失败之后要靠猜。此前这条腿只在装配日志与用例里可见。
+        assert (status["outbound"].enabled, status["outbound"].driver) == (False, "off")
         # 没配 OTLP 端点时链路追踪只留本地：这一行必须说真话，否则"接了 Jaeger"是假的
         assert (status["tracing"].enabled, status["tracing"].driver) == (False, "local")
+
+    def test_配了白名单后外呼成为一条可读的腿(self) -> None:
+        ctn = create_container(base_settings(workflow_http_allowed_hosts="api.example.com, 10.0.0.9"), with_simulator=False)
+        row = next(state for state in ctn.integration_status() if state.name == "outbound")
+
+        assert (row.enabled, row.driver) == (True, "http")
+        assert row.detail["allowed_hosts"] == ["api.example.com", "10.0.0.9"]
+        assert row.detail["timeout_ms"] == ctn.settings.workflow_http_timeout_ms
+        # 三个计数是"节点为什么失败"的唯一现场证据
+        assert (row.detail["calls"], row.detail["rejected"], row.detail["failures"]) == (0, 0, 0)
+        assert row.degradation_reason() == ""
+
+    def test_外呼状态里不许出现带凭据的目标(self) -> None:
+        """白名单里就算被人写成 `user:pass@host`，出口也只能剩下主机名。"""
+        ctn = create_container(base_settings(workflow_http_allowed_hosts="ops:sup3rs3cr3t@api.example.com"), with_simulator=False)
+        row = next(state for state in ctn.integration_status() if state.name == "outbound")
+
+        dumped = json.dumps(row.as_dict(), ensure_ascii=False)
+        assert "sup3rs3cr3t" not in dumped
+        assert "api.example.com" in dumped
+
+    async def test_外呼失败次数与原因进降级清单(self) -> None:
+        """白名单命中与连不上都得成为一行事实；全程走注入的假传输，不触网。"""
+        import httpx
+
+        from aegis.workflow.outbound import OutboundTargetError
+
+        def explode(_request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("连接被拒（门禁替身）")
+
+        ctn = create_container(
+            base_settings(workflow_http_allowed_hosts="api.example.com"),
+            with_simulator=False,
+            outbound_client=httpx.AsyncClient(transport=httpx.MockTransport(explode), base_url="http://api.example.com"),
+        )
+        assert ctn.outbound is not None
+
+        with pytest.raises(OutboundTargetError):
+            await ctn.outbound("POST", "http://evil.invalid/x", {})
+        row = next(state for state in ctn.integration_status() if state.name == "outbound")
+        assert row.detail["rejected"] == 1
+        assert row.detail["calls"] == 0
+        # 画布上填了白名单外的主机是"这条腿带着问题在跑"，运维要能一眼看到，而不是等节点报错再猜
+        assert "主机不在白名单" in row.degradation_reason()
+        assert "evil.invalid" in str(row.detail["last_error"])
+
+        with pytest.raises(httpx.ConnectError):
+            await ctn.outbound("GET", "http://api.example.com/boom")
+        row = next(state for state in ctn.integration_status() if state.name == "outbound")
+        assert row.detail["failures"] == 1
+        assert "outbound" in [state.name for state in ctn.integration_status() if state.degradation_reason()]
+        await ctn.shutdown()
 
     def test_analytics_sink_receives_chain_and_reading_facts(self, tmp_path: Path) -> None:
         """容器里的扇出真的接上了：链路落库与分析入队共用同一个 on_result 出口。"""

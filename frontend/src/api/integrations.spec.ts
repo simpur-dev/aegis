@@ -66,8 +66,12 @@ describe('legLabel：后端加腿不许从 UI 消失', () => {
     expect([...backendIntegrationLegs()].sort()).toEqual(Object.keys(LEG_LABELS).sort())
   })
 
-  it('后端源里真的抓到了七条腿：改写导致抓取为空时这条先失败，不让上面的相等变成空对空', () => {
-    expect(backendIntegrationLegs()).toHaveLength(7)
+  it('后端源里真的抓到了八条腿：改写导致抓取为空时这条先失败，不让上面的相等变成空对空', () => {
+    // 数字写死是有意的：加一条腿（现在到 outbound）必须在这里显式承认一次，
+    // 免得"抓取被改写空了"和"标签表跟抓取都为空"这两种状态在门禁面前长得一样。
+    expect([...backendIntegrationLegs()].sort()).toEqual(
+      ['analytics', 'knowledge', 'mqtt', 'outbound', 'retrieval', 'store', 'tracing', 'weather'].sort(),
+    )
   })
 })
 

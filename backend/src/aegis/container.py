@@ -260,6 +260,21 @@ class PlatformContainer:
         if self.weather is not None:
             weather_state = replace(weather_state, detail={**weather_state.detail, **self.weather.status()})
         rows.append(weather_state)
+        # 工作流外呼腿（`api_call` / `device_control` 的出口）：白名单为空时这条腿整条不接入。
+        # 画布上摆了这两类节点却没人配白名单，运维要的是一行"没开"加上"为什么没开"，
+        # 而不是等节点报 NodeError 之后再猜是哪一环。拒发/失败两个计数就是那两环的现场证据。
+        if self.outbound is None:
+            rows.append(IntegrationState(name="outbound", enabled=False, driver="off"))
+        else:
+            outbound_detail = {key: value for key, value in self.outbound.status().items() if key != "enabled"}
+            rows.append(
+                IntegrationState(
+                    name="outbound",
+                    enabled=self.outbound.enabled,
+                    driver="http" if self.outbound.enabled else "off",
+                    detail=outbound_detail,
+                )
+            )
         # 链路追踪不是"装了 OTel 就有证据"：没装配 provider 时跨度只落在本地，
         # 第三方在 Jaeger 里查不到任何东西。这一行让"上报中/仅本地"可判别。
         status = telemetry_status()

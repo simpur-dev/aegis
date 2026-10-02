@@ -184,3 +184,11 @@ class TestPolicyFromSettings:
     def test_白名单解析规则只有一份(self) -> None:
         assert parse_host_list("A.com.,  a.com,b.cn") == ("a.com", "b.cn")
         assert parse_host_list("") == ()
+
+    def test_条目被收敛成主机名_凭据绝不留存(self) -> None:
+        """白名单会原样出现在 `GET /api/v1/integrations`（匿名可读），入口就得剥干净。"""
+        hosts = parse_host_list("https://API.example.com/v1/, ops:sup3rs3cr3t@b.cn, , @, http://c.cn:8443/x?y=1")
+
+        assert hosts == ("api.example.com", "b.cn", "c.cn")  # 端口也剥掉：白名单是主机粒度的
+        assert "sup3rs3cr3t" not in repr(hosts)
+        assert not any("@" in host or "/" in host for host in hosts)
