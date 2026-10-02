@@ -7,11 +7,26 @@
 
 from __future__ import annotations
 
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
-from scripts.load_curve import LOCAL_PROFILE, merge_streams, parse_summary, point_from, profile_for, server_env
+import scripts.load_curve as load_curve
+from scripts.load_curve import (
+    LOCAL_PROFILE,
+    _spawn_server,
+    _stop_server,
+    _wait_until_ready,
+    merge_streams,
+    parse_summary,
+    point_from,
+    profile_for,
+    read_log_tail,
+    server_command,
+    server_env,
+)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "locust_summary_locust-2.46.6.txt"
 
@@ -162,3 +177,139 @@ class TestServerProfile:
     def test_未知形态响亮拒绝(self) -> None:
         with pytest.raises(ValueError, match="未知 --profile"):
             profile_for("prod-ish", {"AEGIS_PG_DSN": "x"})
+
+
+class TestServerLog:
+    """起服务那一层：判"提前退出"却把子进程输出丢进 DEVNULL，等于把现场擦掉再报"没现场"。
+
+    2026-10-02 实测代价：`--profile deployed` 起不来，报的只有
+    `ValueError: nats: invalid consumer name: 'd_perceive_perceive.mock01'`（在服务进程自己的
+    stderr 里），脚本这边只给出退出码，只能手工再跑一遍 `python -m aegis.main` 才拿到那句话。
+    """
+
+    @staticmethod
+    def _child_printing(*, out: str, err: str, code: int) -> str:
+        return f"import sys;print({out!r});print({err!r}, file=sys.stderr, flush=True);sys.exit({code})"
+
+    def test_日志不存在时给空列表而不是抛(self, tmp_path: Path) -> None:
+        assert read_log_tail(tmp_path / "never-written.log") == []
+
+    def test_只留最后若干行且丢掉空行(self, tmp_path: Path) -> None:
+        log = tmp_path / "server.log"
+        # 每第三行是空行/纯空白：日志里穿插的空行不该占掉尾巴的名额。
+        body = "".join(f"line-{index}\n" if index % 3 else "\n   \n" for index in range(40))
+        log.write_text(body, encoding="utf-8")
+        non_blank = [f"line-{index}" for index in range(40) if index % 3]
+        assert read_log_tail(log, lines=5) == non_blank[-5:]
+
+    def test_子进程的_stdout_与_stderr_落到同一份日志(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # 同一份句柄：uvicorn 的信息走行、traceback 走另一行，分成两个文件就没法按因果读。
+        monkeypatch.setattr(
+            load_curve,
+            "server_command",
+            lambda: [sys.executable, "-u", "-c", self._child_printing(out="OUT-1", err="ERR-1", code=0)],
+        )
+        log = tmp_path / "server.log"
+        with log.open("wb") as sink:
+            process = _spawn_server(8123, env=server_env(8123, LOCAL_PROFILE), log_sink=sink)
+            # 这条量的是"正常退出"路径，所以必须等它自己跑完再收摊（_stop_server 是 terminate，
+            # 抢在它 flush 之前就把子进程杀了，文件会是空的——那不是这条要问的东西）。
+            assert process.wait(timeout=60) == 0
+        text = log.read_text(encoding="utf-8")
+        assert "OUT-1" in text
+        assert "ERR-1" in text
+
+    def test_进程挂住时尾巴已经在文件里了(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`-u` 买到的就是这一刻：服务"卡住不返回 /healthz"时是被 terminate 收摊的。
+
+        重定向到文件时解释器默认对 stdout 做块缓冲，没有 `-u` 就会现场全丢在 8KB 缓冲区里，
+        而"提前退出"那条路径反而会因为正常 flush 而有内容——正好把最需要看日志的那种失败
+        变成空文件。所以这条按真行为量：子进程不 flush 地打印后睡死，父进程必须已经读得到。
+        """
+        assert "-u" in server_command()
+        monkeypatch.setattr(
+            load_curve,
+            "server_command",
+            lambda: [sys.executable, "-u", "-c", "print('HANGING-BEFORE-READY');import time;time.sleep(120)"],
+        )
+        log = tmp_path / "server.log"
+        with log.open("wb") as sink:
+            process = _spawn_server(8123, env=server_env(8123, LOCAL_PROFILE), log_sink=sink)
+            try:
+                seen = ""
+                deadline = time.time() + 20.0
+                while time.time() < deadline:
+                    seen = log.read_text(encoding="utf-8", errors="replace")
+                    if "HANGING-BEFORE-READY" in seen:
+                        break
+                    time.sleep(0.1)
+                assert "HANGING-BEFORE-READY" in seen
+                # 同一条读法在真实报错里用的就是它：读不出东西的那条路径要单独判，别在这里猜。
+                assert read_log_tail(log, lines=1) == ["HANGING-BEFORE-READY"]
+            finally:
+                _stop_server(process)
+
+    def test_提前退出的报错里带着真正的死因(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            load_curve,
+            "server_command",
+            lambda: [
+                sys.executable,
+                "-u",
+                "-c",
+                self._child_printing(
+                    out="INFO Starting server",
+                    err="ValueError: nats: invalid consumer name",
+                    code=3,
+                ),
+            ],
+        )
+        log = tmp_path / "server.log"
+        with log.open("wb") as sink:
+            process = _spawn_server(8123, env=server_env(8123, LOCAL_PROFILE), log_sink=sink)
+            try:
+                with pytest.raises(RuntimeError) as raised:
+                    _wait_until_ready("http://127.0.0.1:9", process, timeout=30.0, log_path=log)
+            finally:
+                _stop_server(process)
+        message = str(raised.value)
+        assert "退出码 3" in message
+        assert "invalid consumer name" in message
+        assert "INFO Starting server" in message
+
+    def test_就绪就返回启动耗时(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Ready:
+            returncode = None
+
+            def poll(self) -> None:
+                return None
+
+        monkeypatch.setattr(load_curve.httpx, "get", lambda url, timeout: _Ok() if url.endswith("/healthz") else _Bad())
+        seconds = _wait_until_ready("http://127.0.0.1:8123", Ready(), timeout=5.0)  # type: ignore[arg-type]
+        assert seconds >= 0.0
+
+    def test_超时也是判失败而不是当成通过(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Alive:
+            returncode = None
+
+            def poll(self) -> None:
+                return None
+
+        monkeypatch.setattr(load_curve.httpx, "get", lambda url, timeout: _Bad())
+        with pytest.raises(RuntimeError, match="没有就绪"):
+            _wait_until_ready("http://127.0.0.1:8123", Alive(), timeout=0.3, log_path=Path("missing.log"))  # type: ignore[arg-type]
+
+
+class _Ok:
+    status_code = 200
+
+
+class _Bad:
+    status_code = 503
+
+    def raise_for_status(self) -> None:
+        raise RuntimeError("not ready")

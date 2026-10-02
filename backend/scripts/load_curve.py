@@ -29,7 +29,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 import httpx
 
@@ -115,29 +115,63 @@ def server_env(port: int, profile: ServerProfile) -> dict[str, str]:
     }
 
 
-def _spawn_server(port: int, *, env: dict[str, str]) -> subprocess.Popen[bytes]:
+SERVER_LOG = Path("reports") / "load_curve_server.log"
+
+
+def read_log_tail(path: Path, *, lines: int = 25) -> list[str]:
+    """读服务子进程日志的非空行尾巴；文件不存在就给空列表而不是抛。
+
+    曲线跑挂了的时候，这份尾巴是唯一能区分"外部依赖没起来"和"我们自己的代码起不来"的东西。
+    之前它被直接送进 DEVNULL，于是定位一个消费者名非法的启动失败要靠手工复现一遍（2026-10-02）。
+    """
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    non_blank = [line for line in raw.splitlines() if line.strip()]
+    return non_blank[-lines:]
+
+
+def server_command() -> list[str]:
+    """被量的那个进程怎么起：与被 compose/CLI 拉起的同一条入口，不搞第二套。
+
+    `-u` 是必需的，不是风格：重定向到文件时解释器对 stdout 做块缓冲，服务"挂住不动"被
+    terminate 后那一Buffer 里的现场就一起没了——而挂住正是最需要看尾巴的时候（提前退出反而
+    会在正常退出时 flush）。
+    """
+    return [sys.executable, "-u", "-m", "aegis.main"]
+
+
+def _spawn_server(port: int, *, env: dict[str, str], log_sink: IO[bytes]) -> subprocess.Popen[bytes]:
     child_env = {**os.environ, **env}
     return subprocess.Popen(
-        [sys.executable, "-m", "aegis.main"],
+        server_command(),
         env=child_env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_sink,
+        stderr=log_sink,
     )
 
 
-def _wait_until_ready(base: str, process: subprocess.Popen[bytes], *, timeout: float) -> float:
+def _wait_until_ready(
+    base: str,
+    process: subprocess.Popen[bytes],
+    *,
+    timeout: float,
+    log_path: Path = SERVER_LOG,
+) -> float:
     """返回"起进程到 /healthz 可答"的秒数；进程中途退出就直接判失败。"""
     started = time.perf_counter()
     deadline = started + timeout
     while time.perf_counter() < deadline:
         if process.poll() is not None:
-            raise RuntimeError(f"服务进程提前退出，退出码 {process.returncode}")
+            # 子进程已经退出 ⇒ 它自己的缓冲都落盘了，此刻读尾巴是完整的。
+            raise RuntimeError(f"服务进程提前退出，退出码 {process.returncode}；{log_path} 尾部：{read_log_tail(log_path)}")
         try:
             if httpx.get(f"{base}/healthz", timeout=2.0).status_code == 200:
                 return time.perf_counter() - started
         except Exception:
             time.sleep(0.2)
-    raise RuntimeError(f"服务在 {timeout}s 内没有就绪：{base}/healthz")
+    raise RuntimeError(f"服务在 {timeout}s 内没有就绪：{base}/healthz；{log_path} 尾部：{read_log_tail(log_path)}")
 
 
 def _stop_server(process: subprocess.Popen[bytes]) -> None:
@@ -268,50 +302,54 @@ def run_curve(
     base = f"http://127.0.0.1:{port}"
     read_budget = read_budget_ms(settings)
     drill_budget = drill_budget_ms(settings)
-    process = _spawn_server(port, env=server_env(port, profile))
-    try:
-        boot_seconds = _wait_until_ready(base, process, timeout=60.0)
-        points: list[dict[str, Any]] = []
-        for users in levels:
-            csv_prefix = Path("reports") / f"load_curve_u{users}"
-            csv_prefix.parent.mkdir(parents=True, exist_ok=True)
-            point = run_point(base=base, users=users, duration=duration, spawn_rate=spawn_rate, csv_prefix=csv_prefix)
-            breaches: list[str] = []
-            for name, row in point["by_endpoint"].items():
-                budget = drill_budget if name == "drill_run" else read_budget
-                p95 = row.get("p95")
-                if row["fail_pct"] > 0.0:
-                    breaches.append(f"{name} 失败率 {row['fail_pct']}%")
-                elif isinstance(p95, (int, float)) and p95 > budget:
-                    breaches.append(f"{name} P95={p95:.0f}ms > {budget:.0f}ms")
-            point["breaches"] = breaches
-            points.append(point)
-            print(
-                f"users={users:>4}  requests={point['requests']:>7}  RPS={point['rps']:>6.2f}  "
-                f"失败率={point['fail_pct']:>5.2f}%  P50={point['percentiles_ms'].get('p50', 0):>7.1f}ms  "
-                f"P95={point['percentiles_ms'].get('p95', 0):>7.1f}ms  越阈值={len(breaches)}",
-                flush=True,
-            )
-        clean = [point for point in points if not point["breaches"]]
-        return {
-            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "budgets_ms": {"read": read_budget, "drill": drill_budget},
-            "server": {
-                "profile": profile.key,
-                "label": profile.label,
-                "bus": profile.bus_backend,
-                "store": profile.store_backend,
-                "boot_seconds": round(boot_seconds, 2),
-                "port": port,
-            },
-            "duration_per_point": duration,
-            "levels": levels,
-            "points": points,
-            "max_clean_level": max((point["users"] for point in clean), default=None),
-            "first_breaching_level": next((point["users"] for point in points if point["breaches"]), None),
-        }
-    finally:
-        _stop_server(process)
+    SERVER_LOG.parent.mkdir(parents=True, exist_ok=True)
+    # "wb" 而不是 append：把上一次跑挂的 traceback 混进这次的日志尾巴里，读的人会指错方向。
+    with SERVER_LOG.open("wb") as log_sink:
+        process = _spawn_server(port, env=server_env(port, profile), log_sink=log_sink)
+        try:
+            boot_seconds = _wait_until_ready(base, process, timeout=60.0)
+            points: list[dict[str, Any]] = []
+            for users in levels:
+                csv_prefix = Path("reports") / f"load_curve_u{users}"
+                csv_prefix.parent.mkdir(parents=True, exist_ok=True)
+                point = run_point(base=base, users=users, duration=duration, spawn_rate=spawn_rate, csv_prefix=csv_prefix)
+                breaches: list[str] = []
+                for name, row in point["by_endpoint"].items():
+                    budget = drill_budget if name == "drill_run" else read_budget
+                    p95 = row.get("p95")
+                    if row["fail_pct"] > 0.0:
+                        breaches.append(f"{name} 失败率 {row['fail_pct']}%")
+                    elif isinstance(p95, (int, float)) and p95 > budget:
+                        breaches.append(f"{name} P95={p95:.0f}ms > {budget:.0f}ms")
+                point["breaches"] = breaches
+                points.append(point)
+                print(
+                    f"users={users:>4}  requests={point['requests']:>7}  RPS={point['rps']:>6.2f}  "
+                    f"失败率={point['fail_pct']:>5.2f}%  P50={point['percentiles_ms'].get('p50', 0):>7.1f}ms  "
+                    f"P95={point['percentiles_ms'].get('p95', 0):>7.1f}ms  越阈值={len(breaches)}",
+                    flush=True,
+                )
+            clean = [point for point in points if not point["breaches"]]
+            return {
+                "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "budgets_ms": {"read": read_budget, "drill": drill_budget},
+                "server": {
+                    "profile": profile.key,
+                    "label": profile.label,
+                    "bus": profile.bus_backend,
+                    "store": profile.store_backend,
+                    "boot_seconds": round(boot_seconds, 2),
+                    "port": port,
+                    "log": str(SERVER_LOG),
+                },
+                "duration_per_point": duration,
+                "levels": levels,
+                "points": points,
+                "max_clean_level": max((point["users"] for point in clean), default=None),
+                "first_breaching_level": next((point["users"] for point in points if point["breaches"]), None),
+            }
+        finally:
+            _stop_server(process)
 
 
 def main() -> int:
