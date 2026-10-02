@@ -132,12 +132,19 @@ class TestMigrations:
         assert [r["extname"] for r in installed] == ["postgis", "vector"]
         tables = {r["tablename"] for r in await pool.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")}
         assert {"monitoring_stations", "telemetry_readings", "warnings", "standardized_task_units"} <= tables
+        # 真值标注表也在同一批 DDL 里：回放缺它就退化成"只有预测侧"，算不出准确率
+        assert "warning_truth_labels" in tables
 
     async def test_migrate_is_idempotent_and_checksummed(self, store: PostgresStore) -> None:
         # 夹具已应用过一轮：幂等的含义是"不重复应用"，故再跑两次都应返回空
         assert await store.migrate() == [] and await store.migrate() == []
         ledger = await store.require_pool().fetch("SELECT name FROM public.schema_migrations ORDER BY name")
-        assert [r["name"] for r in ledger] == ["001_extensions.sql", "002_schema.sql", "003_indexes.sql"]
+        assert [r["name"] for r in ledger] == [
+            "001_extensions.sql",
+            "002_schema.sql",
+            "003_indexes.sql",
+            "004_accuracy_labels.sql",
+        ]
 
 
 class TestSpatialQueries:

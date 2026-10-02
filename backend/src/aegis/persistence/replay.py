@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -211,6 +212,36 @@ def parse_case(raw: Mapping[str, Any], *, line_no: int) -> ReplayCase:
         truth_level=_as_optional_level(raw.get("truth_level"), field="truth_level", line_no=line_no),
         predicted_level=_as_optional_level(raw.get("predicted_level"), field="predicted_level", line_no=line_no),
         lead_seconds=_as_optional_float(raw.get("lead_seconds"), field="lead_seconds", line_no=line_no),
+    )
+
+
+def case_from_row(row: Mapping[str, Any], *, line_no: int) -> ReplayCase:
+    """库里"真值 + 窗口内产出"的配对行 -> 案例：判定字段一个都不自己算，全部走 `parse_case`。
+
+    存在的理由只有一个：让 Postgres 侧读出来的东西与 JSONL 侧走**同一套**口径。
+    在 SQL 里再算一遍 TP/FP 就会有两个"预警准确率"，两边不一致时没人能看出谁在骗人。
+
+    `predicted_generated_at` 为空即窗口内没有任何预警，也就是漏报（False）而不是未知：
+    把漏报写成 None 会让分母悄悄变小，准确率反而显得更高。
+    """
+    generated_at = row.get("predicted_generated_at")
+    observed_at = row.get("observed_at")
+    lead_seconds = None
+    if isinstance(generated_at, datetime) and isinstance(observed_at, datetime):
+        lead_seconds = (generated_at - observed_at).total_seconds()
+    return parse_case(
+        {
+            "case_id": row["case_id"],
+            "hazard_type": row["hazard_type"],
+            "region_code": row["region_code"],
+            "truth_warning": row["truth_warning"],
+            "predicted_warning": generated_at is not None,
+            "predicted_hazard_type": row.get("predicted_hazard_type"),
+            "truth_level": row.get("truth_level"),
+            "predicted_level": row.get("predicted_level"),
+            "lead_seconds": lead_seconds,
+        },
+        line_no=line_no,
     )
 
 

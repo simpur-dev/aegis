@@ -66,6 +66,10 @@ class VectorArgumentError(QueryArgumentError):
     """向量检索参数不合法（除维度外的 k / 阈值 / 时间窗问题）。"""
 
 
+class AccuracyArgumentError(QueryArgumentError):
+    """准确率回放参数或标注行不合法：缺 case_id/灾种/区划、裸时间、等级越界、配对窗非法。"""
+
+
 class VectorEmbeddingError(VectorArgumentError):
     """嵌入向量本身不可用：维度与列定义不符，或含 NaN/Inf。重试同一个向量必然再失败。"""
 

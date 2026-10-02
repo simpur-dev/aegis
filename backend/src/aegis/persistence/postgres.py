@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import logging
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,7 +28,7 @@ import orjson
 
 from aegis.config import Settings, get_settings
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, utc_now
-from aegis.persistence import geo, rows, vectors
+from aegis.persistence import accuracy, geo, rows, vectors
 from aegis.persistence.dsn import dsn_label, normalize_dsn, redact_dsn
 from aegis.persistence.errors import (
     ConnectionFailedError,
@@ -497,6 +497,29 @@ class PostgresStore:
     async def stations_within(self, *, lon: float, lat: float, radius_m: float, limit: int = 50) -> list[dict[str, Any]]:
         async with self.acquire() as conn:
             return await geo.stations_within(conn, lon=lon, lat=lat, radius_m=radius_m, limit=limit)
+
+    async def put_warning_labels(self, rows: Iterable[Mapping[str, Any]]) -> int:
+        """导入现场真值标注（按 case_id 幂等）。
+
+        刻意走借连接直写而不是有界写缓冲：回放是离线路径，导入结果必须立即可见，
+        否则"刚导入就回放"会算出一份看着像真的旧数字。
+        """
+        await self.connect()
+        async with self.acquire() as conn:
+            return await accuracy.put_labels(conn, rows)
+
+    async def accuracy_replay_cases(
+        self,
+        *,
+        since: datetime,
+        until: datetime | None = None,
+        window_seconds: int = accuracy.DEFAULT_WINDOW_SECONDS,
+        region_code: str | None = None,
+    ) -> list[Any]:
+        """真值与已落库预警的配对结果；判定口径见 `persistence/replay.case_from_row`。"""
+        await self.connect()
+        async with self.acquire() as conn:
+            return await accuracy.replay_rows(conn, since=since, until=until, window_seconds=window_seconds, region_code=region_code)
 
     async def list_stations(self, *, region_code: str | None = None, limit: int = 500) -> list[dict[str, object]]:
         """站点清单：维表行（有名称与坐标）优先，再用"报过数但不在维表"的站点补齐。

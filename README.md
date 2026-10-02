@@ -45,7 +45,7 @@ aegis/
 │   │   ├── observability/     # 时延账本、OpenTelemetry 埋点与导出、Prometheus 导出
 │   │   ├── agents/            # 参考智能体（开发与门禁用）
 │   │   └── api/               # FastAPI HTTP/SSE 接口与工作流接口
-│   ├── scripts/               # drill / metrics_report / load_curve / zenoh_poc
+│   ├── scripts/               # drill / metrics_report / accuracy_replay / load_curve / zenoh_poc
 │   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
 │   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / dev
 ├── frontend/                  # Vue 3 + Vite；Cesium 一张图、Vue Flow 编排画布
@@ -150,6 +150,12 @@ uv run python -m scripts.load_curve --profile deployed --levels 1,10,30,60 --dur
                                                     # 起不来时报错会直接把日志尾巴一起给出
 uv run python -m scripts.metrics_report --dataset labels.jsonl
                                                     # 附现场标注案例集才算得出"预警准确率"；不附则如实写"未测得"
+AEGIS_PG_DSN=postgresql://<user>:<password>@127.0.0.1:5432/<db> \
+uv run python -m scripts.accuracy_replay --import-labels labels.jsonl
+                                                    # 把现场真值标注导入 warning_truth_labels（按 case_id 幂等）
+uv run python -m scripts.accuracy_replay --from-store --since 2026-09-01T00:00:00Z --kind field
+                                                    # 库侧回放：真值来自标注表，预测来自落库 warnings
+                                                    # （时间必须带时区；标注没声明是现场数据时官方准确率恒为"未测得"）
 ```
 
 ## 5. 关键设计约束

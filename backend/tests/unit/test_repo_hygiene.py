@@ -39,3 +39,23 @@ def test_scripts_imports_are_backed_by_pythonpath() -> None:
         pytest.fail("没有任何测试 import scripts：这条门禁失去了对象，配置该连同用例一起清理")
     config = (TESTS_ROOT.parent / "pyproject.toml").read_text(encoding="utf-8")
     assert 'pythonpath = ["."]' in config, f"这些测试依赖 scripts 包但没有 pythonpath：{importers}"
+
+
+def test_every_test_module_parses() -> None:
+    """每个测试模块都要能被 `ast.parse`。
+
+    今晚两次真实打断：中文用例名里混进空格（`def test_区划代码 CHECK 与站点表同口径`）
+    造成语法错，而语法错发生在**收集期**——pytest 整场中断，不是少跑一个文件。
+    这条把"哪个文件第几行"直接报出来，省掉一轮"全套为什么不绿"的排查。
+    """
+    import ast
+
+    paths = [path for path in sorted(TESTS_ROOT.rglob("test_*.py")) if "__pycache__" not in path.parts]
+    assert len(paths) >= 60, f"没量到真实测试树：{len(paths)} 个文件"
+    broken: list[str] = []
+    for path in paths:
+        try:
+            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError as exc:
+            broken.append(f"{path.name}:{exc.lineno} {exc.msg}")
+    assert not broken, "测试树不可收集（会打断整场 pytest）：" + "；".join(broken)
