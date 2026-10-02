@@ -248,7 +248,15 @@ def hybrid_search_config(limit: int) -> Any:
 
 
 def build_batched_embedder(config: GraphitiConfig) -> Any:
-    """DashScope 等 API 单次 embed 批量 ≤10：切片后拼回（NexusMind 现场验证的约束）。"""
+    """DashScope 等 API 单次 embed 批量 ≤10：切片后拼回（NexusMind 现场验证的约束）。
+
+    凭据门禁必须在这里也有：`build_graphiti()` 两个角色都走本函数，缺 key 时
+    `OpenAIEmbedder` 会先抛 SDK 的裸 `OpenAIError`，绕过类型化降级——装配面于是把
+    "没配凭据"报成一个无法归类的错误（真 Neo4j 上实测到）。读写一视同仁：
+    图谱检索要把查询串向量化，所以**没有凭据连读路径都建不起来**，别假装能降级成"只读"。
+    """
+    if not config.llm_api_key:
+        raise GraphitiUnavailableError("图谱检索需要向量凭据（查询向量化由 embedding 模型完成），llm_api_key 为空")
     from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 
     class BatchedOpenAIEmbedder(OpenAIEmbedder):
@@ -260,7 +268,7 @@ def build_batched_embedder(config: GraphitiConfig) -> Any:
             return results
 
     embedder_config = OpenAIEmbedderConfig(
-        api_key=config.llm_api_key or None,
+        api_key=config.llm_api_key,
         base_url=config.llm_base_url or None,
         embedding_model=config.embedding_model,
         embedding_dim=config.embedding_dim,

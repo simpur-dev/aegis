@@ -461,6 +461,28 @@ class TestAssembly:
     def test_batch_size_matches_dashscope_limit(self) -> None:
         assert DASHSCOPE_EMBEDDING_BATCH_SIZE == 10
 
+    def test_missing_credentials_fail_typed_for_both_builders(self) -> None:
+        """缺凭据要报成类型化的"这条腿不可用"，并且理由点名是哪个键。
+
+        真 Neo4j 上实测到的缺陷：只有 `build_llm_client` 设了门禁，而 `build_graphiti()`
+        两个角色都会先构造 embedder → 读路径抛的是 SDK 裸 `OpenAIError`，
+        装配面把它归成一个无法解释的错误，而不是"没配凭据"。
+        """
+        empty = GraphitiConfig(uri="bolt://x:7687")
+        for name in ("build_batched_embedder", "build_llm_client"):
+            builder = getattr(graphiti_store, name)
+            with pytest.raises(GraphitiUnavailableError) as caught:
+                builder(empty)
+            assert "llm_api_key" in str(caught.value), f"{name} 的失败理由没点名凭据"
+
+    def test_embedder_gate_runs_before_importing_the_graph_stack(self) -> None:
+        """门禁必须排在 `import graphiti_core` 之前：没装 graph extra 的机器上，
+        缺凭据也该报"缺凭据"，而不是被 ImportError 抢先后报成"依赖不可用"。"""
+        source = (Path(graphiti_store.__file__).read_text(encoding="utf-8")).split("def build_batched_embedder")[1]
+        gate = source.index("if not config.llm_api_key")
+        imported = source.index("from graphiti_core.embedder.openai import")
+        assert gate < imported, "凭据门禁被放到了图谱依赖导入之后"
+
 
 class TestLazyImports:
     """图谱与驱动依赖必须留在函数体内：单测与降级模式都不能要求 neo4j driver 可导入。"""

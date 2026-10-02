@@ -1,9 +1,17 @@
-"""真实 Neo4j + Graphiti 集成：证明 add_episode 与混合检索在真图上确实可用，且召回零 LLM 调用。
+"""真实 Neo4j + Graphiti 集成，分两档跑（凭据只挡住需要模型的那一档）：
 
-默认跳过。启用方式（两个条件都要满足，写入路径必须有模型凭据）：
-    AEGIS_TEST_NEO4J=bolt://127.0.0.1:7687 \\
-    AEGIS_LLM_API_KEY=sk-... AEGIS_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1 \\
+第一档**不需要模型凭据**（`AEGIS_TEST_NEO4J` 一设就跑）：连得上真图、缺凭据时报成类型化的
+"这条腿不可用"。这一档的价值是把"图谱没起/凭据没配"两种情况分开——否则整份文件一起跳过，
+连 Neo4j 通不通都不知道。
+
+    AEGIS_TEST_NEO4J=bolt://127.0.0.1:7687 \
+    AEGIS_NEO4J_USER=neo4j AEGIS_NEO4J_PASSWORD=... \
     uv run pytest -q -m slow tests/integration/test_knowledge_graphiti_live.py
+
+第二档要写入路径，必须有模型凭据（图谱抽取与查询向量化都由模型完成）：
+
+    AEGIS_LLM_API_KEY=sk-... AEGIS_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1 \
+    ...（同上，再加这两个键）
 
 用例只往 `aegis_case_pytest_live_*` 这一个隔离图里写，teardown 用 remove_episode 清理，
 反复运行不会污染真实案例图。
@@ -18,7 +26,13 @@ import pytest
 
 from aegis.config import get_settings
 from aegis.knowledge.cases import HazardCase
-from aegis.knowledge.graphiti_store import GraphitiConfig, GraphitiKnowledgeProvider, GraphitiRole, case_episode_uuid
+from aegis.knowledge.graphiti_store import (
+    GraphitiConfig,
+    GraphitiKnowledgeProvider,
+    GraphitiRole,
+    GraphitiUnavailableError,
+    case_episode_uuid,
+)
 
 NEO4J_URI = os.getenv("AEGIS_TEST_NEO4J", "")
 LIVE_MARKER_HAZARD = "pytest_live"
@@ -26,8 +40,8 @@ LIVE_MARKER_HAZARD = "pytest_live"
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(not NEO4J_URI, reason="未设置 AEGIS_TEST_NEO4J，跳过真实图谱集成"),
-    pytest.mark.skipif(not get_settings().llm_api_key, reason="未配置 AEGIS_LLM_API_KEY，无法执行图谱抽取写入"),
 ]
+needs_llm = pytest.mark.skipif(not get_settings().llm_api_key, reason="未配置 AEGIS_LLM_API_KEY，无法执行图谱抽取写入与向量检索")
 
 
 def _live_case(case_id: str, *, title: str, observed_at: str, signal: str) -> HazardCase:
@@ -74,6 +88,44 @@ async def _cleanup(instance: GraphitiKnowledgeProvider, case_ids: list[str]) -> 
         await write.remove_episode(case_episode_uuid(case_id))
 
 
+class TestGraphitiLiveWithoutCredentials:
+    """第一档：不需要模型凭据也能验的两件事——图连得上、缺凭据报得清楚。
+
+    为什么值得单独一档：整份文件挂在"要有 LLM key"上，等于 Neo4j 通不通也要靠凭据才能知道；
+    而"这条腿没起"和"这条腿没配凭据"是两种必须分开的降级原因（见 `GET /api/v1/integrations`）。
+    """
+
+    async def test_neo4j_accepts_the_declared_credentials(self) -> None:
+        from neo4j import GraphDatabase
+
+        settings = get_settings()
+        driver = GraphDatabase.driver(NEO4J_URI, auth=(settings.neo4j_user, settings.neo4j_password))
+        try:
+            with driver.session() as session:
+                assert session.run("RETURN 1 AS n").single()["n"] == 1
+                components = session.run("CALL dbms.components() YIELD name, versions, edition RETURN name, versions, edition").single()
+            # 实测形状：name 是 'Neo4j Kernel'（不是 'Neo4j'）、versions 是列表、edition 是 'community'。
+            assert str(components["name"]).startswith("Neo4j"), f"连到的不是 Neo4j：{components['name']!r}"
+            assert components["versions"], "读不到版本号，取证里就没法写实测版本"
+            assert str(components["edition"]).lower() in {"community", "enterprise"}, f"未知的发行版：{components['edition']!r}"
+        finally:
+            driver.close()
+
+    async def test_missing_llm_credentials_surface_as_typed_unavailability(self) -> None:
+        settings = get_settings()
+        if settings.llm_api_key:
+            pytest.skip("已配置模型凭据，这条只在缺凭据时有意义")
+        provider = GraphitiKnowledgeProvider(config=GraphitiConfig.from_parts(uri=NEO4J_URI, settings=settings))
+        try:
+            with pytest.raises(GraphitiUnavailableError) as caught:
+                await provider.prepare_schema()
+            assert "llm_api_key" in str(caught.value), f"降级理由没点名凭据：{caught.value}"
+            assert provider.instance_of(GraphitiRole.write) is None, "建实例失败却把半截实例缓存了"
+        finally:
+            await provider.close()
+
+
+@needs_llm
 class TestGraphitiLive:
     async def test_add_episode_then_hybrid_recall_finds_the_case(self, provider: GraphitiKnowledgeProvider) -> None:
         case = _live_case(
