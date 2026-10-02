@@ -11,6 +11,10 @@
 用法：
     uv run python -m scripts.load_curve                                  # 1/10/30/60 并发，各 25s
     uv run python -m scripts.load_curve --levels 100,200 --duration 60s --out reports/load_curve.json
+
+    # 部署形态（容器化 NATS JetStream + PostgreSQL）：DSN/地址由环境给出，缺 DSN 直接判失败
+    AEGIS_PG_DSN=postgresql://aegis:…@127.0.0.1:5432/aegis \\
+        uv run python -m scripts.load_curve --profile deployed --out reports/load_curve_deployed.json
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -39,19 +45,78 @@ PERCENTILE_KEYS = ("p50", "p66", "p75", "p80", "p90", "p95", "p98", "p99", "p99_
 PERCENTILE_ROW = re.compile(r"^(?:(?P<type>[A-Z]+)\s+)?(?P<name>[\w/]+)\s+(?P<values>(?:[\d.]+\s+){11})(?P<requests>\d+)\s*$")
 
 
-def _spawn_server(port: int, *, env: dict[str, str]) -> subprocess.Popen[bytes]:
-    child_env = {
-        **os.environ,
-        **env,
+@dataclass(frozen=True)
+class ServerProfile:
+    """曲线是在哪种服务形态上量的。
+
+    换总线、换存储，容量结论就不能互相引用——"第一个不越阈值的并发级别"这句话一旦脱离形态
+    就没有意义（内存总线下 60 并发能过，不代表真总线 + 真库也能过）。所以形态写进产物本身，
+    而不是只留在命令行历史里。
+    """
+
+    key: str
+    label: str
+    bus_backend: str
+    store_backend: str
+    server_env: Mapping[str, str] = field(default_factory=dict)
+
+
+LOCAL_PROFILE = ServerProfile(
+    key="local",
+    label="本机进程 + 内存总线 + 内存视图（回归用的下限形态）",
+    bus_backend="memory",
+    store_backend="memory",
+)
+
+
+def deployed_profile(environ: Mapping[str, str]) -> ServerProfile:
+    """容器化服务端形态：NATS JetStream + PostgreSQL 17(PostGIS+pgvector)，按 compose 发布端口连本机。
+
+    缺 DSN 直接判失败，而不是退回内存视图：那样量出来的数字会被当成"生产形态容量"引用，
+    而它其实一条外部依赖都没接。口径与装配面 `AEGIS_STORE_BACKEND=postgres` 留空即报错一致。
+    """
+    pg_dsn = (environ.get("AEGIS_PG_DSN") or "").strip()
+    if not pg_dsn:
+        raise ValueError("--profile deployed 需要 AEGIS_PG_DSN（指向 compose 发布的 127.0.0.1:5432）")
+    return ServerProfile(
+        key="deployed",
+        label="容器化服务端：NATS JetStream + PostgreSQL 17（PostGIS + pgvector）",
+        bus_backend="nats",
+        store_backend="postgres",
+        server_env={
+            "AEGIS_NATS_URL": (environ.get("AEGIS_NATS_URL") or "").strip() or "nats://127.0.0.1:4222",
+            "AEGIS_PG_DSN": pg_dsn,
+            "AEGIS_PG_APPLY_MIGRATIONS_ON_START": "true",
+        },
+    )
+
+
+def profile_for(name: str, environ: Mapping[str, str]) -> ServerProfile:
+    if name == LOCAL_PROFILE.key:
+        return LOCAL_PROFILE
+    if name == "deployed":
+        return deployed_profile(environ)
+    raise ValueError(f"未知 --profile：{name}，可选 {LOCAL_PROFILE.key}|deployed")
+
+
+def server_env(port: int, profile: ServerProfile) -> dict[str, str]:
+    """子进程环境里的那份形态：显式写全，避免"继承了调用方某个 AEGIS_*"这种隐式口径。"""
+    return {
         "AEGIS_HTTP_HOST": "127.0.0.1",
         "AEGIS_HTTP_PORT": str(port),
         "AEGIS_ENV": "dev",
         "AEGIS_LOG_LEVEL": "WARNING",
-        "AEGIS_BUS_BACKEND": "memory",
+        "AEGIS_BUS_BACKEND": profile.bus_backend,
+        "AEGIS_STORE_BACKEND": profile.store_backend,
         "AEGIS_DELIVERY_MODE": "mock",
         # 演练端点要求模拟器在场；这条开关今晚才真正被配置面拧动
         "AEGIS_SIMULATOR_ENABLED": "true",
+        **profile.server_env,
     }
+
+
+def _spawn_server(port: int, *, env: dict[str, str]) -> subprocess.Popen[bytes]:
+    child_env = {**os.environ, **env}
     return subprocess.Popen(
         [sys.executable, "-m", "aegis.main"],
         env=child_env,
@@ -198,11 +263,12 @@ def run_curve(
     duration: str,
     spawn_rate: int,
     settings: Settings,
+    profile: ServerProfile,
 ) -> dict[str, Any]:
     base = f"http://127.0.0.1:{port}"
     read_budget = read_budget_ms(settings)
     drill_budget = drill_budget_ms(settings)
-    process = _spawn_server(port, env={})
+    process = _spawn_server(port, env=server_env(port, profile))
     try:
         boot_seconds = _wait_until_ready(base, process, timeout=60.0)
         points: list[dict[str, Any]] = []
@@ -230,7 +296,14 @@ def run_curve(
         return {
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "budgets_ms": {"read": read_budget, "drill": drill_budget},
-            "server": {"boot_seconds": round(boot_seconds, 2), "bus": settings.bus_backend, "port": port},
+            "server": {
+                "profile": profile.key,
+                "label": profile.label,
+                "bus": profile.bus_backend,
+                "store": profile.store_backend,
+                "boot_seconds": round(boot_seconds, 2),
+                "port": port,
+            },
             "duration_per_point": duration,
             "levels": levels,
             "points": points,
@@ -247,14 +320,37 @@ def main() -> int:
     parser.add_argument("--duration", default="25s", help="每个级别跑多久")
     parser.add_argument("--spawn-rate", type=int, default=10, help="每秒拉起多少用户")
     parser.add_argument("--port", type=int, default=8123)
+    parser.add_argument(
+        "--profile",
+        choices=("local", "deployed"),
+        default="local",
+        help="local=内存总线+内存视图；deployed=容器化 NATS JetStream + PostgreSQL（需 AEGIS_PG_DSN）",
+    )
     parser.add_argument("--out", type=Path, default=None, help="同时把曲线写入 JSON 文件")
     args = parser.parse_args()
 
     levels = [int(item) for item in str(args.levels).split(",") if item.strip()]
     if not levels or any(level < 1 for level in levels):
         parser.error("--levels 至少给出一个正整数")
-    settings = Settings(env="dev", bus_backend="memory", delivery_mode="mock", simulator_enabled=True)
-    curve = run_curve(port=args.port, levels=levels, duration=str(args.duration), spawn_rate=args.spawn_rate, settings=settings)
+    try:
+        profile = profile_for(args.profile, os.environ)
+    except ValueError as exc:
+        parser.error(str(exc))
+    settings = Settings(
+        env="dev",
+        bus_backend=profile.bus_backend,
+        store_backend=profile.store_backend,
+        delivery_mode="mock",
+        simulator_enabled=True,
+    )
+    curve = run_curve(
+        port=args.port,
+        levels=levels,
+        duration=str(args.duration),
+        spawn_rate=args.spawn_rate,
+        settings=settings,
+        profile=profile,
+    )
     print(json.dumps(curve, ensure_ascii=False, indent=2))
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -4,7 +4,10 @@ services:
   nats:
     image: nats:2.10-alpine
     container_name: aegis-nats
-    command: ["--jetstream", "--store_dir", "/data", "--cluster_name", "aegis"]
+    # `-m 8222` 不是可选项：nats-server 默认不开监控端口，而下面的 healthcheck 打的正是 8222。
+    # 少了它，healthcheck 永远失败，`depends_on: condition: service_healthy` 的 backend 就永远起不来
+    # （docker exec 里 wget 127.0.0.1:8222 实测 connection refused；守卫见 test_deploy_env_contract.py）。
+    command: ["--jetstream", "--store_dir", "/data", "--cluster_name", "aegis", "-m", "8222"]
     ports:
       - "4222:4222" # 客户端
       - "6222:6222" # 路由

@@ -96,3 +96,55 @@ class TestComposeEnvContract:
         assert "promtool" in ci and "check rules" in ci, "告警规则要由 promtool 在 CI 里校验"
         assert "check config" in ci, "采集配置（rule_files / alerting 段）要在 CI 里过 promtool"
         assert "amtool" in ci and "check-config" in ci, "分发与抑制配置要在 CI 里过 amtool"
+
+
+HEALTH_URL_PORT = re.compile(r"http://127\.0\.0\.1:(\d+)")
+
+
+def compose_service_blocks() -> dict[str, str]:
+    """按两空格缩进把 `services:` 下的每个服务块切出来（不引 yaml 依赖，保持本文件的纯文本对账口径）。"""
+    lines = compose_text().splitlines()
+    blocks: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in lines:
+        named = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if named:
+            current = named.group(1)
+            blocks[current] = []
+            continue
+        if current is not None and re.match(r"^[A-Za-z]", line):
+            current = None  # 到了 volumes:/name: 这类顶层键，服务块结束
+        if current is not None:
+            blocks[current].append(line)
+    return {name: "\n".join(body) for name, body in blocks.items()}
+
+
+class TestHealthcheckPortIsActuallyOpened:
+    """healthcheck 打的端口必须由该服务自己显式开启，否则"服务不健康"看起来像镜像坏了。
+
+    真事故形状（2026-10-02 实测）：nats 的 healthcheck 打 `127.0.0.1:8222/healthz`，
+    而 nats-server **默认不开监控端口**（要 `-m 8222`）。在容器里 wget 那个地址是
+    connection refused ⇒ healthcheck 永远失败 ⇒ 用 `depends_on: service_healthy` 的
+    backend 永远起不来。`docker compose config` 查不出这种错，因为它只看语法。
+    """
+
+    def test_every_localhost_healthcheck_port_is_enabled_in_the_command(self) -> None:
+        offenders: list[str] = []
+        for name, body in compose_service_blocks().items():
+            ports = set(HEALTH_URL_PORT.findall(body))
+            if not ports:
+                continue
+            command = " ".join(line for line in body.splitlines() if "command:" in line)
+            if not command:
+                continue  # 没有 command 的服务靠镜像默认监听，静态证不了，跳过而不是判过
+            for port in sorted(ports):
+                if port not in command:
+                    offenders.append(f"{name}: healthcheck 打 :{port}，但 command 里没开启它")
+        assert offenders == []
+
+    def test_nats_healthcheck_port_is_the_one_its_command_opens(self) -> None:
+        """nats 单独钉一条：它是 backend 的启动前置条件，这条断了整条 app profile 就起不来。"""
+        body = compose_service_blocks()["nats"]
+        assert '"-m", "8222"' in body, "nats 的监控端口要在 command 里显式开，healthcheck 才打得到"
+        backend = compose_service_blocks()["backend"]
+        assert "nats:" in backend and "condition: service_healthy" in backend, "backend 以 nats 健康为启动前置条件"

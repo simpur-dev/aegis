@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from scripts.load_curve import merge_streams, parse_summary, point_from
+from scripts.load_curve import LOCAL_PROFILE, merge_streams, parse_summary, point_from, profile_for, server_env
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "locust_summary_locust-2.46.6.txt"
 
@@ -126,3 +126,39 @@ class TestPointFrom:
         header_only = parse_summary("Type     Name   # reqs      # fails\n--------|------\n")
         with pytest.raises(RuntimeError, match="users=100"):
             point_from(header_only, users=100, exit_code=0)
+
+
+class TestServerProfile:
+    """形态层：曲线必须知道自己是在哪种服务形态上量的，否则"容量"两个字没有可比性。"""
+
+    def test_local_形态把总线与存储都写进子进程环境(self) -> None:
+        env = server_env(8123, LOCAL_PROFILE)
+        assert env["AEGIS_BUS_BACKEND"] == "memory"
+        assert env["AEGIS_STORE_BACKEND"] == "memory"
+        assert env["AEGIS_HTTP_PORT"] == "8123"
+        assert env["AEGIS_DELIVERY_MODE"] == "mock"
+
+    def test_形态写全每一项_不留继承来的隐式口径(self) -> None:
+        # 调用方环境里残留 AEGIS_STORE_BACKEND=postgres 时，local 形态仍必须显式写 memory。
+        env = server_env(8123, profile_for("local", {"AEGIS_STORE_BACKEND": "postgres"}))
+        assert env["AEGIS_STORE_BACKEND"] == "memory"
+
+    def test_deployed_缺_DSN_直接判失败而不是静默退回内存视图(self) -> None:
+        with pytest.raises(ValueError, match="AEGIS_PG_DSN"):
+            profile_for("deployed", {})
+
+    def test_deployed_把真总线与真库都带上并默认开迁移(self) -> None:
+        profile = profile_for(
+            "deployed",
+            {"AEGIS_PG_DSN": "postgresql://aegis:pw@127.0.0.1:5432/aegis"},
+        )
+        env = server_env(8123, profile)
+        assert profile.bus_backend == "nats"
+        assert profile.store_backend == "postgres"
+        assert env["AEGIS_PG_DSN"] == "postgresql://aegis:pw@127.0.0.1:5432/aegis"
+        assert env["AEGIS_NATS_URL"] == "nats://127.0.0.1:4222"
+        assert env["AEGIS_PG_APPLY_MIGRATIONS_ON_START"] == "true"
+
+    def test_未知形态响亮拒绝(self) -> None:
+        with pytest.raises(ValueError, match="未知 --profile"):
+            profile_for("prod-ish", {"AEGIS_PG_DSN": "x"})
