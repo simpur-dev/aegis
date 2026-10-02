@@ -558,6 +558,37 @@ class TestPrewarm:
         assert cfg.retrieval_budget_ms < 180_000, "检索预算必须仍是预警口径的一小部分"
 
 
+class TestDegradedListing:
+    """降级清单看的是"有没有原因"，不是"键在不在"。
+
+    真机跑 `/api/v1/integrations` 时才暴露：健康检索腿的 detail 里 `degraded` 键存在且为
+    空串（"没有降级原因"本身就是这条记录的一部分），按键存在与否判定会让它永远被列成瘸腿。
+    """
+
+    async def test_empty_reason_is_not_a_degradation_but_a_real_one_is(self, tmp_path: Path) -> None:
+        from dataclasses import replace
+
+        ctn = create_container(base_settings(retrieval_enabled=True, retrieval_model_dir=str(tmp_path)), with_simulator=False)
+        await ctn.start()
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(ctn.settings, container=ctn)),
+            base_url="http://testserver",
+        )
+        try:
+            with_reason = (await client.get("/api/v1/integrations")).json()
+            row = next(item for item in with_reason["items"] if item["name"] == "retrieval")
+            assert "权重缺失" in row["detail"]["degraded"]
+            assert "retrieval" in with_reason["degraded"], "真有原因时必须列出来"
+
+            assert ctn.retrieval_state is not None
+            ctn.retrieval_state = replace(ctn.retrieval_state, detail={**ctn.retrieval_state.detail, "degraded": ""})
+            healthy = (await client.get("/api/v1/integrations")).json()
+            assert "retrieval" not in healthy["degraded"], "空串是「没有降级原因」，不是「降级原因为空」"
+        finally:
+            await client.aclose()
+            await ctn.shutdown()
+
+
 class TestRetrievalApi:
     async def test_search_returns_ranked_blocks_with_auditable_provenance(
         self, retrieval_client: tuple[httpx.AsyncClient, PlatformContainer]

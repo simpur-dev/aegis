@@ -58,6 +58,9 @@ aegis/
 
 ```bash
 # 1) 配置：LLM 与图谱项可留空，平台按规则引擎与内存案例库降级运行
+#    注意：`Settings` 的 env_file 按进程工作目录解析，`backend/.env` 会被 pytest 一起读走。
+#    本机实验请用一次性环境变量，别写进 .env——否则"全绿"量到的是你个人的机器偏好：
+#      AEGIS_RETRIEVAL_ENABLED=true AEGIS_RETRIEVAL_INDEX_BACKEND=seekdb uv run python -m aegis.main
 cp .env.example backend/.env
 
 # 2) 依赖（后端 uv / 前端 npm）

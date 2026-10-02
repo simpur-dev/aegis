@@ -59,6 +59,12 @@ describe('legState：三态而不是两态', () => {
     },
   )
 
+  it('标记键带空值不算降级：健康行的 detail 里 degraded 键存在但为空串', () => {
+    // 后端 `build_retrieval` 健康时也写 degraded=""；按键存在与否判定会把每条正常腿染成橙色。
+    expect(legState(row({ detail: { degraded: '', warm_error: '   ', index: { analyzer: 'ngram(2)' } } }))).toBe('enabled')
+    expect(legState(row({ detail: { error: 'ClickHouse 认证失败' } }))).toBe('degraded')
+  })
+
   it('三态标签各自不同：把"没启用"和"降级"混成一个词就等于藏起故障', () => {
     const labels = (['disabled', 'enabled', 'degraded'] as const).map(legStateLabel)
     expect(new Set(labels).size).toBe(3)

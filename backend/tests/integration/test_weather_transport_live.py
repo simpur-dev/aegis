@@ -47,9 +47,13 @@ class TinyHttpServer:
 
     @property
     def base_url(self) -> str:
+        return f"http://{self.authority}"
+
+    @property
+    def authority(self) -> str:
         assert self._server is not None and self._server.sockets
-        port = self._server.sockets[0].getsockname()[1]
-        return f"http://127.0.0.1:{port}"
+        host, port = self._server.sockets[0].getsockname()[:2]
+        return f"{host}:{port}"
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         head = await reader.readuntil(b"\r\n\r\n")
@@ -100,13 +104,22 @@ class TestOverRealSockets:
             await source.aclose()
 
     async def test_peer_dying_mid_response_is_counted_not_swallowed(self) -> None:
+        """对端半途断开：记一次失败、留下原因，且原因里不许出现端点。
+
+        这里刻意不断言 `<endpoint>` 出现——对端半途死时 httpx 抛的是
+        "Server disconnected without sending a response."，消息里本来就没有 URL；
+        会不会带 URL 取决于它先吐了多少字节，那是传输层细节不是本项目的契约。
+        替换逻辑本身由 `tests/unit/test_weather_connector.py` 用 MockTransport 钉住。
+        """
         async with TinyHttpServer(truncate=True) as server:
             source = WeatherApiSource(server.base_url)
             with pytest.raises(httpx.HTTPError):
                 await source.collect()
             status = source.status()
             assert status["failures"] == 1 and status["rounds"] == 0
-            assert "<endpoint>" in str(status["last_error"])
+            last_error = str(status["last_error"])
+            assert last_error, "只记一次失败却不留原因，现场就没法区分对端死了和没人应答"
+            assert server.authority not in last_error, "端点里可能带运营方填的凭据，不许进状态面"
             await source.aclose()
 
 

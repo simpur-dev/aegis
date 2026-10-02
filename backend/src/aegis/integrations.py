@@ -53,6 +53,20 @@ class IntegrationState:
     def as_dict(self) -> dict[str, object]:
         return {"name": self.name, "enabled": self.enabled, "driver": self.driver, "detail": dict(self.detail)}
 
+    def degradation_reason(self) -> str:
+        """这条腿"带着问题在跑"的成因；空串表示没有问题。
+
+        判据是**标记键有没有值**，不是键在不在：`build_retrieval` 健康时也写
+        `degraded=""`（"没有降级原因"是这条记录的一部分），按键存在与否判定会让它
+        永远出现在降级清单里——这是真跑一次 `/api/v1/integrations` 才暴露出来的。
+        """
+        marks = [
+            str(value)
+            for key, value in self.detail.items()
+            if (key.startswith("degraded") or key.endswith("_error") or key == "error") and str(value or "").strip()
+        ]
+        return "; ".join(marks)
+
 
 @dataclass(slots=True)
 class StoreBundle:

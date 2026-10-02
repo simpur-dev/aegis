@@ -52,12 +52,16 @@ export function legLabel(name: string): string {
   return LEG_LABELS[name] ?? name
 }
 
+/** 与后端 `IntegrationState.degradation_reason()` 同一口径：标记键有值才算降级。 */
+function isDegradationMark(key: string, value: unknown): boolean {
+  const marked = key.startsWith('degraded') || key.endsWith('_error') || key === 'error'
+  return marked && String(value ?? '').trim() !== ''
+}
+
 /** 三态：未启用 / 已启用 / 已启用但降级。后端把"装配时跳过"和"跑起来后降级"分成两行事实。 */
 export function legState(row: IntegrationRow): 'disabled' | 'enabled' | 'degraded' {
   if (!row.enabled) return 'disabled'
-  return Object.keys(row.detail ?? {}).some((key) => key.startsWith('degraded') || key === 'start_error' || key === 'warm_error')
-    ? 'degraded'
-    : 'enabled'
+  return Object.entries(row.detail ?? {}).some(([key, value]) => isDegradationMark(key, value)) ? 'degraded' : 'enabled'
 }
 
 export function legStateLabel(state: ReturnType<typeof legState>): string {

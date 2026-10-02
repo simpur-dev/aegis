@@ -112,7 +112,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         这不是健康检查的重复：`/readyz` 只答"总线通不通"，这里答"哪条腿是瘸的"。
         """
         rows = ctn.integration_status()
-        degraded = [state.name for state in rows if state.enabled and "degraded" in state.detail]
+        degraded = [state.name for state in rows if state.enabled and state.degradation_reason()]
         return {
             "items": [state.as_dict() for state in rows],
             "degraded": degraded,

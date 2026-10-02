@@ -386,3 +386,40 @@ class TestContainerWiring:
         for name in ("telemetry", "warnings", "tasks", "chains"):
             assert getattr(ctn.store, name) is not None
         assert set(ctn.store.snapshot()) == {"telemetry_count", "warning_count", "task_count", "chain_count"}
+
+
+class TestDegradationReason:
+    """降级成因的判定口径：看标记键有没有值，不看键在不在。
+
+    `build_retrieval` 健康时也会写 `degraded=""`（"没有降级原因"是这条事实的一部分），
+    按键存在与否判定会让它在 `/api/v1/integrations` 里永远是瘸腿——真跑一次才发现。
+    """
+
+    def test_empty_markers_are_not_a_degradation(self) -> None:
+        healthy = IntegrationState(
+            name="retrieval",
+            enabled=True,
+            driver="bge-m3-int8",
+            detail={"degraded": "", "warm_error": "   ", "index": {"analyzer": "ngram(2)"}},
+        )
+        assert healthy.degradation_reason() == ""
+
+    @pytest.mark.parametrize(
+        "detail",
+        [
+            {"degraded": "read_model_only"},
+            {"degraded_dense": "embedder 缺失"},
+            {"warm_error": "ModelUnavailableError"},
+            {"start_error": "OSError: broker 不可达"},
+            {"error": "ClickHouse 认证失败"},
+        ],
+    )
+    def test_every_non_empty_marker_counts(self, detail: dict[str, object]) -> None:
+        state = IntegrationState(name="leg", enabled=True, driver="d", detail=detail)
+        reason = state.degradation_reason()
+        assert reason and str(next(iter(detail.values()))) in reason
+
+    def test_unrelated_keys_never_make_a_leg_look_degraded(self) -> None:
+        """`graphiti=""`（未接图谱）这类"某能力为空"的键不是降级标记，别混为一谈。"""
+        state = IntegrationState(name="knowledge", enabled=True, driver="in_memory", detail={"graphiti": "", "fallback_cases": 16})
+        assert state.degradation_reason() == ""
