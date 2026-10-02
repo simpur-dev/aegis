@@ -4,6 +4,25 @@
 缺这一份资产时页面仍可正常出图：`components/map/terrain.ts` 会退回椭球面
 （决策函数 `chooseTerrainMode()` 已被 `terrain.spec.ts` 覆盖，界面上会显示"使用椭球面"的原因）。
 
+## 仓库里现在带着什么（以及它不是什么）
+
+```
+layer.json + 0..2 层完整金字塔：42 张 .terrain，共 949,578 字节
+```
+
+这批瓦由 `python scripts/build_offline_tiles.py --max-zoom 2` 生成，**高程是解析函数算的合成值，
+不是任何真实 DEM**（同一个函数也喂给底图那条腿，见 `basemaps/README.md`）。它的作用是让离线链路
+在有真数据之前就能被真读取器验一遍——`offline-assets.spec.ts` 会真的 `HEAD layer.json`、真的取一张瓦、
+真的按字节读；`backend/tests/unit/test_offline_tile_format.py` 里有一份按 Cesium 1.145 解析顺序镜像的
+解码器逐字段读回每个字节，并带一条"上游解析顺序漂移即红"的守卫。
+
+一个必须写下来的格式口径：这一版 Cesium 的 `createQuantizedMeshTerrainData` **从 pos=0 直接读 center，
+不认 magic/version 前导**（本仓库的生成器与镜像解码器都按它写）。若换用别的地形服务端或旧版 Cesium，
+先确认对方是否要求 quantized-mesh 规范里那 6 字节前导，别把"我们的瓦在自家页面能显示"当成"任何消费者都能读"。
+
+要烘到更深层级（现场判读建议 0–15，覆盖西藏 `78°E–99°E, 26°N–37°N`）就直接加大 `--max-zoom`；
+层级每深一级文件数乘 4，产物是否入库请自己决定——当前仓库只带 0–2 这一份最小可用样本。
+
 ## 需要烘焙成什么
 
 ```

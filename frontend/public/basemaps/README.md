@@ -10,6 +10,19 @@ PMTiles 单文件  →  XYZ 瓦片金字塔  →  不挂影像（只画地形 + 
 Viewer 收到 `baseLayer: false`，地球用深色底色）。任何指向非同源的地址都会在
 `offline.isLocalAssetUrl()` 这一步被拒（`basemap.spec.ts` 与 `guard.spec.ts` 钉住了这条约束）。
 
+## 0) 仓库里现在带着什么（以及它不是什么）
+
+`aegis.pmtiles` 是 `python scripts/build_offline_tiles.py --max-zoom 2` 烘的 **PMTiles v3 栅格归档**：
+`minZoom=0 / maxZoom=2`、21 张 256×256 PNG、44,921 字节。**像素是合成高程的分层设色 + 经纬网，
+不是影像数据**，用途是让"底图能不能真被读"这件事在拿到合规底图之前就可验证——
+`offline-assets.spec.ts` 用仓库里装的 `pmtiles@4.5.0` 经一次真实 HTTP（含 Range）打开它、按 z/x/y 取瓦，
+并断言取回的字节就是归档里那段 PNG、超出烘焙层级取不到瓦而不是报错。
+
+自烘时有两条格式约束只有真读取器会拒绝（替身测试一概发现不了），生成器里已按 `pmtiles` 源码对齐：
+根目录必须整个落在**首个 16384 字节**里（`getHeaderAndRoot` 只从这一块切根目录），
+目录用四段式 varint、tile_id 走 Hilbert 序号、偏移段里 `0` 表示"接在前一条之后"。
+`region-anchors.json` / `hazard-zones.geojson` 仍然刻意不预置——未核对的位置不能当成真值。
+
 ## 1) 底图：两种可烘焙形态
 
 ### 形态 A（推荐）：栅格 PMTiles 单文件

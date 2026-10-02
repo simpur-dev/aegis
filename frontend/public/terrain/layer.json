@@ -1,0 +1,48 @@
+{
+  "format": "quantized-mesh-1.0",
+  "version": "1.0",
+  "scheme": "slippyMap",
+  "projection": "EPSG:4326",
+  "tiles": [
+    "{z}/{x}/{y}.terrain"
+  ],
+  "extensions": [
+    "octvertexnormals"
+  ],
+  "minzoom": 0,
+  "maxzoom": 2,
+  "bounds": [
+    -180.0,
+    -90.0,
+    180.0,
+    90.0
+  ],
+  "attribution": "合成高程/合成影像：由 scripts/build_offline_tiles.py 的解析函数生成，不是真实 DEM 或卫星影像，仅用于离线链路验证与演示。",
+  "available": [
+    [
+      {
+        "startX": 0,
+        "endX": 1,
+        "startY": 0,
+        "endY": 0
+      }
+    ],
+    [
+      {
+        "startX": 0,
+        "endX": 3,
+        "startY": 0,
+        "endY": 1
+      }
+    ],
+    [
+      {
+        "startX": 0,
+        "endX": 7,
+        "startY": 0,
+        "endY": 3
+      }
+    ]
+  ],
+  "generator": "scripts/build_offline_tiles.py"
+}
