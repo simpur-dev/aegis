@@ -33,7 +33,7 @@ from typing import Any
 
 import httpx
 
-from aegis.config import Settings
+from aegis.config import BusBackend, Settings, StoreBackend
 from aegis.observability.load_policy import drill_budget_ms, read_budget_ms
 
 STATS_ROW = re.compile(
@@ -56,8 +56,8 @@ class ServerProfile:
 
     key: str
     label: str
-    bus_backend: str
-    store_backend: str
+    bus_backend: BusBackend
+    store_backend: StoreBackend
     server_env: Mapping[str, str] = field(default_factory=dict)
 
 
