@@ -94,9 +94,14 @@ python scripts/fetch_retrieval_models.py
 # 不灌这一句，召回照样有命中，但命中的全是容器里的内存兜底库，图谱那侧一条事实都没有。
 # 逐条落点由命令自己报（exit 3 = 有降级、4 = 写得进去却召回不到），别只看它有没有跑完：
 #   docker compose --env-file .env -f deploy/docker-compose.yml exec backend python -m scripts.ingest_cases
-# （这条命令的形状与"镜像里真的带着 16 条模板"在本机验过：`docker build -f deploy/Dockerfile`
-#   出来的镜像里 `python -m scripts.ingest_cases --dry-run` 回 `rows: 16`；
-#   经 compose 起全栈那一次仍未跑——那要用到根 .env 里的真凭据。）
+# （上面这条 exec 命令本机原样跑过：compose 起的 backend 容器里 exit=3、
+#   `total 2 / landed 0 / degraded 2 / by_driver {in_memory: 2} / durable false`，
+#   理由就写在同一行输出里——缺模型凭据，图谱那条腿收不下案例。
+#   一个只有整栈跑才会露面的坑：`docker run` 起的依赖容器挂在默认 `bridge`，compose 把 backend
+#   放进 `<project>_default`，于是 backend 里 `nats`/`postgres`/`neo4j` 三个服务名全都解析不到，
+#   而每条腿仍然各自优雅降级——`/readyz` 200 会把"什么都没接上"读成"部署成功"。
+#   要么整个栈都用这一份 compose 起，要么先把依赖挂进同一网络：
+#   `docker network connect --alias nats <compose 网络> aegis-nats`（postgres/neo4j 同理）。）
 ```
 
 接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`
