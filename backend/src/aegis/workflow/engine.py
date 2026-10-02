@@ -36,7 +36,6 @@ from aegis.workflow.model import (
 )
 from aegis.workflow.nodes import (
     HumanRequired,
-    NodeConfigError,
     NodeContext,
     NodeError,
     NodeOutcome,
@@ -53,6 +52,14 @@ ACTIVE_SOURCE_STATES = frozenset({NodeState.SUCCEEDED, NodeState.DEGRADED, NodeS
 
 class WorkflowValidationError(Exception):
     """定义期校验失败：未知节点类型、配置不合法、图有环等。"""
+
+
+def _as_config_list(value: Any) -> list[str]:
+    """`upstream` 允许写单个节点 id 或列表：画布两种形态都出现过，校验口径必须一致。"""
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
+    return [str(item) for item in items]
 
 
 def _as_workflow_error(exc: ValidationError) -> WorkflowValidationError:
@@ -166,6 +173,23 @@ class WorkflowEngine:
                 spec.validate_config(node.config)
             except AegisError as exc:
                 raise WorkflowValidationError(exc.message) from exc
+            self._validate_wired_upstreams(definition, node)
+
+    @staticmethod
+    def _validate_wired_upstreams(definition: WorkflowDef, node: NodeDef) -> None:
+        """配置里点名的 `upstream` 必须是这个节点的入边——画布上没连线就不算上游。
+
+        运行时 `ctx.inputs` 只带直接入边的结果。少了这道检查时，"join 指了一个没连线的节点"
+        会在实例跑到那一步时才炸成节点失败（现场表现为"流程莫名卡住"），而这是定义期
+        就能判定的错误：API 层能直接回 400，编排的人当场就知道要补那条线。
+        """
+        wired = {edge.source for edge in definition.incoming(node.node_id)}
+        for value in _as_config_list(node.config.get("upstream")):
+            if value not in wired:
+                raise WorkflowValidationError(
+                    f"节点 {node.node_id} 的 upstream={value!r} 不是它的入边"
+                    f"（画布上缺少 {value} → {node.node_id} 这条连线；当前入边：{sorted(wired) or '无'}）"
+                )
 
     async def create_definition(
         self,
@@ -453,7 +477,9 @@ class WorkflowEngine:
                 return
             except TimeoutError:
                 error: Exception = NodeError(f"节点超时 (>{node.timeout_ms}ms)", detail={"node_id": node_id}, retryable=True)
-            except (NodeError, NodeConfigError) as exc:
+            except AegisError as exc:
+                # 类型化错误（含 NodeError/NodeConfigError）自带可读原因，不许被压成"节点执行异常: 类名"。
+                # 外呼被拒就是"主机不在白名单：x"——留在 error 里运维才知道该改哪一格配置。
                 error = exc
             except ValidationError as exc:  # handler 内对上游载荷的模型校验失败
                 errors = exc.errors()

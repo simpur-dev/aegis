@@ -78,7 +78,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     description: '阈值判断：对读数做触发条件判定',
     fields: [
       jsonField('conditions', '条件列表', '[{"metric":"rain_10min","op":">=","threshold":25,"agg":"max"}]'),
-      textField('upstream', '上游节点 ID', '留空则用实例 payload.rows'),
+      textField('upstream', '上游节点 ID', '留空则用实例 payload.rows；填了必须是已连线的上游（后端在定义期校验：没连线会 400）'),
       textField('mode', '判定模式', 'any / all'),
     ],
     defaults: { conditions: [{ metric: 'rain_10min', op: '>=', threshold: 25, agg: 'max' }], mode: 'any' },
@@ -88,7 +88,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     description: '条件分支：按规则路由',
     fields: [
       jsonField('rules', '分支规则', '[{"when":"risk_level","op":"<=","value":2,"then":"high"}]'),
-      textField('upstream', '取值上游节点 ID'),
+      textField('upstream', '取值上游节点 ID', '必须是已连线的上游（后端在定义期校验：没连线会 400）'),
       textField('default', '兜底分支名', 'else'),
     ],
     defaults: { rules: [{ when: 'triggered', op: '==', value: true, then: 'triggered' }], default: 'not_triggered' },
@@ -96,7 +96,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
   join: {
     label: '并行汇聚',
     description: '并行汇聚：合并多路上游结果',
-    fields: [listField('upstream', '参与汇聚的上游节点')],
+    fields: [listField('upstream', '参与汇聚的上游节点', '必须是已连线的上游（后端在定义期校验：没连线会 400）')],
     defaults: { upstream: [] },
   },
   delay: {
@@ -120,7 +120,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
   risk_assess: {
     label: '风险定级',
     description: '风险定级：产出 1-5 级结论',
-    fields: [listField('upstream', '合并进定级输入的上游节点'), jsonField('extra', '附加上下文', 'JSON 对象')],
+    fields: [listField('upstream', '合并进定级输入的上游节点', '必须是已连线的上游（后端在定义期校验：没连线会 400）'), jsonField('extra', '附加上下文', 'JSON 对象')],
     defaults: {},
   },
   situation_simulate: {

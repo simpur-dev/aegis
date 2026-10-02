@@ -104,7 +104,7 @@ python scripts/fetch_retrieval_models.py
 | 一张图 | `/map` | Cesium 三维 + 站点/预警点位；底图 PMTiles、地形自建 quantized-mesh，零 Ion/谷歌依赖；缺瓦片时如实降级为"无底图 + 椭球地形" |
 | 监测预警 | `/monitor` | 遥测明细与时序曲线、劣化读数缺口显示、一键发起激增/背景演练 |
 | 预警发布 | `/warnings` | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |
-| 流程编排 | `/workflow` | Vue Flow 画布：16 类节点、版本化定义与实例运行、人工决策/改参/旁路 |
+| 流程编排 | `/workflow` | Vue Flow 画布：16 类节点（每一类都有引擎级分派证据，见 `tests/unit/test_workflow_node_dispatch_matrix.py`）、版本化定义与实例运行、人工决策/改参/旁路。配置里点名的 `upstream` 必须是画布上的连线，定义期就校验 |
 | 指标量测 | `/metrics` | 运行时埋点的 P50/P95/最大时延 vs 阈值判定、协同成功率、越限项 |
 
 ## 3. 可选子系统：接得上、退得掉、看得见
