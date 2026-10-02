@@ -185,18 +185,63 @@ class PlatformStore:
         self.warnings = WarningStore()
         self.tasks = TaskStore()
         self.chains: BoundedCollection[ChainResult] = BoundedCollection(2_000)
+        # 站点维表（内存态）：与 PostgreSQL 那份同构，由 `scripts/import_stations.py` 显式写入。
+        # 内存视图没有持久层，导入只活到进程结束——这一条由导入命令在结果里说清楚。
+        self._station_dim: dict[str, dict[str, object]] = {}
+
+    async def upsert_station(
+        self,
+        station_id: str,
+        region_code: str,
+        lon: float | None,
+        lat: float | None,
+        *,
+        name_zh: str = "",
+        hazard_focus: Sequence[str] = (),
+        elevation_m: float | None = None,
+    ) -> None:
+        """登记/更新一个站点。与 PostgresStore 同签名同语义，让同一套台账能导入任一端。
+
+        成对坐标是这里唯一的硬校验：只给一半会被 Postgres 侧拒掉，
+        两端都在写入前把关，才不会等到现场导入时才发现一半的行了。
+        """
+        if not station_id.strip():
+            raise ValueError("station_id 不能为空")
+        if not region_code.strip():
+            raise ValueError("region_code 不能为空")
+        if (lon is None) != (lat is None):
+            raise ValueError("坐标必须成对给出")
+        geom = None if lon is None or lat is None else f"SRID=4326;POINT({lon} {lat})"
+        self._station_dim[station_id] = {
+            "region_code": region_code,
+            "name_zh": name_zh,
+            "hazard_focus": list(hazard_focus),
+            "elevation_m": elevation_m,
+            "lon": lon,
+            "lat": lat,
+            "geom": geom,
+        }
 
     async def list_stations(self, *, region_code: str | None = None, limit: int = 500) -> list[dict[str, object]]:
-        """站点清单（内存视图）：只回答"哪些站报过数、报在哪个行政区"。
+        """站点清单（内存视图）：维表行优先，再用"报过数但没登记"的站点补齐。
 
-        站点名称、经纬度与高程来自维表，内存视图里没有就是没有——绝不拿遥测字段拼一个看似完整的
-        站点出来。缺坐标的条目由前端归入"未定位"列表，而不是从地图上凭空消失。
+        维表没有的字段就留 None/空表——绝不拿遥字段拼一个看似完整的站点出来。
+        缺坐标的条目由前端归入"未定位"列表，而不是从地图上凭空消失。
         """
         if limit <= 0:
             raise ValueError("limit 必须为正")
-        rows = [station_ledger_row(station_id, region) for station_id, region in self.telemetry.observed_stations()]
-        if region_code:
-            rows = [row for row in rows if row["region_code"] == region_code]
+        rows: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for station_id, dim in sorted(self._station_dim.items()):
+            if region_code and dim["region_code"] != region_code:
+                continue
+            seen.add(station_id)
+            fields = {key: value for key, value in dim.items() if key != "region_code"}
+            rows.append(station_ledger_row(station_id, str(dim["region_code"]), **fields))  # type: ignore[arg-type]
+        for station_id, region in self.telemetry.observed_stations():
+            if station_id in seen or (region_code and region != region_code):
+                continue
+            rows.append(station_ledger_row(station_id, region))
         return rows[:limit]
 
     async def record_chain(self, result: ChainResult) -> None:
@@ -279,6 +324,18 @@ class StoreProtocol(Protocol):
     async def record_chain(self, result: ChainResult) -> None: ...
 
     async def list_stations(self, *, region_code: str | None = None, limit: int = 500) -> list[dict[str, object]]: ...
+
+    async def upsert_station(
+        self,
+        station_id: str,
+        region_code: str,
+        lon: float | None,
+        lat: float | None,
+        *,
+        name_zh: str = "",
+        hazard_focus: Sequence[str] = (),
+        elevation_m: float | None = None,
+    ) -> None: ...
 
     def snapshot(self) -> dict[str, object]: ...
 

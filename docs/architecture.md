@@ -112,7 +112,8 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
   一次 `learn` + `recall`。
 - **数据侧欠的三样**：离线底图/地形只烘了**合成样本**（`scripts/build_offline_tiles.py`，0–2 层完整金字塔，
   已被真 pmtiles/Cesium 读取路径与镜像解码器验过；欠的是合规的真实 DEM/影像烘到 0–15 覆盖西藏范围）；
-  站点台账需现场导入（`upsert_station` 没有生产调用方）；
+  站点台账的入口已就位（`python -m scripts.import_stations --source stations.csv`：全量校验后才写、
+  不猜坐标、内存视图默认拒绝），欠的是现场那份**真实台账文件**本身；
   预警准确率缺**现场标注案例集**——算式与报表出口（`scripts.metrics_report --dataset`）都已就位，
   没有 `kind=field` 的数据集就永远如实标 `not_measured`。
 - **平台侧总线未替换**：Zenoh 只做站端↔网关这一段，灾害总线仍是 NATS JetStream。
