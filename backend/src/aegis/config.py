@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     llm_model: str = "qwen-plus"
     llm_timeout_seconds: float = 20.0
 
+    # 契约 Schema 目录：镜像/离线部署把它指到打包位置（后端镜像里是 /contracts）。留空 = 跟着
+    # 源码树走（仓库根 contracts/），本机直接跑进程时不需要配。这个键必须真实存在：Dockerfile 里
+    # 写过 `ENV AEGIS_CONTRACTS_DIR=/contracts` 而配置面没有它时，`extra="ignore"` 会把它静默丢掉，
+    # 容器于是去找源码树相对路径的 contracts，镜像里没有，就在启动期炸成"契约目录不存在"。
+    contracts_dir: str = ""
+
     # 案例知识层：默认纯内存提供者（零外部依赖，16 条内置预案模板，性质见 knowledge/cases.py）。
     # 给了 graphiti URI 才走图谱主路径，并在图谱不可用时自动回落到内存（降级链由 provider 保证）。
     knowledge_graphiti_uri: str = ""

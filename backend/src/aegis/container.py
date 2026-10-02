@@ -356,7 +356,7 @@ def create_container(
     gateway_llm = llm_gateway if llm_gateway is not None else build_gateway_if_configured(cfg)
     bus = transport or build_transport(cfg)
     registry = AgentRegistry(cfg)
-    contracts = ContractRegistry(contracts_dir)
+    contracts = ContractRegistry(contracts_dir or cfg.contracts_dir)
     tracer = Tracer()
     gateway = AgentGateway(
         bus,

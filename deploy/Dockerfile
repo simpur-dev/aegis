@@ -27,6 +27,13 @@ RUN useradd --create-home --uid 10001 aegis
 USER aegis
 
 WORKDIR /app/backend
+# `python` 必须是 uv 建出来的那个虚拟环境里的解释器，且 `src/` 要在导入路径上。
+# 实测（本机 `docker build` + `docker run` 出来的镜像）：这两行缺任一行，容器都停在
+# `ModuleNotFoundError: No module named 'aegis'`——三个可选腿的依赖其实都装好了（aiomqtt /
+# asyncpg / pgvector / clickhouse-connect / duckdb / neo4j+graphiti-core / onnxruntime+tokenizers
+# 逐个 import 过），唯独项目自身没进解释器的搜索路径，而 CMD 用的正是系统 `python`。
+ENV PATH="/app/backend/.venv/bin:${PATH}" \
+    PYTHONPATH=/app/backend/src
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
     CMD ["python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=2).status==200 else 1)"]

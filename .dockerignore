@@ -1,0 +1,42 @@
+# 构建上下文里没有的东西，一律不进上下文：整个仓库是 1.7GB+（不含 node_modules），
+# 而 Dockerfile 只 COPY backend 与 contracts 两处。少了这个文件，`docker build` 会先把
+# 前端依赖、虚拟环境、模型权重和本地凭据整个压进管道——慢是一方面，`.env` 进了上下文
+# 就是另一方面（上下文会被 CI 缓存，也可能被推进 registry 的构建层里）。
+#
+# 规矩：这里列的是"永远不该被构建看见"的路径，不是"某层不要"。要排除某层用 Dockerfile 的
+# COPY 精确路径，不要靠这里兜——那会让"镜像里有什么"取决于两处的默契。
+.git
+.github
+.dockerignore
+*.md
+
+# 凭据与本地配置：镜像里的 env 只来自 compose 的 env_file/environment，绝不吃仓库里这两份
+.env
+.env.*
+!.env.example
+
+# Python 侧的本地产物（依赖由 uv sync --frozen 在镜像里装，源码树里的 .venv 是宿主平台的）
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+**/htmlcov/
+backend/data/
+backend/reports/
+**/test-results/
+**/dist/
+**/build/
+**/*.egg-info/
+
+# 前端产物与依赖：前端由 frontend/Dockerfile（或静态托管）单独构建，不在后端镜像里
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+
+# 地图资产是运行时静态文件（2.4MB 地形 + PMTiles），从仓库挂载或另发；不烧进后端镜像
+frontend/public/terrain/
+frontend/public/basemap/

@@ -94,8 +94,9 @@ python scripts/fetch_retrieval_models.py
 # 不灌这一句，召回照样有命中，但命中的全是容器里的内存兜底库，图谱那侧一条事实都没有。
 # 逐条落点由命令自己报（exit 3 = 有降级、4 = 写得进去却召回不到），别只看它有没有跑完：
 #   docker compose --env-file .env -f deploy/docker-compose.yml exec backend python -m scripts.ingest_cases
-# （这一条今晚未在真容器里实跑：本机没有 aegis-backend 镜像，只有 aegis-pg 系列；命令形状是按
-#   deploy/Dockerfile 的 WORKDIR=/app/backend 与 COPY backend ./backend 核对出来的。）
+# （这条命令的形状与"镜像里真的带着 16 条模板"在本机验过：`docker build -f deploy/Dockerfile`
+#   出来的镜像里 `python -m scripts.ingest_cases --dry-run` 回 `rows: 16`；
+#   经 compose 起全栈那一次仍未跑——那要用到根 .env 里的真凭据。）
 ```
 
 接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`

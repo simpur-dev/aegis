@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from aegis.config import Settings
+
 REPO_ROOT = Path(__file__).resolve().parents[3]  # backend/tests/unit/... → 仓库根
 COMPOSE = REPO_ROOT / "deploy" / "docker-compose.yml"
 ENV_TEMPLATE = REPO_ROOT / ".env.example"
@@ -148,3 +150,21 @@ class TestHealthcheckPortIsActuallyOpened:
         assert '"-m", "8222"' in body, "nats 的监控端口要在 command 里显式开，healthcheck 才打得到"
         backend = compose_service_blocks()["backend"]
         assert "nats:" in backend and "condition: service_healthy" in backend, "backend 以 nats 健康为启动前置条件"
+
+
+def test_镜像里声明的每个AEGIS环境变量都是配置面真有的键() -> None:
+    """Dockerfile 的 `ENV AEGIS_*=…` 必须落得到 `Settings` 的字段上。
+
+    实测过的后果：镜像里写了 `AEGIS_CONTRACTS_DIR=/contracts`，而配置面根本没这个键——
+    `extra="ignore"` 把它静默丢掉，容器于是按源码树相对路径找 contracts，镜像里没有，
+    最后只在启动期炸成"契约目录不存在"。这一步之前的一切都是绿的：build 成功、
+    `compose config --quiet` 通过、本机跑进程也正常（源码树就在旁边）。
+    """
+    dockerfile = (REPO_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")
+    keys = {
+        token.split("=", 1)[0] for line in dockerfile.splitlines() for token in line.split() if token.startswith("AEGIS_") and "=" in token
+    }
+    assert keys, "Dockerfile 里已经没有 AEGIS_* 赋值：这条检查要看一眼是不是被整段删了"
+    fields = set(Settings.model_fields)
+    missing = sorted(key for key in keys if key.removeprefix("AEGIS_").lower() not in fields)
+    assert not missing, f"这些键配置面不认，容器里会被静默忽略：{missing}（Settings 字段共 {len(fields)} 个）"

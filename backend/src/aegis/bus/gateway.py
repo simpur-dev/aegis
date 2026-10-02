@@ -82,7 +82,7 @@ class ContractRegistry:
     """加载并缓存契约 Schema；校验错误只取首要路径，便于回执定位。"""
 
     def __init__(self, contracts_dir: Path | str | None = None) -> None:
-        root = Path(contracts_dir or Path(__file__).resolve().parents[4] / "contracts")
+        root = Path(contracts_dir or _DEFAULT_CONTRACTS_DIR)
         if not root.is_dir():
             raise FileNotFoundError(f"契约目录不存在: {root}")
         self._root = root

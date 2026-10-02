@@ -59,3 +59,51 @@ def test_every_test_module_parses() -> None:
         except SyntaxError as exc:
             broken.append(f"{path.name}:{exc.lineno} {exc.msg}")
     assert not broken, "测试树不可收集（会打断整场 pytest）：" + "；".join(broken)
+
+
+REPO_ROOT = TESTS_ROOT.parents[1]
+
+
+def _lines(path: Path) -> list[str]:
+    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _ignore_patterns() -> list[str]:
+    return [line for line in _lines(REPO_ROOT / ".dockerignore") if line and not line.startswith("#")]
+
+
+def _copy_sources() -> list[str]:
+    """Dockerfile 里真正被 COPY 的宿主路径（`--from=` 的多阶段复制不算）。"""
+    sources: list[str] = []
+    for line in _lines(REPO_ROOT / "deploy" / "Dockerfile"):
+        if not line.startswith("COPY") or "--from=" in line:
+            continue
+        tokens = [token for token in line.split()[1:] if not token.startswith("--")]
+        if len(tokens) >= 2:
+            sources.append(tokens[0])
+    return sources
+
+
+def test_后端构建上下文排掉凭据与宿主产物() -> None:
+    """没有 .dockerignore 时，`docker build` 先把 1.7GB+（含 .env 与 node_modules）压进管道。
+
+    慢只是表面；.env 进了上下文，就可能被 CI 缓存层与构建记录留下痕。
+    """
+    patterns = _ignore_patterns()
+    for required in (".env", ".env.*", "**/.venv/", "frontend/node_modules/", "**/__pycache__/", "backend/data/"):
+        assert required in patterns, f".dockerignore 少了 {required}"
+    # 模板本身要留：`cp .env.example .env` 是文档里的第一步，把它连同 .env 一起排除会让镜像构建期读不到键名
+    assert "!.env.example" in patterns
+
+
+def test_dockerignore不排除Dockerfile真正COPY的东西() -> None:
+    """致命错法只有一种：把 `backend` 或 `contracts` 整目录列进忽略表——镜像于是静默少一层源码。
+
+    带通配的模式不在这里做 glob 复刻（那是 BuildKit 的口径），这条只挡"整目录被忽略"。
+    """
+    sources = _copy_sources()
+    assert {"backend", "contracts"} <= set(sources), f"Dockerfile 的 COPY 源变了，这条检查要看一眼：{sources}"
+    literal = [p for p in _ignore_patterns() if not p.startswith("!") and "*" not in p and "?" not in p]
+    for source in sources:
+        blocked = [p for p in literal if source == p.rstrip("/") or source.startswith(p.rstrip("/") + "/")]
+        assert not blocked, f"COPY {source} 会被 .dockerignore 的 {blocked} 挡掉，镜像里就没有这部分代码"
