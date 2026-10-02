@@ -22,29 +22,13 @@ import { WORKFLOW_NODE_TYPES } from '@/components/workflow/nodeComponents'
 import { useWorkflowStore } from '@/stores/workflow'
 import type { NodeProps } from '@vue-flow/core'
 import { NODE_SPECS, type FlowNodeData, type NodeCategory, type NodeType } from '@/utils/graph'
+import { backendNodeTypes } from '@/testing/repoSource'
 
 /**
- * 与 backend/src/aegis/workflow/nodes.py:351-366 逐字对齐的清单。
- * 后端注册新类型而前端未跟进时，这里的集合相等断言会失败（漂移门禁）。
+ * 后端节点类型从 `backend/src/aegis/workflow/nodes.py` 现解析，不在前端抄一份清单：
+ * 抄来的清单只能证明"两份抄写一致"，证明不了"另一端没变"。
  */
-const BACKEND_NODE_TYPES: NodeType[] = [
-  'api_call',
-  'branch',
-  'data_fetch',
-  'delay',
-  'degrade_to_rule',
-  'device_control',
-  'feedback_collect',
-  'hazard_identify',
-  'human_review',
-  'join',
-  'notify',
-  'risk_assess',
-  'situation_simulate',
-  'threshold',
-  'warning_generate',
-  'warning_publish',
-]
+const BACKEND_NODE_TYPES = backendNodeTypes() as NodeType[]
 
 const HANDLE_STUB = { stubs: { Handle: true } }
 
@@ -79,10 +63,11 @@ function nodeProps(data: FlowNodeData, id = 'fetch_1') {
 }
 
 describe('节点类型注册表与后端对齐', () => {
-  it('恰好覆盖 nodes.py 的 16 类节点，无缺无多', () => {
+  it('覆盖后端注册的全部类型，无缺无多，并满足"≥10 类节点可视化编排"的考核口径', () => {
+    expect(BACKEND_NODE_TYPES.length, '后端注册数就是画布要覆盖的下限来源').toBeGreaterThanOrEqual(10)
     expect(Object.keys(NODE_META).sort()).toEqual([...BACKEND_NODE_TYPES].sort())
     expect(Object.keys(NODE_SPECS).sort()).toEqual([...BACKEND_NODE_TYPES].sort())
-    expect(BACKEND_NODE_TYPES).toHaveLength(16)
+    expect(NODE_SPECS).toHaveProperty('degrade_to_rule')
   })
 
   it('面板分组展开后仍是同一集合（四类卡片组件全覆盖）', () => {

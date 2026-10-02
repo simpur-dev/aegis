@@ -1,40 +1,17 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-
 import { describe, expect, it } from 'vitest'
 
 import type { IntegrationRow } from './integrations'
 import { LEG_LABELS, MAX_DETAIL_CHARS, fetchIntegrations, legLabel, legState, legStateLabel, visibleDetail } from './integrations'
+import { backendIntegrationLegs, readRepoFile } from '@/testing/repoSource'
 
 function row(overrides: Partial<IntegrationRow> = {}): IntegrationRow {
   return { name: 'store', enabled: true, driver: 'postgres', detail: {}, ...overrides }
 }
 
-/**
- * 读后端源文件，路径按"从 cwd 往上找第一个含 backend/src/aegis 的仓库根"解析：
- * vitest 里 `import.meta.url` 是 `/@fs/` 虚拟路径，直接拼会读不到文件。
- */
-function backendSource(...parts: string[]): string {
-  for (let dir = process.cwd(); ; dir = join(dir, '..')) {
-    const root = resolve(dir, 'backend', 'src', 'aegis')
-    const target = join(root, ...parts)
-    if (existsSync(target)) return readFileSync(target, 'utf8')
-    if (dirname(dir) === dir) throw new Error(`找不到 backend/src/aegis/${parts.join('/')}：漂移门禁必须在仓库内运行`)
-  }
-}
-
-/** 后端把腿名写死在 `IntegrationState(name=...)`：直接对源文件，不在前端抄一份常量。 */
-function declaredLegs(): string[] {
-  const found = new Set<string>()
-  for (const file of ['integrations.py', 'container.py']) {
-    for (const match of backendSource(file).matchAll(/IntegrationState\(\s*name="([a-z_]+)"/g)) found.add(match[1] as string)
-  }
-  return [...found]
-}
-
 /** 后端真实会挂进 detail 的那段数据集出处说明（`knowledge/cases.py` 的 DATASET_PROVENANCE）。 */
 function backendProvenance(): string {
-  const group = backendSource('knowledge', 'cases.py').match(/DATASET_PROVENANCE = \(([\s\S]*?)\n\)/)
+  const source = readRepoFile('backend', 'src', 'aegis', 'knowledge', 'cases.py')
+  const group = source.match(/DATASET_PROVENANCE = \(([\s\S]*?)\n\)/)
   if (!group) throw new Error('没抓到 DATASET_PROVENANCE：cases.py 改写后这条测试要跟着改')
   return [...group[1].matchAll(/"([^"]*)"/g)].map((piece) => piece[1]).join('')
 }
@@ -86,11 +63,11 @@ describe('legLabel：后端加腿不许从 UI 消失', () => {
   })
 
   it('标签表与后端声明的腿严格同名（漂移门禁）', () => {
-    expect([...declaredLegs()].sort()).toEqual(Object.keys(LEG_LABELS).sort())
+    expect([...backendIntegrationLegs()].sort()).toEqual(Object.keys(LEG_LABELS).sort())
   })
 
   it('后端源里真的抓到了七条腿：改写导致抓取为空时这条先失败，不让上面的相等变成空对空', () => {
-    expect(declaredLegs()).toHaveLength(7)
+    expect(backendIntegrationLegs()).toHaveLength(7)
   })
 })
 
