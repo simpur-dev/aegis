@@ -28,7 +28,7 @@ from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.container import PlatformContainer, create_container
 from aegis.domain.enums import Action, AgentType, HazardType
 from aegis.domain.messages import AgentMessage, utc_now
-from aegis.integrations import build_knowledge, target_of, warm_knowledge
+from aegis.integrations import build_knowledge, close_knowledge, target_of, warm_knowledge
 from aegis.knowledge.cases import HazardCase, load_builtin_cases
 from aegis.knowledge.graphiti_store import GraphitiUnavailableError
 from aegis.knowledge.memory_store import InMemoryKnowledgeProvider
@@ -38,6 +38,7 @@ from aegis.knowledge.provider import (
     KnowledgeProvider,
     LearnOutcome,
     SupportsSchemaPreparation,
+    SupportsShutdown,
 )
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import ChainResult, HazardResponseChain
@@ -485,3 +486,79 @@ class TestKnowledgeSchemaWarmup:
         provider = FallbackKnowledgeProvider(primary=SchemaStub(delay_ms=400), fallback=InMemoryKnowledgeProvider(cases=[]))
         reason = await warm_knowledge(provider)
         assert reason is not None and reason.startswith("schema_timeout")
+
+
+class CloseStub(SchemaStub):
+    """带连接的图谱侧替身：索引能建好、连接却关不上，两件事要能分开演。"""
+
+    def __init__(self, *, close_error: Exception | None = None, error: Exception | None = None, delay_ms: float = 0.0) -> None:
+        super().__init__(error=error, delay_ms=delay_ms)
+        self._close_error = close_error
+        self.closed = 0
+
+    async def close(self) -> None:
+        if self._delay_ms:
+            await asyncio.sleep(self._delay_ms / 1000)
+        if self._close_error is not None:
+            raise self._close_error
+        self.closed += 1
+
+
+class TestKnowledgeShutdown:
+    """关停侧的同一件事：图谱实例里的连接必须在停服时被关掉，且关不上要留下可读的原因。"""
+
+    async def test_纯内存装配没有连接可关(self) -> None:
+        provider, _state = build_knowledge(base_settings())
+        assert not isinstance(provider, SupportsShutdown)
+        assert await close_knowledge(provider) is None
+
+    async def test_关停转给持有连接的腿(self) -> None:
+        stub = CloseStub()
+        provider = FallbackKnowledgeProvider(primary=stub, fallback=InMemoryKnowledgeProvider(cases=[]))
+        assert await close_knowledge(provider) is None
+        assert stub.closed == 1
+
+    async def test_主腿关不上也要把兜底腿走完(self) -> None:
+        """关停阶段没有"失败"可传播：先抛会让另一条连接一直开着，而这正是这件事要避免的。"""
+        broken = CloseStub(close_error=GraphitiUnavailableError("Neo4j 断开"))
+        opened: list[str] = []
+
+        class WatchedMemory(InMemoryKnowledgeProvider):
+            async def close(self) -> None:
+                opened.append("fallback")
+
+        provider = FallbackKnowledgeProvider(primary=broken, fallback=WatchedMemory(cases=[]))
+        with pytest.raises(GraphitiUnavailableError):
+            await provider.close()
+        assert opened == ["fallback"]
+        assert broken.closed == 0
+
+    async def test_关闭失败作为降级事实出现在装配状态上(self) -> None:
+        ctn = create_container(base_settings(), with_simulator=False)
+        ctn.knowledge = FallbackKnowledgeProvider(
+            primary=CloseStub(close_error=GraphitiUnavailableError("连接池已毁")),
+            fallback=InMemoryKnowledgeProvider(cases=[]),
+        )
+        await ctn.start()
+        await ctn.shutdown()
+        # 停服之后仍能读到的状态才算事实：正在排空的过程里运维要看的就是这一行
+        row = next(item for item in ctn.integration_status() if item.name == "knowledge")
+        assert "连接池已毁" in str(row.detail["close_error"])
+        assert "schema_error" not in row.detail
+
+    async def test_关闭超时不拖住停服(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(integrations, "KNOWLEDGE_CLOSE_TIMEOUT_SECONDS", 0.01)
+        provider = FallbackKnowledgeProvider(primary=CloseStub(delay_ms=400), fallback=InMemoryKnowledgeProvider(cases=[]))
+        reason = await close_knowledge(provider)
+        assert reason is not None and reason.startswith("close_timeout")
+
+    async def test_容器停服真的关掉了图谱连接(self) -> None:
+        """只断"能读到 close_error"不够：正常路径下没人调用 close 也是绿的，所以要数关闭次数。"""
+        stub = CloseStub()
+        ctn = create_container(base_settings(), with_simulator=False)
+        ctn.knowledge = FallbackKnowledgeProvider(primary=stub, fallback=InMemoryKnowledgeProvider(cases=[]))
+        await ctn.start()
+        await ctn.shutdown()
+        assert stub.closed == 1
+        row = next(item for item in ctn.integration_status() if item.name == "knowledge")
+        assert "close_error" not in row.detail

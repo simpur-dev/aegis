@@ -28,7 +28,7 @@ from aegis.connectors.mqtt import AiomqttClient, MqttSource  # MQTT 只在此装
 from aegis.connectors.weather_api import WeatherApiSource
 from aegis.domain.messages import TelemetryReading, utc_now
 from aegis.knowledge.cases import DATASET_PROVENANCE, HazardCase, load_builtin_cases
-from aegis.knowledge.provider import KnowledgeProvider, SupportsSchemaPreparation
+from aegis.knowledge.provider import KnowledgeProvider, SupportsSchemaPreparation, SupportsShutdown
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import ChainResult
 from aegis.storage.store import PlatformStore, StoreProtocol
@@ -539,6 +539,9 @@ def _weights_present(root: Path) -> bool:
 # 不是平台启动该等的时间。超了就记降级，召回自己走内存兜底。
 KNOWLEDGE_SCHEMA_TIMEOUT_SECONDS = 20.0
 
+# 关停比启动更不留情：索引没建成还能靠内存兜底继续服务，连接关不上则会把整个停服卡住。
+KNOWLEDGE_CLOSE_TIMEOUT_SECONDS = 10.0
+
 
 def build_knowledge(settings: Settings | None = None, tracer: Tracer | None = None) -> tuple[KnowledgeProvider | None, IntegrationState]:
     """案例知识提供者：预案生成前的历史案例召回（读路径，结构上不含 LLM）。
@@ -592,6 +595,26 @@ async def warm_knowledge(provider: KnowledgeProvider | None) -> str | None:
     return None
 
 
+async def close_knowledge(provider: KnowledgeProvider | None) -> str | None:
+    """关停期把知识腿的连接关掉，失败只变成一行原因，不打断后面的停服步骤。
+
+    图谱实例里揣着 Neo4j 异步驱动和 LLM 客户端：没人关它们，进程要么在退出时干等连接超时，
+    要么留下"服务已停但图谱还连着"的现场。纯内存装配不实现 `SupportsShutdown`，整段跳过。
+    超时同样要有：驱动在自己那侧卡住时，"停服"不该被一条可选腿拖住（上限比启动期更短）。
+    """
+    if provider is None or not isinstance(provider, SupportsShutdown):
+        return None
+    try:
+        await asyncio.wait_for(provider.close(), timeout=KNOWLEDGE_CLOSE_TIMEOUT_SECONDS)
+    except TimeoutError:
+        log.warning("知识层关闭超时", extra={"timeout_seconds": KNOWLEDGE_CLOSE_TIMEOUT_SECONDS})
+        return f"close_timeout:{KNOWLEDGE_CLOSE_TIMEOUT_SECONDS:g}s"
+    except Exception as exc:  # 关停的失败要能被读到，而不是把后面的停服步骤打断
+        log.warning("知识层关闭失败", extra={"err": type(exc).__name__})
+        return f"{type(exc).__name__}: {str(exc)[:200]}"
+    return None
+
+
 def target_of(uri: str) -> str:
     """连接串的可公开目标段（host[:port]）：scheme、凭据、路径与参数一律丢弃。
 
@@ -619,6 +642,7 @@ __all__ = [
     "build_retrieval",
     "build_store",
     "chain_facts",
+    "close_knowledge",
     "reading_facts",
     "start_store",
     "stop_store",

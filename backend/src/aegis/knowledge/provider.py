@@ -190,6 +190,17 @@ class SupportsSchemaPreparation(Protocol):
     async def prepare_schema(self) -> None: ...
 
 
+@runtime_checkable
+class SupportsShutdown(Protocol):
+    """持有外部连接（Neo4j 驱动、LLM 客户端）的实现：关停时必须被关掉。
+
+    同 `SupportsSchemaPreparation` 的理由——纯内存库没有连接可关，硬塞进 `KnowledgeProvider`
+    会让装配层对每个实现都调用一次"关掉不存在的东西"，那句调用就成了假事实。
+    """
+
+    async def close(self) -> None: ...
+
+
 async def run_with_budget(awaitable: Awaitable[T], budget_ms: float | None, *, label: str) -> T:
     """预算口径统一在此：超限即 DeadlineExceededError，由上层决定是否降级，不静默吞掉。"""
     if budget_ms is None:
@@ -257,6 +268,23 @@ class FallbackKnowledgeProvider:
         if not isinstance(self._primary, SupportsSchemaPreparation):
             raise KnowledgeConfigError("知识层主实现不提供索引初始化", detail={"primary": type(self._primary).__name__})
         await self._primary.prepare_schema()
+
+    async def close(self) -> None:
+        """逐条腿转有关闭：图谱侧的 Neo4j 驱动与 LLM 客户端只有它自己知道怎么关。
+
+        一条腿关不上不该让另一条也跟着不开（关停阶段没有"失败"可传播，只有"这条连接还开着"
+        这种要等进程退出才显形的事实），所以先把每条腿都走完，再把第一个异常原样抛出去。
+        """
+        failures: list[Exception] = []
+        for leg in (self._primary, self._fallback):
+            if not isinstance(leg, SupportsShutdown):
+                continue
+            try:
+                await leg.close()
+            except Exception as exc:  # 关不上的每条腿都要留痕，但不是现在中断关停
+                failures.append(exc)
+        if failures:
+            raise failures[0]
 
     async def recall(
         self,

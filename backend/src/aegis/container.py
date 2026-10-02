@@ -34,6 +34,7 @@ from aegis.integrations import (
     build_retrieval,
     build_store,
     build_weather,
+    close_knowledge,
     start_store,
     stop_store,
     warm_knowledge,
@@ -134,6 +135,7 @@ class PlatformContainer:
     _store_state: IntegrationState | None = None
     _retrieval_warm_error: str | None = None
     _knowledge_schema_error: str | None = None
+    _knowledge_close_error: str | None = None
     _mqtt_start_error: str | None = None
 
     async def start(
@@ -209,6 +211,8 @@ class PlatformContainer:
         if self.outbound is not None:
             await self.outbound.aclose()
         await self.registry.stop_sweeper()
+        # 图谱腿自己揣着 Neo4j 驱动与 LLM 客户端，此前没人关；关不掉只留一行原因，不打断后面的停服步骤
+        self._knowledge_close_error = await close_knowledge(self.knowledge)
         await self.gateway.close()
         await self.transport.close()
         # 旁路最后关：分析缓冲要先把已受理的行排空，落库可以晚到，不能凭空消失。
@@ -230,9 +234,15 @@ class PlatformContainer:
         else:
             rows.append(IntegrationState(name="analytics", enabled=False, driver=self.settings.analytics_backend))
         knowledge_state = self.knowledge_state or IntegrationState(name="knowledge", enabled=False, driver="off")
+        knowledge_defects: dict[str, object] = {}
         if self._knowledge_schema_error is not None:
             # 图谱索引没建成的 knowledge 腿是"启用了但图谱那侧永远召不回"，只写日志外部读不到
-            knowledge_state = replace(knowledge_state, detail={**knowledge_state.detail, "schema_error": self._knowledge_schema_error})
+            knowledge_defects["schema_error"] = self._knowledge_schema_error
+        if self._knowledge_close_error is not None:
+            # 停服期间图谱连接没关成：排障时要能区分"服务停了"与"服务停了但连接还开着"
+            knowledge_defects["close_error"] = self._knowledge_close_error
+        if knowledge_defects:
+            knowledge_state = replace(knowledge_state, detail={**knowledge_state.detail, **knowledge_defects})
         rows.append(knowledge_state)
         retrieval_state = self.retrieval_state or IntegrationState(name="retrieval", enabled=False, driver="off")
         retrieval_detail: dict[str, object] = dict(retrieval_state.detail)
