@@ -118,7 +118,7 @@ python scripts/fetch_retrieval_models.py
 | `store` | `memory` \| `postgres` | 落库失败不换实现：内存读视图照常服务，写侧进有界缓冲重试并按计数暴露 |
 | `analytics` | `off` \| `clickhouse` \| `duckdb` | `off` 时链路里根本不出现 OLAP 代码路径；启用时只 write-behind 入队，热路径永不等 OLAP |
 | `knowledge` | `in_memory` \| `graphiti` | 图谱缺位时召回自动落到内置预案库（性质与逐条出处随召回结果一起外显），预案生成照旧完成。写入侧有生产调用点：`POST /api/v1/knowledge/cases` 是唯一入口，响应里的 `driver/degraded/reason` 说清这条案例究竟落在图谱还是只在内存；启动期还会建一次图谱索引，失败作为 `schema_error` 出现在这一行 |
-| `retrieval` | `off` \| `hybrid` | 权重缺失时稠密腿换确定性词面近似并在 `driver/degraded` 上标出；该分数不得进任何准确率汇报。索引引擎可切 `local`（pgvector + 进程内 BM25）或 `seekdb`（向量 ANN 与 ngram 中文全文同库），切换只改装配，两腿语义与凭证结构不变 |
+| `retrieval` | `off` \| `hybrid` | 权重缺失时稠密腿换确定性词面近似并在 `driver/degraded` 上标出；该分数不得进任何准确率汇报。索引引擎可切 `local`（pgvector + 进程内 BM25）或 `seekdb`（向量 ANN 与 ngram 中文全文同库），切换只改装配，两腿语义与凭证结构不变。**默认是 `local`**：2026-10-02 实测过 seekdb 的几何/约束/LATERAL 能力后，它仍只作为显式 POC 打开，`tests/unit/test_retrieval_wiring.py::TestSeekdbIsNotInTheDefaultShape` 用双向变异把"local 装配去碰 seekdb 代码路径"钉成红 |
 | `mqtt` | `off` \| `mqtt` | 推送腿未起不阻断平台；broker 连接状态、读数与溢出计数、`last_error` 全部外显 |
 | `weather` | `off` \| `http` | 拉取腿未配 base_url 时完全不存在；启用时按源隔离失败，轮次/条数/失败次数进状态行 |
 | `tracing` | `local` \| `otlp` | 无 OTLP 端点时跨度只落本地——这一行必须说真话，否则"接了 Jaeger"是假的 |

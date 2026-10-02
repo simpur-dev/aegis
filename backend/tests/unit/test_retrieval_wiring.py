@@ -661,3 +661,44 @@ class TestRetrievalApi:
 
         assert response.status_code == 200
         assert elapsed_ms < ctn.settings.retrieval_budget_ms * 4, f"检索耗时异常，疑似走了模型往返: {elapsed_ms:.1f}ms"
+
+
+class TestSeekdbIsNotInTheDefaultShape:
+    """2026-10-02 的决定：默认部署形态里不留 seekdb，两腿留在 pgvector + 进程内 BM25。
+
+    "配置默认值是 local"这句话本身太轻——它只说明一个字符串，不说明那条代码路径没被走。
+    所以这里把 seekdb 模块伪装成"一导入就炸"，装配照样得成功；那才是"根本不存在"的意思。
+    """
+
+    def test_配置声明的默认后端就是local(self) -> None:
+        assert Settings.model_fields["retrieval_index_backend"].default == "local"
+
+    def test_local后端下装配面连seekdb模块都不导入(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sys
+
+        monkeypatch.setitem(sys.modules, "aegis.retrieval.seekdb", None)  # 导入即 ImportError
+        cfg = Settings(
+            env="test",
+            retrieval_enabled=True,
+            retrieval_index_backend="local",
+            seekdb_host="10.9.9.9",  # 填得再像真的也不该被碰
+            seekdb_port=2881,
+            seekdb_table="aegis_must_not_be_touched",
+        )
+        service, state = build_retrieval(cfg)
+
+        assert service is not None
+        assert service.index is None, "local 装配里出现了外部索引，说明那条路径没被挡住"
+        assert state.detail["index_backend"] == "local"
+        assert "seekdb" not in str(state.detail.get("degraded", ""))
+
+    def test_显式选seekdb时才走那条路径_且失败仍退到本地(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """反向对照：上一条如果只是因为"任何 import 都失败"而绿，这条会红。"""
+        import sys
+
+        monkeypatch.setitem(sys.modules, "aegis.retrieval.seekdb", None)
+        service, state = build_retrieval(Settings(env="test", retrieval_enabled=True, retrieval_index_backend="seekdb"))
+
+        assert service is not None and service.index is None
+        degraded = str(state.detail.get("degraded", ""))
+        assert "seekdb" in degraded, f"外部索引不可用时必须把原因写出来，实际是：{degraded!r}"
