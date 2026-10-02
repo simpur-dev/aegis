@@ -541,9 +541,15 @@ class PostgresStore:
         rows.sort(key=lambda row: str(row["station_id"]))
         return rows[:limit]
 
-    async def hazard_trace_summary(self, *, polygon_wkt: str, since: datetime, until: datetime | None = None) -> dict[str, Any]:
+    async def stations_in_polygon(self, *, polygon_wkt: str, region_code: str | None = None) -> list[dict[str, Any]]:
         async with self.acquire() as conn:
-            return await geo.trace_summary(conn, polygon_wkt=polygon_wkt, since=since, until=until)
+            return await geo.stations_in_polygon(conn, polygon_wkt=polygon_wkt, region_code=region_code)
+
+    async def hazard_trace_summary(
+        self, *, polygon_wkt: str, since: datetime, until: datetime | None = None, hazard_type: str | None = None
+    ) -> dict[str, Any]:
+        async with self.acquire() as conn:
+            return await geo.trace_summary(conn, polygon_wkt=polygon_wkt, since=since, until=until, hazard_type=hazard_type)
 
     # ---------- 观测（供 metrics 模块抓取） ----------
 

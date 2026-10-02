@@ -11,7 +11,7 @@ import asyncio
 from collections import deque
 from collections.abc import Iterable, Sequence
 from datetime import datetime
-from typing import Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, parse_iso
 from aegis.pipeline.chain import ChainResult
@@ -338,6 +338,35 @@ class StoreProtocol(Protocol):
     ) -> None: ...
 
     def snapshot(self) -> dict[str, object]: ...
+
+
+@runtime_checkable
+class SupportsGeoQueries(Protocol):
+    """几何查询能力：半径内站点、面内站点、轨迹面汇总。
+
+    这是一个**可选能力面**，不并进 `StoreProtocol`：内存实现没有 PostGIS，硬要"也能查"
+    就得另养一份 haversine / 射线法，于是同一个"这个站在不在范围内"有了两套口径，
+    而验收时看不出差别。缺能力必须可判别，而不是被近似值冒充。
+
+    几何口径由 `aegis.persistence.geo` 唯一确定（geography 类型、SRID=4326、经度在前）。
+    """
+
+    async def stations_within(self, *, lon: float, lat: float, radius_m: float, limit: int = 50) -> list[dict[str, Any]]: ...
+
+    async def stations_in_polygon(self, *, polygon_wkt: str, region_code: str | None = None) -> list[dict[str, Any]]: ...
+
+    async def hazard_trace_summary(
+        self, *, polygon_wkt: str, since: datetime, until: datetime | None = None, hazard_type: str | None = None
+    ) -> dict[str, Any]: ...
+
+
+def geo_query_port(store: object) -> SupportsGeoQueries | None:
+    """能力发现：三个几何查询都在才算支持。
+
+    用 `isinstance` 对 runtime_checkable 协议做结构检查，只认方法存在性——签名漂移
+    由 `tests/api/test_geo_endpoints.py` 里对着 `PostgresStore` 的那条用例兜住。
+    """
+    return store if isinstance(store, SupportsGeoQueries) else None
 
 
 def _to_iso(moment: datetime | str | None) -> str | None:
