@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aegis.bus import subjects
+from aegis.bus.naming import consumer_name
 from aegis.bus.transport import BusTransport
 from aegis.domain.enums import Action, AgentType, HazardType, MessageKind, RiskLevel
 from aegis.domain.messages import (
@@ -84,8 +85,10 @@ class MockAgent:
             await self.transport.subscribe(
                 subjects.agent_in(self.agent_type),
                 self._on_request,
-                queue=f"cg_{self.agent_type.value}_{self.agent_id}",
-                durable=f"d_{self.agent_type.value}_{self.agent_id}",
+                # 名字里带 agent_id，而 agent_id 可以有点（`perceive.mock01`）：
+                # JetStream 的消费者名校验会直接拒掉，内存总线却不报错——见 bus/naming.py。
+                queue=consumer_name("cg", self.agent_type.value, self.agent_id),
+                durable=consumer_name("d", self.agent_type.value, self.agent_id),
             )
         )
         self._hb_task = asyncio.create_task(self._heartbeat_loop(heartbeat_interval), name=f"hb-{self.agent_id}")

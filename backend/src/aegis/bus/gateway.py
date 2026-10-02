@@ -22,6 +22,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from aegis.bus import subjects
+from aegis.bus.naming import consumer_name
 from aegis.bus.registry import AgentRegistry
 from aegis.bus.transport import BusTransport
 from aegis.domain.enums import Action, AgentType, MessageKind, RiskLevel
@@ -175,7 +176,7 @@ class AgentGateway:
                     subjects.agent_out(agent_type),
                     self._on_agent_out,
                     queue="aegis-gateway",
-                    durable=f"cg_gateway_{agent_type.value}",
+                    durable=consumer_name("cg_gateway", agent_type.value),
                 )
             )
             self._subs.append(await self._transport.subscribe(subjects.agent_hb(agent_type), self._on_heartbeat))
