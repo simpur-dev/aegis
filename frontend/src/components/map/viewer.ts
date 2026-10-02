@@ -355,6 +355,9 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   }
   viewer.camera.percentageChanged = 0.25
   viewer.camera.changed.addEventListener(onCameraChanged)
+  // 装配完先推一次：`camera.changed` 只在**变化**时发，不推的话面板一直停在"视野：未就绪"、
+  // 缩放报 0，而且按视野过滤图层的那条路一直拿不到 bbox（浏览器实测：不动鼠标就一直是未就绪）。
+  onCameraChanged()
 
   function currentBBox(): BBox | null {
     const rectangle = viewer.camera.computeViewRectangle()

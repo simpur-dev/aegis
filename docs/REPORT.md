@@ -196,17 +196,27 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
    还没在真实 neo4j 实例上跑过一次 `learn` + `recall`。
 5. **离线底图与站点坐标的数据侧**：代码链路是通的（Cesium 自建 quantized-mesh 地形 + PMTiles 底图，
    零 Ion/谷歌依赖，前端有守卫用例禁止引入外部 token；`GET /api/v1/stations` 也已能返回真实清单），
-   但数据还没烘焙：`frontend/public/basemaps/` 与 `public/terrain/` 目前只有 README，
-   未挂瓦片时地图按"无底图 + 椭球地形"如实降级；站点坐标同理——平台侧没有任何生产代码向
+   仓库里也已烘进**合成**资产（`public/terrain` 42 张 quantized-mesh + `public/basemaps/aegis.pmtiles`
+   21 张 256² PNG，见上表两行取证），缺的是**真实测绘数据**：换真 DEM/影像的做法与要对齐的口径写在
+   两份 README 里；站点坐标同理——平台侧没有任何生产代码向
    `monitoring_stations` 写站名/经纬度（`upsert_station` 只被测试与运维导入路径调用），
    所以地图上点位的多少取决于现场导入的站点台账，不是代码能力。
-6. **案例库的经验侧**：`hazard_cases.json` 的 16 条是**自编预案模板**（骨架移植自 NexusMind 干预库，
+6. **一张图的初始取景目视不合格（未定位，如实记）**：浏览器里 `/map` 首帧不报错、不崩渲染循环，
+   但视野内**大部分是天空**，只有顶部一条与底部一段弧呈合成底图的浅色（239,207,175），
+   面板读数 `视野 69.88,12.67 → 107.12,49.05 / 缩放 8`（中心 88.5,30.9 正是西藏）；把镜头拉远后
+   整个地球正常显示影像。已用实测排除：渲染崩溃（无遮罩、rAF 165/s）、探针误判（真归档判可用、
+   兜底页判不可用）、瓦片解析错误（控制台只有后端 500，没有地形/影像错误）、包围球不含几何
+   （逐顶点回算：半径 = 最远顶点距离，含住）、影像字节（归档里那一瓦就是这些像素）。
+   剩下的怀疑面是**相机/画布尺寸时序**（`setView` 时容器尺寸与 aspect 尚未稳定，导致 37°×36° 的
+   视野与 0.73 的画布宽高比对不上），要坐实需要能读到 viewer 实例的诊断入口——这是下一步，
+   不是已修的。
+7. **案例库的经验侧**：`hazard_cases.json` 的 16 条是**自编预案模板**（骨架移植自 NexusMind 干预库，
    处置内容为川藏沿线实战口径），`confidence` 与 `estimated_delay_hours` 是编制判断值。
    召回、排序、图谱摄取三条路径都在真实数据上跑通了，但"预警准确率"意义上的**案例命中率**
    还没有可核对的真实事件复盘集可以做对照——这一项不能进任何"经验证于历史灾害"的表述。
    性质声明由代码与接口两处外显（`DATASET_PROVENANCE` 进 `/api/v1/integrations`、
    `source_note` 进每条召回命中），用例见 `tests/unit/test_knowledge_dataset_provenance.py`。
-7. **预警准确率的数据侧**：算式与报表出口都已就位（`persistence/replay.py` +
+8. **预警准确率的数据侧**：算式与报表出口都已就位（`persistence/replay.py` +
    `scripts.metrics_report --dataset`，判据分支见上一节的三条真实命令），缺的是**数据**：
    仓库里没有真实现场标注的 JSONL（也不该造一个），所以"≥80%"这项至今是 `not_measured`。
    现场交付时要按 `{"dataset":{"kind":"field","source":…}}` + 逐案例
