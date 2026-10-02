@@ -29,6 +29,7 @@ import type {
 
 import type { BasemapConfig, BasemapSource } from './basemap'
 import { chooseBasemapSource, createBasemapSetup, DEFAULT_BASEMAP_CONFIG } from './basemap'
+import { clearMapDebugHandle, publishMapDebugHandle } from './debugHandle'
 import type {
   BBox,
   HazardZoneFeature,
@@ -322,6 +323,8 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 200
   viewer.camera.setView({ destination: cesium.Rectangle.fromDegrees(...rectArray(options.initialRectangle ?? TIBET_RECTANGLE)) })
+  // `?mapDebug` 时才挂只读句柄：视觉烟雾门禁要读 globe.getHeight() 这类真场景状态（见 debugHandle.ts）。
+  publishMapDebugHandle(viewer, location.search)
 
   const handles = createLayerHandles(cesium, viewer)
   const signatures = {} as Record<LayerName, string>
@@ -398,6 +401,8 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
       handler.destroy()
       viewer.dataSources.removeAll(true)
       viewer.destroy()
+      // 句柄必须跟着销毁：SPA 里切走再切回来，旧 Viewer 已经没了，留着只会读到一堆 destroyed 报错。
+      clearMapDebugHandle()
     },
     info: {
       basemapMessage: basemapSetup.message,

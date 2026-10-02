@@ -70,3 +70,6 @@ curl -sI http://127.0.0.1:8080/terrain/layer.json | head -1   # 期望 200
 | 面板显示"未取到 /terrain/layer.json，使用椭球面" | 资产没拷进来或路径不对 | 按上面的目录摆放 |
 | 显示"quantized-mesh 初始化失败…已回退椭球面" | layer.json 与瓦片不同源/层级不一致 | 重新生成，勿混用两次烘焙结果 |
 | 贴地要素高度怪异 | 椭球面兜底时高程为 0 | 站点若台账有 `elevation_m`，前端已按绝对高度画 |
+| `.terrain` 响应的 `Content-Type` 是空的 | 静态服务器不认识这个扩展名（`vite preview`/`python -m http.server` 实测都不给） | nginx 在 `mime.types` 里加 `application/vnd.quantized-mesh terrain;`。**不要**在前端按 MIME 白名单判瓦可用性：空类型是正常态，真兜底页要靠"字节以 `<!doctype html`/`<html` 开头"来判 |
+| 贴近瓦边取到的高程是几万米的负值（`globe.getHeight` 或目视起伏不对） | 引擎给 quantized-mesh 加的裙边高度 = 该层几何误差 × 5，而误差按 `levelZero/2^level` 递减：只烘到 maxzoom 2 时 L2 误差还有 19 km，裙边就深 96 km | 不是字节坏了（逐顶点反算与解析面逐点吻合、邻瓦接缝高差 < 1 m，见 `terrain-parse.spec.ts`）。要消掉观感只能**加密层级**：把关注区域（西藏一带）多烘 2–3 层，全球其余保持浅层 |
+| `vite preview` 起在 4175 但 `curl 127.0.0.1:4175` 连不上 | 它默认只绑 `[::1]`（实测 netstat） | 加 `--host 127.0.0.1`（`playwright.config.ts` 里已这么写） |

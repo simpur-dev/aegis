@@ -54,3 +54,8 @@ reports/
 # Cesium 静态资源由 npm run prepare:cesium 从 node_modules 落盘，属依赖产物
 frontend/public/cesium/
 
+# Playwright 视觉烟雾门禁的输出（截图、失败现场）；浏览器本体检在 ~/.cache/ms-playwright
+frontend/test-results/
+frontend/playwright-report/
+frontend/playwright-install.log
+

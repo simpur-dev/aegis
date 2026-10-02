@@ -116,3 +116,77 @@ export function decodeTerrainTile(raw: unknown): DecodedTerrainTile {
     creditHtml: (credits ?? []).map((credit) => credit.html ?? ''),
   }
 }
+
+/**
+ * quantized-mesh 的顶点量化上限。`65535` 是错的：Cesium 建网格的 worker 用 `const maxShort = 32767`，
+ * 按 65535 反算会得出"高度只有头部跨度一半"这种**假故障**（我自己就在这上面误判过一次，
+ * 所以这个数由用例对着已安装源码核，而不是靠记忆）。
+ */
+export const QUANTIZED_MESH_MAX_SHORT = 32767
+
+export interface TileRectangleDegrees {
+  readonly west: number
+  readonly south: number
+  readonly east: number
+  readonly north: number
+}
+
+export interface DecodedVertex {
+  readonly lonDeg: number
+  readonly latDeg: number
+  readonly heightMeters: number
+  readonly uCode: number
+  readonly vCode: number
+}
+
+/**
+ * 把解析结果反算成"顶点在地球上的位置 + 高程"，与 Cesium 建网格时同一套换算。
+ *
+ * 口径只有两条，写死在这里而不是散进各用例：`u` 自西向东，`v` **自南向北**
+ * （quantized-mesh 与 `createVerticesFromQuantizedTerrainMesh` 都是 v 向上）。
+ * 反算口径错了不会崩，只会让"几何对不对"整片失真，所以这两条必须在门禁里可核。
+ */
+export function decodeVertexPositions(raw: unknown, rectangle: TileRectangleDegrees): DecodedVertex[] {
+  if (raw === null || typeof raw !== 'object') throw new TypeError(`解析结果不是对象：${String(raw)}`)
+  const source = raw as Record<string, unknown>
+  const uint16 = (name: string): Uint16Array => {
+    const value = source[name]
+    if (!(value instanceof Uint16Array)) throw new TypeError(`${name} 期望是 Uint16Array，实际是 ${Object.prototype.toString.call(value)}`)
+    return value
+  }
+  const heightOf = (name: string): number => {
+    const value = source[name]
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new TypeError(`${name} 期望是有限数：${String(value)}`)
+    return value
+  }
+  const u = uint16('_uValues')
+  const v = uint16('_vValues')
+  const codes = uint16('_heightValues')
+  if (u.length !== v.length || v.length !== codes.length) {
+    throw new TypeError(`u/v/height 三个分量长度不一致：${u.length}/${v.length}/${codes.length}`)
+  }
+  const minimum = heightOf('_minimumHeight')
+  const maximum = heightOf('_maximumHeight')
+  const spanLon = rectangle.east - rectangle.west
+  const spanLat = rectangle.north - rectangle.south
+
+  // 不能用 `u.map(...)`：TypedArray 的 map 返回同种 TypedArray，对象会被静默压成 0，
+  // 于是所有比较都变成 false，跨度停成 [Infinity, -Infinity]——门禁会看起来"资产坏了"。
+  const vertices: DecodedVertex[] = []
+  for (let index = 0; index < codes.length; index += 1) {
+    vertices.push({
+      lonDeg: rectangle.west + (u[index] / QUANTIZED_MESH_MAX_SHORT) * spanLon,
+      latDeg: rectangle.south + (v[index] / QUANTIZED_MESH_MAX_SHORT) * spanLat,
+      heightMeters: minimum + (codes[index] / QUANTIZED_MESH_MAX_SHORT) * (maximum - minimum),
+      uCode: u[index],
+      vCode: v[index],
+    })
+  }
+  return vertices
+}
+
+/** 一个量化码对应的高度跨度：所有"应当相等"的断言都拿它当容差。 */
+export function quantizationStep(raw: unknown): number {
+  const decoded = decodeTerrainTile(raw)
+  return (decoded.maximumHeight - decoded.minimumHeight) / QUANTIZED_MESH_MAX_SHORT
+}

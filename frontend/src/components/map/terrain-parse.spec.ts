@@ -24,8 +24,33 @@ import * as Cesium from 'cesium'
 
 import { publicAssetDir, startLocalAssetServer, type LocalAssetServer } from '@/testing/localAssetServer'
 import { cesiumSourceFlat } from '@/testing/cesiumSource'
-import { decodeTerrainTile, quantizedMeshFieldContract } from '@/testing/cesiumTerrainDecode'
+import { decodeTerrainTile, decodeVertexPositions, quantizationStep, quantizedMeshFieldContract, QUANTIZED_MESH_MAX_SHORT } from '@/testing/cesiumTerrainDecode'
 import { readRepoFile } from '@/testing/repoSource'
+
+/** 合成高程面的峰刻意做在这个位置（`scripts/build_offline_tiles.py` 的 `synthetic_height_m`）。 */
+const SYNTHETIC_PEAK = { lon: 88.0, lat: 31.0 }
+
+/** 弧度转角度自己算：`Cesium.Math` 在 `cesium` 这层 barrel 里不是必须存在的名，绑错了一个名就会静默得 NaN。 */
+function toDegrees(radians: number): number {
+  return (radians * 180) / Math.PI
+}
+
+function rectangleInDegrees(level: number, x: number, y: number) {
+  const rect = provider.tilingScheme.tileXYToRectangle(x, y, level)
+  const box = {
+    west: toDegrees(rect.west),
+    south: toDegrees(rect.south),
+    east: toDegrees(rect.east),
+    north: toDegrees(rect.north),
+  }
+  // 反算全靠这个矩形，它一旦是 NaN，所有比较都会静默为假、跨度停成 [Infinity, -Infinity]。
+  // 这条断言就是让那种情况响亮地红，而不是伪装成"资产高度界不符"。
+  for (const [name, value] of Object.entries(box)) {
+    if (!Number.isFinite(value)) throw new TypeError(`瓦 L${level}/${x}/${y} 的矩形 ${name}=${value} 不是有限数：切片方案换算错了`)
+  }
+  return box
+}
+
 
 /** 青藏高原一带：合成高程面的峰就在这里，用它来判"瓦的内容属于它自己的矩形"。 */
 const PLATEAU = Cesium.Cartographic.fromDegrees(88.0, 31.0)
@@ -169,6 +194,65 @@ describe('真 Cesium 接不接受我们烘的地形', () => {
     expect(problems, problems.join('\n')).toEqual([])
   }, 90_000)
 
+  it('顶点按 maxShort 反算后仍然铺满头部声明的高度界（量化口径不是 65535）', async () => {
+    const problems: string[] = []
+    for (const tile of baked) {
+      const data = await provider.requestTileGeometry(tile.x, tile.y, tile.level)
+      const decoded = decodeTerrainTile(data)
+      const vertices = decodeVertexPositions(data, rectangleInDegrees(tile.level, tile.x, tile.y))
+      const step = quantizationStep(data)
+      // 反算条数必须等于顶点数： TypedArray.map 的坑就在这里静默发生（实测会被压成一串 0）。
+      expect(vertices.length, `L${tile.level}/${tile.x}/${tile.y} 反算顶点数与解析结果不符`).toBe(decoded.vertexCount)
+      let lo = Number.POSITIVE_INFINITY
+      let hi = Number.NEGATIVE_INFINITY
+      for (const vertex of vertices) {
+        if (vertex.heightMeters < lo) lo = vertex.heightMeters
+        if (vertex.heightMeters > hi) hi = vertex.heightMeters
+        // 反算出来的每个顶点高程都必须待在头部界内：出了界就是量化或头部两者之一写错。
+        if (vertex.heightMeters < decoded.minimumHeight - step || vertex.heightMeters > decoded.maximumHeight + step) {
+          problems.push(`L${tile.level}/${tile.x}/${tile.y} 顶点高程越界：${vertex.heightMeters} ∉ [${decoded.minimumHeight}, ${decoded.maximumHeight}]`)
+          break
+        }
+      }
+      // 跨度要真的**到达**两端：按 65535 反算只会得到一半（实测就是这样把好的资产读成坏的一一这条防的是读的人）。
+      if (Math.abs(lo - decoded.minimumHeight) > step * 2 || Math.abs(hi - decoded.maximumHeight) > step * 2) {
+        problems.push(`L${tile.level}/${tile.x}/${tile.y} 反算跨度 [${lo.toFixed(1)}, ${hi.toFixed(1)}] 与头部 [${decoded.minimumHeight.toFixed(1)}, ${decoded.maximumHeight.toFixed(1)}] 不符`)
+      }
+    }
+    expect(problems, problems.slice(0, 5).join('\n')).toEqual([])
+  }, 90_000)
+
+  it('峰落在它该在的那个角落：u 向东、v 向北的口径没有被翻过去', async () => {
+    const target = provider.tilingScheme.positionToTileXY(PLATEAU, maxZoom, new Cesium.Cartesian2())
+    expect(target).toBeDefined()
+    const data = await provider.requestTileGeometry(target!.x, target!.y, maxZoom)
+    const vertices = decodeVertexPositions(data, rectangleInDegrees(maxZoom, target!.x, target!.y))
+    const peak = vertices.reduce((best, vertex) => (vertex.heightMeters > best.heightMeters ? vertex : best), vertices[0])
+    // 只比"瓦内相对位置"，不重抄合成高程面的公式：v 口径一旦翻转，这里的纬度会从 31°N 掉到瓦内对称位置，
+    // 而这个偏差是几度量级的，容差 4° 足够把它和真实量化误差区分开。
+    expect(Math.abs(peak.lonDeg - SYNTHETIC_PEAK.lon)).toBeLessThan(6)
+    expect(Math.abs(peak.latDeg - SYNTHETIC_PEAK.lat)).toBeLessThan(4)
+    expect(peak.heightMeters).toBeGreaterThan(4_000)
+  })
+
+  it('相邻瓦在同一条经线上接得上：接缝高差远小于一个量化步长的放大值', async () => {
+    const offenders: string[] = []
+    for (const tile of baked.filter((entry) => entry.level === maxZoom)) {
+      const right = baked.find((entry) => entry.level === maxZoom && entry.x === tile.x + 1 && entry.y === tile.y)
+      if (!right) continue
+      const leftVertices = decodeVertexPositions(await provider.requestTileGeometry(tile.x, tile.y, maxZoom), rectangleInDegrees(maxZoom, tile.x, tile.y))
+      const rightVertices = decodeVertexPositions(await provider.requestTileGeometry(right.x, right.y, maxZoom), rectangleInDegrees(maxZoom, right.x, right.y))
+      const east = leftVertices.filter((vertex) => vertex.uCode === QUANTIZED_MESH_MAX_SHORT).sort((a, b) => a.latDeg - b.latDeg)
+      const west = rightVertices.filter((vertex) => vertex.uCode === 0).sort((a, b) => a.latDeg - b.latDeg)
+      expect(west.length, `L${maxZoom} ${tile.x}/${tile.y} 右邻缺西边界列`).toBe(east.length)
+      let delta = 0
+      for (let index = 0; index < east.length; index += 1) delta = Math.max(delta, Math.abs(east[index].heightMeters - west[index].heightMeters))
+      // 每瓦有各自的量化区间，接缝允许一个量化步长级别的差；实测远小于 1 m，1 m 是把它和"烘错位"分开的界。
+      if (delta > 1) offenders.push(`L${maxZoom} ${tile.x}/${tile.y}|${right.x}/${right.y} 接缝高差 ${delta.toFixed(2)} m`)
+    }
+    expect(offenders, offenders.slice(0, 5).join('\n')).toEqual([])
+  }, 90_000)
+
   it('瓦的内容属于它自己那个矩形：高原瓦有起伏，而同一列镜像行的瓦没有', async () => {
     const scheme = provider.tilingScheme
     const plateauTile = scheme.positionToTileXY(PLATEAU, maxZoom, new Cesium.Cartesian2())
@@ -267,6 +351,8 @@ describe('缺件不能被读成"有瓦"（三种失败都得响亮）', () => {
     // childTileMask 来自可用性而不是文件字节：这条也顺便钉住，
     // 免得后来人去生成器里找"为什么没写子瓦掩码"。
     expect(providerFlat).toContain('provider.availability.computeChildMaskForTile(level, x, y)')
+    // 量化上限：反算顶点高程用的就是这个数，写成 65535 会把资产读成"高度只有一半"。
+    expect(cesiumSourceFlat('Workers', 'createVerticesFromQuantizedTerrainMesh.js')).toContain(`const maxShort = ${QUANTIZED_MESH_MAX_SHORT};`)
   })
 
   it('可用性判读：顶层瓦报有子瓦，`available` 最深层按叶子处理', () => {
