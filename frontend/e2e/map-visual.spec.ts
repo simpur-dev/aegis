@@ -72,14 +72,19 @@ interface PendingResponse {
 
 let dataResponses: PendingResponse[] = []
 let probeResponses: PendingResponse[] = []
+let requestUrls: string[] = []
 let pageErrors: string[] = []
 let consoleErrors: string[] = []
 
 test.beforeEach(async ({ page }) => {
   dataResponses = []
   probeResponses = []
+  requestUrls = []
   pageErrors = []
   consoleErrors = []
+  // 每个请求都记一条 URL：下面那条"一张图不出网"的断言靠的就是它，
+  // 而 Cesium 想偷偷去要 Ion 令牌只会多出一个外部主机名。
+  page.on('request', (request) => requestUrls.push(request.url()))
   page.on('response', (response) => {
     const url = response.url()
     const isData = DATA_PATH.test(url)
@@ -105,6 +110,21 @@ async function inspect(responses: readonly PendingResponse[]): Promise<AssetResp
     responses.map(async (entry) => ({ ...entry.meta, body: await entry.body })),
   )
 }
+
+test('离线前提：一张图的请求全留在本机源上（不打 Cesium Ion 与任何外部主机）', async ({ page }) => {
+  await settle(page, { waitForTerrain: true })
+  const origin = new URL(page.url()).origin
+  const httpUrls = requestUrls.filter((url) => url.startsWith('http'))
+  const foreign = [...new Set(httpUrls.map((url) => new URL(url).origin))].filter((other) => other !== origin)
+  // 断言而不是"看一眼控制台"：REPORT 里那句"请求主机只有 localhost"此前只是观察记录，
+  // 谁哪天挂了个 Ion 令牌或 CDN 底图，界面照样好看，弱网离线这条口径却已经假了。
+  expect(httpUrls.length, '一个请求都没抓到：采集挂了，这条断言会空转').toBeGreaterThan(0)
+  expect(foreign, `一张图打到了本机源之外：${foreign.join(', ')}`).toEqual([])
+  console.log(
+    `[视觉门禁] 离线检查：源=${origin}，http 请求 ${httpUrls.length} 条，` +
+      `主机集合=${[...new Set(httpUrls.map((url) => new URL(url).hostname))].sort().join(',')}`,
+  )
+})
 
 test('画布真的出画：没有渲染错误框，截图也不是单一平色', async ({ page }) => {
   // 等地形进场景再截图：不然拍到的是"只挂了椭球面"的中间态，取景判断就没有意义。
