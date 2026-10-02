@@ -38,15 +38,30 @@
 
 | 方案 | 许可 | 运行时依赖 | 运行中改实例 | 判定 |
 | --- | --- | --- | --- | --- |
-| Conductor OSS | Apache-2.0 | Java server + PostgreSQL + Redis/Dynomite | 有真·运行时改实例 API：`skipTaskFromWorkflow`、`PUT /api/workflow/{wfId}/{taskRef}/{status}` | **不引入**：三件套中心服务直接破坏边缘自治；其运行时改图 API 作为本引擎 API 设计的对照样例引用 |
+| Conductor OSS | Apache-2.0 | Java server + PostgreSQL + Redis/Dynomite | 有真·运行时改实例 API：`PUT /api/workflow/{workflowId}/skiptask/{taskReferenceName}`（官方 Workflow API 页），SDK 侧对应操作名 `SkipTaskFromWorkflow`（conductor-oss csharp-sdk 的 workflow-lifecycle 文档） | **不引入**：三件套中心服务直接破坏边缘自治；其运行时改图 API 作为本引擎 API 设计的对照样例引用 |
 | Temporal | MIT（服务端） | 需持久库（Cassandra/MySQL/PostgreSQL）+ worker 进程；工作代码要满足确定性重放 | 通过版本化 workflow 与 update/signal 实现，改图需发新版本 | 不引入：确定性重放模型与"边跑边改节点"的产品命题相反，运维面在高原站点过重 |
 | Camunda 7（嵌入式） | Apache-2.0（社区版） | JVM 嵌入式引擎 | BPMN 实例可迁移，但自定义节点仍需二次开发 | 不引入：Java 栈与本平台（Python/asyncio）不同构 |
 | Camunda 8 / Zeebe | 非 OSI 开源许可（具体条款待核对，不在交付中作确定性表述） | 需独立 broker + 附加服务 | Operate/自 API 侧操作实例 | 不引入：许可与运维形态都不满足赛题交付约束 |
 | Prefect | Apache-2.0 | server + 数据库，面向数据管道调度 | 以部署/版本切换为主 | 不引入：调度粒度与"人在环、事件驱动重调度"不匹配 |
 
-上表中除 Conductor 的两条 API 名称（来自其公开 OpenAPI，且已写入本引擎的对照注释）外，
+上表中除 Conductor 的两条 API 名称（出处见下一节，并已写进本引擎的对照注释）外，
 其余各家许可证与依赖形态均属**调研期结论**，正式对外引用前需按官方 LICENSE 与文档逐条复核——
 本 ADR 不把这些写成可第三方引用的事实。
+
+### Conductor 对照证据的出处（2026-10-02 逐条复核）
+
+这两条是表里唯一被当成"设计对照"引用的外部事实，所以给出可核对的出处与核对日期：
+
+- `PUT /api/workflow/{workflowId}/skiptask/{taskReferenceName}`：官方文档 Workflow API 页
+  （<https://conductor-oss.github.io/conductor/documentation/api/workflow.html>，核对于 2026-10-02）。
+- `SkipTaskFromWorkflow`：SDK 侧操作名，见 conductor-oss/csharp-sdk 仓库
+  `docs/workflow-lifecycle.md`（"Marks a task skipped and moves on."，核对于 2026-10-02）。
+
+**本轮改判**：本 ADR 早期版本把这两条写成 `skipTaskFromWorkflow` 与
+`PUT /api/workflow/{wfId}/{taskRef}/{status}`。2026-10-02 逐条复核官方文档后：官方 API 页上
+查不到那种 `{status}` 形式的改状态端点，而 `SkipTaskFromWorkflow` 是 SDK 操作名而非 REST 路径。
+故按核对到的原文重写，早期写法不再作为依据保留；同时把"已写入本引擎对照注释"这句话变成真的
+（`workflow/engine.py` 的 `update_node_config` / `insert_node` 处已写下这组对照）。
 
 ## 后果
 

@@ -616,6 +616,10 @@ class WorkflowEngine:
         await self._drive(instance)
         return self.instance_detail(instance_id) or {}
 
+    # 下面两个"在途实例改图"的口子是本引擎的立项理由，也是 ADR-0004 里唯一的外部对照对象：
+    # Conductor OSS 以 `PUT /api/workflow/{workflowId}/skiptask/{taskReferenceName}`（官方 Workflow API 页）
+    # 与其 SDK 的 `SkipTaskFromWorkflow` 操作做到同类效果，但它要 Java server + PG + Redis 三件套中心服务，
+    # 直接破坏边缘自治，所以只借它的 API 形状、不引它的运行时。出处与核对日期见 docs/adr/0004。
     async def update_node_config(self, instance_id: str, node_id: str, config: dict[str, Any]) -> dict[str, Any]:
         """在途实例改节点参数：仅允许未执行的节点，且必须通过该节点类型的配置校验。"""
         instance = self._require_instance(instance_id)
