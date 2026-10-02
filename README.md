@@ -90,6 +90,12 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app --prof
 # 别把实验开关写进 backend/.env——pytest 也会读它（见上面"快速开始"里的提醒）。
 # 混合检索需要权重，先在能联网的机器上预置到 backend/data/models/（约 1.1GB，只读挂载进容器）
 python scripts/fetch_retrieval_models.py
+# 图谱腿起来之后把 16 条内置预案灌进去（容器 workdir 就是 /app/backend，脚本随镜像一起装好）；
+# 不灌这一句，召回照样有命中，但命中的全是容器里的内存兜底库，图谱那侧一条事实都没有。
+# 逐条落点由命令自己报（exit 3 = 有降级、4 = 写得进去却召回不到），别只看它有没有跑完：
+#   docker compose --env-file .env -f deploy/docker-compose.yml exec backend python -m scripts.ingest_cases
+# （这一条今晚未在真容器里实跑：本机没有 aegis-backend 镜像，只有 aegis-pg 系列；命令形状是按
+#   deploy/Dockerfile 的 WORKDIR=/app/backend 与 COPY backend ./backend 核对出来的。）
 ```
 
 接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`
