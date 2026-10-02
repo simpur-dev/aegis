@@ -127,6 +127,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 （归档-回读校验-才删，与旧日志那条同一口径），但**尚未执行**。
 | 地图渲染的两道门禁（无头真 Cesium 解析 + Playwright 真机画面） | 本机 `@cesium/engine`/`cesium@1.145`（与浏览器同一份模块）+ `node:http` 本机静态服务；Playwright 1.5x chromium（Chrome for Testing 153.0.8010.12，SwiftShader 软件 GL，本机跑、不用任何云测服务）+ `vite preview` 构建产物 | `npx vitest run src/components/map/terrain-parse.spec.ts`（14 项）；`npm run test:e2e`（4 项，13.0s）；`npm run typecheck` + 前端 **323 项**全绿 | 上一轮的教训是"实现+替身测试"不等于"真跑通"，这轮把两层都变成常驻门禁。**第一层（零新依赖）**：真 Cesium 逐瓦解析 42 张 `.terrain`，除"能解析"外还钉住三条不变量——① 按 `maxShort=32767` 反算的顶点高程必须铺满头部声明的高度界（我一开始用 65535 反算，得出"高度只有一半"的**假故障**，所以这个数由门禁对着已安装源码核）；② 峰必须落在它该在的瓦角落（v 口径一旦翻转就会偏十几度，而按瓦最大值判是判不出来的）；③ 邻瓦同经线接缝高差 < 1 m（实测 0）。另有三档缺件都得响亮：老实 404 → `RequestErrorEvent`，`vite preview` 的 `200 text/html` → `RangeError: Invalid typed array length`（证明 HTML 真被喂进了 quantized-mesh 解析器），以及"layer.json 声明可用但瓦不在位"→ reject 而不是静默出平地形。**第二层（真 GPU 画面）**：`/map?mapDebug=1` 打开构建产物，实测画布 720×490、2861 种颜色、主色占 17.2%、亮度 1.1..255，无 `An error occurred while rendering` 遮罩；6 张地形瓦响应各 22,609B、全 2xx、无一张是 HTML；场景侧 `globe.getHeight(85°E,31°N)=4196m`（椭球面只会给 0，所以这条就是"provider 是谁"的行为证据——生产包里类名已被压成 `hd`，看名字判不出）。**因此改掉的装配面事实**：新增显式 opt-in 的只读场景句柄 `debugHandle.ts`（URL 不带 `?mapDebug` 就不挂，销毁必清），此前 e2e 只能"看截图猜"；`vite preview` 默认只绑 `[::1]`（实测 netstat），门禁命令里补 `--host 127.0.0.1`。**照实记**：① 贴瓦边取到 -8243m 这类负值是引擎裙边（`skirtHeight = 该层几何误差 × 5`，maxzoom 2 时 L2 误差还有 19km），不是资产坏了，所以画面侧只判"这里没有高原"不判下界；② CI 仍只跑 `npm run test`，e2e 需要下载浏览器与真 GL，按"本机/现场交付前跑"的口径提供 `npm run test:e2e`，不进云端门禁；③ 同一批截图还暴露一条口径矛盾：画面左下角固定画着引擎自带的厂商署名（一段带外链的 `<a target="_blank">` + 图片），而本项目一张托管资产都不取——已用公开访问器把它换成"自托管、无第三方瓦片服务"（`applyOfflineCredits`），署名容器仍说清出处，e2e 与 `credits.spec.ts` 各钉一条；④ 只烘到 maxzoom 2 的浅金字塔让引擎裙边深达 96km，贴瓦边采样会取到几万米负值，这不是资产坏了（逐顶点反算已证），修法与口径见清单第 6 条 |
 | 地形按关注区域加密（全球浅 + 受控区深） | 同一台机器：`scripts/build_offline_tiles.py`（新增 `--refine-max-zoom/--refine-region`）+ 真 `@cesium/engine@1.145` 无头解析 + Playwright 真机 | `python scripts/build_offline_tiles.py --max-zoom 2`；`uv run pytest -q tests/unit/test_offline_tile_format.py`（22 项）；`npx vitest run src/components/map/terrain-parse.spec.ts`（14 项）；`npm run test:e2e`（5 项）；`npm run typecheck` + 前端 327 项 + 后端 2008 项全绿 | 上一轮量到的"贴瓦边取到 -8243m 负高程"根因是**浅金字塔**：引擎裙边 = 该层几何误差 ×5，全球 maxzoom 2 时 L2 误差 19 km ⇒ 裙边 96 km。全球烘深不成立（Geographic 下层级 z 有 2^(z+1)×2^z 张瓦，烘到 5 层就是 2730 张 ≈ 62 MB），所以生成器把两件事分开：`--max-zoom` 是全球铺满深度（父瓦链必须完整，Cesium 假定"层级 n 有瓦 ⇒ 父瓦都在"），`--refine-max-zoom` 只作用于受控区（默认西藏 78–99°E, 26–37°N）。实测：110 张瓦 / 2,486,990 字节，逐层 2/8/32/2/6/15/45，烘焙 3.5s；`layer.json` 的 `available` 深几层只声明局部范围（**行号按 TMS 自南向北写**，Cesium 读时翻一次；翻错就是"区域外判有瓦、区域内停在浅层"，两侧各有一条对账钉住）。真机复测：地形瓦请求从 6 次涨到 14 次、渲染层级到 4、高原处 `getHeight` 从 4196m 升到 **5045m**（解析面峰值 5573m，浅层采样必然低估）、画布上高原山体阴影像素占 **8.33%**——"画面发白"那句是我读缩略图读错，实测有起伏着色，已按实测改判。区域作用域也可判：完全落在受控区的矩形 `computeBestAvailableLevelOverRectangle` 给到最深一层，向南只多探 0.3° 就老实退回上一层 |
+| 部署形态起服务（真 JetStream + 真库）与量测脚本自身的取证能力 | 本机容器：nats:2.10-alpine（`--jetstream --store_dir /data -m 8222`）+ `aegis-pg:local`（PostgreSQL 17 + PostGIS + pgvector）；locust 2.46.6 经 compose 发布端口打本机 | `AEGIS_PG_DSN=… uv run python -m scripts.load_curve --profile deployed --levels 1 --duration 10s` → 退出码 0，服务从起进程到 `/healthz` 可答 **1.61s**，5 请求零失败；`uv run pytest -q tests/unit/test_bus_naming.py tests/unit/test_load_curve_report.py`（17 + 26 项） | "照 README 把部署形态跑一遍"是这批里产出最多的一跑：**两个真缺陷同时现形，而它们在内存形态的 2000 多项单测里全都看不见**。① durable 消费者名把 `agent_id` 里的点带了进去（`d_perceive_perceive.mock01`），nats-py 判非法直接抛 `ValueError` → uvicorn `Application startup failed`，也就是应用根本起不来；规则收进唯一真源 `aegis/bus/naming.py`（保守字符集，**只在真的改写过或超限时**追加原名短哈希——不区分就会让 `a.b` 与 `a_b` 静默共用同一个服务端投递状态，那比启动失败更难查；全空时给非空名字而不是退化成"无 durable 订阅"），门禁**直接 import 上游 `_validate_consumer_name`/`_INVALID_NAME_CHARS` 对账**，它改规则我们就红，而不是拿自己的正则自我证明。② 定位①的过程暴露量测脚本自己会擦掉现场：判"服务进程提前退出"却把子进程 stdout/stderr 送进 `DEVNULL`，那句话只存在于服务自己的 stderr 里，只能手工再跑一遍 `python -m aegis.main` 才拿到；现在尾巴由 `reports/load_curve_server.log` 直接带进报错与产物（`server.log`）。子进程同时改 `-u` 起——重定向到文件时解释器对 stdout 块缓冲，而"挂住不返回 /healthz"这条路是被 terminate 收摊的，不加 `-u` 恰好在最需要看日志的那一刻读到空文件（正常退出反而会 flush，于是缺陷只出现在一半路径上）；这条按真子进程行为量：不 flush 地打印后睡死的进程，父进程必须在它活着时就读得到那行。**照实记三条**：a) 我第一版调用点断言只看字节码 `co_names` 里有没有 `consumer_name`，漏写 import 时它照样绿——而且真发生过（`bus/gateway.py` 加了调用点忘了 import，内存形态全绿、部署形态一跑就炸 `NameError`），断言已改成"从函数全局命名空间解析得到、且与唯一真源是同一个对象"，并用变异检查（把绑定临时摘掉再跑）确认新断言抓得到这类漏；b) 用例里等子进程"自然退出"才读日志，`_stop_server()` 是 terminate，抢在 flush 前杀就得到空文件——第一版就踩了这条，所以两条路径各自有用例；c) 本行只是"起得来、答得了"的烟雾档，部署形态的容量拐点见下文「部署形态复测（2026-10-02，同一台机器，真总线 + 真库）」 |
 
 ## 并发曲线实测（2026-10-01，Locust）
 
@@ -152,6 +153,41 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 - 所以这一版实现能对外承诺的容量口径是：**本机单 worker + 内存总线下，≤120 并发的"读 + 演练"混合负载全部达阈**。
 - 口径边界：这不是 Linux + uvloop + 4 workers + NATS JetStream 的部署形态，部署环境那条曲线仍需重跑。
 
+### 部署形态复测（2026-10-02，同一台机器，真总线 + 真库）
+
+命令：`AEGIS_PG_DSN=… uv run python -m scripts.load_curve --profile deployed --levels 1,10,30,60 --duration 25s`
+与 `… --levels 120,200 --duration 30s`（产物 `reports/load_curve_deployed.json`、
+`reports/load_curve_deployed_high.json`，两者都写明 `server.profile=deployed`）。
+形态：nats:2.10-alpine（`--jetstream`）+ PostgreSQL 17（PostGIS + pgvector）容器，
+应用仍是本机单 uvicorn worker、mock 通道、模拟器开启；服务从起进程到 `/healthz` 可答 **1.63s**。
+
+| 并发用户 | 请求数 | RPS | 整体超预算率 | 聚合 P50/P95 (ms) | 演练 `drill_run` P95 | 站点清单 P95 | 就绪探针 P95 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 13 | 0.57 | 0% | 130 / 180 | 180 | — | — |
+| 10 | 255 | 10.41 | 0% | 8 / 170 | 310 | 210 | 26 |
+| 30 | 745 | 29.62 | 0% | 13 / 200 | 280 | 48 | 33 |
+| 60 | 1289 | 51.28 | 0% | 65 / 700 | 1300 | 520 | 170 |
+| 120 | 2244 | 74.42 | 0% | 160 / 2700 | 3700 | 1100 | 610 |
+| 200 | 1753 | 58.79 | 7.24% | 840 / 6100 | 9300 | 2600 | 1300 |
+
+读数与结论：
+
+- **拐点形状与内存形态一致，落在 120→200 之间**：RPS 从 74.42 回落到 58.79，
+  所以对外承诺的部署形态容量口径是 **≤120 并发的"读 + 演练"混合负载全部达阈**（与上表内存形态同一档，
+  即"接上真总线真库没有把可承诺容量拉下来"）。
+- **代价看得很清楚**：演练段 P95 在 60/120 并发分别是 1300/3700ms，而内存形态同档是 710/2200ms
+  ——真 JetStream + 真落库把演练路径抬了约 1.5–1.8 倍；只读端点也整体抬升（站点清单 60 并发 520ms vs 95ms）。
+  这是"多一跳总线 + 一次真写"的应有代价，不是回归。
+- **"失败率 7.24%" 这句必须换个说法才诚实**：逐条读 locust 的 failures 台账，200 并发那一档
+  **没有一条 5xx、没有一条连接错误**，全部是压测档案自己判的 `drill 超阈值: 5050..13642ms > 5000ms`
+  （drill_run 44.64%）与两条 `stations 超阈值: 6542/9080ms > 4000ms`。
+  也就是说这一档的语义是"SLA 预算被越过"，而不是"服务出错"——两者进同一列会误导读者，
+  所以上表列名写作"整体超预算率"。（上一张 2026-10-01 的内存形态表仍沿用"失败率"三字：
+  那一档的逐条 failures 台账已被后续运行覆盖，没法照同样的口径复核，不去替它改判。）
+- 1 并发那一档只跑到演练任务（13 次请求），其余端点当次没记到样本，所以表里是 `—`。
+- **口径边界（照实说）**：这仍是 Windows + 单 worker + 无 uvloop，且数据库/总线容器与压测机、被压机
+  共享同一份 CPU；它证明的是"接上真依赖后容量没塌"，不能当成 Linux + 4 workers 的部署环境数字。
+
 **这一轮的先决条件是压测档案本身能被修好**：`tests/load/locustfile.py` 里写着
 `float(response.elapsed)`，而 locust 2.46 底下层是 httpx、`elapsed` 是 `timedelta` —— 每次任务都抛
 `TypeError`，Locust 把它记成 task error，汇总表却是 `Aggregated 0 requests, 0(0.00%)` + 退出码 0。
@@ -165,7 +201,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 
 **读数层自己也曾是"没被测过的那层"**：`scripts/load_curve.py` 把 locust 的两张表解析成结论，
 这 100 多行解析/合并/零流量判定今晚之前没有任何用例。现在由
-`tests/unit/test_load_curve_report.py`（14 项）钉住，fixture 是提交进仓库的**真 locust 2.46.6 输出**
+`tests/unit/test_load_curve_report.py`（26 项）钉住，fixture 是提交进仓库的**真 locust 2.46.6 输出**
 （`tests/fixtures/locust_summary_locust-2.46.6.txt`，本机 2 并发 8s 原样落盘），
 断言的数字全部来自它，而不是想象的表格长相。
 
@@ -187,9 +223,11 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 
 ## 还没测到的（诚实清单）
 
-1. **部署形态的并发曲线**：上表是本机单 worker + 内存总线 + mock 通道；
-   生产形态（Linux + uvloop + 4 workers + NATS JetStream + PostgreSQL 落库）的曲线、
-   以及"按站数梯度"的资源占用还没量过。
+1. **部署形态的并发曲线**：真总线 + 真库那一档已在 2026-10-02 量过（见上文"部署形态复测"，
+   拐点同样是 120→200、容量口径仍是 ≤120），但**仍不是生产环境数字**：缺的部分是
+   Linux + uvloop + 4 workers 的那条曲线（本机复现不了），以及"按站数梯度"的资源占用
+   （CPU/内存/连接数随在册站数怎么涨）——后者连量法都还没定，属于下一批要开口子的地方。
+   另外这次的 `delivery_mode` 仍是 mock，演练段里不含真实触达链路。
 2. **弱网工况**：Zenoh 链路已在真实运行时上验过互通、请求-响应、边缘存留与按序重放
    （见上表），但还没在真实丢包/高时延链路（4G/卫星回传）上量过；`poc_report.py` 的丢包梯度是
    本机注入的合成时延，不是空口实测。

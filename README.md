@@ -135,6 +135,13 @@ uv run python -m scripts.metrics_report             # 打印时延/成功率实�
 uv run python -m scripts.zenoh_poc                  # 站端↔网关弱网链路 POC（需要 zenoh 与本机端口）
 uv run python -m scripts.load_curve --levels 1,10,30,60 --duration 25s
                                                     # 并发曲线：自己起服务、按梯度跑 Locust、报出拐点
+AEGIS_PG_DSN=postgresql://<user>:<password>@127.0.0.1:5432/<db> \
+uv run python -m scripts.load_curve --profile deployed --levels 1,10,30,60 --duration 25s
+                                                    # 同一套曲线换到真 NATS JetStream + 真 PostgreSQL 上量。
+                                                    # DSN 必须显式给：`.env` 里 `AEGIS_PG_DSN=` 是故意留空的
+                                                    # 模板，缺它脚本直接判失败，不会静默退回内存视图。
+                                                    # 服务子进程的 stdout/stderr 落在 reports/load_curve_server.log，
+                                                    # 起不来时报错会直接把日志尾巴一起给出
 uv run python -m scripts.metrics_report --dataset labels.jsonl
                                                     # 附现场标注案例集才算得出"预警准确率"；不附则如实写"未测得"
 ```
