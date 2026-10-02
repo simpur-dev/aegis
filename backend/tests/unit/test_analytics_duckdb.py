@@ -491,3 +491,32 @@ class TestOfflinePersistence:
         assert rollup[0].count == 5
         assert rollup[0].total == pytest.approx(15.0)
         run(second.close(0))
+
+
+class TestGeometryErrorContract:
+    """几何写错时的收口口径：驱动异常必须变成本模块的定型错误，且不把整段几何抄进日志。
+
+    真点-多边形判定在 `tests/integration/test_analytics_duckdb_spatial_live.py` 里跑；
+    这里只钉错误映射，所以故意不依赖 spatial（手动置能力位 + 注入必抛的驱动），
+    离线装不上扩展的机器同样要有这条保障。
+    """
+
+    def test_driver_parse_error_becomes_typed_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        wkt = "POLYGON ((91 29, 91.1"
+        instance = DuckDbWarehouse(tmp_path / "geo.duckdb", allow_spatial=False)
+
+        class _Boom:
+            def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+                raise RuntimeError(f"Invalid Input Error: Expected number at position '21' near: '{wkt}'")
+
+        run(instance.apply_schema())
+        monkeypatch.setattr(instance, "_spatial_ready", True)
+        monkeypatch.setattr(instance, "_con", _Boom())
+        with pytest.raises(WarehouseError) as caught:
+            run(instance.within_polygon(wkt))
+        message = str(caught.value)
+        assert wkt not in message, f"整段几何被抄进错误信息：{message}"
+        assert len(message) <= 220
+        assert caught.value.detail["geometry_chars"] == len(wkt)
+        assert caught.value.retryable is False
+        run(instance.close(0))

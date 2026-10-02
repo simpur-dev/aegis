@@ -367,7 +367,21 @@ class DuckDbWarehouse:
             raise SpatialUnavailableError(
                 "spatial 扩展不可用，无法执行点-多边形包含判定", detail={"reason": self._spatial_reason, "path": str(self.path)}
             )
-        return _rows_as_dicts(self._con.execute(_WITHIN_SQL, (wkt,)))
+        try:
+            return _rows_as_dicts(self._con.execute(_WITHIN_SQL, (wkt,)))
+        except Exception as exc:
+            raise self._geometry_error(exc, wkt=wkt) from exc
+
+    def _geometry_error(self, exc: Exception, *, wkt: str) -> WarehouseError:
+        """几何写错时驱动会把整段 WKT 抄进异常文本，并原样抛到调用方（现场传的多边形可以很长，
+        还会连带进日志与状态面）。这里收成本模块的定型错误，只留原因、不留载荷。"""
+        first_line = str(exc).splitlines()[0] if str(exc) else ""
+        reason = first_line.split(" near:", 1)[0].strip() or type(exc).__name__
+        return WarehouseError(
+            f"点-多边形判定失败: {reason[:160]}",
+            detail={"driver_error": type(exc).__name__, "geometry_chars": len(wkt), "path": str(self.path)},
+            retryable=False,
+        )
 
     def _rollup_sync(self, region_code: str | None, kind: str | None, since: datetime | None) -> list[MinuteFact]:
         self._ensure_open()
