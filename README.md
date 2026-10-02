@@ -172,6 +172,9 @@ uv run python -m scripts.accuracy_replay --import-labels labels.jsonl
 uv run python -m scripts.accuracy_replay --from-store --since 2026-09-01T00:00:00Z --kind field
                                                     # 库侧回放：真值来自标注表，预测来自落库 warnings
                                                     # （时间必须带时区；标注没声明是现场数据时官方准确率恒为"未测得"）
+curl -s 'http://localhost:8000/api/v1/accuracy/replay?since=2026-09-01T00:00:00Z&kind=field&min_field_cases=20'
+                                                    # 同一份报表的 HTTP 出口（大屏读这里）。判定只在
+                                                    # persistence/replay.py 一处；store_backend=memory 时这条回 503 并说明要配 postgres
 ```
 
 ## 5. 关键设计约束

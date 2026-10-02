@@ -31,22 +31,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from aegis.persistence.accuracy import DEFAULT_WINDOW_SECONDS, read_label_file
+from aegis.persistence.accuracy import (  # parse_moment 住在持久层：CLI 与 HTTP 端点共用同一份时间口径
+    DEFAULT_WINDOW_SECONDS,
+    parse_moment,
+    read_label_file,
+)
 from aegis.persistence.postgres import PostgresStore, apply_migrations
 from aegis.persistence.replay import DatasetKind, ReplayDataset, measure
 from aegis.storage.store import PlatformStore
-
-
-def parse_moment(raw: str) -> datetime:
-    """时间参数必须带时区：裸时间会被按本地时区解释，回放窗整体平移几小时看不出来。"""
-    text = raw.strip().replace("Z", "+00:00")
-    try:
-        moment = datetime.fromisoformat(text)
-    except ValueError as exc:
-        raise ValueError(f"时间参数不是合法 ISO 8601：{raw}") from exc
-    if moment.tzinfo is None:
-        raise ValueError(f"时间参数必须带时区（如 …+00:00 或 …Z）：{raw}")
-    return moment
 
 
 async def run(

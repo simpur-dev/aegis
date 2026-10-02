@@ -8,8 +8,8 @@
 - 日期：2026-10-01；机器：单台 x64 Windows，CPU only（无 GPU、无独立推理卡）。
 - 存储后端：`store_backend=memory`（除特别说明外）；总线 `memory`；交付通道 `mock`。
   触达时延里的 1.2s 是 mock 通道适配器注入的模拟链路耗时，不是真实短信/北斗时延。
-- 测试规模（`--junitxml` 计数与 `find | wc -l` 实测，2026-10-02 21:38 复核）：全量 `pytest`
-  **2123 passed / 81 skipped（共 2204）**，分布在 91 个测试文件；`backend/src/` 93 个 .py、20,993 行。
+- 测试规模（`--junitxml` 计数与 `find | wc -l` 实测，2026-10-02 21:53 复核）：全量 `pytest`
+  **2136 passed / 82 skipped（共 2218）**，分布在 92 个测试文件；`backend/src/` 93 个 .py、21,112 行。
   （本行此前写的是 2025-10-02 早先那轮的 2025 条 / 87 文件 / 92 模块 / 20,510 行——
   数字过期就重测，这是这条报告自己的规矩。计数口径也换过一次：`pytest -q` 的尾行在重定向时会被截掉，
   现在一律读 junitxml 的属性，不读终端输出。）
@@ -138,6 +138,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 | seekdb 能否替掉 PostgreSQL：一次能力实测与随之而来的默认值定案 | 本机同一时刻两个引擎都在位：`5.7.25-OceanBase seekdb-v1.3.0.0`（127.0.0.1:2881）与容器 `aegis-postgres`（PG 17.5 + postgis 3.5.2 + vector 0.8.6）；同一批 6 个站点坐标、同一中心点、同一个多边形 | `docker exec aegis-postgres env` 取 `POSTGRES_*` 现拼 DSN（口令不回显）→ 两侧同一批点各算一遍距离与集合；`uv run pytest -q tests/unit/test_retrieval_wiring.py -k SeekdbIsNotInTheDefaultShape`（3 项，含两次变异注入的对照） | 起因是"seekdb + Neo4j 已够，Postgres 没必要"。**我原先的两条判断被实测推翻**：seekdb 有 `ST_GeomFromText/ST_AsText/ST_Within/ST_Contains/ST_Buffer/ST_Distance_Sphere` 与 `geometry` 列 + `SPATIAL INDEX`（列须 NOT NULL，否则 1252），而且**支持 `LEFT JOIN LATERAL`**、CHECK 约束真拦得住（3819）、外键真拦得住（1452）、`ON DUPLICATE KEY UPDATE` 幂等——所以回放那条 `LEFT JOIN LATERAL` 的形状是**可移植**的，不是墙。真差异只剩四条：① **`ST_DWithin` 不存在**（1305，`MBRContains`/`ST_PointFromText` 也没有）→ `persistence/geo.py:86` 的半径谓词得改成 `ST_Distance_Sphere(...) <= r`，代价是半径剪枝不再走索引；② **DDL 不进事务**（建表后 rollback，查 `information_schema` 表还在），而 `postgres.py` 有 3 处 `conn.transaction()`，其中"建迁移台账 + 应用 DDL"的原子性正压在这上面；③ `COPY` 批量灌数无等价物；④ `INSERT ... RETURNING` 不支持（1064，好在生产代码没用）。**口径差异量到了米**：PostGIS `geography`（WGS84 椭球）vs seekdb 球面，441 m 差 0.4 m、9.6 km 差 3.8 m、221 km 差 383.5 m、314 km 差 609.1 m（最大相对差 0.194%）；半径从 1 km 扫到 400 km，**400 档里只有 221 km 这一档两引擎集合不同**（日喀则翻出/翻进）——排序两边始终一致，面内判定 `ST_Within` 与自写射线法参照三方全一致。定案：**保留 Postgres 作关系与空间主存，把 seekdb 从默认形态里摘出去**（它本来默认就是 `local`，只是没人钉）；新增 `TestSeekdbIsNotInTheDefaultShape` 把 `aegis.retrieval.seekdb` 伪装成"导入即炸"，local 装配必须照样成功且不记 seekdb 降级，并做两次变异注入证明它咬得住——把分支改成"永不构造外部索引"时反向用例红，改成"总是构造"时 local 用例红。`.env` / `.env.example` 里的 7 个 `AEGIS_SEEKDB_*` 键保留为 POC 开关（默认 `local` 时整条路径不存在），CI 的 `--extra seekdb` 只为跑 seekdb 那套 live 用例 |
 | 工作流外呼成为装配面板上的一行事实（`outbound` 腿）+ 白名单入口收敛 | 本机：真应用容器装配，外呼传输由注入的 `httpx.MockTransport` 承担（全程不触网）；前端漂移门禁直接读后端装配源码 | `uv run pytest -q tests/unit/test_integrations.py`（36 项）/ `tests/unit/test_workflow_outbound.py`（21 项）；`cd frontend && npx vitest run`（327 项，其中装配契约 28 项）；`npx vue-tsc --noEmit` | 上一轮外呼闸落地时照实记了一条"这条腿还没进 `/api/v1/integrations` 的腿表"，这次补齐：白名单为空是 `enabled=false / driver=off`，配了白名单是 `driver=http` 并带 `allowed_hosts`/`timeout_ms` 与 `calls`/`rejected`/`failures` 三个计数和 `last_error`；画布上填了不放行的主机会让这条腿显示"降级运行"，因为那正是"节点为什么一直失败"的第一现场。**顺带修掉一个凭据出口**：白名单以前按逗号切串后原样进状态面，运维写成 `user:pass@host` 等于把口令贴到匿名可读的接口上；现在条目统一过 `urlsplit().hostname` 收敛（scheme、路径、userinfo、端口一律剥），**并且与匹配侧共用同一份规范化**——两份各写一半时"配了白名单却永远匹配不上"是查不出来的那类故障。剥端口意味着白名单是主机粒度，这一点写进 docstring 与用例而不是留给人猜。前端"不硬编码腿清单"的约束这次真的用上：从装配源码抓出的 `IntegrationState(name=...)` 集合必须与 `LEG_LABELS` 键严格相等，加腿不贴标签立刻红；那条防空转的断言也从"长度为 7"改成逐条列出八条，免得"抓取被改写空了"与"两边都空"在门禁面前长得一样。**照实记**：`AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS` / `AEGIS_WORKFLOW_HTTP_TIMEOUT_MS` 仍未进 `.env.example`（该文件受工具写入策略保护，需人工补两行）|
 | 16 类节点的引擎级分派证据 + `upstream` 必须是画布上的连线 | 本机：真装配容器（内存总线 + mock 通道 + 注入的外呼替身，全程不触网）；预警链按 `data_fetch → threshold → risk_assess → warning_generate → warning_publish → feedback_collect` 整条跑 | `uv run pytest -q tests/unit/test_workflow_node_dispatch_matrix.py`（21 项）；连同既有工作流套件 `test_workflow_engine/model/properties/services_bridge/outbound` 共 130 项一起绿；`ruff format`/`check`、`mypy` 全绿 | 上一轮只证到"装配桥把每类节点要的依赖服务都给了出去"（`require_service` 清单核对），这次补的是"每类节点都被**装配好的引擎**真的驱动过一次"：新增分派矩阵，`TestCoverage` 拿注册表 `names()` 与场景里出现的类型做双向比对（漏一类红、写了不存在的类型也红）。**矩阵当场测出两条真缺陷**：① `join` 的 `config.upstream` 指了一个没连线的节点时，此前要等实例跑到汇聚那步才炸成"汇聚节点缺少上游结果"——现场只看到"流程莫名卡住"。现补定义期交叉校验 `_validate_wired_upstreams`：配置里点名的 `upstream` 必须是该节点的入边，单值与列表同一条口径；同时留一条"连了线的正常图照常通过"防住自己改严。② 节点失败原因被压成"节点执行异常: 类名"：外呼被拒时运维只看到 `OutboundTargetError`，看不到"主机不在白名单：169.254.169.254"——因为引擎只对 `NodeError/NodeConfigError` 保留 message，其余 `AegisError` 落到通用分支把原因丢了。现在所有 `AegisError` 都原样带上，拒因同时进节点 `error` 与 `outbound` 那行的 `last_error`（这条是变异验过的：把引擎分支改回去，那条用例立刻红）。预警链那条用例钉的是"下游吃的是上游真产出的东西"：`delivery.warning_id == warning.warning_id`、`delivered > 0`（mock 通道一条都没发出去时，这条证据就是空的）。人工节点测到三段事实：挂起 `awaiting_human` → 决策恢复走到 `approve` 分支 → 非法决策值在 `resume` 门口就 400 且实例仍停在等待态（不被染成失败）。**照实记**：`feedback_collect` 单独一类跑时拿到空 warning_id 也算"成功"，所以这类证据必须由链来给，拆成单节点用例会证到假的东西 |
+| 预警准确率回放的 HTTP 出口（`GET /api/v1/accuracy/replay`）与真库取证 | 本机容器：PostgreSQL 17.5 + PostGIS；HTTP 侧 ASGI 直连真应用；内存 store 只用来验降级回答 | `uv run pytest -q tests/api/test_accuracy_replay_endpoint.py`（16 项）；`AEGIS_TEST_PG_DSN=… uv run pytest -q tests/integration/test_accuracy_replay_live.py`（10 项，含真库上这条端点用例）；契约测试已把该路径列入考核相关端点 | 诚实清单第 9 条那句"回放只有 CLI 入口，没有 HTTP 端点"补上了。端点**不做任何算术**：`status/indicator/official_accuracy` 全部来自 `persistence/replay.measure`，用例把 HTTP 响应与"对同一批库侧案例直接调 measure"的结果逐字段对比——防的就是两套准确率。三条判据钉住：① `kind` 默认 `unspecified`，数据集没自证是现场标注时官方准确率恒为 None 并带 `provenance_warning`；② 内存 store 没有库侧配对能力 → 503 + `E_ACCURACY_UNAVAILABLE` + 明写要配 `AEGIS_STORE_BACKEND=postgres`（能力用 `SupportsAccuracyReplay` 探测，绝不在内存里伪造第二套配对阵列）；③ 裸时间、逆序窗、配对窗越界、区划格式错全部在**触库之前**被拒，用例断言 store 的调用计数没有增加。真库取证：两条标注 + 两条落在事件之后的预警 → `status=measured`、`official_accuracy=1.0`、`indicator=met`；把 `kind` 省掉就回到 `official_accuracy=None`。**顺带收成一份真源**：`parse_moment` 从 `scripts/accuracy_replay.py` 搬进 `persistence/accuracy.py`，CLI 与端点共用——两处各写一份 ISO 解析，迟早分裂成"CLI 拒的日期界面收下了"。**照实记**：这里的 `met` 来自门禁自己写进库的两条标注，只证明通路对，不证明真实世界的准确率；现场标注数据仓库里仍然没有（也不该造一个）|
 
 ## 并发曲线实测（2026-10-01，Locust）
 
@@ -276,11 +277,10 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
    `truth_warning/predicted_warning` 的口径导入，且总案例数须 ≥ `MIN_FIELD_CASES`（30），
    否则报表判"样本不足"——这一条同样是机器拦住的，不靠人记得。
 
-9. **准确率回放的库侧通路已接上，缺的仍是数据与出口**：真值表已存在（`004_accuracy_labels.sql`），
-   预测侧改从落库 `warnings` 配对（`scripts.accuracy_replay` 一条 CLI，取证见上一节），
-   判定仍只在 `persistence/replay.py` 一处。剩下两件事：① 仓库里没有真实现场标注（也不该造一个），
-   所以"≥80%"这项照旧是 `not_measured`；② 回放只有 CLI 入口，没有 HTTP 端点——
-   大屏要看回放结果，得等这条通路接到 `/api/v1/…` 上。
+9. **准确率回放：库侧通路与 HTTP 出口都已就位，缺的只是真实标注**：真值表（`004_accuracy_labels.sql`）、
+   与落库 `warnings` 的配对 SQL、`GET /api/v1/accuracy/replay` 都在（取证见对应行），判定仍只在
+   `persistence/replay.py` 一处。剩下的是数据侧：仓库里没有真实现场标注（也不该造一个），
+   所以"≥80%"这项在真实数据上照旧是 `not_measured`。
 10. **图谱写路径的"真图"证据仍缺第二档**：`learn()` / `prepare_schema()` 现在都有生产调用方了
     （`POST /api/v1/knowledge/cases` + 启动期索引初始化，见上一节新增行），但"写进去之后真图上
     确实能召回"这件事还是只有替身级证据——`AEGIS_LLM_API_KEY` 为空，`-m slow` 的第二档照旧 skip。

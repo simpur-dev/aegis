@@ -16,7 +16,7 @@ import json
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from aegis.domain.messages import parse_iso
 from aegis.persistence.errors import AccuracyArgumentError
@@ -44,6 +44,41 @@ LABEL_COLUMNS = (
     "labelled_by",
     "note",
 )
+
+
+def parse_moment(raw: str, *, field: str = "time") -> datetime:
+    """时间参数必须带时区：裸时间会被按本地时区解释，整个回放窗平移几小时没人看得出来。
+
+    入口脚本与 HTTP 端点共用这一份——两处各写一个 ISO 解析，就会出现"CLI 拒的日期
+    界面收下了"这种两边都对不上的口径。
+    """
+    text = str(raw or "").strip().replace("Z", "+00:00")
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise AccuracyArgumentError(f"时间参数不是合法 ISO 8601：{raw}", detail={field: raw}) from exc
+    if moment.tzinfo is None:
+        raise AccuracyArgumentError(f"时间参数必须带时区（如 …+00:00 或 …Z）：{raw}", detail={field: raw})
+    return moment
+
+
+@runtime_checkable
+class SupportsAccuracyReplay(Protocol):
+    """存储侧的库内回放能力：只由 Postgres 实现提供，不在内存里伪造第二套配对口径。"""
+
+    async def accuracy_replay_cases(
+        self,
+        *,
+        since: datetime,
+        until: datetime | None = None,
+        window_seconds: int = DEFAULT_WINDOW_SECONDS,
+        region_code: str | None = None,
+    ) -> Sequence[ReplayCase]: ...
+
+
+def accuracy_replay_port(store: object) -> SupportsAccuracyReplay | None:
+    """能力探测：内存 store 没有这个方法时返回 None，由调用方给出"缺什么"的回答。"""
+    return store if isinstance(store, SupportsAccuracyReplay) else None
 
 
 def check_lead_window(seconds: float) -> int:

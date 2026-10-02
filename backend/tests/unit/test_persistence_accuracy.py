@@ -318,9 +318,9 @@ class TestScriptTimeArguments:
         assert parse_moment(raw) == T0
 
     def test_裸时间被拒(self) -> None:
-        with pytest.raises(ValueError, match="时区"):
+        with pytest.raises(AccuracyArgumentError, match="时区"):
             parse_moment("2026-09-20T03:00:00")
 
     def test_垃圾输入把原值带出来(self) -> None:
-        with pytest.raises(ValueError, match="上周三"):
+        with pytest.raises(AccuracyArgumentError, match="上周三"):
             parse_moment("上周三")

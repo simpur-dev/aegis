@@ -46,6 +46,7 @@ def test_the_openapi_document_covers_the_sla_bearing_endpoints() -> None:
         "/api/v1/collaboration",
         "/api/v1/metrics/latency",
         "/api/v1/integrations",
+        "/api/v1/accuracy/replay",
         "/api/v1/knowledge/cases",
         "/api/v1/drill/run",
     }

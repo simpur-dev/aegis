@@ -171,3 +171,88 @@ class TestMeasureUsesTheSingleOracle:
         assert payload["official_accuracy"] is None
         # 数据集没声明成现场标注时，报表必须自带一句"这不算官方准确率证据"
         assert payload["provenance_warning"] is not None
+
+
+class TestReplayHTTPEndpointOnRealDB:
+    """`GET /api/v1/accuracy/replay` 在真库上的取证：大屏读的就是这一份，不能只有 CLI。"""
+
+    async def test_端点从库里配对并给出与measure一致的判定(self) -> None:
+        import httpx
+
+        from aegis.api.app import create_app
+        from aegis.config import Settings
+        from aegis.container import create_container
+        from aegis.persistence.replay import measure
+
+        base = utc_now().replace(microsecond=0)
+        # 用这条用例专属的区划：库里同一时刻还留着别的用例写在 REGION 上的标注，
+        # 共用区域会让"几条案例"这种断言变成看别人脸色。
+        region = "99HTTP01"
+        ctn = create_container(
+            Settings(
+                env="test",
+                bus_backend="memory",
+                store_backend="postgres",
+                pg_dsn=DSN,
+                simulator_enabled=False,
+                analytics_backend="off",
+            ),
+            with_simulator=False,
+        )
+        await ctn.start()
+        app = create_app(ctn.settings, container=ctn)
+        http = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+        try:
+            await _seed(
+                ctn.store,
+                _record(warning_id="ACC-HTTP-1", region=region, generated_at=base + timedelta(minutes=10)),
+                _record(warning_id="ACC-HTTP-2", region=region, generated_at=base + timedelta(minutes=30)),
+            )
+            await ctn.store.put_warning_labels(
+                [
+                    _label(case_id="ACC-HTTP-1", observed_at=base, truth=True, region=region),
+                    _label(case_id="ACC-HTTP-2", observed_at=base + timedelta(minutes=5), truth=True, region=region),
+                ]
+            )
+
+            response = await http.get(
+                "/api/v1/accuracy/replay",
+                params={
+                    "since": (base - timedelta(hours=1)).isoformat(),
+                    "until": (base + timedelta(hours=1)).isoformat(),
+                    "region_code": region,
+                    "kind": "field",
+                    "min_field_cases": 2,
+                    "accuracy_target": 0.5,
+                },
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["dataset"]["cases"] == 2
+            assert body["status"] == "measured"
+            assert body["indicator"] == "met"
+            assert body["official_accuracy"] == 1.0
+
+            # 唯一口径：HTTP 面上的判定必须等于对库侧案例直接跑 measure 的结果
+            cases = await ctn.store.accuracy_replay_cases(
+                since=base - timedelta(hours=1),
+                until=base + timedelta(hours=1),
+                region_code=region,
+            )
+            expected = measure(ReplayDataset(cases=tuple(cases), kind="field", source="x", note="y"), target=0.5, min_field_cases=2)
+            assert (body["status"], body["indicator"], body["official_accuracy"]) == (
+                expected.status,
+                expected.indicator,
+                expected.official_accuracy,
+            )
+
+            default = await http.get("/api/v1/accuracy/replay", params={"since": (base - timedelta(hours=1)).isoformat()})
+            assert default.json()["official_accuracy"] is None, "数据集性质未声明时官方准确率恒为 None"
+            assert "不构成官方" in str(default.json()["provenance_warning"])
+        finally:
+            async with ctn.store.acquire() as conn:
+                await conn.execute("delete from warnings where warning_id like 'ACC-HTTP-%'")
+                await conn.execute("delete from monitoring_stations where region_code = '99HTTP01'")
+                await conn.execute("delete from warning_truth_labels where case_id like 'ACC-HTTP-%'")
+            await http.aclose()
+            await ctn.shutdown()
