@@ -28,7 +28,7 @@ from aegis.connectors.mqtt import AiomqttClient, MqttSource  # MQTT 只在此装
 from aegis.connectors.weather_api import WeatherApiSource
 from aegis.domain.messages import TelemetryReading, utc_now
 from aegis.knowledge.cases import DATASET_PROVENANCE, HazardCase, load_builtin_cases
-from aegis.knowledge.provider import KnowledgeProvider
+from aegis.knowledge.provider import KnowledgeProvider, SupportsSchemaPreparation
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import ChainResult
 from aegis.storage.store import PlatformStore, StoreProtocol
@@ -535,6 +535,10 @@ def _weights_present(root: Path) -> bool:
 
 # --------------------------------------------------------------------- 知识
 
+# 启动期索引初始化的墙钟上限：Neo4j 驱动默认连接超时约 30s，那是"库在哪儿"的时间，
+# 不是平台启动该等的时间。超了就记降级，召回自己走内存兜底。
+KNOWLEDGE_SCHEMA_TIMEOUT_SECONDS = 20.0
+
 
 def build_knowledge(settings: Settings | None = None, tracer: Tracer | None = None) -> tuple[KnowledgeProvider | None, IntegrationState]:
     """案例知识提供者：预案生成前的历史案例召回（读路径，结构上不含 LLM）。
@@ -568,6 +572,26 @@ def build_knowledge(settings: Settings | None = None, tracer: Tracer | None = No
     )
 
 
+async def warm_knowledge(provider: KnowledgeProvider | None) -> str | None:
+    """启动期把图谱索引建好：索引缺失时 cosine 与 bm25 两路检索都会报错，等于图谱腿白装。
+
+    纯内存装配不实现 `SupportsSchemaPreparation`，这里就整段跳过——不制造"预热了个空"的假事实。
+    失败与超时都不阻断启动：返回原因，由 `integration_status()` 作为 knowledge 这条腿的降级事实外显。
+    超时上限是必要的：Neo4j 不可达时驱动会按自己的连接超时干等，而"启动"不该被一条可选腿拖住。
+    """
+    if provider is None or not isinstance(provider, SupportsSchemaPreparation):
+        return None
+    try:
+        await asyncio.wait_for(provider.prepare_schema(), timeout=KNOWLEDGE_SCHEMA_TIMEOUT_SECONDS)
+    except TimeoutError:
+        log.warning("图谱索引初始化超时，召回将在降级链上运行", extra={"timeout_seconds": KNOWLEDGE_SCHEMA_TIMEOUT_SECONDS})
+        return f"schema_timeout:{KNOWLEDGE_SCHEMA_TIMEOUT_SECONDS:g}s"
+    except Exception as exc:  # 连接失败/权限不足/依赖缺失都要变成一行可见事实，而不是让进程起不来
+        log.warning("图谱索引初始化失败，召回将在降级链上运行", extra={"err": type(exc).__name__})
+        return f"{type(exc).__name__}: {str(exc)[:200]}"
+    return None
+
+
 def target_of(uri: str) -> str:
     """连接串的可公开目标段（host[:port]）：scheme、凭据、路径与参数一律丢弃。
 
@@ -599,4 +623,5 @@ __all__ = [
     "start_store",
     "stop_store",
     "target_of",
+    "warm_knowledge",
 ]

@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 import pytest
 
+from aegis import integrations
 from aegis.agents.mock import MockAgent
 from aegis.api.app import create_app
 from aegis.bus import subjects
@@ -27,10 +28,17 @@ from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.container import PlatformContainer, create_container
 from aegis.domain.enums import Action, AgentType, HazardType
 from aegis.domain.messages import AgentMessage, utc_now
-from aegis.integrations import build_knowledge, target_of
+from aegis.integrations import build_knowledge, target_of, warm_knowledge
 from aegis.knowledge.cases import HazardCase, load_builtin_cases
+from aegis.knowledge.graphiti_store import GraphitiUnavailableError
 from aegis.knowledge.memory_store import InMemoryKnowledgeProvider
-from aegis.knowledge.provider import CaseMatch, FallbackKnowledgeProvider, KnowledgeProvider
+from aegis.knowledge.provider import (
+    CaseMatch,
+    FallbackKnowledgeProvider,
+    KnowledgeProvider,
+    LearnOutcome,
+    SupportsSchemaPreparation,
+)
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import ChainResult, HazardResponseChain
 from conftest import REGION, readings_rain_burst
@@ -412,3 +420,68 @@ def test_chain_result_default_has_no_reference_cases() -> None:
 
     assert result.reference_cases == []
     assert result.as_dict()["reference_cases"] == []
+
+
+class SchemaStub:
+    """带索引初始化能力的图谱侧替身：预热该不该发生、失败怎么说，都只由它的一句话决定。"""
+
+    driver = "graphiti"
+
+    def __init__(self, *, error: Exception | None = None, delay_ms: float = 0.0) -> None:
+        self._error = error
+        self._delay_ms = delay_ms
+        self.prepared = 0
+
+    async def recall(self, query: str, **_: Any) -> list[CaseMatch]:
+        del query
+        return []
+
+    async def learn(self, case: HazardCase) -> None:
+        del case
+
+    async def learn_case(self, case: HazardCase) -> LearnOutcome:
+        return LearnOutcome(case_id=case.case_id, driver=self.driver)
+
+    async def prepare_schema(self) -> None:
+        if self._delay_ms:
+            await asyncio.sleep(self._delay_ms / 1000)
+        if self._error is not None:
+            raise self._error
+        self.prepared += 1
+
+
+class TestKnowledgeSchemaWarmup:
+    """审计补上的这一段：图谱写入侧与索引初始化在装配层必须有生产调用点。"""
+
+    async def test_纯内存装配不假装预热过图谱(self) -> None:
+        provider, _state = build_knowledge(base_settings())
+        assert not isinstance(provider, SupportsSchemaPreparation)
+        assert await warm_knowledge(provider) is None
+
+    async def test_图谱在位时索引初始化真的被执行(self) -> None:
+        stub = SchemaStub()
+        provider = FallbackKnowledgeProvider(primary=stub, fallback=InMemoryKnowledgeProvider(cases=[]))
+        assert await warm_knowledge(provider) is None
+        assert stub.prepared == 1
+
+    async def test_预热失败作为降级事实出现在装配状态上(self) -> None:
+        ctn = create_container(base_settings(), with_simulator=False)
+        ctn.knowledge = FallbackKnowledgeProvider(
+            primary=SchemaStub(error=GraphitiUnavailableError("Neo4j 不可达")),
+            fallback=InMemoryKnowledgeProvider(cases=[]),
+        )
+        await ctn.start()
+        try:
+            rows = ctn.integration_status()
+            row = next(item for item in rows if item.name == "knowledge")
+            assert "Neo4j 不可达" in str(row.detail["schema_error"])
+            # 光有 detail 不够：/api/v1/integrations 的 degraded 清单要真的把它列出来
+            assert "knowledge" in [item.name for item in rows if item.degradation_reason()]
+        finally:
+            await ctn.shutdown()
+
+    async def test_预热超时不拖住启动(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(integrations, "KNOWLEDGE_SCHEMA_TIMEOUT_SECONDS", 0.01)
+        provider = FallbackKnowledgeProvider(primary=SchemaStub(delay_ms=400), fallback=InMemoryKnowledgeProvider(cases=[]))
+        reason = await warm_knowledge(provider)
+        assert reason is not None and reason.startswith("schema_timeout")

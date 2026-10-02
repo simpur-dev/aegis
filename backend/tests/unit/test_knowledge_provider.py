@@ -21,7 +21,9 @@ from aegis.knowledge.provider import (
     FallbackKnowledgeProvider,
     KnowledgeConfigError,
     KnowledgeProvider,
+    LearnOutcome,
     RecallSource,
+    SupportsSchemaPreparation,
     build_knowledge_provider,
     run_with_budget,
 )
@@ -32,6 +34,7 @@ class StubProvider:
     """可编排的主实现替身：延迟、异常、返回集都由测试给定。"""
 
     name = "stub"
+    driver: RecallSource = "graphiti"
 
     def __init__(
         self,
@@ -69,6 +72,10 @@ class StubProvider:
             raise self.learn_error
         self.learned.append(case)
 
+    async def learn_case(self, case: HazardCase) -> LearnOutcome:
+        await self.learn(case)
+        return LearnOutcome(case_id=case.case_id, driver=self.driver)
+
 
 def match(case: HazardCase, *, score: float = 1.0, source: RecallSource = "graphiti") -> CaseMatch:
     return CaseMatch.from_case(case, score=score, source=source)
@@ -94,6 +101,35 @@ class TestProtocol:
                 return []
 
         assert not isinstance(NoLearn(), KnowledgeProvider)
+
+    def test_缺driver或learn_case的实现都不算提供者(self) -> None:
+        """写路径 widening 之后，`isinstance` 必须真的在管这两个成员。
+
+        这条断言是实测出来的：把协议成员改成只读属性后，Python 仍按"属性存在与否"判定，
+        缺 `driver` 或缺 `learn_case` 都会被判 False——少了这一条，实现漂移就只剩 mypy 在管。
+        """
+
+        class NoDriver:
+            async def recall(self, query: str, **_: Any) -> list[CaseMatch]:
+                return []
+
+            async def learn(self, case: HazardCase) -> None:
+                del case
+
+            async def learn_case(self, case: HazardCase) -> LearnOutcome:
+                return LearnOutcome(case_id=case.case_id, driver="in_memory")
+
+        class NoLearnCase:
+            driver: RecallSource = "graphiti"
+
+            async def recall(self, query: str, **_: Any) -> list[CaseMatch]:
+                return []
+
+            async def learn(self, case: HazardCase) -> None:
+                del case
+
+        assert not isinstance(NoDriver(), KnowledgeProvider)
+        assert not isinstance(NoLearnCase(), KnowledgeProvider)
 
 
 class TestCaseMatch:
@@ -234,28 +270,89 @@ class TestFallbackRecall:
 
 
 class TestFallbackLearn:
-    async def test_healthy_primary_keeps_learning_out_of_memory(self, case: HazardCase) -> None:
+    async def test_健康的图谱收下案例时内存库一个字节都不写(self, case: HazardCase) -> None:
         stub = StubProvider()
         memory = InMemoryKnowledgeProvider(cases=[])
-        await FallbackKnowledgeProvider(primary=stub, fallback=memory).learn(case)
+        outcome = await FallbackKnowledgeProvider(primary=stub, fallback=memory).learn_case(case)
         assert stub.learned == [case]
         assert len(memory) == 0
+        # 落点必须由实现自己说：stub 是图谱替身，答案就是 graphiti 而不是"某侧"
+        assert (outcome.driver, outcome.degraded, outcome.reason) == ("graphiti", False, "")
 
-    async def test_graph_outage_still_records_the_case_locally(self, case: HazardCase) -> None:
+    async def test_图谱坏了案例仍进本地库且降级原因随结果返回(self, case: HazardCase) -> None:
         memory = InMemoryKnowledgeProvider(cases=[])
         router = FallbackKnowledgeProvider(
             primary=StubProvider(learn_error=GraphitiUnavailableError("图谱写入失败")),
             fallback=memory,
         )
-        await router.learn(case)
+        outcome = await router.learn_case(case)
         assert len(memory) == 1
         assert router.degradations[-1].reason == "learn_failed"
+        # 只看 HTTP/返回码看不出降级：这三件事必须一起成立，否则"案例已入图"就是谎报
+        assert (outcome.driver, outcome.degraded, outcome.reason) == ("in_memory", True, "learn_failed")
+        assert "图谱写入失败" in outcome.detail
 
     async def test_learn_timeout_degrades_without_breaking_the_chain(self, case: HazardCase) -> None:
         memory = InMemoryKnowledgeProvider(cases=[])
         router = FallbackKnowledgeProvider(primary=StubProvider(learn_error=TimeoutError()), fallback=memory)
         await router.learn(case)
         assert len(memory) == 1
+
+    async def test_内层已经降级时外层不再重复写自己的兜底(self, case: HazardCase) -> None:
+        """嵌套链的事实要原样传出去，不能被外层再盖一次。
+
+        外层若按"primary.learn 成功"来判断，内层"图谱坏了、已落内存"这件事就会被读成
+        "写进了图谱"；外层若再写一次自己的内存库，同一条案例就有了两个落点。
+        """
+        inner_memory = InMemoryKnowledgeProvider(cases=[])
+        inner = FallbackKnowledgeProvider(primary=StubProvider(learn_error=GraphitiUnavailableError("挂了")), fallback=inner_memory)
+        outer_memory = InMemoryKnowledgeProvider(cases=[])
+        outer = FallbackKnowledgeProvider(primary=inner, fallback=outer_memory)
+
+        outcome = await outer.learn_case(case)
+        assert (outcome.driver, outcome.degraded, outcome.reason) == ("in_memory", True, "learn_failed")
+        assert len(inner_memory) == 1
+        assert len(outer_memory) == 0
+        assert outer.degradations == ()
+
+    async def test_兜底也写不进去时响亮失败而不是静默丢弃(self, case: HazardCase) -> None:
+        broken_memory = StubProvider(learn_error=GraphitiUnavailableError("内存库也写不进"))
+        broken_memory.driver = "in_memory"
+        router = FallbackKnowledgeProvider(primary=StubProvider(learn_error=TimeoutError()), fallback=broken_memory)
+        with pytest.raises(GraphitiUnavailableError):
+            await router.learn_case(case)
+
+    async def test_驱动名取自主实现而不是类型名猜测(self) -> None:
+        memory_stub = StubProvider()
+        memory_stub.driver = "in_memory"
+        assert FallbackKnowledgeProvider(primary=memory_stub, fallback=InMemoryKnowledgeProvider(cases=[])).driver == "in_memory"
+
+
+class SchemaCapableStub(StubProvider):
+    """只多一件事：实现了 `prepare_schema`，用来证明装配层的能力判定不是按配置字符串猜的。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prepared = 0
+
+    async def prepare_schema(self) -> None:
+        self.prepared += 1
+
+
+class TestSchemaPreparation:
+    def test_图谱替身满足能力协议_纯内存实现不满足(self) -> None:
+        assert isinstance(SchemaCapableStub(), SupportsSchemaPreparation)
+        assert not isinstance(InMemoryKnowledgeProvider(cases=[]), SupportsSchemaPreparation)
+
+    async def test_降级链把索引初始化转给主实现(self) -> None:
+        primary = SchemaCapableStub()
+        await FallbackKnowledgeProvider(primary=primary, fallback=InMemoryKnowledgeProvider(cases=[])).prepare_schema()
+        assert primary.prepared == 1
+
+    async def test_主实现不建索引时是配置错误而不是静默跳过(self) -> None:
+        # 静默跳过会让"我配了图谱所以索引建好了"这句话失去依据
+        with pytest.raises(KnowledgeConfigError):
+            await FallbackKnowledgeProvider(primary=StubProvider(), fallback=InMemoryKnowledgeProvider(cases=[])).prepare_schema()
 
 
 class TestAssembly:

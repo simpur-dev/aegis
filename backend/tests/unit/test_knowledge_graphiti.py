@@ -99,6 +99,8 @@ class FakeGraphiti:
         return SimpleNamespace(feature_warnings=[])
 
     async def build_indices_and_constraints(self) -> None:
+        if self.db_error is not None:
+            raise self.db_error
         self.index_built += 1
 
     async def close(self) -> None:
@@ -395,6 +397,16 @@ class TestLearn:
         assert "预案案例" in call["custom_extraction_instructions"]
         assert call["source"] is graphiti_store._episode_type()
 
+    async def test_learn_reports_the_graphiti_side_and_keeps_the_case_indexed(
+        self, config: GraphitiConfig, cases: list[HazardCase]
+    ) -> None:
+        registry: dict[GraphitiRole, FakeGraphiti] = {}
+        provider = provider_for(config, cases, registry)
+        outcome = await provider.learn_case(cases[0])
+        assert (outcome.case_id, outcome.driver, outcome.degraded) == (cases[0].case_id, "graphiti", False)
+        # 报告"进了图谱"就得真的写过一次 add_episode，否则这句话没有依据
+        assert [call["name"] for call in registry[GraphitiRole.write].add_calls] == [cases[0].case_id]
+
     async def test_learn_indexes_the_case_for_later_recall(self, config: GraphitiConfig) -> None:
         registry: dict[GraphitiRole, FakeGraphiti] = {}
         provider = provider_for(config, [], registry)
@@ -416,6 +428,22 @@ class TestLearn:
         provider = provider_for(config, cases, registry)
         await provider.prepare_schema()
         assert registry[GraphitiRole.write].index_built == 1
+        # 索引初始化是写侧的事：读实例被顺带建出来意味着召回路径拿起了写权限
+        assert GraphitiRole.read not in registry
+
+    async def test_schema_preparation_reports_db_outage_as_not_ready(self, config: GraphitiConfig, cases: list[HazardCase]) -> None:
+        from neo4j.exceptions import ServiceUnavailable
+
+        registry: dict[GraphitiRole, FakeGraphiti] = {}
+        provider = provider_for(config, cases, registry)
+        write_fake = registry.setdefault(GraphitiRole.write, FakeGraphiti(GraphitiRole.write, provider.read_guards))
+        write_fake.db_error = ServiceUnavailable("Neo4j 不可达")
+        with pytest.raises(GraphitiUnavailableError):
+            await provider.prepare_schema()
+
+    def test_declares_its_own_driver(self, config: GraphitiConfig, cases: list[HazardCase]) -> None:
+        registry: dict[GraphitiRole, FakeGraphiti] = {}
+        assert provider_for(config, cases, registry).driver == "graphiti"
 
 
 class TestAssembly:

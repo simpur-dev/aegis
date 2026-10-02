@@ -9,10 +9,10 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from aegis.knowledge.cases import load_builtin_cases
-from aegis.knowledge.provider import CaseMatch
+from aegis.knowledge.provider import CaseMatch, LearnOutcome, RecallSource
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -75,6 +75,7 @@ class InMemoryKnowledgeProvider:
     """确定性关键词召回 + 进程内案例学习。"""
 
     name = "in_memory"
+    driver: ClassVar[RecallSource] = "in_memory"
 
     def __init__(self, cases: Sequence[HazardCase] | None = None) -> None:
         self._cases: dict[str, HazardCase] = {case.case_id: case for case in (cases if cases is not None else load_builtin_cases())}
@@ -125,6 +126,10 @@ class InMemoryKnowledgeProvider:
     async def learn(self, case: HazardCase) -> None:
         """同 case_id 覆盖：复盘修正后的案例应立即成为召回结果。"""
         self._cases[case.case_id] = case
+
+    async def learn_case(self, case: HazardCase) -> LearnOutcome:
+        await self.learn(case)
+        return LearnOutcome(case_id=case.case_id, driver=self.driver)
 
 
 def _score(

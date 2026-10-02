@@ -46,6 +46,7 @@ def test_the_openapi_document_covers_the_sla_bearing_endpoints() -> None:
         "/api/v1/collaboration",
         "/api/v1/metrics/latency",
         "/api/v1/integrations",
+        "/api/v1/knowledge/cases",
         "/api/v1/drill/run",
     }
     missing = required - paths
@@ -58,6 +59,8 @@ def test_filter_patterns_are_regex_and_select_real_operations() -> None:
     assert re.compile(READ_ONLY).match("/api/v1/cases/recall")
     assert re.compile(READ_ONLY).match("/api/v1/stations")
     assert not re.compile(READ_ONLY).match("/api/v1/retrieval/search")
+    # 案例入库会触发图谱写入（一次 add_episode ≈ 4—7 次 LLM 调用），绝不能被算进"只读"模糊测试集合
+    assert not re.compile(READ_ONLY).match("/api/v1/knowledge/cases")
     assert not re.compile(READ_ONLY).match("/api/v1/drill/run")
     assert not re.compile(READ_ONLY).match("/api/v1/events/stream")
     assert len(list(SCHEMA.include(path_regex=READ_ONLY).get_all_operations())) >= 7

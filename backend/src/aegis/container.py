@@ -36,6 +36,7 @@ from aegis.integrations import (
     build_weather,
     start_store,
     stop_store,
+    warm_knowledge,
     warm_retrieval,
 )
 from aegis.knowledge.provider import KnowledgeProvider
@@ -132,6 +133,7 @@ class PlatformContainer:
     _started: bool = False
     _store_state: IntegrationState | None = None
     _retrieval_warm_error: str | None = None
+    _knowledge_schema_error: str | None = None
     _mqtt_start_error: str | None = None
 
     async def start(
@@ -153,6 +155,9 @@ class PlatformContainer:
         if self.retrieval is not None:
             # 装载 568MB 权重要几秒：放在启动期，别让第一条预警替后续所有请求付这笔钱
             self._retrieval_warm_error = await warm_retrieval(self.retrieval)
+        # 图谱索引初始化：纯内存装配不实现这件事，这里对它是空转；配了图谱却是坏图时，
+        # 结果作为 knowledge 这条腿的降级事实出现在 /api/v1/integrations 上。
+        self._knowledge_schema_error = await warm_knowledge(self.knowledge)
         if self.mqtt is not None:
             # 订阅腿起不来不阻断平台启动（broker 可能在站端那边还没起来），
             # 但失败必须成为 /api/v1/integrations 上的一行事实，而不是只进日志。
@@ -224,7 +229,11 @@ class PlatformContainer:
             rows.append(self.analytics.state())
         else:
             rows.append(IntegrationState(name="analytics", enabled=False, driver=self.settings.analytics_backend))
-        rows.append(self.knowledge_state or IntegrationState(name="knowledge", enabled=False, driver="off"))
+        knowledge_state = self.knowledge_state or IntegrationState(name="knowledge", enabled=False, driver="off")
+        if self._knowledge_schema_error is not None:
+            # 图谱索引没建成的 knowledge 腿是"启用了但图谱那侧永远召不回"，只写日志外部读不到
+            knowledge_state = replace(knowledge_state, detail={**knowledge_state.detail, "schema_error": self._knowledge_schema_error})
+        rows.append(knowledge_state)
         retrieval_state = self.retrieval_state or IntegrationState(name="retrieval", enabled=False, driver="off")
         retrieval_detail: dict[str, object] = dict(retrieval_state.detail)
         # 外部索引的形态在启动期才成立（建表 + 灌数），装配时快照会得到"未建表 / 0 条"，

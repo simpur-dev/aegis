@@ -8,10 +8,11 @@
 - 日期：2026-10-01；机器：单台 x64 Windows，CPU only（无 GPU、无独立推理卡）。
 - 存储后端：`store_backend=memory`（除特别说明外）；总线 `memory`；交付通道 `mock`。
   触达时延里的 1.2s 是 mock 通道适配器注入的模拟链路耗时，不是真实短信/北斗时延。
-- 测试规模（`pytest --collect-only` 与 `wc -l` 实测，2026-10-02 复核）：全量 `pytest` **2025 passed / 72 skipped**，
-  分布在 87 个测试文件；`backend/src/` 92 个模块、20,510 行。
-  （本行此前写的是 2026-10-01 那一刻的 1628 条 / 57 文件 / 85 模块 / 18,461 行——
-  数字过期就重测，这是这条报告自己的规矩。）
+- 测试规模（`--junitxml` 计数与 `find | wc -l` 实测，2026-10-02 20:40 复核）：全量 `pytest`
+  **2100 passed / 81 skipped（共 2181）**，分布在 90 个测试文件；`backend/src/` 93 个 .py、20,937 行。
+  （本行此前写的是 2025-10-02 早先那轮的 2025 条 / 87 文件 / 92 模块 / 20,510 行——
+  数字过期就重测，这是这条报告自己的规矩。计数口径也换过一次：`pytest -q` 的尾行在重定向时会被截掉，
+  现在一律读 junitxml 的属性，不读终端输出。）
 - 门禁：`ruff format --check`、`ruff check`、`mypy src/aegis`、全量 `pytest` 四项必须全绿才算完成。
 
 ## 考核指标实测
@@ -133,6 +134,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 | 工作流外呼节点（`api_call` / `device_control`）与其 SSRF 闸 | 本机：真应用容器装配 + 注入的假 httpx 传输（全程不触网）；结构门禁直接读 `workflow/nodes.py` 源码文本 | `uv run pytest -q tests/unit/test_workflow_outbound.py tests/unit/test_workflow_services_bridge.py`（20 + 12 项）；全量 `uv run pytest` **2025 passed / 72 skipped**；`ruff format --check`/`ruff check`/`mypy`（98 个源文件）全绿 | 独立审计抓到的实现缺口：`WorkflowServices.http_call` 字段与两个 handler 的 `require_service("http_call", ...)` 一直都在，唯独装配桥从来没传它，于是这两类节点在产品形态下 100% 抛 `NodeError`——"≥10 类节点可视化编排"这句话在 16 类里实际只有 14 类能跑；桥这一层此前**零用例**，所以谁都踩不到。反过来直接放开也不成立：URL 是编排画布上填的，等于让流程定义者决定平台往哪儿发请求（元数据端点只差一跳）。新出口 `workflow/outbound.py` 的口径是**配了主机白名单才开**：只放行 http/https、主机名精确匹配、拒绝 URL 内嵌凭据、一律不跟随重定向，异常与状态只留 `scheme://host`，调用/拒发/失败三个计数可外显；`AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS` 留空时节点按"缺少依赖服务"响亮失败并在装配日志说明原因。**门禁防的是整类问题**：从节点源码读出全部 `require_service` 声明，逐个断言装配桥真的给出去（反向也核，防止字段堆积无人用），并用变异检查证明它抓得到——把 `notify` 从桥返回里删掉，两条用例立刻红。**照实记三条**：① 我第一版调用点断言只看字节码 `co_names`，漏 import 时它照样绿（真发生过一次 `NameError`），已改成"`__globals__` 解析得到且与唯一真源同一"；② `AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS` 这两个键还没进 `.env.example`（该文件受工具写入策略保护，需要人工补两行），先记在 README 配置节；③ 这条腿目前只在装配日志与用例里可见，还没进 `GET /api/v1/integrations` 的腿表 |
 | 空间轨迹查询从应用可达（PostGIS 半径 / 轨迹面） | 本机容器：PostgreSQL 17.5 + PostGIS 3.5.2 + pgvector，经 compose 发布端口 127.0.0.1:5432；HTTP 侧用 ASGI 直连真应用 | `uv run pytest -q tests/api/test_geo_endpoints.py`（15 项）；`AEGIS_TEST_PG_DSN=… uv run pytest -q tests/integration/test_geo_endpoints_live.py`（8 项，真库跑通）；复跑既有 `tests/integration/test_persistence_postgres.py`（22 项）确认互不污染 | 审计结论是"SQL 写好了也测过了，但没有任何调用方"：`stations_within` / `hazard_trace_summary` 既没进存储协议也没进 API，所以"PostGIS 用于空间轨迹查询"只在测试进程里成立。这轮把它接成三个只读端点 `/api/v1/geo/{stations-within,stations-in-polygon,hazard-trace}`，回答里带 `driver:"postgis"` 说明是谁算的。几何能力作为**可选能力面** `SupportsGeoQueries` 单列而不并进 `StoreProtocol`：内存实现没有 PostGIS，硬要"也能查"就得再养一份 haversine/射线法，两套几何口径同时存在时看不出差别的是验收方、付代价的是被漏掉的站；缺能力时端点以 503 + `E_GEO_UNAVAILABLE` 回答并写明要配 `AEGIS_STORE_BACKEND=postgres`。真库取证：1.9km 两点按米升序、半径收紧只剩中心站、空候选集回空表、面内恰好罩住两站、区号叠加过滤仍为空、非法 WKT 与裸时间/逆序窗在触达数据库之前就被拒。**顺带修一条边界缺陷**：持久层的 `QueryArgumentError` 不是 `AegisError` 的子类，而应用侧只挂了 `AegisError` 处理器——此前没有任何端点会抛它所以从没暴露，接上几何查询后它以 500 出去（调用方会以为服务端坏了），现在补了处理器统一 422 |
 | 预警准确率的库侧回放（真值表 + 与落库 warnings 配对） | 本机容器：PostgreSQL 17.5 + PostGIS + pgvector；另跑一次真 CLI 冒烟（导入 2 条标注 → 库侧回放 → 写 JSON） | `uv run pytest -q tests/unit/test_persistence_accuracy.py`；`AEGIS_TEST_PG_DSN=… uv run pytest -q tests/integration/test_accuracy_replay_live.py`（9 项，真库）；`AEGIS_PG_DSN=… uv run python -m scripts.accuracy_replay --import-labels labels.jsonl --from-store --since … --kind field` → 退出码 0，产物里 `imported_labels=2`、`status=insufficient_sample`、`official_accuracy=None` | 审计结论：算式与判据分支都在，但真值在 Postgres 里**没有表**，回放是纯 Python + 文件读，于是"PostgreSQL 用于预警准确率回放"这半句不成立。补 `sql/004_accuracy_labels.sql`（幂等，走既有 `apply_migrations` 清单；漂移门禁按文件名清单从三个改判为四个）+ `persistence/accuracy.py`：按 `case_id` upsert 导入真值，`LEFT JOIN LATERAL … ORDER BY w.generated_at LIMIT 1` 取"事件之后第一条产出"。两条口径写死在用例里：① 预测侧只认 `observed_at` **之后**发出的预警——把事件之前就存在的预警算成命中，是"预报准确率"最典型的造假方式（真库上有一条专门这样断言，结果是 fn 而不是 tp）；② 配对不按灾种过滤，否则"报对灾种"恒为真。判定算术仍只在 `replay.py`：`case_from_row` 只搬字段，且有一条用例断言它与 `parse_case` 对同一份数据产出完全相等的案例，防"两套准确率"。窗口默认 3600s、上限 6h；裸时间与逆序窗在触库前就被拒。`--kind` 默认 `unspecified`：数据没自己声明是现场标注时官方准确率恒为 None，报表自带 `provenance_warning` |
+| 知识层写入侧的生产调用点（案例入库端点 + 启动期图谱索引） | 本机：真应用容器装配（内存总线，ASGI 直连，全程不触网）；图谱与 Neo4j 侧由替身驱动 | `uv run pytest -q tests/api/test_knowledge_case_endpoint.py`（15 项）/ `tests/unit/test_knowledge_provider.py`（35）/ `tests/unit/test_knowledge_wiring.py`（33）/ `tests/unit/test_knowledge_graphiti.py`（45）；全量 `uv run pytest` **2100 passed / 81 skipped（共 2181，junitxml 计数）**；`ruff format`/`ruff check`/`mypy`（93 个 .py）全绿 | 审计原话是"`learn()` 与 `prepare_schema()` 只被 provider 与用例调用"，于是一套新部署的图是空的、每次召回都落到内存预案库，"案例时序知识"只有读路径的证据。补三件事：① `KnowledgeProvider` 协议加只读成员 `driver` 与 `learn_case`，返回值 `LearnOutcome{case_id,driver,degraded,reason,detail}` 把"这条案例究竟落在哪一侧"变成响应事实——图谱写失败时降级链照旧把案例收进内存库，只看 HTTP 200 会被读成"已入图"，而图是空的；② 唯一写入口 `POST /api/v1/knowledge/cases`（读端点 `/api/v1/cases/recall` 不变；契约测试新增一条断言把它排除在"只读"模糊测试集合之外，因为一次 `add_episode` ≈ 4—7 次 LLM 调用）；③ 启动期 `warm_knowledge()` 用能力协议 `SupportsSchemaPreparation` 判定"这条腿要不要建索引"——纯内存装配根本不实现它，所以判定不是按配置字符串猜；失败与超时（上限 20s：Neo4j 驱动默认连接超时会干等约 30s，平台启动不该被一条可选腿拖住）作为 `schema_error` 进 knowledge 那一行，并出现在 `degraded` 清单里。**协议成员是不是真被管住，做了变异实测**：`runtime_checkable` 的 `isinstance` 在成员改成只读属性后仍按"属性存在与否"判定，缺 `driver` 或缺 `learn_case` 的实现都被判 False，这条写成了用例而不是靠口头保证。嵌套降级链也钉住：内层已经降级时外层原样转发事实、**不再重复写自己的内存库**（否则同一条案例两个落点、外层还会把内层的失败读成成功）。兜底那一侧写不进时是响亮抛错而不是静默丢弃。**照实记两条**：真 Neo4j + 真模型凭据下"写进去再召回"仍未跑（`AEGIS_LLM_API_KEY` 为空，`-m slow` 第二档照旧 skip）；16 条内置预案模板没有批量回填入口，当前只能逐条 POST |
 
 ## 并发曲线实测（2026-10-01，Locust）
 
@@ -276,10 +278,10 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
    判定仍只在 `persistence/replay.py` 一处。剩下两件事：① 仓库里没有真实现场标注（也不该造一个），
    所以"≥80%"这项照旧是 `not_measured`；② 回放只有 CLI 入口，没有 HTTP 端点——
    大屏要看回放结果，得等这条通路接到 `/api/v1/…` 上。
-10. **图谱写入侧没有生产调用方**：`graphiti_store.learn()` 与 `prepare_schema()` 只被
-    provider 与用例调用（`recall` 是真的接进了预案生成链路），所以一套新部署的图是空的，
-    每次召回都会落到内存预案库——"案例时序知识"目前只有读路径的替身级证据 + 真 Neo4j 上的
-    连通性证据，写路径要在应用里接上一条真实链路才算数。
+10. **图谱写路径的"真图"证据仍缺第二档**：`learn()` / `prepare_schema()` 现在都有生产调用方了
+    （`POST /api/v1/knowledge/cases` + 启动期索引初始化，见上一节新增行），但"写进去之后真图上
+    确实能召回"这件事还是只有替身级证据——`AEGIS_LLM_API_KEY` 为空，`-m slow` 的第二档照旧 skip。
+    另外内置 16 条预案模板没有批量回填入口（当前只能逐条 POST），新部署的图仍然是空的。
 11. **两处工程配套待补**：① 工作流外呼这条腿（`AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS` /
     `AEGIS_WORKFLOW_HTTP_TIMEOUT_MS`）还没进 `GET /api/v1/integrations` 的腿表，
     `.env.example` 也因为工具写入策略没被本次自动改动覆盖（需人工补两行）；

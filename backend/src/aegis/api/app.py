@@ -1,6 +1,7 @@
 """HTTP API（L4 服务层对外接口 + L5 Web 的数据源）。
 
-约定：全部只读接口不改状态；写接口仅两类——演练触发（/drill）与人工上报（/reports）。
+约定：读接口占多数且不改状态；写接口只有三类——演练触发（/drill）、人工上报（/reports）、
+案例入库（/knowledge/cases，图谱写入的唯一生产调用点，因此刻意不挂在任何自动链路上）。
 智能体不通过 HTTP 交互，一律走总线契约（见 contracts/）。
 """
 
@@ -26,6 +27,7 @@ from aegis.container import PlatformContainer, create_container
 from aegis.domain.enums import HazardType
 from aegis.domain.messages import AgentMessage, TelemetryReading
 from aegis.errors import AegisError
+from aegis.knowledge.cases import HazardCase
 from aegis.observability import telemetry
 from aegis.persistence import geo
 from aegis.persistence.errors import QueryArgumentError
@@ -168,6 +170,25 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "budget_ms": ctn.settings.knowledge_recall_budget_ms,
             "items": [m.planning_brief() for m in matches],
         }
+
+    @app.post("/api/v1/knowledge/cases", tags=["knowledge"], responses={503: {"description": "知识层未装配"}})
+    async def learn_case(
+        case: HazardCase,
+        ctn: PlatformContainer = Depends(get_container),
+    ) -> dict[str, Any]:
+        """案例入库：知识层唯一的写入口（复盘/经验修正后把案例喂给图谱与内存库）。
+
+        响应必须回答"这条案例落在了哪一侧"：图谱写失败时降级链仍会把它收进进程内库，
+        只看 HTTP 200 会读成"案例时序知识已更新"，而图其实是空的。`degraded`/`reason`
+        就是为这件事准备的——审计口径要能分辨"图谱里有这条案例"与"只有模板库里有"。
+
+        只有显式入库才走这里：Graphiti 的一次 `add_episode` ≈ 4—7 次 LLM 调用，
+        挂在预警/研判路径上会直接把 ≤3min 指标打成不可用，所以这条腿不进任何自动链路。
+        """
+        if ctn.knowledge is None:
+            raise HTTPException(status_code=503, detail="知识层未装配（knowledge）")
+        outcome = await ctn.knowledge.learn_case(case)
+        return {"title": case.title, **outcome.model_dump()}
 
     @app.get("/api/v1/retrieval/search", tags=["knowledge"], responses={503: {"description": "检索层未启用"}})
     async def search_context(

@@ -133,9 +133,36 @@ class DegradationRecord:
     at: str
 
 
+class LearnOutcome(BaseModel):
+    """一次案例入库落在哪一侧的事实。
+
+    必须有这层返回值：图谱写失败时降级链仍会把案例收进内存库，请求看结果是"成功"，
+    但图是空的——"案例时序知识"这条口径就没有任何证据可言（2026-10-02 审计抓到的正是这个：
+    `learn()` 当时连一个生产调用方都没有）。
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    case_id: str
+    driver: RecallSource
+    degraded: bool = False
+    reason: str = ""
+    detail: str = ""
+
+
 @runtime_checkable
 class KnowledgeProvider(Protocol):
-    """案例知识提供者：读召回（LLM-free）与写学习（ingest）严格分离。"""
+    """案例知识提供者：读召回（LLM-free）与写学习（ingest）严格分离。
+
+    `driver` 与 `learn_case` 都是协议成员，不是某个实现的私有便利方法：
+    入库端点必须能在图谱实现与内存实现之间无差别调用，而"这条案例最终落在哪一侧"
+    只有实现自己知道——由调用方按类型名猜，就会把"只在内存里"报成"已进图谱"。
+    """
+
+    @property
+    def driver(self) -> RecallSource:
+        """实现自己的驱动身份（只读：写路径的落点由 `learn_case` 报告，不由这里被外部改写）。"""
+        ...
 
     async def recall(
         self,
@@ -148,6 +175,19 @@ class KnowledgeProvider(Protocol):
     ) -> list[CaseMatch]: ...
 
     async def learn(self, case: HazardCase) -> None: ...
+
+    async def learn_case(self, case: HazardCase) -> LearnOutcome: ...
+
+
+@runtime_checkable
+class SupportsSchemaPreparation(Protocol):
+    """需要（且能）在启动期把索引建好的实现。
+
+    单独一个协议而不是塞进 `KnowledgeProvider`：内存库没有 schema 可建，
+    装配层只该对"确实实现了这件事"的对象调用它。
+    """
+
+    async def prepare_schema(self) -> None: ...
 
 
 async def run_with_budget(awaitable: Awaitable[T], budget_ms: float | None, *, label: str) -> T:
@@ -200,8 +240,23 @@ class FallbackKnowledgeProvider:
         return self._fallback
 
     @property
+    def driver(self) -> RecallSource:
+        """这条链**打算**用哪个驱动；某一次写入实际落在哪一侧看 `learn_case` 的返回值。"""
+        return self._primary.driver
+
+    @property
     def degradations(self) -> tuple[DegradationRecord, ...]:
         return tuple(self._history)
+
+    async def prepare_schema(self) -> None:
+        """索引初始化转给主实现——降级链不该假装自己能建索引。
+
+        内存实现没有 schema 可建，所以纯内存装配根本不满足 `SupportsSchemaPreparation`；
+        装配层因此能对"图谱腿在不在"做一次真实的类型判定，而不是按配置字符串猜。
+        """
+        if not isinstance(self._primary, SupportsSchemaPreparation):
+            raise KnowledgeConfigError("知识层主实现不提供索引初始化", detail={"primary": type(self._primary).__name__})
+        await self._primary.prepare_schema()
 
     async def recall(
         self,
@@ -260,11 +315,26 @@ class FallbackKnowledgeProvider:
 
     async def learn(self, case: HazardCase) -> None:
         """学习走尽力而为：图谱不可用时案例仍进入进程内库，且降级被记账。"""
+        await self.learn_case(case)
+
+    async def learn_case(self, case: HazardCase) -> LearnOutcome:
+        """写路径的事实版本：落到了哪一侧、有没有降级，都由返回值说，而不是只说"成功"。
+
+        主实现自己报告它把案例收下了没有（`primary.learn_case`），降级时才由本层补写内存库
+        并把驱动改成实际落点——嵌套降级链的事实因此不会被外层覆盖。
+        """
         try:
-            await self._primary.learn(case)
+            return await self._primary.learn_case(case)
         except (AegisError, TimeoutError) as exc:
             await self._fallback.learn(case)
             self._note(reason="learn_failed", detail=str(exc), returned=1)
+            return LearnOutcome(
+                case_id=case.case_id,
+                driver=self._fallback.driver,
+                degraded=True,
+                reason="learn_failed",
+                detail=str(exc)[:400],
+            )
 
     async def _degrade(
         self,

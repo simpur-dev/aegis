@@ -24,13 +24,13 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from aegis.domain.messages import now_iso
 from aegis.errors import AegisError, ErrorCode
 from aegis.knowledge.cases import HazardCase, load_builtin_cases
 from aegis.knowledge.prompts import CASE_EXTRACTION_INSTRUCTIONS, CASE_SOURCE_DESCRIPTION
-from aegis.knowledge.provider import CaseMatch, KnowledgeConfigError, run_with_budget
+from aegis.knowledge.provider import CaseMatch, KnowledgeConfigError, LearnOutcome, RecallSource, run_with_budget
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -311,6 +311,7 @@ class GraphitiKnowledgeProvider:
     """真实 Graphiti 实现：`learn()` 只在入库时写剧集，`recall()` 只做混合检索。"""
 
     name = "graphiti"
+    driver: ClassVar[RecallSource] = "graphiti"
 
     def __init__(
         self,
@@ -416,10 +417,21 @@ class GraphitiKnowledgeProvider:
         # 图谱回读只给得到 uuid，本地索引必须同步收下才能补全预案字段
         self._index[case.case_id] = case
 
+    async def learn_case(self, case: HazardCase) -> LearnOutcome:
+        await self.learn(case)
+        return LearnOutcome(case_id=case.case_id, driver=self.driver)
+
     async def prepare_schema(self) -> None:
-        """建好向量/全文索引（幂等）：否则 cosine 与 bm25 两路检索直接报错。"""
+        """建好向量/全文索引（幂等）：否则 cosine 与 bm25 两路检索直接报错。
+
+        这件事必须有生产调用方——图谱索引没建就"装配成功"，第一次召回才在降级计数里露头，
+        运维看到的是一个能查却永远空手的图。启动期由 `integrations.warm_knowledge` 调用。
+        """
         graphiti = await self._graphiti(GraphitiRole.write)
-        await graphiti.build_indices_and_constraints()
+        try:
+            await graphiti.build_indices_and_constraints()
+        except _db_error_types() as exc:
+            raise GraphitiUnavailableError(f"图谱索引初始化失败: {exc}") from exc
 
     async def close(self) -> None:
         for instance in list(self._instances.values()):
