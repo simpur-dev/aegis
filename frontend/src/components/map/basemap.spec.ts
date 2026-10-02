@@ -6,7 +6,7 @@
 import { TileType } from 'pmtiles'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { readRepoFile } from '@/testing/repoSource'
+import { cesiumSourceFlat } from '@/testing/cesiumSource'
 import { FakeWebMercatorTilingScheme, fakeRectangle, insideWebMercator, WEB_MERCATOR_MAX_LATITUDE_DEG } from '@/testing/cesiumBasemapStub'
 
 import type { BasemapCesium, TileReader } from './basemap'
@@ -300,21 +300,11 @@ describe('栅格 PMTiles provider', () => {
  * 所以读真源做门禁：前提没了要改代码，而不是把断言删掉。
  */
 describe('Cesium 影像矩形前提没有漂移', () => {
-  function cesiumSource(...parts: string[]): string {
-    return readRepoFile('frontend', 'node_modules', '@cesium', 'engine', 'Source', ...parts)
-  }
-
-  /** 摊平成一行好做子串断言；行首的 `//` 必须一起去掉，否则注释里的句子被斜杠切成几段，断言会假红。 */
-  function flatten(text: string): string {
-    return text
-      .split('\n')
-      .map((line) => line.replace(/^\s*\/\/\s*/, ''))
-      .join(' ')
-      .replace(/\s+/g, ' ')
-  }
+  // 读已安装 Cesium 源码的助手在 `@/testing/cesiumSource`：影像与地形两条门禁共用一份，
+  // 免得同一件事被抄两遍、解析规则各自漂移。
 
   it('ImageryLayer 仍要求切片方案矩形完全包含 provider 矩形，且未判空就解引用瓦片坐标', () => {
-    const flat = flatten(cesiumSource('Scene', 'ImageryLayer.js'))
+    const flat = cesiumSourceFlat('Scene', 'ImageryLayer.js')
     expect(flat).toContain(
       "The imagery TilingScheme's rectangle always fully contains the ImageryProvider's rectangle",
     )
@@ -323,13 +313,13 @@ describe('Cesium 影像矩形前提没有漂移', () => {
   })
 
   it('WebMercatorTilingScheme 的矩形仍来自 ±(半长轴·π) 米反投影（即 85.05112877980659°）', () => {
-    const flat = flatten(cesiumSource('Core', 'WebMercatorTilingScheme.js'))
+    const flat = cesiumSourceFlat('Core', 'WebMercatorTilingScheme.js')
     expect(flat).toContain('const semimajorAxisTimesPi = this._ellipsoid.maximumRadius * Math.PI;')
     expect(flat).toContain('this._projection.unproject(southwestCartesianScratch')
   })
 
   it('Rectangle.intersection 仍是「无交集返回 undefined」', () => {
-    const flat = flatten(cesiumSource('Core', 'Rectangle.js'))
+    const flat = cesiumSourceFlat('Core', 'Rectangle.js')
     expect(flat).toContain('static intersection(rectangle, otherRectangle, result) {')
     expect(flat).toContain('const north = Math.min(rectangle.north, otherRectangle.north);')
   })

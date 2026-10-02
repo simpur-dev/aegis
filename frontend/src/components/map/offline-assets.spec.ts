@@ -7,8 +7,11 @@
  * varint 目录、首个 16KB 块里必须放得下根目录），只有真读取器会拒绝，而替身会照单全收。
  * 这一轮就是把两端接起来：`scripts/build_offline_tiles.py` 写 → 这里读。
  *
- * 服务器只监听 127.0.0.1 且只挂 `frontend/public`，所以"无外链"这条约束也是可断言的事实：
- * 用例记录每一次请求的 host，出现任何非本机主机就直接红。
+ * 服务器只监听 127.0.0.1 且只挂 `frontend/public`（`@/testing/localAssetServer`，与
+ * `terrain-parse.spec.ts` 同一份实现），所以"无外链"这条约束也是可断言的事实：
+ *  fixture 记录每一次请求的 host，出现任何非本机主机就直接红。
+ *  缺件应答刻意选 `spa-html` 那一档：`vite preview` 对不存在的瓦回的就是 `200 text/html`
+ *  （浏览器实测），比干净的 404 更靠近现场，也更能把"只看状态码"的探针打死。
  *
  * 环境用 node 而不是这个套件默认的 jsdom：jsdom 造出的 `AbortSignal` 不是 undici `fetch`
  * 认可的那个实例（`Expected signal to be an instance of AbortSignal`），探针会在传输层就死掉，
@@ -16,15 +19,14 @@
  */
 // @vitest-environment node
 
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { readFile, stat } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
-import { extname, join, resolve } from 'path'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { PMTiles } from 'pmtiles'
 
 import { insideWebMercator, FakeWebMercatorTilingScheme, fakeRectangle, WEB_MERCATOR_MAX_LATITUDE_DEG } from '@/testing/cesiumBasemapStub'
+import { publicAssetDir, startLocalAssetServer, type LocalAssetServer } from '@/testing/localAssetServer'
 
 import {
   DEFAULT_BASEMAP_CONFIG,
@@ -37,97 +39,23 @@ import {
 import { chooseTerrainMode, terrainProbeUrl } from './terrain'
 import { probeSource, tileUrlForTemplate } from './offline'
 
-const CONTENT_TYPES: Record<string, string> = {
-  '.json': 'application/json',
-  '.terrain': 'application/vnd.quantized-mesh',
-  '.pmtiles': 'application/vnd.pmtiles',
-  '.png': 'image/png',
-}
+const PUBLIC_DIR = publicAssetDir()
 
-/** 从 vitest 的工作目录往上找仓库里的 public/，找不到就把路径报出来而不是猜一个空目录。 */
-function locatePublicDir(): string {
-  let dir = process.cwd()
-  for (let depth = 0; depth < 5; depth += 1) {
-    const candidate = resolve(dir, 'public')
-    if (existsSync(join(candidate, 'basemaps', 'aegis.pmtiles'))) return candidate
-    dir = resolve(dir, '..')
-  }
-  throw new Error(`没找到带 aegis.pmtiles 的 public/ 目录（cwd=${process.cwd()}）；先跑 python scripts/build_offline_tiles.py`)
-}
-
-const PUBLIC_DIR = locatePublicDir()
-const requestedUrls: string[] = []
-
-let server: Server
+let assets: LocalAssetServer
 let origin = ''
 
-function contentTypeFor(path: string): string {
-  return CONTENT_TYPES[extname(path)] ?? 'application/octet-stream'
-}
-
-/** 静态服务 + Range：PMTiles 的取瓦就是靠 Range 头部做随机读，缺了它这条用例等于没测。 */
-function handler(request: IncomingMessage, response: ServerResponse): void {
-  const url = new URL(request.url ?? '/', origin || 'http://127.0.0.1')
-  requestedUrls.push(url.href)
-  const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '')
-  void (async () => {
-    // 仿 SPA 兜底：`vite preview` 对不存在的 `/basemaps/0/0/0.png` 回的是 `200 text/html`
-    // （浏览器实测），探针若只看状态码就会把 HTML 页面当成瓦片源挂上去。
-    if (relative.startsWith('spa/')) {
-      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-      response.end(request.method === 'HEAD' ? undefined : '<!doctype html><title>index.html</title>')
-      return
-    }
-    let info
-    try {
-      info = await stat(join(PUBLIC_DIR, relative))
-    } catch {
-      response.writeHead(404).end()
-      return
-    }
-    if (!info.isFile()) {
-      response.writeHead(403).end()
-      return
-    }
-    const range = request.headers.range
-    if (range) {
-      const matched = /^bytes=(\d+)-(\d*)$/.exec(range)
-      if (!matched) {
-        response.writeHead(416, { 'Content-Range': `bytes */${info.size}` }).end()
-        return
-      }
-      const start = Number(matched[1])
-      const end = matched[2] ? Math.min(Number(matched[2]), info.size - 1) : Math.min(start + 65535, info.size - 1)
-      const chunk = await readFile(join(PUBLIC_DIR, relative))
-      response.writeHead(206, {
-        'Content-Type': contentTypeFor(relative),
-        'Content-Range': `bytes ${start}-${end}/${info.size}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': String(end - start + 1),
-      })
-      response.end(request.method === 'HEAD' ? undefined : chunk.subarray(start, end + 1))
-      return
-    }
-    const body = await readFile(join(PUBLIC_DIR, relative))
-    response.writeHead(200, {
-      'Content-Type': contentTypeFor(relative),
-      'Accept-Ranges': 'bytes',
-      'Content-Length': String(body.byteLength),
-    })
-    response.end(request.method === 'HEAD' ? undefined : body)
-  })()
+/** 只看 host 的那条约束用 fixture 的请求日志来证，而不是靠"我们没写外链"这种自述。 */
+function requestedHosts(): string[] {
+  return [...new Set(assets.requests.map((request) => request.host))]
 }
 
 beforeAll(async () => {
-  server = createServer(handler)
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
-  const address = server.address()
-  if (address === null || typeof address === 'string') throw new Error('本机静态服务没拿到端口')
-  origin = `http://127.0.0.1:${address.port}`
+  assets = await startLocalAssetServer({ missing: 'spa-html', publicDir: PUBLIC_DIR })
+  origin = assets.origin
 })
 
 afterAll(async () => {
-  await new Promise<void>((done, fail) => server.close((err) => (err ? fail(err) : done())))
+  await assets.close()
 })
 
 /**
@@ -232,7 +160,7 @@ describe('前端自己的底图装配吃的就是这些真字节', () => {
     const source = chooseBasemapSource({ pmtilesReachable, templateReachable }, config, origin)
     expect(source.kind).toBe('pmtiles')
 
-    requestedUrls.length = 0
+    assets.requests.length = 0
     const setup = await createBasemapSetup(stubCesium(), source)
     expect(setup.layer).not.toBe(false)
     const provider = (setup.layer as unknown as { provider: PmtilesImageryProvider }).provider
@@ -242,12 +170,14 @@ describe('前端自己的底图装配吃的就是这些真字节', () => {
     expect(provider.hasTile(3, 3, 3)).toBe(false)
     // 装配出来的 provider 矩形是渲染循环真正拿去算瓦号的东西：界内才算这条链没埋雷。
     expect(insideWebMercator(provider.rectangle)).toBe(true)
-    expect(requestedUrls.every((url) => url.startsWith(origin))).toBe(true)
+    expect(requestedHosts()).toEqual([new URL(origin).host])
   })
 
   it('SPA 兜底页（200 text/html）不被当成瓦片源：真归档仍是首选，只剩兜底页时判"没有底图"', async () => {
     const fetchLike = (input: RequestInfo | URL, init?: RequestInit) => fetch(String(input), init)
-    const fallbackTemplate = `${origin}/spa/basemaps/{z}/{x}/{y}.png`
+    // 这条模板故意指向没烘的目录：fixture 在 spa-html 档下会把它答成 `200 text/html`，
+    // 与真 `vite preview` 的 SPA 兜底同形。
+    const fallbackTemplate = `${origin}/basemaps/none/{z}/{x}/{y}.png`
     const config = { ...DEFAULT_BASEMAP_CONFIG, template: fallbackTemplate, pmtilesUrl: `${origin}/basemaps/aegis.pmtiles` }
 
     // 两条路都是 200，差别只在 content-type：探针必须把 HTML 那路判死。
@@ -341,10 +271,10 @@ describe('地形通道的探针打到真 layer.json', () => {
 
 describe('无外链约束在真请求上也成立', () => {
   it('整个用例过程里没有一次请求打到非本机主机', () => {
-    const hosts = new Set(requestedUrls.map((url) => new URL(url).host))
+    const hosts = requestedHosts()
     for (const host of hosts) {
       expect(host).toBe(new URL(origin).host)
     }
-    expect([...hosts].some((host) => /ion\.cesium|google|mapbox|tile\.openstreetmap/i.test(host))).toBe(false)
+    expect(hosts.some((host) => /ion\.cesium|google|mapbox|tile\.openstreetmap/i.test(host))).toBe(false)
   })
 })
