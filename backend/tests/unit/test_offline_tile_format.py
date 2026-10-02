@@ -148,15 +148,34 @@ def test_baked_assets_exist_and_are_not_placeholders() -> None:
 
 
 def test_layer_json_matches_files_on_disk() -> None:
+    """声明、磁盘、层级三者必须互相对得上（部分金字塔之后这条比原来更值钱）。
+
+    以前 available 只能"整层全有"，所以"声明 == 全金字塔"就够。现在深一层只有受控区有瓦，
+    于是必须真的按 available 反解出应有瓦集合，再和磁盘上的集合做双向差集：
+    少烘一张、或多出一张没人声明的瓦，都会在这里红，而不是等到浏览器里出现空洞。
+    """
     layer = json.loads((PUBLIC_DIR / "terrain" / "layer.json").read_text(encoding="utf-8"))
     assert layer["format"] == "quantized-mesh-1.0"
     assert layer["scheme"] == "slippyMap", "scheme 决定 URL 的 y 是否翻面，必须与烘焙口径一致"
     assert layer["projection"] == "EPSG:4326"
     assert "octvertexnormals" in layer["extensions"]
     max_zoom = layer["maxzoom"]
+    assert len(layer["available"]) == max_zoom + 1, "available 必须从 0 连续排到 maxzoom，Cesium 拿它的长度当可用性深度"
+
+    declared: set[tuple[int, int, int]] = set()
     for z, ranges in enumerate(layer["available"]):
         x_tiles, y_tiles = BUILDER.geographic_tile_counts(z)
-        assert ranges == [{"startX": 0, "endX": x_tiles - 1, "startY": 0, "endY": y_tiles - 1}]
+        assert ranges, f"层级 {z} 一个范围都没声明"
+        for entry in ranges:
+            # Cesium 读 available 时做的是 yTiles - y - 1（TMS 自南向北 → tiling scheme 自北向南），
+            # 这里按同一口径翻回来，才是"引擎会认为存在"的那批瓦。
+            north_start = y_tiles - 1 - entry["endY"]
+            north_end = y_tiles - 1 - entry["startY"]
+            assert 0 <= entry["startX"] <= entry["endX"] < x_tiles
+            assert 0 <= north_start <= north_end < y_tiles
+            declared.update((z, x, y) for x in range(entry["startX"], entry["endX"] + 1) for y in range(north_start, north_end + 1))
+
+    on_disk = set()
     for path in baked_terrain_tiles():
         z = int(path.parent.parent.name)
         x = int(path.parent.name)
@@ -164,6 +183,70 @@ def test_layer_json_matches_files_on_disk() -> None:
         assert 0 <= z <= max_zoom
         assert 0 <= x < BUILDER.geographic_tile_counts(z)[0]
         assert 0 <= y < BUILDER.geographic_tile_counts(z)[1]
+        on_disk.add((z, x, y))
+
+    assert on_disk - declared == set(), f"磁盘上有没声明的瓦（引擎永远不会去取）：{sorted(on_disk - declared)[:5]}"
+    assert declared - on_disk == set(), f"声明了但没烘（引擎会取到 404/兜底页）：{sorted(declared - on_disk)[:5]}"
+
+
+def test_region_tile_range_covers_exactly_the_tiles_that_intersect_the_box() -> None:
+    """加密范围必须"相交即入"：漏一格就是受控区边缘出现空洞。"""
+    region = BUILDER.DEFAULT_REFINE_REGION
+    for z in range(3, 7):
+        x_tiles, y_tiles = BUILDER.geographic_tile_counts(z)
+        x_start, x_end, y_start, y_end = BUILDER.region_tile_range(region, z)
+        inside = {(x, y) for x in range(x_tiles) for y in range(y_tiles) if _tile_rectangle_intersects(z, x, y, region)}
+        listed = {(x, y) for x in range(x_start, x_end + 1) for y in range(y_start, y_end + 1)}
+        assert listed == inside, f"层级 {z} 的加密范围与实际相交瓦不一致：多 {sorted(listed - inside)[:3]} 少 {sorted(inside - listed)[:3]}"
+
+
+def _tile_rectangle_intersects(z: int, x: int, y: int, region) -> bool:
+    rect = BUILDER.geographic_tile_rectangle(z, x, y)
+    return not (rect.east <= region.west or rect.west >= region.east or rect.north <= region.south or rect.south >= region.north)
+
+
+def test_available_ranges_use_the_tms_rows_cesium_flips() -> None:
+    """`available` 写的是 TMS（自南向北）行号：翻两次必须回到北向下界。
+
+    这条防的是"看起来对、实际指向另一批瓦"——行号口径错一位不会报错，
+    只会让引擎在区域外找深瓦（404）而在区域内停在浅层（地形糊成一片）。
+    """
+    region = BUILDER.DEFAULT_REFINE_REGION
+    for z in (3, 4, 5):
+        _, y_tiles = BUILDER.geographic_tile_counts(z)
+        x_start, x_end, y_start, y_end = BUILDER.region_tile_range(region, z)
+        entry = BUILDER.tms_available_range(region, z)
+        assert (entry["startX"], entry["endX"]) == (x_start, x_end)
+        assert entry["startY"] == y_tiles - 1 - y_end
+        assert entry["endY"] == y_tiles - 1 - y_start
+        assert entry["startY"] <= entry["endY"]
+
+
+def test_refined_pyramid_keeps_baked_parents_and_stays_bounded() -> None:
+    """深一层的每张瓦都必须能回溯到烘过的父瓦，且张数受控（仓库体积是硬约束）。
+
+    Cesium 的可用性代码里写着假设："层级 n 有瓦 ⇒ 0..n-1 的父瓦都在"。这个假设不是
+    由格式强制的，所以只能自己钉——破了就是运行期取不到瓦，而不是测试期报错。
+    """
+    on_disk = {(int(p.parent.parent.name), int(p.parent.name), int(p.stem)) for p in baked_terrain_tiles()}
+    layer = json.loads((PUBLIC_DIR / "terrain" / "layer.json").read_text(encoding="utf-8"))
+    global_zoom = _global_zoom_of(layer)
+    refined = {tile for tile in on_disk if tile[0] > global_zoom}
+    assert refined, f"maxzoom={layer['maxzoom']} 却没有加密层：区域声明白写了"
+    for z, x, y in refined:
+        parent = (z - 1, x // 2, y // 2)
+        assert parent in on_disk, f"{(z, x, y)} 的父瓦 {parent} 没烘"
+    assert len(on_disk) < 400, f"资产张数 {len(on_disk)} 已超出仓库可接受的量级，检查 --refine-max-zoom 是否被推高"
+
+
+def _is_full_layer(z: int, ranges: list[dict]) -> bool:
+    x_tiles, y_tiles = BUILDER.geographic_tile_counts(z)
+    return len(ranges) == 1 and ranges[0] == {"startX": 0, "endX": x_tiles - 1, "startY": 0, "endY": y_tiles - 1}
+
+
+def _global_zoom_of(layer: dict) -> int:
+    """available 里最后一层"整层都有"的层级 = 全球铺满深度（加密层从它下一层开始）。"""
+    return max(z for z, ranges in enumerate(layer["available"]) if _is_full_layer(z, ranges))
 
 
 def test_provenance_is_carried_by_both_asset_entries() -> None:
@@ -461,7 +544,7 @@ def test_bake_runs_from_any_working_directory(tmp_path: Path, monkeypatch: pytes
     里长出一套没人看的瓦——这一条把那次事故钉住。"""
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "public"
-    assert BUILDER.main(["--public", str(target), "--max-zoom", "0", "--no-pmtiles"]) == 0
+    assert BUILDER.main(["--public", str(target), "--max-zoom", "0", "--refine-max-zoom", "0", "--no-pmtiles"]) == 0
     assert (target / "terrain" / "layer.json").is_file()
     assert len(list((target / "terrain").glob("*/*/*.terrain"))) == 2
     assert BUILDER.DEFAULT_PUBLIC_DIR == PUBLIC_DIR
@@ -472,7 +555,17 @@ def test_baking_is_deterministic(tmp_path: Path) -> None:
     first = {path.relative_to(PUBLIC_DIR): path.read_bytes() for path in baked_terrain_tiles()}
     first_layer = (PUBLIC_DIR / "terrain" / "layer.json").read_bytes()
     out_dir = tmp_path / "public"
-    BUILDER.bake(out_dir / "basemaps", out_dir / "terrain", z_max=2, pmtiles=True, xyz=False)
+    # 参数从现网资产反推，而不是把层级写死在这里：改了烘焙深度时这条仍在校验"同样输入 → 同样字节"。
+    repo_layer = json.loads((PUBLIC_DIR / "terrain" / "layer.json").read_text(encoding="utf-8"))
+    BUILDER.bake(
+        out_dir / "basemaps",
+        out_dir / "terrain",
+        z_max=_global_zoom_of(repo_layer),
+        refine_z_max=repo_layer["maxzoom"],
+        refine_region=BUILDER.DEFAULT_REFINE_REGION,
+        pmtiles=True,
+        xyz=False,
+    )
     second = {path.relative_to(out_dir): path.read_bytes() for path in sorted((out_dir / "terrain").glob("*/*/*.terrain"))}
     assert set(second) == set(first)
     for key in second:

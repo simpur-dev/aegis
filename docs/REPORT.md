@@ -126,6 +126,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 需要"停服→删→起服"一趟，这条已经写成可复跑的 `D:\seekdb\migration-evidence\roll-server-log.ps1`
 （归档-回读校验-才删，与旧日志那条同一口径），但**尚未执行**。
 | 地图渲染的两道门禁（无头真 Cesium 解析 + Playwright 真机画面） | 本机 `@cesium/engine`/`cesium@1.145`（与浏览器同一份模块）+ `node:http` 本机静态服务；Playwright 1.5x chromium（Chrome for Testing 153.0.8010.12，SwiftShader 软件 GL，本机跑、不用任何云测服务）+ `vite preview` 构建产物 | `npx vitest run src/components/map/terrain-parse.spec.ts`（14 项）；`npm run test:e2e`（4 项，13.0s）；`npm run typecheck` + 前端 **323 项**全绿 | 上一轮的教训是"实现+替身测试"不等于"真跑通"，这轮把两层都变成常驻门禁。**第一层（零新依赖）**：真 Cesium 逐瓦解析 42 张 `.terrain`，除"能解析"外还钉住三条不变量——① 按 `maxShort=32767` 反算的顶点高程必须铺满头部声明的高度界（我一开始用 65535 反算，得出"高度只有一半"的**假故障**，所以这个数由门禁对着已安装源码核）；② 峰必须落在它该在的瓦角落（v 口径一旦翻转就会偏十几度，而按瓦最大值判是判不出来的）；③ 邻瓦同经线接缝高差 < 1 m（实测 0）。另有三档缺件都得响亮：老实 404 → `RequestErrorEvent`，`vite preview` 的 `200 text/html` → `RangeError: Invalid typed array length`（证明 HTML 真被喂进了 quantized-mesh 解析器），以及"layer.json 声明可用但瓦不在位"→ reject 而不是静默出平地形。**第二层（真 GPU 画面）**：`/map?mapDebug=1` 打开构建产物，实测画布 720×490、2861 种颜色、主色占 17.2%、亮度 1.1..255，无 `An error occurred while rendering` 遮罩；6 张地形瓦响应各 22,609B、全 2xx、无一张是 HTML；场景侧 `globe.getHeight(85°E,31°N)=4196m`（椭球面只会给 0，所以这条就是"provider 是谁"的行为证据——生产包里类名已被压成 `hd`，看名字判不出）。**因此改掉的装配面事实**：新增显式 opt-in 的只读场景句柄 `debugHandle.ts`（URL 不带 `?mapDebug` 就不挂，销毁必清），此前 e2e 只能"看截图猜"；`vite preview` 默认只绑 `[::1]`（实测 netstat），门禁命令里补 `--host 127.0.0.1`。**照实记**：① 贴瓦边取到 -8243m 这类负值是引擎裙边（`skirtHeight = 该层几何误差 × 5`，maxzoom 2 时 L2 误差还有 19km），不是资产坏了，所以画面侧只判"这里没有高原"不判下界；② CI 仍只跑 `npm run test`，e2e 需要下载浏览器与真 GL，按"本机/现场交付前跑"的口径提供 `npm run test:e2e`，不进云端门禁；③ 同一批截图还暴露一条口径矛盾：画面左下角固定画着引擎自带的厂商署名（一段带外链的 `<a target="_blank">` + 图片），而本项目一张托管资产都不取——已用公开访问器把它换成"自托管、无第三方瓦片服务"（`applyOfflineCredits`），署名容器仍说清出处，e2e 与 `credits.spec.ts` 各钉一条；④ 只烘到 maxzoom 2 的浅金字塔让引擎裙边深达 96km，贴瓦边采样会取到几万米负值，这不是资产坏了（逐顶点反算已证），修法与口径见清单第 6 条 |
+| 地形按关注区域加密（全球浅 + 受控区深） | 同一台机器：`scripts/build_offline_tiles.py`（新增 `--refine-max-zoom/--refine-region`）+ 真 `@cesium/engine@1.145` 无头解析 + Playwright 真机 | `python scripts/build_offline_tiles.py --max-zoom 2`；`uv run pytest -q tests/unit/test_offline_tile_format.py`（22 项）；`npx vitest run src/components/map/terrain-parse.spec.ts`（14 项）；`npm run test:e2e`（5 项）；`npm run typecheck` + 前端 327 项 + 后端 2008 项全绿 | 上一轮量到的"贴瓦边取到 -8243m 负高程"根因是**浅金字塔**：引擎裙边 = 该层几何误差 ×5，全球 maxzoom 2 时 L2 误差 19 km ⇒ 裙边 96 km。全球烘深不成立（Geographic 下层级 z 有 2^(z+1)×2^z 张瓦，烘到 5 层就是 2730 张 ≈ 62 MB），所以生成器把两件事分开：`--max-zoom` 是全球铺满深度（父瓦链必须完整，Cesium 假定"层级 n 有瓦 ⇒ 父瓦都在"），`--refine-max-zoom` 只作用于受控区（默认西藏 78–99°E, 26–37°N）。实测：110 张瓦 / 2,486,990 字节，逐层 2/8/32/2/6/15/45，烘焙 3.5s；`layer.json` 的 `available` 深几层只声明局部范围（**行号按 TMS 自南向北写**，Cesium 读时翻一次；翻错就是"区域外判有瓦、区域内停在浅层"，两侧各有一条对账钉住）。真机复测：地形瓦请求从 6 次涨到 14 次、渲染层级到 4、高原处 `getHeight` 从 4196m 升到 **5045m**（解析面峰值 5573m，浅层采样必然低估）、画布上高原山体阴影像素占 **8.33%**——"画面发白"那句是我读缩略图读错，实测有起伏着色，已按实测改判。区域作用域也可判：完全落在受控区的矩形 `computeBestAvailableLevelOverRectangle` 给到最深一层，向南只多探 0.3° 就老实退回上一层 |
 
 ## 并发曲线实测（2026-10-01，Locust）
 
@@ -200,24 +201,20 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
    所以"图谱写入与混合检索在真图上可用"目前只有替身级证据。
 5. **离线底图与站点坐标的数据侧**：代码链路是通的（Cesium 自建 quantized-mesh 地形 + PMTiles 底图，
    零 Ion/谷歌依赖，前端有守卫用例禁止引入外部 token；`GET /api/v1/stations` 也已能返回真实清单），
-   仓库里也已烘进**合成**资产（`public/terrain` 42 张 quantized-mesh + `public/basemaps/aegis.pmtiles`
+   仓库里也已烘进**合成**资产（`public/terrain` 110 张 quantized-mesh：全球 0–2 层 + 受控区加密到 6 层，2.49MB；`public/basemaps/aegis.pmtiles`
    21 张 256² PNG，见上表两行取证），缺的是**真实测绘数据**：换真 DEM/影像的做法与要对齐的口径写在
    两份 README 里；站点坐标同理——平台侧没有任何生产代码向
    `monitoring_stations` 写站名/经纬度（`upsert_station` 只被测试与运维导入路径调用），
    所以地图上点位的多少取决于现场导入的站点台账，不是代码能力。
-6. **一张图的取景观感仍偏淡（链路本身已证通，剩下的不是缺陷而是数据与取景）**：
-   原来这条写的是"挂上地形就视野内不出几何"。两道门禁把它推翻了：地形几何**确实在场景里**
-   （`globe.getHeight(85°E,31°N)=4196m`、渲染瓦到层级 4、`globe.tilesLoaded=true`），
-   截图逐格取色也量到了分层设色 + 山体阴影的暗橄榄（21,34,16）与瓦片底色（224,216,188），
-   字节侧另有三条不变量兜着（反算高程铺满头部界、峰落在该在的角落、邻瓦接缝 0 差）。
-   残留的是**观感**：画面左上一带偏淡（相机 1.7e6m、视野 37°×36° 时地表只占下半部），
-   以及贴瓦边采样会落到引擎裙边上（`skirtHeight = 该层几何误差 × 5`，全球 maxzoom 2 的浅金字塔
-   里 L2 误差还有 19km → 裙边 96km，实测贴边取到 -8243m）。两条的根因同一个：
-   **仓库里是合成高程面 + 只烘到 3 层的全球浅金字塔**。该做的修法写进了 `public/terrain/README.md`：
-   换真实 DEM 并按关注区域加密（西藏一带多烘 2–3 层、`layer.json` 的 `available` 按区域写），
-   而不是把全球烘深（maxzoom 5 就是 2730 张 ≈ 62MB）。同批发现的一条署名问题已修：
-   画面左下角原本固定画 Cesium 厂商 logo（带外链），与"零托管服务"口径矛盾，
-   现由 `applyOfflineCredits` 换成"自托管、无第三方瓦片服务"，并由 `credits.spec.ts` + e2e 各钉一条。
+6. **一张图：链路已证通，缺的是真实测绘数据而不是代码**：两道门禁把原来记在这条里的"挂上地形就不出几何"
+   彻底推翻——真机量到 `globe.getHeight(85°E,31°N)=5045m`、渲染层级到 4、画布上高原山体阴影占 8.33% 像素，
+   字节侧三条不变量（反算铺满头部高度界、峰落在该在的瓦角落、邻瓦同经线接缝 0 差）与逐顶点对解析面的
+   对账都在。原来"发白"的判断是我读缩略图读错（低海拔本就是浅米色，画面外是深墨色天空），已按实测改判。
+   裙边深度靠"受控区加密"压到公里级（见上一行取证）。剩下的观感差距只可能来自**数据**：仓库里是解析函数
+   合成的 DEM 与底图——等高程面、等经纬网，不是真实测绘。换真 DEM/影像的口径写在
+   `public/terrain/README.md` 与 `public/basemaps/README.md`（含现场建议 `--refine-max-zoom 12–15`、
+   nginx 需补 `application/vnd.quantized-mesh` 的 MIME 项）。同批发现的一条署名矛盾已修：画面左下角原本
+   固定画引擎自带的厂商 logo（带外链），与"零托管服务"口径矛盾，现由 `applyOfflineCredits` 换成自托管说明。
 7. **案例库的经验侧**：`hazard_cases.json` 的 16 条是**自编预案模板**（骨架移植自 NexusMind 干预库，
    处置内容为川藏沿线实战口径），`confidence` 与 `estimated_delay_hours` 是编制判断值。
    召回、排序、图谱摄取三条路径都在真实数据上跑通了，但"预警准确率"意义上的**案例命中率**

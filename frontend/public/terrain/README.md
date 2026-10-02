@@ -7,10 +7,12 @@
 ## 仓库里现在带着什么（以及它不是什么）
 
 ```
-layer.json + 0..2 层完整金字塔：42 张 .terrain，共 949,578 字节
+layer.json + 全球 0..2 层完整金字塔 + 受控区（西藏 78°E–99°E, 26°N–37°N）加密到 6 层：
+110 张 .terrain，共 2,486,990 字节
 ```
 
-这批瓦由 `python scripts/build_offline_tiles.py --max-zoom 2` 生成，**高程是解析函数算的合成值，
+这批瓦由 `python scripts/build_offline_tiles.py --max-zoom 2` 生成（默认再往受控区里加密到
+`--refine-max-zoom 6`，区域可用 `--refine-region W S E N` 改），**高程是解析函数算的合成值，
 不是任何真实 DEM**（同一个函数也喂给底图那条腿，见 `basemaps/README.md`）。它的作用是让离线链路
 在有真数据之前就能被真读取器验一遍——`offline-assets.spec.ts` 会真的 `HEAD layer.json`、真的取一张瓦、
 真的按字节读；`backend/tests/unit/test_offline_tile_format.py` 里有一份按 Cesium 1.145 解析顺序镜像的
@@ -20,8 +22,17 @@ layer.json + 0..2 层完整金字塔：42 张 .terrain，共 949,578 字节
 不认 magic/version 前导**（本仓库的生成器与镜像解码器都按它写）。若换用别的地形服务端或旧版 Cesium，
 先确认对方是否要求 quantized-mesh 规范里那 6 字节前导，别把"我们的瓦在自家页面能显示"当成"任何消费者都能读"。
 
-要烘到更深层级（现场判读建议 0–15，覆盖西藏 `78°E–99°E, 26°N–37°N`）就直接加大 `--max-zoom`；
-层级每深一级文件数乘 4，产物是否入库请自己决定——当前仓库只带 0–2 这一份最小可用样本。
+## 为什么是"全球浅 + 受控区深"，而不是把全球烘深
+
+Geographic 切片方案下层级 z 有 `2^(z+1) × 2^z` 张瓦，每深一级张数 ×4：全球烘到 5 层就是 2730 张
+≈ 62 MB，烘到 6 层 10922 张，作为提交物不成立。而引擎的观感恰恰由**深度**决定：
+`skirtHeight = getLevelMaximumGeometricError(level) × 5`，全球只烘到 2 层时 L2 的几何误差还有 19 km，
+裙边 96 km，画面与贴边采样都不对。所以生成器把两件事分开：`--max-zoom` 是全球铺满深度（父瓦链必须完整，
+Cesium 假定"层级 n 有瓦 ⇒ 0..n-1 的父瓦都在"），`--refine-max-zoom` 只作用于受控区，
+`layer.json` 的 `available` 相应地按层声明局部范围（**行号是 TMS 自南向北**，Cesium 读时会翻一次）。
+
+现场判读建议 0–15：换真 DEM 后把 `--refine-max-zoom` 推到 12–15 即可，区域外的浅层保持不动；
+产物是否入库由交付方决定，本仓库只带这一份"链路可验"的最小样本。
 
 ## 需要烘焙成什么
 
@@ -71,5 +82,5 @@ curl -sI http://127.0.0.1:8080/terrain/layer.json | head -1   # 期望 200
 | 显示"quantized-mesh 初始化失败…已回退椭球面" | layer.json 与瓦片不同源/层级不一致 | 重新生成，勿混用两次烘焙结果 |
 | 贴地要素高度怪异 | 椭球面兜底时高程为 0 | 站点若台账有 `elevation_m`，前端已按绝对高度画 |
 | `.terrain` 响应的 `Content-Type` 是空的 | 静态服务器不认识这个扩展名（`vite preview`/`python -m http.server` 实测都不给） | nginx 在 `mime.types` 里加 `application/vnd.quantized-mesh terrain;`。**不要**在前端按 MIME 白名单判瓦可用性：空类型是正常态，真兜底页要靠"字节以 `<!doctype html`/`<html` 开头"来判 |
-| 贴近瓦边取到的高程是几万米的负值（`globe.getHeight` 或目视起伏不对） | 引擎给 quantized-mesh 加的裙边高度 = 该层几何误差 × 5，而误差按 `levelZero/2^level` 递减：只烘到 maxzoom 2 时 L2 误差还有 19 km，裙边就深 96 km | 不是字节坏了（逐顶点反算与解析面逐点吻合、邻瓦接缝高差 < 1 m，见 `terrain-parse.spec.ts`）。要消掉观感只能**加密层级**：把关注区域（西藏一带）多烘 2–3 层，全球其余保持浅层 |
+| 贴近瓦边取到几万米的负高程（`globe.getHeight` 不对） | 引擎给 quantized-mesh 加的裙边深度 = `该层几何误差 × 5`，而误差按 `levelZero/2^level` 递减：全球浅层（maxzoom 2）那一档 L2 裙边还有 96 km | 不是字节坏了（逐顶点反算与解析面逐点吻合、邻瓦接缝 0 差，见 `terrain-parse.spec.ts`）。缓解手段是**按关注区域加密**：`--refine-max-zoom` 决定受控区内烘到多深（默认全球 2 层 + 区内到 6 层，L6 裙边约 12 km），区域外保持浅层以控住仓库体积 |
 | `vite preview` 起在 4175 但 `curl 127.0.0.1:4175` 连不上 | 它默认只绑 `[::1]`（实测 netstat） | 加 `--host 127.0.0.1`（`playwright.config.ts` 里已这么写） |

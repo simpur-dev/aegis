@@ -93,8 +93,14 @@ function generatorProvenance(): string {
 const PUBLIC_DIR = publicAssetDir()
 const PROVENANCE = generatorProvenance()
 
+interface AvailableRange { readonly startX: number; readonly endX: number; readonly startY: number; readonly endY: number }
+
 let baked: BakedTile[] = []
 let maxZoom = 0
+let globalZoom = 0
+let availableByLevel: AvailableRange[][] = []
+/** 区域外一格：受控区之外、层级又比全球深度深，引擎必须判"没有瓦"。 */
+let outsideRegion: BakedTile | null = null
 /** 默认档：缺件回 404。用来跑"一切正常"的主干断言。 */
 let strict: LocalAssetServer
 /** provider 主干用例共享，避免为每张瓦重取一次 layer.json。 */
@@ -103,14 +109,46 @@ let provider: InstanceType<typeof Cesium.CesiumTerrainProvider>
 beforeAll(async () => {
   strict = await startLocalAssetServer({ missing: 'not-found' })
   baked = await listBakedTiles(join(PUBLIC_DIR, 'terrain'))
-  const layer = (await (await fetch(`${strict.origin}/terrain/layer.json`)).json()) as { maxzoom?: number }
+  const layer = (await (await fetch(`${strict.origin}/terrain/layer.json`)).json()) as {
+    maxzoom?: number
+    available?: AvailableRange[][]
+  }
   maxZoom = Number(layer.maxzoom)
+  availableByLevel = layer.available ?? []
+  // 全球铺满深度 = 最后一个"整层都有"的层级。深一层的可用范围只覆盖受控区，
+  // 所以凡是要拿"整层都存在"当预设的断言（镜像行、极地与本瓦对照）都必须用这一层，不能用 maxZoom。
+  globalZoom = availableByLevel.reduce((deepest, ranges, level) => (isFullLevel(level, ranges) ? level : deepest), 0)
+  // 受控区是西藏一带，深一层的 (x=0, y=0) 必然在地球另一侧：拿它当"区域外的深瓦"。
+  outsideRegion = { level: maxZoom, x: 0, y: 0 }
+  expect(isBaked(maxZoom, 0, 0), '加密层铺满了全球，区域声明等于没写').toBe(false)
   provider = await Cesium.CesiumTerrainProvider.fromUrl(`${strict.origin}/terrain`, { requestVertexNormals: true })
 }, 60_000)
 
 afterAll(async () => {
   await strict.close()
 })
+
+function isFullLevel(level: number, ranges: AvailableRange[]): boolean {
+  const xTiles = 2 << level
+  const yTiles = 1 << level
+  return ranges.length === 1 && ranges[0].startX === 0 && ranges[0].endX === xTiles - 1 && ranges[0].startY === 0 && ranges[0].endY === yTiles - 1
+}
+
+/** `available` 的行号是 TMS（自南向北）；Cesium 读它时做 `yTiles - y - 1`，这里按同一口径翻回来。 */
+function declaredTiles(level: number, ranges: AvailableRange[]): BakedTile[] {
+  const yTiles = 1 << level
+  const out: BakedTile[] = []
+  for (const range of ranges) {
+    const northStart = yTiles - 1 - range.endY
+    const northEnd = yTiles - 1 - range.startY
+    for (let x = range.startX; x <= range.endX; x += 1) for (let y = northStart; y <= northEnd; y += 1) out.push({ level, x, y })
+  }
+  return out
+}
+
+function isBaked(level: number, x: number, y: number): boolean {
+  return baked.some((tile) => tile.level === level && tile.x === x && tile.y === y)
+}
 
 describe('真 Cesium 接不接受我们烘的地形', () => {
   it('layer.json 被吃下：切片方案是 Geographic，且请求路径就是我们声明的 {z}/{x}/{y}（不翻 y）', async () => {
@@ -137,9 +175,15 @@ describe('真 Cesium 接不接受我们烘的地形', () => {
     const beyond = maxZoom + 1
     expect(provider.availability!.isTileAvailable(beyond, 0, 0)).toBe(false)
     expect(provider.getTileDataAvailable(0, 0, beyond)).toBe(false)
-    // 完整金字塔的应有瓦数：层级 z 是 2^(z+1) × 2^z 张。少烘一张这里就红。
-    const expected = Array.from({ length: maxZoom + 1 }, (_, level) => (2 << level) * (1 << level)).reduce((a, b) => a + b, 0)
-    expect(baked.length).toBe(expected)
+    // 声明 ↔ 磁盘双向差集：部分金字塔（深一层只有受控区）之后，这才是"资产与声明对得上"的说法。
+    const declared = availableByLevel.flatMap((ranges, level) => declaredTiles(level, ranges))
+    const key = (tile: BakedTile) => `${tile.level}/${tile.x}/${tile.y}`
+    expect(baked.map(key).sort()).toEqual(declared.map(key).sort())
+    expect(globalZoom).toBeLessThan(maxZoom)
+    // 区域外的深瓦：引擎必须回答"没有"。答"有"就会去取不存在的层级，表现是空洞而不是报错。
+    expect(outsideRegion, '没找到一张区域外的深瓦，加密范围可能铺满了全球').not.toBeNull()
+    expect(provider.availability!.isTileAvailable(outsideRegion!.level, outsideRegion!.x, outsideRegion!.y)).toBe(false)
+    expect(provider.getTileDataAvailable(outsideRegion!.x, outsideRegion!.y, outsideRegion!.level)).toBe(false)
   })
 
   it('层级几何误差有限且严格递减（四叉树按它决定要不要继续下钻）', () => {
@@ -255,25 +299,34 @@ describe('真 Cesium 接不接受我们烘的地形', () => {
 
   it('瓦的内容属于它自己那个矩形：高原瓦有起伏，而同一列镜像行的瓦没有', async () => {
     const scheme = provider.tilingScheme
-    const plateauTile = scheme.positionToTileXY(PLATEAU, maxZoom, new Cesium.Cartesian2())
+    const plateauTile = scheme.positionToTileXY(PLATEAU, globalZoom, new Cesium.Cartesian2())
     expect(plateauTile).toBeDefined()
     const x = plateauTile!.x
     const y = plateauTile!.y
-    const rectangle = scheme.tileXYToRectangle(x, y, maxZoom)
+    const rectangle = scheme.tileXYToRectangle(x, y, globalZoom)
     expect(Cesium.Rectangle.contains(rectangle, PLATEAU)).toBe(true)
 
-    const plateau = decodeTerrainTile(await provider.requestTileGeometry(x, y, maxZoom))
+    const plateau = decodeTerrainTile(await provider.requestTileGeometry(x, y, globalZoom))
     expect(plateau.maximumHeight).toBeGreaterThan(4_000)
+
+    // 加密层必须真的接上同一处高原：没接上的表现是"停在浅层、起伏糊掉"，
+    // 而按瓦最大值判是判不出来的（浅层瓦也有同一个峰），所以要按层级各取一次并比深度。
+    const deepTile = scheme.positionToTileXY(PLATEAU, maxZoom, new Cesium.Cartesian2())
+    expect(deepTile).toBeDefined()
+    const deep = decodeTerrainTile(await provider.requestTileGeometry(deepTile!.x, deepTile!.y, maxZoom))
+    expect(deep.maximumHeight).toBeGreaterThan(4_000)
+    // 深一层的瓦覆盖更小矩形，峰被切掉一角时最大值只会更小，不会大出一截。
+    expect(deep.maximumHeight).toBeLessThan(plateau.maximumHeight + 500)
 
     // 同一列、行号镜像过去（slippyMap ↔ tms 的那个翻法）必须是一张几乎平的海/陆面。
     // 万一 y 口径在生成器或 layer.json 上被反过来，这里会先红，而不是等到浏览器里"地形对不上影像"。
-    const mirroredY = scheme.getNumberOfYTilesAtLevel(maxZoom) - 1 - y
-    const mirrored = decodeTerrainTile(await provider.requestTileGeometry(x, mirroredY, maxZoom))
+    const mirroredY = scheme.getNumberOfYTilesAtLevel(globalZoom) - 1 - y
+    const mirrored = decodeTerrainTile(await provider.requestTileGeometry(x, mirroredY, globalZoom))
     expect(mirrored.maximumHeight).toBeLessThan(1_000)
     expect(plateau.maximumHeight - mirrored.maximumHeight).toBeGreaterThan(3_000)
 
     // 最北那张同样是低值：证明"高"是跟着矩形来的，不是整批瓦的常数。
-    const polar = decodeTerrainTile(await provider.requestTileGeometry(0, 0, maxZoom))
+    const polar = decodeTerrainTile(await provider.requestTileGeometry(0, 0, globalZoom))
     expect(polar.maximumHeight).toBeLessThan(1_000)
   })
 
@@ -359,6 +412,10 @@ describe('缺件不能被读成"有瓦"（三种失败都得响亮）', () => {
     expect(provider.availability!.computeChildMaskForTile(0, 0, 0)).toBe(15)
     expect(provider.availability!.computeChildMaskForTile(maxZoom, 0, 0)).toBe(0)
     expect(provider.availability!.computeMaximumLevelAtPosition(PLATEAU)).toBe(maxZoom)
-    expect(provider.availability!.computeBestAvailableLevelOverRectangle(Cesium.Rectangle.fromDegrees(85, 25, 95, 35))).toBe(maxZoom)
+    // 完全落在受控区里 → 能给到最深一层。
+    expect(provider.availability!.computeBestAvailableLevelOverRectangle(Cesium.Rectangle.fromDegrees(85, 28, 95, 35))).toBe(maxZoom)
+    // 往南只多探出 0.3°（超出加密范围）→ 引擎必须老实回答"最深只能到上一层"。
+    // 这条是"区域作用域真生效"的判据：写错行号口径时它会直接红，而不是运行期悄悄取空瓦。
+    expect(provider.availability!.computeBestAvailableLevelOverRectangle(Cesium.Rectangle.fromDegrees(85, 25, 95, 35))).toBe(maxZoom - 1)
   })
 })

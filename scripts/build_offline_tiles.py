@@ -124,6 +124,72 @@ def geographic_tile_counts(z: int) -> tuple[int, int]:
     return 2 << z, 1 << z
 
 
+@dataclass(frozen=True)
+class Region:
+    """按经纬度定义的一块关注区域（度）。地形加密只围绕它做。"""
+
+    west: float
+    south: float
+    east: float
+    north: float
+
+
+# 与前端 `entities.ts` 的 TIBET_RECTANGLE 同一口径：一张图的默认视野就是受控区，
+# 加密层级落在它身上才有意义（全球烘深是 62MB 量级的事，见 README 的取舍说明）。
+DEFAULT_REFINE_REGION = Region(78.0, 26.0, 99.0, 37.0)
+
+
+def region_tile_range(region: Region, z: int) -> tuple[int, int, int, int]:
+    """层级 z 上与区域相交的瓦范围 `(x_start, x_end, y_start, y_end)`，闭区间。
+
+    行号用 Cesium tiling scheme 的口径：**自北向南**（y=0 在最北）。`layer_json` 里写进
+    `available` 时还要再翻一次，见 `tms_available_range`。
+    """
+    x_tiles, y_tiles = geographic_tile_counts(z)
+    dx = 360.0 / x_tiles
+    dy = 180.0 / y_tiles
+    x_start = int((region.west + 180.0) // dx)
+    x_end = int((region.east + 180.0) // dx)
+    y_start = int((90.0 - region.north) // dy)
+    y_end = int((90.0 - region.south) // dy)
+    # 夹回有效范围：区域贴边（如 north=90）时向下取整会正好越界一格。
+    return (
+        max(0, min(x_start, x_tiles - 1)),
+        max(0, min(x_end, x_tiles - 1)),
+        max(0, min(y_start, y_tiles - 1)),
+        max(0, min(y_end, y_tiles - 1)),
+    )
+
+
+def tms_available_range(region: Region, z: int) -> dict[str, int]:
+    """把北向南的行号翻成 `layer.json` 的 `available` 口径。
+
+    Cesium 读 `available` 时做的是 `yStart = yTiles - range.endY - 1 / yEnd = yTiles - range.startY - 1`
+    （`_processLayerJsonTerrainProvider`，因为该字段沿用的是自南向北的 TMS 行号）。
+    翻错的后果不是报错而是**可用性指向另一批瓦**：区域外的位置被判为"有更深瓦"，
+    于是请求不存在的层级、区域里的位置被判为"没有"，于是永远停在浅层。
+    """
+    x_start, x_end, y_start, y_end = region_tile_range(region, z)
+    _, y_tiles = geographic_tile_counts(z)
+    return {"startX": x_start, "endX": x_end, "startY": y_tiles - 1 - y_end, "endY": y_tiles - 1 - y_start}
+
+
+def availability_ranges(*, global_zoom: int, refine_zoom: int, region: Region) -> list[list[dict[str, int]]]:
+    """逐层的 `available`：浅层是完整全球行，深层只声明区域那一段。
+
+    层级数组必须从 0 连续排到 `refine_zoom`——Cesium 用它的长度当可用性深度，
+    中间断一层就等于告诉引擎"下面没有了"。
+    """
+    levels: list[list[dict[str, int]]] = []
+    for z in range(refine_zoom + 1):
+        if z <= global_zoom:
+            x_tiles, y_tiles = geographic_tile_counts(z)
+            levels.append([{"startX": 0, "endX": x_tiles - 1, "startY": 0, "endY": y_tiles - 1}])
+        else:
+            levels.append([tms_available_range(region, z)])
+    return levels
+
+
 # ---------- 网格构造 ----------
 
 
@@ -403,12 +469,19 @@ def encode_terrain_tile(mesh: Mesh) -> bytes:
     return b"".join(parts)
 
 
-def layer_json(max_zoom: int, *, bounds: tuple[float, float, float, float]) -> dict[str, object]:
+def layer_json(
+    max_zoom: int,
+    *,
+    bounds: tuple[float, float, float, float],
+    global_zoom: int,
+    refine_region: Region = DEFAULT_REFINE_REGION,
+) -> dict[str, object]:
     return {
         "format": "quantized-mesh-1.0",
         "version": "1.0",
         # slippyMap：URL 的 y 直接用 tiling scheme 的行号（Cesium 只对 tms 翻 y，见
-        # CesiumTerrainProvider 里 terrainY 的分支）；本归档烘的是完整金字塔，两种口径都能命中。
+        # CesiumTerrainProvider 里 terrainY 的分支）。注意 `available` 不跟着这个口径走：
+        # 它始终是 TMS（自南向北），由 availability_ranges 负责翻。
         "scheme": "slippyMap",
         "projection": "EPSG:4326",
         "tiles": ["{z}/{x}/{y}.terrain"],
@@ -417,7 +490,7 @@ def layer_json(max_zoom: int, *, bounds: tuple[float, float, float, float]) -> d
         "maxzoom": max_zoom,
         "bounds": list(bounds),
         "attribution": PROVENANCE,
-        "available": [[{"startX": 0, "endX": (2 << z) - 1, "startY": 0, "endY": (1 << z) - 1}] for z in range(max_zoom + 1)],
+        "available": availability_ranges(global_zoom=global_zoom, refine_zoom=max_zoom, region=refine_region),
         "generator": "scripts/build_offline_tiles.py",
     }
 
@@ -673,28 +746,55 @@ def build_pmtiles(z_max: int, dest: Path) -> int:
 # ---------- 烘焙编排 ----------
 
 
-def bake(out_dir: Path, terrain_dir: Path, *, z_max: int, pmtiles: bool, xyz: bool) -> dict[str, object]:
+def bake(
+    out_dir: Path,
+    terrain_dir: Path,
+    *,
+    z_max: int,
+    refine_z_max: int,
+    refine_region: Region,
+    pmtiles: bool,
+    xyz: bool,
+) -> dict[str, object]:
     out_dir.mkdir(parents=True, exist_ok=True)
     terrain_dir.mkdir(parents=True, exist_ok=True)
 
     tile_count = 0
     byte_total = 0
-    for z in range(z_max + 1):
-        x_tiles, y_tiles = geographic_tile_counts(z)
-        for y in range(y_tiles):
-            for x in range(x_tiles):
-                payload = encode_terrain_tile(build_mesh(geographic_tile_rectangle(z, x, y)))
-                target = terrain_dir / str(z) / str(x)
-                target.mkdir(parents=True, exist_ok=True)
-                (target / f"{y}.terrain").write_bytes(payload)
-                tile_count += 1
-                byte_total += len(payload)
+    per_level: dict[str, int] = {}
+    for z in range(refine_z_max + 1):
+        if z <= z_max:
+            # 浅层铺满全球：Cesium 假定"层级 n 有瓦 ⇒ 0..n-1 的父瓦都在"，深一层的每一张
+            # 都必须能回溯到烘过的父瓦，否则四叉树走到半路就没得下钻。
+            x_tiles, y_tiles = geographic_tile_counts(z)
+            tile_ids = [(x, y) for y in range(y_tiles) for x in range(x_tiles)]
+        else:
+            x_start, x_end, y_start, y_end = region_tile_range(refine_region, z)
+            tile_ids = [(x, y) for y in range(y_start, y_end + 1) for x in range(x_start, x_end + 1)]
+        for x, y in tile_ids:
+            payload = encode_terrain_tile(build_mesh(geographic_tile_rectangle(z, x, y)))
+            target = terrain_dir / str(z) / str(x)
+            target.mkdir(parents=True, exist_ok=True)
+            (target / f"{y}.terrain").write_bytes(payload)
+            tile_count += 1
+            byte_total += len(payload)
+        per_level[str(z)] = len(tile_ids)
     (terrain_dir / "layer.json").write_text(
-        json.dumps(layer_json(z_max, bounds=(-180.0, -90.0, 180.0, 90.0)), ensure_ascii=False, indent=2),
+        json.dumps(
+            layer_json(refine_z_max, bounds=(-180.0, -90.0, 180.0, 90.0), global_zoom=z_max, refine_region=refine_region),
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
-    result: dict[str, object] = {"terrain_tiles": tile_count, "terrain_bytes": byte_total}
+    result: dict[str, object] = {
+        "terrain_tiles": tile_count,
+        "terrain_bytes": byte_total,
+        "terrain_global_zoom": z_max,
+        "terrain_refine_zoom": refine_z_max,
+        "terrain_tiles_per_level": per_level,
+    }
     if pmtiles:
         archive = out_dir / "aegis.pmtiles"
         if archive.exists():
@@ -720,7 +820,21 @@ def bake(out_dir: Path, terrain_dir: Path, *, z_max: int, pmtiles: bool, xyz: bo
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="烘焙离线一张图资产（合成高程/合成影像，非真实测绘）")
     parser.add_argument("--public", type=Path, default=DEFAULT_PUBLIC_DIR, help="资产落盘目录（默认按脚本位置锚定的 frontend/public）")
-    parser.add_argument("--max-zoom", type=int, default=2, help="烘焙最高层级（默认 2：提交进仓库的最小可用样本）")
+    parser.add_argument("--max-zoom", type=int, default=2, help="全球铺满的最高层级（默认 2：提交进仓库的最小可用样本）")
+    parser.add_argument(
+        "--refine-max-zoom",
+        type=int,
+        default=None,
+        help="受控区域内加密到的层级（默认 max-zoom+4）；决定引擎算出的裙边深度，见 README",
+    )
+    parser.add_argument(
+        "--refine-region",
+        type=float,
+        nargs=4,
+        metavar=("WEST", "SOUTH", "EAST", "NORTH"),
+        default=None,
+        help=f"加密区域（度），默认 {tuple(vars(DEFAULT_REFINE_REGION).values())}",
+    )
     parser.add_argument("--no-pmtiles", action="store_true", help="只烘地形")
     parser.add_argument("--with-xyz", action="store_true", help="顺带烘一份 XYZ 模板金字塔（形态 A）")
     args = parser.parse_args(argv)
@@ -728,10 +842,26 @@ def main(argv: list[str] | None = None) -> int:
     if not (0 <= args.max_zoom <= 8):
         parser.error("--max-zoom 只允许 0..8（纯 Python 渲染，层级再高只是慢，不是不能用）")
 
+    refine_zoom = args.max_zoom + 4 if args.refine_max_zoom is None else args.refine_max_zoom
+    if refine_zoom < args.max_zoom:
+        parser.error("--refine-max-zoom 不能低于 --max-zoom（那样等于没有加密层）")
+    if not (0 <= refine_zoom <= 10):
+        parser.error("--refine-max-zoom 只允许到 10：受控区外的瓦不烘，所以这个上限只约束区域内的张数")
+
+    if args.refine_region is None:
+        region = DEFAULT_REFINE_REGION
+    else:
+        west, south, east, north = args.refine_region
+        if not (west < east and south < north):
+            parser.error(f"--refine-region 的边界不成立：west={west} east={east} south={south} north={north}")
+        region = Region(west, south, east, north)
+
     summary = bake(
         args.public / "basemaps",
         args.public / "terrain",
         z_max=args.max_zoom,
+        refine_z_max=refine_zoom,
+        refine_region=region,
         pmtiles=not args.no_pmtiles,
         xyz=args.with_xyz,
     )

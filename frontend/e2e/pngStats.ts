@@ -23,6 +23,12 @@ export interface CanvasPixelStats {
   readonly dominantShare: number
   readonly darkestLuminance: number
   readonly brightestLuminance: number
+  /**
+   * "绿多于红蓝"的像素占比：合成底图把山体阴影直接烘进 PNG（高原一带是暗橄榄），
+   * 所以这一项量的是"起伏在画面上看得见"。刻意不用"暗像素占比"——画面外的深墨色天空
+   * 同样暗（实测那种像素占了三成），拿它当起伏证据就是假证。
+   */
+  readonly oliveShare: number
 }
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -118,6 +124,7 @@ function paeth(a: number, b: number, c: number): number {
 function summarize(pixels: Buffer, width: number, height: number, channels: number): CanvasPixelStats {
   const counts = new Map<number, number>()
   let samples = 0
+  let olive = 0
   let darkest = Number.POSITIVE_INFINITY
   let brightest = Number.NEGATIVE_INFINITY
 
@@ -132,6 +139,7 @@ function summarize(pixels: Buffer, width: number, height: number, channels: numb
       const key = (r << 16) | (g << 8) | b
       counts.set(key, (counts.get(key) ?? 0) + 1)
       const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+      if (g > r + 4 && g > b + 8) olive += 1
       if (luminance < darkest) darkest = luminance
       if (luminance > brightest) brightest = luminance
     }
@@ -148,5 +156,6 @@ function summarize(pixels: Buffer, width: number, height: number, channels: numb
     dominantShare: samples === 0 ? 1 : dominant / samples,
     darkestLuminance: samples === 0 ? 0 : darkest,
     brightestLuminance: samples === 0 ? 0 : brightest,
+    oliveShare: samples === 0 ? 0 : olive / samples,
   }
 }

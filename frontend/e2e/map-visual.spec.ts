@@ -117,7 +117,8 @@ test('画布真的出画：没有渲染错误框，截图也不是单一平色',
   const stats = pngPixelStats(shot)
   console.log(
     `[视觉门禁] 画布 ${stats.width}×${stats.height}，取样 ${stats.samples} 像素，颜色 ${stats.distinctColors} 种，` +
-      `主色占 ${(stats.dominantShare * 100).toFixed(1)}%，亮度 ${stats.darkestLuminance.toFixed(1)}..${stats.brightestLuminance.toFixed(1)}`,
+      `主色占 ${(stats.dominantShare * 100).toFixed(1)}%，高原山体阴影（橄榄色）占 ${(stats.oliveShare * 100).toFixed(2)}%，` +
+      `亮度 ${stats.darkestLuminance.toFixed(1)}..${stats.brightestLuminance.toFixed(1)}`,
   )
 
   // 主色几乎占满就是"整片一个色"：既覆盖渲染崩溃后的黑屏，也覆盖 GL 上下文丢了但场景 API 正常的情况。
@@ -125,6 +126,9 @@ test('画布真的出画：没有渲染错误框，截图也不是单一平色',
   expect(stats.dominantShare, `画布几乎是单一颜色：${JSON.stringify(stats)}`).toBeLessThan(0.98)
   expect(stats.distinctColors).toBeGreaterThan(8)
   expect(stats.brightestLuminance - stats.darkestLuminance).toBeGreaterThan(20)
+  // 高原的山体阴影必须在画面上看得见：合成底图把起伏烘成暗橄榄色，低海拔则是浅米色。
+  // 只判"有没有这种颜色"，不判它出现在哪个像素——位置属于取景观感，不是链路事实。
+  expect(stats.oliveShare, `画面里没有高原起伏的着色：${JSON.stringify(stats)}`).toBeGreaterThan(0.001)
 })
 
 test('被当数据消费的资产都是 2xx 且是真字节；探针那一路判死之后仍留下了可用图层', async ({ page }) => {

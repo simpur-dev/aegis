@@ -10,7 +10,7 @@
     "octvertexnormals"
   ],
   "minzoom": 0,
-  "maxzoom": 2,
+  "maxzoom": 6,
   "bounds": [
     -180.0,
     -90.0,
@@ -41,6 +41,38 @@
         "endX": 7,
         "startY": 0,
         "endY": 3
+      }
+    ],
+    [
+      {
+        "startX": 11,
+        "endX": 12,
+        "startY": 5,
+        "endY": 5
+      }
+    ],
+    [
+      {
+        "startX": 22,
+        "endX": 24,
+        "startY": 10,
+        "endY": 11
+      }
+    ],
+    [
+      {
+        "startX": 45,
+        "endX": 49,
+        "startY": 20,
+        "endY": 22
+      }
+    ],
+    [
+      {
+        "startX": 91,
+        "endX": 99,
+        "startY": 41,
+        "endY": 45
       }
     ]
   ],
