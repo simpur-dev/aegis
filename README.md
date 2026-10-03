@@ -8,7 +8,7 @@
 
 - 应用形态：**纯 Web 平台**（响应式，不含原生移动端）
 - 分工边界：**平台侧**（L1 接入 / L2 数据 / L4 服务 / L5 应用 / 基座）由本仓库承载；
-  **L3 五大智能体**由智能体方按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入
+  **L3 五大智能体**由智能体方按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入，交付落点在 `agents/`
 - 架构依据：《课题6_项目架构设计》五层+一基座，融合"一张图 + 一总线 + 四预"扩展
 - 理论框架：MA-RIAEW（多智能体协同赋能的突发事件风险情报感知及预警模式）
 - 所有验收数字与"还没测到的"都记在 `docs/REPORT.md`（含可复跑的取证命令），不写进本文件
@@ -23,6 +23,7 @@ aegis/
 │   ├── agent_message.v1.schema.json
 │   ├── stu.v1.schema.json
 │   └── AGENT_INTEGRATION_SPEC.v1.md
+├── agents/                    # L3 五大智能体的交付落点（外部团队实现；接入总览见 agents/README.md）
 ├── backend/
 │   ├── src/aegis/
 │   │   ├── config.py          # 运行配置与考核指标阈值口径（唯一配置面）
