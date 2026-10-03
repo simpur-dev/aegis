@@ -33,6 +33,7 @@ from aegis.bus.registry import AgentRegistry
 from aegis.config import Settings
 from aegis.domain.enums import Action, AgentType, RiskLevel
 from aegis.domain.messages import AgentMessage, CapabilityRegistration, make_response
+from aegis.errors import BusNotReadyError
 from aegis.observability.tracer import Tracer
 
 NATS_URL = os.getenv("AEGIS_TEST_NATS_URL", "")
@@ -73,7 +74,17 @@ async def _drop_streams(prefix: str) -> None:
 
 async def _make_bus(stream_prefix: str) -> NatsBus:
     bus = NatsBus(NATS_URL, stream_prefix=stream_prefix)
-    await bus.connect()
+    try:
+        await bus.connect()
+    except BusNotReadyError as exc:
+        # 主题重叠（err_code 10065）不是平台缺陷：`stream_prefix` 只隔离"用例 vs 用例"，
+        # 隔离不了"用例 vs 一个正在跑着的部署"——双方用的是同一套契约主题，而契约主题不能改
+        # （外部智能体按它接入）。所以这套 live 用例要的是一个干净的 JetStream。
+        # 判 skip 而不是 fail：把"这台机器上此刻有平台实例在占主题"报成红，
+        # 下一次部署形态取证就会被误读成总线坏了。
+        if "10065" not in str(exc):
+            raise
+        pytest.skip(f"这套 JetStream 已被运行中的平台实例占用（{exc}）；本组用例需要干净的 JetStream，勿与部署共用")
     return bus
 
 

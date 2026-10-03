@@ -78,7 +78,8 @@ class TestGeneration:
         draft = await service.generate(verdict(), event_id="evt_" + "a" * 12, trace_id="trc_" + "b" * 16)
         assert draft.record.event_id == "evt_" + "a" * 12
         assert draft.record.trace_id == "trc_" + "b" * 16
-        assert draft.generation_seconds >= 0.0
+        # 不给链路起点时只量本步：它得是个"小而有意义"的数，而不是恒等于 0 的装饰
+        assert 0.0 <= draft.generation_seconds < 1.0, draft.generation_seconds
 
     async def test_generation_latency_is_traced(self, settings: Settings) -> None:
         tracer = Tracer()
@@ -86,7 +87,36 @@ class TestGeneration:
         await service.generate(verdict())
         stats = tracer.ledger.stats("warning_generation_ms")
         assert stats.count == 1
-        assert stats.max >= 0
+        assert 0.0 <= stats.max < 1000.0, stats
+
+    async def test_翻译耗时算进生成时延(self, settings: Settings) -> None:
+        """翻译是这一步里唯一会变慢的真实工作：它没被算进来，指标就是在替平台圆场。"""
+        import asyncio
+
+        async def slow_translate(text: str) -> str:
+            await asyncio.sleep(0.05)
+            return "bo:" + text
+
+        service = WarningService(Tracer(), settings=settings, translator=slow_translate)
+        draft = await service.generate(verdict())
+        assert draft.generation_seconds >= 0.04, draft.generation_seconds
+
+    async def test_生成时延按链路起点量而不是拿刚盖的章反推(self, settings: Settings) -> None:
+        """钉住一个"永远绿的假判定"。
+
+        旧算法是 `now - record.generated_at`，而 `generated_at` 就在同一次调用里刚盖上——
+        等于拿现在减自己，任何真实时延下都得到 0.0ms，于是"预警生成 ≤3min"这项永远达标。
+        """
+        import time
+
+        tracer = Tracer()
+        tracer.ledger.set_budget("warning_generation_ms", settings.sla_warning_gen_seconds * 1000.0)
+        service = WarningService(tracer, settings=settings)
+        started = time.monotonic() - 240.0  # 链路已经走了 4 分钟才到执行段
+        draft = await service.generate(verdict(), started_at=started)
+        assert 239.0 < draft.generation_seconds < 245.0, draft.generation_seconds
+        stats = tracer.ledger.stats("warning_generation_ms")
+        assert stats.breaches == 1, "超 3min 的生成时间必须被判违约，而不是仍然 0.0ms 一片绿"
 
     async def test_ids_are_unique_across_runs(self, service: WarningService) -> None:
         ids = {(await service.generate(verdict())).record.warning_id for _ in range(20)}

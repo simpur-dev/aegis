@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -52,12 +53,10 @@ _ACTION_TEMPLATE: dict[HazardType, str] = {
 class WarningDraft:
     record: WarningRecord
     translation_pending: bool
-
-    @property
-    def generation_seconds(self) -> float:
-        from aegis.domain.messages import now_iso, parse_iso
-
-        return max((parse_iso(now_iso()) - parse_iso(self.record.generated_at)).total_seconds(), 0.0)
+    #: 本次"预警生成"实测秒数（口径见 `WarningService.generate`）。
+    #: 它是量出来带在结果里的数，不是事后拿 `generated_at` 反推的——后者只会得到 0.0：
+    #: `generated_at` 就在同一次调用里盖的章，拿"现在"去减它等于减自己。
+    generation_seconds: float = 0.0
 
 
 class WarningService:
@@ -107,8 +106,16 @@ class WarningService:
         *,
         event_id: str | None = None,
         trace_id: str | None = None,
+        started_at: float | None = None,
     ) -> WarningDraft:
-        """生成预警产物；翻译失败不阻断发布（降级为纯中文并标记待译）。"""
+        """生成预警产物；翻译失败不阻断发布（降级为纯中文并标记待译）。
+
+        `started_at` 是链路起点的 `time.monotonic()`：给了就按"链路开始→预警产物就绪"量，
+        这才是考核指标"预警信息生成时间 ≤3min"的口径。没给就只量本步（含翻译调用），
+        那是一个诚实的小数字——**绝不退回"拿刚盖的 `generated_at` 去减现在"**，
+        那种算法恒等于 0.0ms，会让 ≤3min 这条在任何时延下都判"达标"。
+        """
+        entered = time.monotonic()
         record = self.build(verdict, event_id=event_id, trace_id=trace_id)
         pending = False
         if self._translator is not None:
@@ -121,14 +128,17 @@ class WarningService:
             pending = record.risk_level is not RiskLevel.NONE
 
         record.translation_pending = pending
-        elapsed_ms = self._elapsed_ms(record.generated_at)
+        done = time.monotonic()
+        elapsed_ms = (done - (started_at if started_at is not None else entered)) * 1000.0
+        elapsed_ms = max(elapsed_ms, 0.0)
         self._tracer.record("warning_generation_ms", elapsed_ms, trace_id=record.trace_id)
         if elapsed_ms / 1000 > self._settings.sla_warning_gen_seconds:
-            log.warning("预警生成超出 SLA 预算", extra={"warning_id": record.warning_id})
-        return WarningDraft(record=record, translation_pending=pending)
-
-    @staticmethod
-    def _elapsed_ms(iso_ts: str) -> float:
-        from aegis.domain.messages import now_iso, parse_iso
-
-        return max((parse_iso(now_iso()) - parse_iso(iso_ts)).total_seconds() * 1000, 0.0)
+            log.warning(
+                "预警生成超出 SLA 预算",
+                extra={
+                    "warning_id": record.warning_id,
+                    "elapsed_ms": round(elapsed_ms, 1),
+                    "budget_s": self._settings.sla_warning_gen_seconds,
+                },
+            )
+        return WarningDraft(record=record, translation_pending=pending, generation_seconds=elapsed_ms / 1000.0)

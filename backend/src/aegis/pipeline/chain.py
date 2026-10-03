@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -249,6 +250,9 @@ class HazardResponseChain:
         result = ChainResult(trace_id=trace, event_id=event_id or new_event_id())
         region = region_code or (readings[0].region_code if readings else "UNKNOWN")
         reported = intake == "report"
+        #: 链路起点。执行段生成预警时按"链路开始→产物就绪"量 ≤3min，
+        #: 所以这个数必须从这里传下去，而不是在生成步里现取（那样恒为 0）。
+        started_at = time.monotonic()
 
         async with instrumentation.span("stage_perceive_ms", trace_id=trace) as perceive_span:
             with self._tracer.span("stage_perceive_ms", trace_id=trace) as sp:
@@ -332,7 +336,7 @@ class HazardResponseChain:
         execute_degradations = len(result.degradations)
         async with instrumentation.span("stage_execute_ms", trace_id=trace) as execute_span:
             with self._tracer.span("stage_execute_ms", trace_id=trace) as sp:
-                warning, used_agent = await self._execute(verdict, result, trace)
+                warning, used_agent = await self._execute(verdict, result, trace, started_at=started_at)
             if warning is None:
                 instrumentation.mark_error(execute_span, "预警发布失败", code="execute_failed")
             elif len(result.degradations) > execute_degradations:
@@ -557,8 +561,10 @@ class HazardResponseChain:
         verdict: RiskVerdict,
         result: ChainResult,
         trace: str,
+        *,
+        started_at: float | None = None,
     ) -> tuple[WarningRecord | None, bool]:
-        draft = await self._warning_service.generate(verdict, event_id=result.event_id, trace_id=trace)
+        draft = await self._warning_service.generate(verdict, event_id=result.event_id, trace_id=trace, started_at=started_at)
         record = draft.record
         used_agent = False
         if self._registry.pick(AgentType.EXECUTE.value, "warn_publish") is not None:
