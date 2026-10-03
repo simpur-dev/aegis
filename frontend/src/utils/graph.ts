@@ -156,7 +156,7 @@ export const NODE_SPECS: Record<NodeType, NodeSpec> = {
   join: { category: 'logic', required_config: ['upstream'], optional_config: [], min_config: {} },
   notify: { category: 'io', required_config: ['text'], optional_config: ['level'], min_config: {} },
   risk_assess: { category: 'intelligence', required_config: [], optional_config: ['upstream', 'extra'], min_config: {} },
-  situation_simulate: { category: 'intelligence', required_config: [], optional_config: ['extra'], min_config: {} },
+  situation_simulate: { category: 'intelligence', required_config: [], optional_config: ['extra', 'upstream'], min_config: {} },
   threshold: { category: 'logic', required_config: ['conditions'], optional_config: ['upstream', 'mode'], min_config: {} },
   warning_generate: { category: 'intelligence', required_config: [], optional_config: ['extra'], min_config: {} },
   warning_publish: { category: 'intelligence', required_config: [], optional_config: ['channels'], min_config: {} },
