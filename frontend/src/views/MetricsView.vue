@@ -25,6 +25,10 @@ const INDICATOR_LABELS: Record<string, string> = {
   ingest_store_ms: '观测→入库',
   ingest_publish_ms: '入库→上总线',
   ingest_store_to_query_ms: '入库→可查询',
+  // 人工上报是第四条接入腿，语义交互另有一项：缺标签就会在表里露出裸埋点名，
+  // 而"阈值 300"那一列对秒制指标的含义只能靠标签说清楚
+  report_intake_seconds: '人工上报接入端到端时延（秒制）',
+  assistant_reply_ms: '语义交互一轮耗时',
 }
 
 const rows = computed(() =>

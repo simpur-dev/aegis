@@ -13,7 +13,14 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': { target: apiTarget, changeOrigin: true },
-      '/metrics': { target: apiTarget, changeOrigin: true },
+      // `/metrics` 有两个主人：后端的 Prometheus 抓取路径，与前端"指标量测"页的路由。
+      // 一律转发会让 dev 下点开这个页面永远拿回一段文本而不是应用（真机实测踩过），
+      // 按 Accept 分流：浏览器导航带 text/html 就交给 SPA，抓取端不带就转后端。
+      '/metrics': {
+        target: apiTarget,
+        changeOrigin: true,
+        bypass: (req) => (req.headers.accept?.includes('text/html') ? '/index.html' : undefined),
+      },
       '/healthz': { target: apiTarget, changeOrigin: true },
       '/readyz': { target: apiTarget, changeOrigin: true },
     },

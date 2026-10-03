@@ -120,12 +120,12 @@ function reset(): void {
       <a-row :gutter="12">
         <a-col :span="12">
           <a-form-item label="纬度（可选，只进证据链不改判据）">
-            <a-input-number v-model:value="form.lat" style="width: 100%" :step="0.000001" data-testid="field-lat" />
+            <a-input-number v-model:value="form.lat" style="width: 100%" :min="-90" :max="90" :step="0.000001" data-testid="field-lat" />
           </a-form-item>
         </a-col>
         <a-col :span="12">
           <a-form-item label="经度（可选）">
-            <a-input-number v-model:value="form.lon" style="width: 100%" :step="0.000001" data-testid="field-lon" />
+            <a-input-number v-model:value="form.lon" style="width: 100%" :min="-180" :max="180" :step="0.000001" data-testid="field-lon" />
           </a-form-item>
         </a-col>
       </a-row>
