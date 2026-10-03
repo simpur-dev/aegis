@@ -224,6 +224,14 @@ async def _risk_assess(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
     merged = {**ctx.payload, **config.get("extra", {})}
     for upstream_id in _as_list(config.get("upstream", [])):
         merged.update(ctx.upstream(upstream_id))
+    # `hazard_identify` 把结果整体挂在 "hazard" 键下：不接这一刀，识别→定级这条边上的
+    # hits 永远是空的，定级就会一路"保守四级"——画布上看着连了线，实际什么都没传过去。
+    hazard = merged.get("hazard")
+    if isinstance(hazard, dict):
+        merged.setdefault("hits", hazard.get("hits") or [])
+        hazards = hazard.get("hazards") or []
+        if not merged.get("hazard_type") and len(hazards) == 1:
+            merged["hazard_type"] = hazards[0]
     result = await service(merged)
     try:
         level = int(result.get("risk_level", 5))
@@ -234,10 +242,55 @@ async def _risk_assess(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
     return NodeOutcome(output={"risk_level": level, "risk": result}, branch=f"level_{level}")
 
 
+def _collect_simulate_anchors(merged: dict[str, Any], sources: list[Any]) -> None:
+    """从上游产出里补齐推演需要的锚点（等级、灾种、区域、命中证据）。
+
+    上游结论的形状不止一种：`risk_assess` 把定级结论挂在 ``risk`` 子键下、`hazard_identify`
+    挂在 ``hazard`` 下。只扫顶层就等于让这两条边永远拿不到灾种，案例检索只能空跑。
+    """
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        candidates: list[dict[str, Any]] = [source]
+        for key in ("risk", "hazard"):
+            nested = source.get(key)
+            if isinstance(nested, dict):
+                candidates.append(nested)
+        for candidate in candidates:
+            for key in ("risk_level", "hazard_type", "region_code"):
+                if merged.get(key) in (None, "") and candidate.get(key) is not None:
+                    merged[key] = candidate[key]
+            hits = candidate.get("hits")
+            if isinstance(hits, list) and hits:
+                merged.setdefault("hits", hits)
+                for hit in hits:
+                    if isinstance(hit, dict) and hit.get("hazard_type") and not merged.get("hazard_type"):
+                        merged["hazard_type"] = hit["hazard_type"]
+                        break
+
+
 async def _situation_simulate(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
     service = ctx.require_service("simulate", "situation_simulate")
-    result = await service({**ctx.payload, **config.get("extra", {})})
-    return NodeOutcome(output={"scenarios": result.get("scenarios", []), "horizon_minutes": result.get("horizon_minutes", 60)})
+    merged: dict[str, Any] = {**ctx.payload, **config.get("extra", {}), "upstream": ctx.inputs}
+    # 不往上游找，链路上的推演就只能看画布手填的 extra——"案例驱动"会变成空话。
+    _collect_simulate_anchors(merged, [*ctx.inputs.values(), *ctx.all_outputs.values()])
+    result = await service(merged)
+    # 整份结果都要带出去：`degraded`/`trend` 被丢掉过一次，代价是画布上看不见"这版推演没有案例支撑"
+    return NodeOutcome(
+        output={
+            "scenarios": result.get("scenarios", []),
+            "horizon_minutes": result.get("horizon_minutes", 60),
+            "trend": result.get("trend"),
+            "degraded": bool(result.get("degraded", False)),
+            "degraded_reason": result.get("degraded_reason", ""),
+            "case_count": result.get("case_count", len(result.get("scenarios", []))),
+            "dropped_cases": result.get("dropped_cases", 0),
+            # 推演是"从哪个等级往外推"的：不带上声明等级与灾种，画布上就没法核对结论的锚点
+            "declared_level": result.get("declared_level"),
+            "hazard_type": result.get("hazard_type"),
+            "region_code": result.get("region_code"),
+        }
+    )
 
 
 async def _human_review(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
@@ -352,7 +405,7 @@ def default_registry() -> NodeRegistry:
         NodeSpec("threshold", "阈值判断：对读数做触发条件判定", _threshold, ("conditions",), ("upstream", "mode")),
         NodeSpec("hazard_identify", "灾种识别：判定候选灾种", _hazard_identify, (), ("extra",)),
         NodeSpec("risk_assess", "风险定级：产出 1-5 级结论", _risk_assess, (), ("upstream", "extra")),
-        NodeSpec("situation_simulate", "态势推演：多情景趋势", _situation_simulate, (), ("extra",)),
+        NodeSpec("situation_simulate", "态势推演：多情景趋势", _situation_simulate, (), ("extra", "upstream")),
         NodeSpec("human_review", "人工审核/会签：等待决策", _human_review, (), ("prompt", "options")),
         NodeSpec("warning_generate", "预警生成：产出分级预警内容", _warning_generate, (), ("extra",)),
         NodeSpec("warning_publish", "预警发布：多通道靶向触达", _warning_publish, (), ("channels",)),

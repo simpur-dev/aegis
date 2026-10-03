@@ -202,6 +202,46 @@ class TestScenarios:
         assert delivery["warning_id"] == warning["warning_id"]
         assert int(delivery["delivered"]) > 0, "mock 通道一条都没发出去，等于这条证据是空的"
 
+    async def test_识别到定级到推演必须把等级与灾种一路带到画布(self, assembled: PlatformContainer) -> None:
+        """这条链上修掉两处"看着连了线、其实没传"：
+
+        ① `hazard_identify` 把结果整体挂在 ``hazard`` 键下，定级节点不接这一刀就只能拿到空 hits，
+           于是永远"保守四级"——蓝级预警在验收图上和橙色长得一样，只有数字能拆穿它；
+        ② 推演节点原先只回传 ``scenarios``/``horizon_minutes``，``degraded``/``case_count``/
+           ``declared_level`` 全被丢掉，画布上只剩一串看不出锚点与出处的等级数字。
+        """
+        case: dict[str, Any] = {
+            "nodes": [
+                {"node_id": "hz", "type": "hazard_identify", "config": {}},
+                {"node_id": "ass", "type": "risk_assess", "config": {"upstream": "hz"}},
+                {"node_id": "sim", "type": "situation_simulate", "config": {}},
+            ],
+            "edges": [
+                {"source": "hz", "target": "ass", "condition": ""},
+                {"source": "ass", "target": "sim", "condition": ""},
+            ],
+            "payload": {
+                "region_code": "540121",
+                "readings": [
+                    {"station_id": "S1", "metric": "rain_10min", "value": 42.0, "unit": "mm", "region_code": "540121", "quality_flag": "ok"}
+                ],
+            },
+            "expectations": {},
+        }
+        detail = await _run(assembled, case, "识别定级推演")
+
+        assessed = _node(detail, "ass")["output"]
+        assert assessed["risk_level"] == 2, f"上游 hits 没并进定级：{assessed['risk']['rationale']}"
+        assert "R-DEBRIS-RAIN-1" in assessed["risk"]["rationale"], "定级依据里必须点得出是哪条规则命中"
+
+        pushed = _node(detail, "sim")["output"]
+        assert pushed["declared_level"] == 2, "推演的锚点等级没从上游带进来"
+        assert pushed["hazard_type"] == "debris_flow" and pushed["region_code"] == "540121"
+        assert pushed["degraded"] is False and pushed["case_count"] == len(pushed["scenarios"]) > 0
+        assert pushed["trend"] in ("升级", "持平", "缓解")
+        assert all(item["refs"] and item["impact_factors"] for item in pushed["scenarios"]), "情景没有出处与量化要素=又是编数"
+        assert all("provenance" in factor for item in pushed["scenarios"] for factor in item["impact_factors"])
+
     async def test_外呼节点确实发出了请求并累计进装配状态(self, assembled: PlatformContainer) -> None:
         outbound = assembled.outbound
         assert outbound is not None
