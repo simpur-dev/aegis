@@ -6,6 +6,7 @@ import api, { ApiError } from '@/api/client'
 import type { LatencyReport } from '@/api/types'
 import EChart from '@/components/EChart.vue'
 import type { ChartOption } from '@/components/echarts'
+import { latencyRows } from '@/views/metrics/rows'
 import { formatMetricValue, toMillis } from '@/utils/metricUnits'
 
 const report = ref<LatencyReport | null>(null)
@@ -32,14 +33,7 @@ const INDICATOR_LABELS: Record<string, string> = {
   assistant_reply_ms: '语义交互一轮耗时',
 }
 
-const rows = computed(() =>
-  Object.entries(report.value?.metrics ?? {}).map(([name, stats]) => ({
-    name,
-    label: INDICATOR_LABELS[name] ?? name,
-    ...stats,
-    pass: stats.budget_ms == null ? null : stats.p95_ms <= stats.budget_ms,
-  })),
-)
+const rows = computed(() => latencyRows(report.value?.metrics ?? {}, INDICATOR_LABELS))
 
 const chartOption = computed<ChartOption>(() => ({
   tooltip: { trigger: 'axis' },
@@ -47,10 +41,10 @@ const chartOption = computed<ChartOption>(() => ({
   grid: { left: 70, right: 24, bottom: 90 },
   xAxis: { type: 'category', data: rows.value.map((r) => r.label), axisLabel: { rotate: 35, fontSize: 10 } },
   yAxis: { type: 'log', logBase: 10, name: 'ms（对数轴）' },
-  // 秒制那几条必须先换算成毫秒再进同一根轴，否则轴标签说的"ms"对它们不成立
+  // 共用一根毫秒轴：秒制那几条先按出口声明的单位换算，否则轴标签说的"ms"对它们不成立
   series: [
-    { name: 'P50', type: 'bar', data: rows.value.map((r) => Math.max(toMillis(r.name, r.p50_ms), 0.1)) },
-    { name: 'P95', type: 'bar', data: rows.value.map((r) => Math.max(toMillis(r.name, r.p95_ms), 0.1)) },
+    { name: 'P50', type: 'bar', data: rows.value.map((r) => Math.max(toMillis(r.unit, r.p50), 0.1)) },
+    { name: 'P95', type: 'bar', data: rows.value.map((r) => Math.max(toMillis(r.unit, r.p95), 0.1)) },
   ],
 }))
 
@@ -113,12 +107,12 @@ onMounted(load)
           { title: '指标', dataIndex: 'label', key: 'label' },
           { title: '埋点名', dataIndex: 'name', key: 'name' },
           { title: '样本', dataIndex: 'count', key: 'count' },
-          // 表头不写单位：单位跟着每个值一起显示（`0.01 s` / `5.8 ms`），
+          // 列头不写单位：单位跟着每个值一起显示（`0.019 s` / `4200 ms`），
           // 因为这张表里既有毫秒埋点也有秒制埋点，一个列头盖不住两种单位
-          { title: 'P50', dataIndex: 'p50_ms', key: 'p50_ms' },
-          { title: 'P95', dataIndex: 'p95_ms', key: 'p95_ms' },
-          { title: '最大', dataIndex: 'max_ms', key: 'max_ms' },
-          { title: '阈值', dataIndex: 'budget_ms', key: 'budget_ms' },
+          { title: 'P50', dataIndex: 'p50', key: 'p50' },
+          { title: 'P95', dataIndex: 'p95', key: 'p95' },
+          { title: '最大', dataIndex: 'max', key: 'max' },
+          { title: '阈值', dataIndex: 'budget', key: 'budget' },
           { title: '判定', key: 'pass' },
         ]"
       >
@@ -127,8 +121,8 @@ onMounted(load)
             <a-tag v-if="record.pass === null" color="default">未设阈值</a-tag>
             <a-tag v-else :color="record.pass ? 'green' : 'red'">{{ record.pass ? '达标' : '超标' }}</a-tag>
           </template>
-          <template v-else-if="['p50_ms', 'p95_ms', 'max_ms', 'budget_ms'].includes(String(column.key))">
-            {{ formatMetricValue(record.name, record[column.key as 'p50_ms']) }}
+          <template v-else-if="['p50', 'p95', 'max', 'budget'].includes(String(column.key))">
+            {{ formatMetricValue(record.unit, record[column.key as 'p50']) }}
           </template>
         </template>
       </a-table>
