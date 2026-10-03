@@ -455,6 +455,10 @@ def register_sla_budgets(
         "ingest_end_to_end_seconds": float(settings.sla_ingest_seconds),
         # 人工上报是第四条接入腿（架构文档 §6.2 场景二）：文本→三路解析→进链路，沿用 ≤5 分钟口径
         "report_intake_seconds": float(settings.sla_ingest_seconds),
+        # 语义交互一轮（意图解构→动作→认知镜像）与数据共享同属考核指标 3 的 ≤3s 一档。
+        # 只记录不判，"≤3s" 就只是这句文档里的话：这条腿的量测点在 `services/assistant.py`，
+        # 而本机无 LLM 凭据时它必然远小于 3s——正因为"显然达标"，不登记预算就永远不会有人发现漏了。
+        "assistant_reply_ms": float(settings.sla_sync_ms),
         # 预警信息生成时间 ≤3 分钟
         "warning_generation_ms": settings.sla_warning_gen_seconds * 1000.0,
         # 预警信息靶向触达 ≤20 分钟

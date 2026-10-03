@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from aegis.config import Settings
 from aegis.container import create_container
 
@@ -54,3 +56,27 @@ def test_上报腿与阈值版本同在一份出口里() -> None:
     assert report["rulebook"]["rules"] == 9
     assert report["rulebook"]["source"] == "builtin"
     assert report["rulebook"]["uncalibrated"] == 9, "未标定状态必须随出口一起报出，不能只在 /api/v1/rules 里"
+
+
+@pytest.mark.asyncio
+async def test_语义交互这条腿既被记录也被判() -> None:
+    """`assistant_reply_ms` 全平台只有一个记账点（`services/assistant.py`）。
+
+    两头都要钉：出口里有样本（否则 ≤3s 那句话没有可对账的数字）、账本里有预算
+    （否则样本永远不产生违约计数，"达标"只是因为没人判过）。本机无 LLM 凭据时这条腿
+    显然会在毫秒级以下——正因如此，漏登记预算不会有任何症状，只能靠这条用例顶着。
+    """
+    container = _container()
+    async for _ in container.assistant.respond("查一下 540121 的预警", session_id="legs"):
+        pass
+
+    report = container.latency_report()
+    sample = report["metrics"].get("assistant_reply_ms")
+    assert sample and sample["count"] == 1, "语义交互的耗时没进考核出口"
+    # 读 `budget_ms`（账本按指标名现取）而不是 `sla_thresholds`（那张表按设置名别名，
+    # 拿它断言就等于再抄一份预算）。
+    assert sample["budget_ms"] == 3000, sample
+
+    # 拿一条注定超线的样本验证"判"真的在跑：没登记预算时这一条会静默通过
+    container.tracer.record("assistant_reply_ms", 5_000.0)
+    assert container.latency_report()["violations"].get("assistant_reply_ms") == 1, "超线样本没被判成违约：这条腿的 ≤3s 只是文档"

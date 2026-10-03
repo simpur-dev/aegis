@@ -36,6 +36,8 @@ TYPE_ACCURACY_INDICATOR = "5 类灾种触发条件识别准确率"
 # 指标名 → (阈值毫秒, 对应考核口径)
 INDICATORS: dict[str, tuple[float, str]] = {
     "sync_agent_to_gateway_ms": (3_000.0, "多节点数据共享同步时延 ≤3s"),
+    # 语义交互与数据共享同属考核指标 3 的 ≤3s 一档（`services/assistant.py` 唯一的记账点）
+    "assistant_reply_ms": (3_000.0, "语义交互一轮响应 ≤3s"),
     "collab_txn": (10_000.0, "异常工况识别与重调度响应 ≤10s（事务口径）"),
     "stage_assess_ms": (2_000.0, "常规任务调度响应时延 ≤2s"),
     "stage_plan_ms": (2_000.0, "常规任务调度响应时延 ≤2s"),
@@ -211,6 +213,15 @@ async def run(
             with_warning += 1 if outcome["chain"]["warning_id"] else 0
             fatal += 1 if outcome["chain"]["errors"] else 0
             await drain_pending(container.transport, timeout=5.0)
+        # 语义交互这条腿：只读查询走完整轮（意图解构→动作→认知镜像），让 ≤3s 这项在报表里
+        # 有自己的样本。只发查询、不发执行类任务，因此不需要 /confirm，也不会有任何动作被执行。
+        assistant_rounds = 0
+        assistant = getattr(container, "assistant", None)
+        if assistant is not None:
+            for index in range(max(reports, 1)):
+                async for _ in assistant.respond("查一下 540121 的预警", session_id=f"metrics-report-{index}"):
+                    pass
+                assistant_rounds += 1
         latency = container.latency_report()
     finally:
         await container.shutdown()
@@ -232,6 +243,11 @@ async def run(
             "转人工核签": reviewed,
             "台账计数": latency.get("reports"),
             "阈值版本": latency.get("rulebook"),
+        },
+        "语义交互腿": {
+            "轮次": assistant_rounds,
+            "一轮耗时_ms": (latency["metrics"].get("assistant_reply_ms") or {}).get("p50_ms"),
+            "说明": "只读查询，未做执行类确认；本机无 LLM 凭据时为「纯规则词表」口径" if assistant_rounds else "助手腿未装配",
         },
         "指标判定": rows,
         "准确率回放": accuracy.as_dict(),
