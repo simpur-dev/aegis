@@ -248,10 +248,10 @@ class TestMetricEvidence:
                 assert required in names, f"缺少指标埋点: {required}"
 
             # 调度响应：决策段就绪→完成必须 ≤2s（常规任务调度响应口径）
-            assert latency["metrics"]["stage_plan_ms"]["p95_ms"] <= settings.sla_schedule_ms
-            assert latency["metrics"]["stage_assess_ms"]["p95_ms"] <= settings.sla_schedule_ms
+            assert latency["metrics"]["stage_plan_ms"]["p95"] <= settings.sla_schedule_ms
+            assert latency["metrics"]["stage_assess_ms"]["p95"] <= settings.sla_schedule_ms
             assert latency["collaboration"]["pass"] is True
-            assert latency["metrics"]["warning_reach_ms"]["max_ms"] <= settings.sla_reach_seconds * 1000
+            assert latency["metrics"]["warning_reach_ms"]["max"] <= settings.sla_reach_seconds * 1000
             assert latency["violations"] == {}
         finally:
             await container.shutdown()

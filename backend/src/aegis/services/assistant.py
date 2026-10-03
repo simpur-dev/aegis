@@ -42,31 +42,43 @@ _TASK_ID_RE = re.compile(r"stu_[0-9a-f]{16}")
 
 @dataclass(frozen=True, slots=True)
 class ActionSpec:
-    """一个白名单动作的说明书：是否需要人工确认、缺依赖时的答复口径。"""
+    """一个白名单动作的说明书：是否需要人工确认、缺依赖时的答复口径。
+
+    `example` 是这个词表自己的一句话样本：能力面把它交给前端当"点这里试一条"的预填文本，
+    而 `tests/unit/test_assistant_intent.py` 断言每个 example 都能被本模块的词表判回它自己
+    那个动作。词表改了、样本没跟上，那条用例就会响——否则页面上的建议条会一路悄悄失效。
+    """
 
     name: str
     title: str
     requires_confirmation: bool
     needs: tuple[str, ...] = ()
+    example: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {"action": self.name, "title": self.title, "requires_confirmation": self.requires_confirmation, "needs": list(self.needs)}
+        return {
+            "action": self.name,
+            "title": self.title,
+            "requires_confirmation": self.requires_confirmation,
+            "needs": list(self.needs),
+            "example": self.example,
+        }
 
 
 #: 白名单就是白名单：不在这里的动作，无论规则还是 LLM 提出来，都只会得到一次拒绝。
 ACTION_SPECS: tuple[ActionSpec, ...] = (
-    ActionSpec("query.warnings", "查询已发布预警", False, ("list_warnings",)),
-    ActionSpec("query.chains", "查询最近链路", False, ("list_chains",)),
-    ActionSpec("query.tasks", "查询任务单元", False, ("get_task",)),
-    ActionSpec("query.stations", "查询站点台账", False, ("list_stations",)),
-    ActionSpec("query.agents", "查询在线智能体", False, ("list_agents",)),
-    ActionSpec("query.metrics", "查询指标量测", False, ("latency_report",)),
-    ActionSpec("explain.warning", "解释一条预警（认知镜像）", False, ("get_warning",)),
-    ActionSpec("explain.chain", "解释一条链路（认知镜像）", False, ("get_chain",)),
-    ActionSpec("ask.plan", "预案问答", False, ()),
-    ActionSpec("run.drill", "发起一次演练", True, ("run_drill",)),
-    ActionSpec("create.report", "提交人工上报", True, ("submit_report",)),
-    ActionSpec("list.actions", "列出可用动作", False, ()),
+    ActionSpec("query.warnings", "查询已发布预警", False, ("list_warnings",), "最近发布了哪些预警"),
+    ActionSpec("query.chains", "查询最近链路", False, ("list_chains",), "最近的事件列表"),
+    ActionSpec("query.tasks", "查询任务单元", False, ("get_task",), "任务单元清单"),
+    ActionSpec("query.stations", "查询站点台账", False, ("list_stations",), "站点台账里有哪些站"),
+    ActionSpec("query.agents", "查询在线智能体", False, ("list_agents",), "现在有哪些在线智能体"),
+    ActionSpec("query.metrics", "查询指标量测", False, ("latency_report",), "p95 时延达标吗"),
+    ActionSpec("explain.warning", "解释一条预警（认知镜像）", False, ("get_warning",), "解释 wrn_… 为什么定这个等级"),
+    ActionSpec("explain.chain", "解释一条链路（认知镜像）", False, ("get_chain",), "链路追踪 trc_… 每段耗时"),
+    ActionSpec("ask.plan", "预案问答", False, (), "这个沟道泥位抬升要不要转移群众"),
+    ActionSpec("run.drill", "发起一次演练", True, ("run_drill",), "发起一次演练"),
+    ActionSpec("create.report", "提交人工上报", True, ("submit_report",), "我要上报：沟道泥位抬升，下游有村庄"),
+    ActionSpec("list.actions", "列出可用动作", False, (), "你能做什么"),
 )
 ACTION_WHITELIST: frozenset[str] = frozenset(spec.name for spec in ACTION_SPECS)
 _SPEC_BY_NAME: dict[str, ActionSpec] = {spec.name: spec for spec in ACTION_SPECS}
@@ -277,7 +289,9 @@ class AssistantService:
         hazard_hint: str | None = None,
     ) -> AsyncGenerator[AssistantEvent, None]:
         """一次对话轮次：以事件流的形式给出过程与结果（API 层负责 SSE 编码）。"""
-        started = time.monotonic()
+        # 时延测量一律用 perf_counter：Windows 上 time.monotonic() 走 GetTickCount64()，
+        # 步进 15.6 ms，一轮 0.3 ms 的交互会被量成 0——考核项 ≤3s 于是永远绿。
+        started = time.perf_counter()
         body = str(text or "").strip()[:2_000]
         session = self._touch(session_id)
         yield AssistantEvent(
@@ -319,12 +333,12 @@ class AssistantService:
 
         session.history.append({"role": "assistant", "text": " ".join(answer_parts)[:500]})
         self.replies += 1
-        self._tracer.record("assistant_reply_ms", max((time.monotonic() - started) * 1000.0, 0.0), trace_id=session.trace_id)
+        self._tracer.record("assistant_reply_ms", max((time.perf_counter() - started) * 1000.0, 0.0), trace_id=session.trace_id)
         yield AssistantEvent(
             "done",
             {
                 "session_id": session.session_id,
-                "latency_ms": round((time.monotonic() - started) * 1000.0, 3),
+                "latency_ms": round((time.perf_counter() - started) * 1000.0, 3),
                 "rejected_count": len(self.rejections),
             },
         )
@@ -778,8 +792,10 @@ def narrate_result(action: str, result: dict[str, Any]) -> str:
         return str(result["error"])
     if action == "query.metrics":
         metrics = result.get("metrics") or {}
+        # 键名中性（p50/p95）、单位随 payload：这里若还按 `p50_ms` 读，秒制那几条会静默变 None
         lines = [
-            f"{name}：n={stats.get('count')} p50={stats.get('p50_ms')} p95={stats.get('p95_ms')} 违约={stats.get('breaches', 0)}"
+            f"{name}：n={stats.get('count')} p50={stats.get('p50')}{stats.get('unit')} "
+            f"p95={stats.get('p95')}{stats.get('unit')} 违约={stats.get('breaches', 0)}"
             for name, stats in metrics.items()
             if isinstance(stats, dict)
         ]
@@ -834,7 +850,7 @@ def _trim_metrics(report: dict[str, Any]) -> dict[str, Any]:
     trimmed: dict[str, Any] = {}
     for name, stats in (metrics or {}).items():
         if isinstance(stats, dict):
-            trimmed[name] = {key: stats[key] for key in ("count", "p50_ms", "p95_ms", "p99_ms", "max_ms", "breaches") if key in stats}
+            trimmed[name] = {key: stats[key] for key in ("count", "unit", "p50", "p95", "p99", "max", "breaches") if key in stats}
     trimmed["collaboration"] = report.get("collaboration") if isinstance(report, dict) else None
     return trimmed
 

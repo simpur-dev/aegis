@@ -28,28 +28,29 @@ from aegis.config import Settings
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.container import create_container
 from aegis.domain.messages import utc_now
+from aegis.observability.tracer import unit_of_metric
 from aegis.persistence.replay import ReplayReport, load_dataset, measure
 
 ACCURACY_INDICATOR = "多灾种灾害预警准确率 ≥80%"
 TYPE_ACCURACY_INDICATOR = "5 类灾种触发条件识别准确率"
 
-# 指标名 → (阈值毫秒, 对应考核口径)
-INDICATORS: dict[str, tuple[float, str]] = {
-    "sync_agent_to_gateway_ms": (3_000.0, "多节点数据共享同步时延 ≤3s"),
+#: 指标名 → 对应考核口径。阈值不在这里抄第二份：账本出口自带 `budget` 与 `unit`，
+#: 唯一的登记处是 `instrumentation.register_sla_budgets`。此前这份副本按"毫秒"写死，
+#: 秒制那两条只能另开一支循环处理（`INGEST_INDICATOR` / `REPORT_INTAKE_INDICATOR`），
+#: 而"另开一支"正是当年把秒值拿去比毫秒阈值、永远绿的源头。
+INDICATORS: dict[str, str] = {
+    "sync_agent_to_gateway_ms": "多节点数据共享同步时延 ≤3s",
     # 语义交互与数据共享同属考核指标 3 的 ≤3s 一档（`services/assistant.py` 唯一的记账点）
-    "assistant_reply_ms": (3_000.0, "语义交互一轮响应 ≤3s"),
-    "collab_txn": (10_000.0, "异常工况识别与重调度响应 ≤10s（事务口径）"),
-    "stage_assess_ms": (2_000.0, "常规任务调度响应时延 ≤2s"),
-    "stage_plan_ms": (2_000.0, "常规任务调度响应时延 ≤2s"),
-    "warning_generation_ms": (180_000.0, "预警信息生成时间 ≤3min"),
-    "warning_reach_ms": (1_200_000.0, "预警信息靶向触达 ≤20min"),
+    "assistant_reply_ms": "语义交互一轮响应 ≤3s",
+    "collab_txn": "异常工况识别与重调度响应 ≤10s（事务口径）",
+    "stage_assess_ms": "常规任务调度响应时延 ≤2s",
+    "stage_plan_ms": "常规任务调度响应时延 ≤2s",
+    "warning_generation_ms": "预警信息生成时间 ≤3min",
+    "warning_reach_ms": "预警信息靶向触达 ≤20min",
+    "ingest_end_to_end_seconds": "多源数据接入时延 ≤5分钟",
+    # 人工上报是"接入 ≤5min"的第四条腿（批次 B4）
+    "report_intake_seconds": "人工上报接入时延 ≤5分钟（第四条腿）",
 }
-
-INGEST_INDICATOR = ("ingest_end_to_end_seconds", 300.0, "多源数据接入时延 ≤5分钟（秒制）")
-
-#: 人工上报是"接入 ≤5min"的第四条腿（批次 B4）。它同样以秒记录，所以判定要和 ingest 一起
-#: 走秒制那一支——塞进 INDICATORS 会让 0.1 秒的样本去和毫秒阈值比，永远"达标"得毫无意义。
-REPORT_INTAKE_INDICATOR = ("report_intake_seconds", 300.0, "人工上报接入时延 ≤5分钟（第四条腿，秒制）")
 
 #: 固定两条上报文本：一条够得上阈值（该报警），一条只描述现象（不该报警）。
 #: 用固定文本而不是随机句子，是为了让"报表里的 20 例"每次都能被逐条复跑对上。
@@ -117,48 +118,53 @@ def accuracy_report(dataset: Path | None, *, target: float | None = None) -> Rep
     return measure(loaded, target=target)
 
 
+def _first_stat(metrics: dict[str, Any], name: str, key: str) -> float | None:
+    """取某指标的一个分位数；埋点缺失或无样本一律 None。
+
+    存在理由：报表里"0"与"没测到"必须是两件事。写成 `…get(key, 0.0)` 会把没跑过的腿
+    报成"耗时 0 毫秒"，读报表的人会当成达标。
+    """
+    stats = metrics.get(name)
+    if not isinstance(stats, dict) or not stats.get("count"):
+        return None
+    value = stats.get(key)
+    return None if not isinstance(value, (int, float)) else float(value)
+
+
 def _table(latency: dict[str, Any], collaboration: dict[str, Any]) -> list[dict[str, Any]]:
+    """考核指标表：数值与阈值一律取自账本出口，判定只比较同单位的两个数。
+
+    列名跟着单位走（`P95_ms` / `P95_s`），因为这张表里既有毫秒埋点也有秒制埋点——
+    把两者塞进同一个 `_ms` 列名就是 1000 倍误读，硬凑一个不带单位的列头又让读者自己猜。
+    出口自带的 `unit` 与指标名后缀若不一致，这里直接抛错：一份悄悄错 1000 倍的报表
+    比一份没有报表更坏。
+    """
     rows: list[dict[str, Any]] = []
     metrics = latency["metrics"]
-    for name, (budget_ms, description) in INDICATORS.items():
+    for name, description in INDICATORS.items():
+        unit = unit_of_metric(name)
         stats = metrics.get(name)
-        if not stats or stats["count"] == 0:
-            rows.append({"指标": description, "样本": 0, "P95_ms": None, "阈值_ms": budget_ms, "判定": "未测得"})
+        row: dict[str, Any] = {"指标": description, "样本": 0, "单位": unit}
+        for key in ("P50", "P95", "最大"):
+            row[f"{key}_{unit}"] = None
+        if stats is not None and stats.get("unit", unit) != unit:
+            raise ValueError(f"{name}: 出口单位 {stats.get('unit')} 与指标名后缀 {unit} 不一致")
+        budget = None if stats is None else stats.get("budget")
+        row[f"阈值_{unit}"] = budget
+        count = 0 if stats is None else stats["count"]
+        row["样本"] = count
+        if not count:
+            row["判定"] = "未测得（账本里没有这条指标的样本）"
+            rows.append(row)
             continue
-        p95 = stats["p95_ms"]
-        rows.append(
-            {
-                "指标": description,
-                "样本": stats["count"],
-                "P50_ms": stats["p50_ms"],
-                "P95_ms": p95,
-                "最大_ms": stats["max_ms"],
-                "阈值_ms": budget_ms,
-                "判定": "达标" if p95 <= budget_ms else "超标",
-                "越限样本": stats.get("breaches", 0),
-            }
-        )
-
-    # 这两条都以"秒"记值，所以列名与阈值都写 `_s`：原来把秒数拿去和 300000（毫秒）比，
-    # 任何时延都会"达标"——那是一行永远绿的假判定（容器侧踩过同单位的坑，见 container.latency_report 注释）。
-    for name, budget_seconds, description in (INGEST_INDICATOR, REPORT_INTAKE_INDICATOR):
-        stats = metrics.get(name)
-        if not stats or not stats["count"]:
-            rows.append({"指标": description, "样本": 0, "P95_s": None, "阈值_s": budget_seconds, "判定": "未测得"})
-            continue
-        p95_seconds = stats["p95_ms"]  # 账本按指标名后缀的单位存值：`_seconds` 存的就是秒
-        rows.append(
-            {
-                "指标": description,
-                "样本": stats["count"],
-                "P50_s": stats["p50_ms"],
-                "P95_s": p95_seconds,
-                "最大_s": stats["max_ms"],
-                "阈值_s": budget_seconds,
-                "判定": "达标" if p95_seconds <= budget_seconds else "超标",
-                "越限样本": stats.get("breaches", 0),
-            }
-        )
+        for source, label in (("p50", "P50"), ("p95", "P95"), ("max", "最大")):
+            row[f"{label}_{unit}"] = stats[source]
+        if budget is None:
+            row["判定"] = "未设阈值"
+        else:
+            row["判定"] = "达标" if stats["p95"] <= budget else "超标"
+            row["越限样本"] = stats.get("breaches", 0)
+        rows.append(row)
 
     rate = collaboration["success_rate"]
     rows.append(
@@ -246,7 +252,8 @@ async def run(
         },
         "语义交互腿": {
             "轮次": assistant_rounds,
-            "一轮耗时_ms": (latency["metrics"].get("assistant_reply_ms") or {}).get("p50_ms"),
+            # 没有样本就是 None（报表里显示"未测得"），不能拿 0.0 顶上去——那是一行"一轮耗时 0 ms"的假话
+            "一轮耗时_ms": _first_stat(latency["metrics"], "assistant_reply_ms", "p50"),
             "说明": "只读查询，未做执行类确认；本机无 LLM 凭据时为「纯规则词表」口径" if assistant_rounds else "助手腿未装配",
         },
         "指标判定": rows,

@@ -9,7 +9,7 @@ from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, gene
 
 from aegis.bus.gateway import AgentGateway
 from aegis.observability import telemetry
-from aegis.observability.tracer import Tracer
+from aegis.observability.tracer import Tracer, millis_of
 
 _BUCKETS_MS = (
     0.5,
@@ -98,9 +98,9 @@ class MetricsExporter:
 
         samples, self._latency_cursor = self._tracer.ledger.iterate_since(self._latency_cursor)
         for sample in samples:
-            self._latency.labels(metric=sample.name).observe(sample.ms)
+            self._latency.labels(metric=sample.name).observe(millis_of(sample.name, sample.value))
             budget = self._tracer.ledger.budget_for(sample.name)
-            if budget is not None and sample.ms > budget:
+            if budget is not None and sample.value > budget:
                 self._breach.labels(metric=sample.name).inc()
 
         dropped = telemetry.dropped_span_count()

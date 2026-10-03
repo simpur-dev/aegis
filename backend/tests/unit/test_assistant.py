@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from aegis.config import Settings
-from aegis.services.assistant import ACTION_WHITELIST, AssistantActions, AssistantService, out_of_scope
+from aegis.services.assistant import ACTION_SPECS, ACTION_WHITELIST, AssistantActions, AssistantService, out_of_scope
 
 WARNING_ROW: dict[str, Any] = {
     "warning_id": "wrn_0123456789abcdef0123",
@@ -161,6 +161,28 @@ async def test_问句里的撤回发布字样不算越权() -> None:
 )
 def test_越权判定只看祈使式与整体作用域(text: str, expected: str | None) -> None:
     assert out_of_scope(text) == expected
+
+
+def test_每个动作的示例句都被自己的词表判回该动作() -> None:
+    """能力面把 `example` 交给页面当"点这里试一条"的预填文本。
+
+    词表改了而示例没跟上，用户点开的就是一个答非所问的动作，而页面本身看不出任何异常——
+    这条用例是那个错位唯一的探测器。示例句同时必须是可接受的（不被越权闸拦下），
+    否则建议条一点就红。
+    """
+    for spec in ACTION_SPECS:
+        assert spec.example, f"{spec.name} 没有示例句：页面上这条建议会预填出空输入框"
+        assert AssistantService._match_intent(spec.example) == spec.name, (
+            f"{spec.name} 的示例句「{spec.example}」被判成了 {AssistantService._match_intent(spec.example)}"
+        )
+        assert out_of_scope(spec.example) is None, f"{spec.name} 的示例句被判成越权：{out_of_scope(spec.example)}"
+
+
+def test_示例句非空且动作集合无重复() -> None:
+    """12 个动作各自一条示例：重复的示例句会让两条建议指向同一个动作，页面看不出来。"""
+    examples = [spec.example for spec in ACTION_SPECS]
+    assert len(examples) == len(set(examples)), "示例句重复：有两条建议会指向同一件事"
+    assert all(example.strip() == example and example for example in examples)
 
 
 @pytest.mark.asyncio

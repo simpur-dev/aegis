@@ -110,12 +110,16 @@ class WarningService:
     ) -> WarningDraft:
         """生成预警产物；翻译失败不阻断发布（降级为纯中文并标记待译）。
 
-        `started_at` 是链路起点的 `time.monotonic()`：给了就按"链路开始→预警产物就绪"量，
+        `started_at` 是链路起点的 `time.perf_counter()`：给了就按"链路开始→预警产物就绪"量，
         这才是考核指标"预警信息生成时间 ≤3min"的口径。没给就只量本步（含翻译调用），
         那是一个诚实的小数字——**绝不退回"拿刚盖的 `generated_at` 去减现在"**，
         那种算法恒等于 0.0ms，会让 ≤3min 这条在任何时延下都判"达标"。
+
+        起点与终点必须同一个时钟：这里曾用 `time.monotonic()`，而链路起点已改用
+        `perf_counter()`——两个不同纪元的数相减，结果要么被 `max(…, 0)` 压成 0，
+        要么凭空多出几十年，两种都会伪装成一个"看起来合理"的时延。
         """
-        entered = time.monotonic()
+        entered = time.perf_counter()
         record = self.build(verdict, event_id=event_id, trace_id=trace_id)
         pending = False
         if self._translator is not None:
@@ -128,7 +132,7 @@ class WarningService:
             pending = record.risk_level is not RiskLevel.NONE
 
         record.translation_pending = pending
-        done = time.monotonic()
+        done = time.perf_counter()
         elapsed_ms = (done - (started_at if started_at is not None else entered)) * 1000.0
         elapsed_ms = max(elapsed_ms, 0.0)
         self._tracer.record("warning_generation_ms", elapsed_ms, trace_id=record.trace_id)

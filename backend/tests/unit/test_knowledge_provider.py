@@ -266,7 +266,7 @@ class TestFallbackRecall:
         await router.recall("冰湖")
         stats = tracer.ledger.stats(RECALL_LATENCY_METRIC)
         assert stats.count == 1
-        assert stats.budget_ms == 800
+        assert stats.budget == 800
 
 
 class TestFallbackLearn:

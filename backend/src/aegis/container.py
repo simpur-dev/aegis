@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
@@ -584,7 +585,9 @@ class PlatformContainer:
         """
         if self.parser is None:
             raise RuntimeError("解析服务未装配（report parser）")
-        started = utc_now()
+        # 时长用 perf_counter，不用 utc_now()：时钟被同步一步，`max(…, 0.0)` 就把负数
+        # 夹成一个看似合理的 0 秒，"人工上报接入 ≤5min" 这条会静默变成永绿。
+        started = time.perf_counter()
         parsed = await self.parser.parse(note, region_code=region_code, hazard_hint=hazard_hint)
         region = parsed.region_code or region_code
         self.report_stats["submitted"] += 1
@@ -631,7 +634,7 @@ class PlatformContainer:
             preset_verdict=verdict,
             intake="report",
         )
-        intake_seconds = max((utc_now() - started).total_seconds(), 0.0)
+        intake_seconds = max(time.perf_counter() - started, 0.0)
         self.tracer.record(
             "report_intake_seconds",
             intake_seconds,

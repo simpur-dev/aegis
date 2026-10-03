@@ -252,7 +252,9 @@ class HazardResponseChain:
         reported = intake == "report"
         #: 链路起点。执行段生成预警时按"链路开始→产物就绪"量 ≤3min，
         #: 所以这个数必须从这里传下去，而不是在生成步里现取（那样恒为 0）。
-        started_at = time.monotonic()
+        #: 用 perf_counter 而不是 monotonic：后者在 Windows 上步进 15.6 ms，
+        #: 毫秒级的段会把 0.3 ms 量成 0，而 `warning_generation_ms` 的判定就建在这个数上。
+        started_at = time.perf_counter()
 
         async with instrumentation.span("stage_perceive_ms", trace_id=trace) as perceive_span:
             with self._tracer.span("stage_perceive_ms", trace_id=trace) as sp:

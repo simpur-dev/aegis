@@ -73,9 +73,10 @@ async def test_语义交互这条腿既被记录也被判() -> None:
     report = container.latency_report()
     sample = report["metrics"].get("assistant_reply_ms")
     assert sample and sample["count"] == 1, "语义交互的耗时没进考核出口"
-    # 读 `budget_ms`（账本按指标名现取）而不是 `sla_thresholds`（那张表按设置名别名，
-    # 拿它断言就等于再抄一份预算）。
-    assert sample["budget_ms"] == 3000, sample
+    # 读 `budget`（账本按指标名现取，单位由同一份出口声明）而不是 `sla_thresholds`
+    # （那张表按设置名别名，拿它断言就等于再抄一份预算）。
+    assert sample["unit"] == "ms", "单位由出口自己说：这条腿是毫秒"
+    assert sample["budget"] == 3000, sample
 
     # 拿一条注定超线的样本验证"判"真的在跑：没登记预算时这一条会静默通过
     container.tracer.record("assistant_reply_ms", 5_000.0)
