@@ -179,5 +179,33 @@ onUnmounted(() => store.stopPolling())
   border-radius: 6px;
   background: #fff;
   min-height: 0;
+  /* 网格项默认 min-width:auto：轨道写了 minmax(0,1fr) 也没用，画布仍按内容最小宽撑住 */
+  min-width: 0;
+}
+
+/*
+ * 窄屏（值班指挥员的平板，768–1000px 这一档）放不下"面板 208 + 画布 + 检查器 340"三列：
+ * 去掉导航栏 232px 后实际可用只有 ~520px，硬排三列会把整页撑出横向滚动，
+ * 右侧检查器（改参数、签工单都在那儿）被推到屏幕外看不见。
+ * 这里不做"缩成一条缝"的妥协：三列改两行，画布保住宽度，检查器整行放在下面。
+ */
+@media (max-width: 1000px) {
+  .wf__body {
+    grid-template-columns: minmax(160px, 208px) minmax(0, 1fr);
+    grid-template-areas:
+      'left canvas'
+      'right right';
+    height: auto;
+  }
+  .wf__left {
+    grid-area: left;
+  }
+  .wf__canvas {
+    grid-area: canvas;
+    min-height: 60vh;
+  }
+  .wf__right {
+    grid-area: right;
+  }
 }
 </style>

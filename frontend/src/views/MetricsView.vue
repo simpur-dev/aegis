@@ -114,6 +114,7 @@ onMounted(load)
         row-key="name"
         :pagination="false"
         size="small"
+        :scroll="{ x: 'max-content' }"
         :columns="[
           { title: '指标', dataIndex: 'label', key: 'label' },
           { title: '埋点名', dataIndex: 'name', key: 'name' },
