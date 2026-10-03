@@ -86,7 +86,15 @@ export function visibleDetail(row: IntegrationRow): Array<{ key: string; value: 
 function formatDetail(value: unknown): string {
   if (value === null || value === undefined || value === '') return '—'
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') return String(value)
-  return Array.isArray(value) ? value.join('、') : JSON.stringify(value)
+  // 数组的每个元素都走同一套规则。这里原先是 `value.join('、')`：元素是对象时会被隐式
+  // `String()` 成 `[object Object]`，而触达通道那条腿的 `channels` 恰好就是对象数组，
+  // 指挥台上因此只剩"四个占位符"——这条腿唯一要给人看的恰恰是每个通道的名字与计数。
+  if (Array.isArray(value)) return value.map((item) => formatDetail(item)).join('、')
+  // 对象摊平成 `k=v`：一是 JSON 串在 64 字符上限里只剩半个通道名，二是顶层的脱敏键过滤
+  // 管不到对象内部——嵌套里的 dsn/token 会随 `JSON.stringify` 整坨显示出来。
+  const entries = Object.entries(value as Record<string, unknown>).filter(([key]) => !SECRET_KEY.test(key))
+  if (!entries.length) return '—'
+  return entries.map(([key, item]) => `${key}=${formatDetail(item)}`).join(' ')
 }
 
 export class IntegrationsApiError extends Error {

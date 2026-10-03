@@ -103,6 +103,30 @@ describe('腿面板：行由后端决定，不由前端清单决定', () => {
     expect(byTestid(wrapper, 'leg-mqtt').text()).toContain('driver=—')
   })
 
+  it('触达通道那种对象数组要摊平显示，不能剩 [object Object]', async () => {
+    // 真实形状来自后端 `dispatcher.channel_status()`：每个通道一条 {channel, mode, sent, failed}。
+    // 这条用例盯的是"整条腿唯一要看的字段全成了占位符"——面板不报错、接口 200，只有人看得见。
+    const wrapper = await renderPanel([
+      {
+        name: 'delivery',
+        driver: 'http',
+        detail: {
+          channels: [
+            { channel: 'sms', mode: 'http', sent: 3, delivered: 3, failed: 0 },
+            { channel: 'broadcast', mode: 'http', sent: 1, delivered: 0, failed: 1 },
+          ],
+        },
+      },
+    ])
+    const leg = byTestid(wrapper, 'leg-delivery')
+    const fact = byTestid(wrapper, 'detail-delivery-channels')
+    expect(leg.text()).not.toContain('[object Object]')
+    expect(fact.text()).toContain('channel=sms')
+    // 截断是既有设计，全文挂 title：这里验的是"截了但没丢"
+    expect(fact.attributes('title')).toContain('channel=broadcast')
+    expect(fact.attributes('title')).toContain('failed=1')
+  })
+
   it('空串值显示为 —，不留 `endpoint=` 这种断头', async () => {
     const wrapper = await renderPanel([{ name: 'tracing', detail: { endpoint: '' } }])
     expect(byTestid(wrapper, 'detail-tracing-endpoint').text()).toBe('endpoint=—')

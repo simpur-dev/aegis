@@ -7,6 +7,7 @@ import type { TelemetryReading } from '@/api/types'
 import EChart from '@/components/EChart.vue'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import type { ChartOption } from '@/components/echarts'
+import { formatOperatingTime, operatingClock } from '@/utils/clock'
 
 const readings = ref<TelemetryReading[]>([])
 const region = ref<string>('')
@@ -32,7 +33,7 @@ const chartOption = computed<ChartOption>(() => ({
   title: { text: `${metric.value} 时序（${region.value || '全部区域'}）`, left: 'center', textStyle: { fontSize: 14 } },
   tooltip: { trigger: 'axis' },
   grid: { left: 56, right: 24, bottom: 48 },
-  xAxis: { type: 'category', data: filtered.value.map((r) => r.observed_at.slice(11, 19)) },
+  xAxis: { type: 'category', data: filtered.value.map((r) => operatingClock(r.observed_at)) },
   yAxis: { type: 'value', name: filtered.value[0]?.unit ?? '' },
   series: [
     {
@@ -52,7 +53,7 @@ const columns = [
   { title: '指标', dataIndex: 'metric', key: 'metric' },
   { title: '数值', key: 'value' },
   { title: '质量', dataIndex: 'quality_flag', key: 'quality_flag' },
-  { title: '观测时刻', dataIndex: 'observed_at', key: 'observed_at' },
+  { title: '观测时刻（UTC+8）', dataIndex: 'observed_at', key: 'observed_at' },
   { title: '接入时延', key: 'latency' },
 ]
 
@@ -134,6 +135,9 @@ onMounted(load)
               </template>
               <template v-else-if="column.key === 'latency'">
                 {{ latencyOf(record) }}
+              </template>
+              <template v-else-if="column.key === 'observed_at'">
+                {{ formatOperatingTime(record.observed_at) }}
               </template>
             </template>
           </a-table>

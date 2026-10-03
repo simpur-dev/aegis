@@ -6,6 +6,7 @@ import api, { ApiError } from '@/api/client'
 import type { LatencyReport } from '@/api/types'
 import EChart from '@/components/EChart.vue'
 import type { ChartOption } from '@/components/echarts'
+import { formatMetricValue, toMillis } from '@/utils/metricUnits'
 
 const report = ref<LatencyReport | null>(null)
 const loading = ref(false)
@@ -46,9 +47,10 @@ const chartOption = computed<ChartOption>(() => ({
   grid: { left: 70, right: 24, bottom: 90 },
   xAxis: { type: 'category', data: rows.value.map((r) => r.label), axisLabel: { rotate: 35, fontSize: 10 } },
   yAxis: { type: 'log', logBase: 10, name: 'ms（对数轴）' },
+  // 秒制那几条必须先换算成毫秒再进同一根轴，否则轴标签说的"ms"对它们不成立
   series: [
-    { name: 'P50', type: 'bar', data: rows.value.map((r) => Math.max(r.p50_ms, 0.1)) },
-    { name: 'P95', type: 'bar', data: rows.value.map((r) => Math.max(r.p95_ms, 0.1)) },
+    { name: 'P50', type: 'bar', data: rows.value.map((r) => Math.max(toMillis(r.name, r.p50_ms), 0.1)) },
+    { name: 'P95', type: 'bar', data: rows.value.map((r) => Math.max(toMillis(r.name, r.p95_ms), 0.1)) },
   ],
 }))
 
@@ -111,10 +113,12 @@ onMounted(load)
           { title: '指标', dataIndex: 'label', key: 'label' },
           { title: '埋点名', dataIndex: 'name', key: 'name' },
           { title: '样本', dataIndex: 'count', key: 'count' },
-          { title: 'P50(ms)', dataIndex: 'p50_ms', key: 'p50_ms' },
-          { title: 'P95(ms)', dataIndex: 'p95_ms', key: 'p95_ms' },
-          { title: '最大(ms)', dataIndex: 'max_ms', key: 'max_ms' },
-          { title: '阈值(ms)', dataIndex: 'budget_ms', key: 'budget_ms' },
+          // 表头不写单位：单位跟着每个值一起显示（`0.01 s` / `5.8 ms`），
+          // 因为这张表里既有毫秒埋点也有秒制埋点，一个列头盖不住两种单位
+          { title: 'P50', dataIndex: 'p50_ms', key: 'p50_ms' },
+          { title: 'P95', dataIndex: 'p95_ms', key: 'p95_ms' },
+          { title: '最大', dataIndex: 'max_ms', key: 'max_ms' },
+          { title: '阈值', dataIndex: 'budget_ms', key: 'budget_ms' },
           { title: '判定', key: 'pass' },
         ]"
       >
@@ -122,6 +126,9 @@ onMounted(load)
           <template v-if="column.key === 'pass'">
             <a-tag v-if="record.pass === null" color="default">未设阈值</a-tag>
             <a-tag v-else :color="record.pass ? 'green' : 'red'">{{ record.pass ? '达标' : '超标' }}</a-tag>
+          </template>
+          <template v-else-if="['p50_ms', 'p95_ms', 'max_ms', 'budget_ms'].includes(String(column.key))">
+            {{ formatMetricValue(record.name, record[column.key as 'p50_ms']) }}
           </template>
         </template>
       </a-table>

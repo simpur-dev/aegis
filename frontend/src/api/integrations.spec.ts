@@ -102,9 +102,51 @@ describe('visibleDetail：凭据类键一律不给看', () => {
     [false, 'false'],
     [3, '3'],
     [['a', 'b'], 'a、b'],
-    [{ legs: 2 }, '{"legs":2}'],
+    [{ legs: 2 }, 'legs=2'],
+    // 触达通道那条腿的真实形状：对象数组。旧实现这里给出 `[object Object]、[object Object]`
+    [{ channels: [{ channel: 'sms', mode: 'mock' }] }, 'channels=channel=sms mode=mock'],
   ])('值 %j 渲染成 %s', (value, expected) => {
     expect(visibleDetail(row({ detail: { k: value } }))[0]?.value).toBe(expected)
+  })
+
+  it('对象数组逐个摊平，不再出现 [object Object]', () => {
+    const entry = visibleDetail(
+      row({
+        name: 'delivery',
+        driver: 'http',
+        detail: {
+          channels: [
+            { channel: 'sms', mode: 'http', sent: 3, delivered: 3, failed: 0 },
+            { channel: 'broadcast', mode: 'http', sent: 1, delivered: 0, failed: 1 },
+          ],
+        },
+      }),
+    )[0]
+    expect(entry?.value).toContain('channel=sms')
+    expect(entry?.value).not.toContain('[object Object]')
+    // 一行放不下是设计内的（截断 + title 挂全文），但全文里每个通道的计数都该在
+    expect(entry?.hint.length).toBeGreaterThan((entry?.value ?? '').length)
+    expect(entry?.hint).toContain('channel=broadcast')
+    expect(entry?.hint).toContain('failed=1')
+  })
+
+  it('嵌套对象里的凭据也不许显示：顶层过滤管不到对象内部', () => {
+    const entry = visibleDetail(
+      row({
+        name: 'store',
+        detail: {
+          replicas: [{ host: 'pg-a', pg_dsn: 'postgresql://aegis:sup3rs3cr3t@10.0.0.2/aegis', neo4j_password: 'hunter2' }],
+        },
+      }),
+    )[0]
+    expect(entry?.value).toContain('host=pg-a')
+    expect(entry?.value).not.toContain('sup3rs3cr3t')
+    expect(entry?.value).not.toContain('hunter2')
+    expect(entry?.value).not.toContain('pg_dsn')
+  })
+
+  it('一个对象里全是敏感键时给破折号，而不是给一个空壳或整坨 JSON', () => {
+    expect(visibleDetail(row({ detail: { probe: { api_key: 'x', token: 'y' } } }))[0]?.value).toBe('—')
   })
 
   it('后端那段数据集说明放不进一行：截断展示，完整串留在 hint 上', () => {

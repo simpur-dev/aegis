@@ -5,6 +5,7 @@ import { onMounted, ref } from 'vue'
 import api, { ApiError } from '@/api/client'
 import type { TaskUnit, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
+import { formatOperatingTime } from '@/utils/clock'
 
 const warnings = ref<WarningRecord[]>([])
 const loading = ref(false)
@@ -20,7 +21,7 @@ const columns = [
   { title: '区域', key: 'regions' },
   { title: '通道', key: 'channels' },
   { title: '触达', key: 'reach' },
-  { title: '生成时间', dataIndex: 'generated_at', key: 'generated_at' },
+  { title: '生成时间（UTC+8）', dataIndex: 'generated_at', key: 'generated_at' },
   { title: '操作', key: 'action' },
 ]
 
@@ -81,6 +82,9 @@ onMounted(load)
             <a-space wrap>
               <a-tag v-for="code in record.region_codes" :key="code">{{ code }}</a-tag>
             </a-space>
+          </template>
+          <template v-else-if="column.key === 'generated_at'">
+            {{ formatOperatingTime(record.generated_at) }}
           </template>
           <template v-else-if="column.key === 'channels'">
             <a-space wrap>
