@@ -103,6 +103,11 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
   认知镜像复用 `rationale`/`degradations`/通道回执，LLM 只改措辞且**冒出事实之外的数字就整段弃用**。
   `POST /api/v1/reports` 与助手"帮我上报"共用 `container.submit_report` 这一个入口，
   解析后进入的是**同一条链路**（同一 trace、同一量测、同一降级留痕）。
+  低置信度（等级不是阈值命中所得）时 `_open_report_review()` 用 `REPORT_REVIEW_TEMPLATE`
+  自动开一张停在 `human_review` 节点的核签工单，回执带回 `review{instance_id, pending_node,
+  options, decision_endpoint}`，三态签核走**既有**的 `/api/v1/workflow/.../decision`；
+  该模板刻意不进 `BUILTIN_TEMPLATES`（那份清单的口径是"5 灾种处置剧本"），也刻意不含
+  `warning_publish` 节点——预警在进链路时已按判据发过，重复发布会把触达数字翻倍。
 - **任务智能解析与规则库（批次 C）**：`services/semantic_parser.py` 三路融合
   （规则腿为唯一判据；检索佐证只加置信；LLM 只提建议且逐字段过白名单），冲突消解固定为
   规则 > 检索 > LLM 且三腿原始结论全部留痕；`trigger_rules` 表把阈值版本化
