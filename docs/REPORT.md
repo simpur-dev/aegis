@@ -244,7 +244,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 
 | 取证项 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端门禁规模 | `cd backend && uv run python -m pytest -q --junitxml=junit_final.xml` | **2502 项、0 失败、0 错误、83 跳过**（跳过全部是需真库/真总线/真图的用例；2259 → 2460 是批次 B/C/D 那轮，2460 → 2502 是 2026-10-04 凌晨浏览器深巡那批，见下文"夜间浏览器深巡实测"） |
+| 后端门禁规模 | `cd backend && uv run python -m pytest -q --junitxml=junit_final.xml` | **2503 项、0 失败、0 错误、83 跳过**（跳过全部是需真库/真总线/真图的用例；2259 → 2460 是批次 B/C/D 那轮，2460 → 2503 是 2026-10-04 凌晨浏览器深巡那批，见下文"夜间浏览器深巡实测"） |
 | 后端风格与类型 | `uv run ruff format --check src tests scripts` / `ruff check` / `mypy src` | 三项全绿（mypy 覆盖 99 个模块） |
 | 前端门禁规模 | `cd frontend && npm run typecheck && npm run test` | typecheck 无错；**31 文件 / 492 项全绿**（434 → 492 是 2026-10-04 凌晨浏览器深巡那批补的门禁：画布选中态与实例聚焦 8 项、时延单位出口对账 15 项、指标页读数与失败面 8 项、助手示例句与建议条 7 项、422 detail 还原 6 项、桩客户端键集编译门禁带出的 4 项等） |
 | 人工上报进链路（第四条接入腿） | `POST /api/v1/reports`，文本"24小时累计降雨95毫米，沟道泥位抬升1.2米"，20 次 | 20/20 产出预警与 STU；`report_intake_seconds` 台账 **P50 1.225s / P95 1.239s**，预算 300s（≤5min 口径，占 **0.41%**）；`reports={submitted:20, measured_by_rule:20, review_required:0}` |
@@ -296,6 +296,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 | 取证项 | 怎么量的 | 结果 |
 | --- | --- | --- |
 | 核签工单在画布上能签了（本轮最要紧的一处） | 真机走 `/workflow`：点实例 → 看画布 → 点"核签通过（approve）" | 修前：运行区写着"待人工核签：review"，画布却是 **0 节点**、标题"未命名防控链路"——选不到节点就打不开决策面板，值班员只能回去 curl。修后：画布出 4 颗节点、`review` 高亮并自动选中；`POST /api/v1/workflow/instances/wfi_fdedeaf56c60/nodes/review/decision` **200**，载荷 `{choice:"approve",by:"值班指挥员"}`，实例转 `succeeded`，两条未命中的分支显示"分支跳过"，三颗决策按钮转灰 |
+| 画布编辑动作逐个真机点过 | 真机在空画布上：点面板项、HTML5 拖入、拖动已有节点、handle 对 handle 拉线、删线、删节点 | 点 `data_fetch` → 画布 1 节点、头部计数"1 节点 / 0 连线"、本地校验提示消失；拖入 `risk_assess` → 2 节点且落在指针松开处；拖动节点 → `transform` 改变并写回模型；源 handle 拉到目标 handle → `.vue-flow__edge` 1 条、连线行显示 `data_fetch_1→risk_assess_1` 且条件输入可用；点"删除"→ 回到 0 连线；"删除节点"入口在。全程 0 条 pageerror |
 | 画布选中态此前只活在 Vue Flow 内部 | 真机读 `.wf-node.is-selected` 与接口轮询节奏 | 视图每次由 `defToGraph` 整体重建，1.5s 一次的实例轮询把内部点选整批冲掉：`selectedNodes: []` 而右侧检查器明明显示"人工核签"。改为选中态由模型（`store.selectedNodeId`）给出后真机命中那颗节点；`focusInstance` 的程序化选中也第一次可见 |
 | 节点组件被响应式代理（控制台脏） | 真机控制台计数 | `WORKFLOW_NODE_TYPES` 未 `markRaw`，被 Vue Flow 收进 reactive 状态后每次渲染刷 `Vue received a Component that was made a reactive object`；补 markRaw 后同一页控制台 **0 条 warning**。用例先把映射放进 `reactive()` 再问 `isReactive`——直接对导出对象问恒为 false，那样的门禁证明不了任何事 |
 | 决策按钮中间那颗露英文裸值 | 真机读三颗按钮文案 | 模板三元式只认识 approve/reject，而定义里的候选是 `["approve","adjust","reject"]`，中间那颗直接显示 `adjust`。改为"核签通过（approve）/核签更正（adjust）/核签退回（reject）"，提交出去的仍是裸值 |
@@ -312,6 +313,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 | 注入面 | 全仓 `grep v-html / innerHTML / outerHTML / insertAdjacentHTML` | **0 处**：后端文本（报表正文、案例溯源、节点名）一律经 Vue 插值转义渲染，页面上看到的长文本是原样文本 |
 | 窄屏把右侧检查器推出屏幕（平板那一档） | 真机 768 / 900 / 1280 / 1440 四档量 `documentElement.scrollWidth` 与三块面板的位置 | 768px 下流程编排页 `scrollWidth=800`：三列网格（面板 208 + 画布 + 检查器 340）去掉导航 232px 后只剩 ~520px 可用，被挤到屏幕外的正是**改参数与签工单所在的检查器**。修法是画布补 `min-width:0`（网格项默认 auto，光写 `minmax(0,1fr)` 撑不住）+ ≤1000px 三列改两行；监测页遥测表与指标页明细表补内部横向滚动（把整页撑宽的正是"为什么测不出"那句必须写在条目里的说明）。四档复测横向溢出 0，三块面板都在视口内（截图留档 `.tmp-verify/wf-768.png`） |
 | 刷新与深链后页面说什么 | 真机对 `/metrics`、`/assistant`、`/dashboard` 各 reload 一次再读正文 | 三张页都重新取数并显示新鲜度（总览回到"更新于 2026-10-04 04:51:21（UTC+8）"，助手会话与时间线如实清空为"还没有发起对话"——本地时间线不假装持久，会话号由后端 meta 帧重新给出） |
+| 每页开屏 15 秒的假告警"事件流重连中" | 真机在页面里新建 `EventSource` 计时到 `open`，改完再量一次 | `open` 实测落在 **15.27 秒**，正好等于 `_SSE_KEEPALIVE_SECONDS`：浏览器要收到第一个字节才认为流已打开，而空闲流原本 15 秒内一个字节都没有——连接一直是好的，徽标却在说"重连中"。修法是一开流先 `yield ": open\n\n"`（注释帧，不改变消费端语义）。改后同一测法 **78 毫秒**，徽标立即"事件流已连接"。新增的 `tests/api/test_sse_live.py` 用例断言的是**时间**（第一帧 2s 内到）而不是内容；变异实测：删掉那一行 yield，用例在 2s 处 TimeoutError 变红 |
 
 
 | 桩客户端漏方法这一类缺陷 | `npm run typecheck` | 桩此前用 `as unknown as WorkflowClient` 绕过键集检查，漏掉 `definition` 时运行时只表现为一条 error 文案加一块空白画布。改为 `Record<keyof WorkflowClient, unknown>` 全量声明：客户端加方法而桩没补就是编译错误 |
