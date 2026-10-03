@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import time
 from collections.abc import AsyncIterator
 
 import httpx
@@ -91,6 +92,23 @@ class TestLiveServer:
 
         assert received, "SSE 未推送任何事件"
         assert "warning_id" in received[0]
+
+    async def test_打开流后立刻有第一帧而不是等保活周期(
+        self, live: httpx.AsyncClient
+    ) -> None:
+        """EventSource 要收到第一个字节才触发 `open`。
+
+        原本空闲流的第一字节是 15 秒后的那条 keep-alive 注释，于是真机上每次进页面
+        都有 15 秒顶着一句"事件流重连中"（实测 open 落在 15.27s），而连接一直是好的。
+        这里断言的不是内容而是**时间**：第一帧必须在保活周期之前到达。
+        """
+        started = time.perf_counter()
+        async with live.stream("GET", "/api/v1/events/stream") as response:
+            assert response.status_code == 200
+            first = await asyncio.wait_for(response.aiter_lines().__anext__(), timeout=2.0)
+        elapsed = time.perf_counter() - started
+        assert first.startswith(":"), f"第一帧应是注释帧（不是事件），实际 {first!r}"
+        assert elapsed < 2.0, f"第一帧等了 {elapsed:.2f}s：浏览器在这段时间里显示的是假的『重连中』"
 
     async def test_metrics_endpoint_serves_prometheus(self, live: httpx.AsyncClient) -> None:
         await live.post("/api/v1/drill/run", json={"scenario": "surge", "ticks": 1})

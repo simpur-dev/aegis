@@ -587,6 +587,11 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
 
         async def _gen() -> AsyncIterator[str]:
             """长连接生命周期严格短于关停/断连窗口：否则 uvicorn 默认无限等待优雅退出。"""
+            # 一开流就冲一帧注释：浏览器 EventSource 要收到第一个字节才触发 open，
+            # 而空闲流原本要等 `_SSE_KEEPALIVE_SECONDS`（15s）才有第一个字节。
+            # 真机量到 open 落在 15.27s——也就是说每次进页面都有 15 秒顶着一句
+            # "事件流重连中"，可它其实连得好好的。假告警比没告警更坏。
+            yield ": open\n\n"
             idle = 0.0
             try:
                 while not ctn.stopping and not await request.is_disconnected():
