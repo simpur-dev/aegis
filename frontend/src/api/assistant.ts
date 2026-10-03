@@ -87,6 +87,8 @@ export interface ActionSpecDto {
   needs: string[]
   available: boolean
   missing: string[]
+  /** 词表自己的示例句：页面上的建议条就预填它。缺字段时是空串，建议条据此不渲染成可点项。 */
+  example: string
 }
 
 export interface CapabilitiesDto {
@@ -125,6 +127,7 @@ function actionSpec(raw: unknown): ActionSpecDto {
     needs: Array.isArray(record.needs) ? record.needs.map(String) : [],
     available: record.available === true,
     missing: Array.isArray(record.missing) ? record.missing.map(String) : [],
+    example: typeof record.example === 'string' ? record.example : '',
   }
 }
 

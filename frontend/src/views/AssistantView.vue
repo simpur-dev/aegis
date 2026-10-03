@@ -15,7 +15,7 @@
 import { message } from 'ant-design-vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 
-import type { AssistantFrame, CapabilitiesDto, ConfirmResultDto, ProposalFrame } from '@/api/assistant'
+import type { ActionSpecDto, AssistantFrame, CapabilitiesDto, ConfirmResultDto, ProposalFrame } from '@/api/assistant'
 import { assistantApi, isAssistantDisabled, isAssistantUnavailable } from '@/api/assistant'
 import ReportForm from '@/components/reports/ReportForm.vue'
 
@@ -92,6 +92,12 @@ async function loadCapabilities(): Promise<void> {
   } finally {
     capabilitiesLoading.value = false
   }
+}
+
+/** 点建议条只填句子、不代发：发不发仍是值班员的决定，这页任何时候都不替人按下发送。 */
+function useExample(spec: ActionSpecDto): void {
+  if (spec.example === '') return
+  draft.value = spec.example
 }
 
 async function send(): Promise<void> {
@@ -212,14 +218,25 @@ onMounted(() => void loadCapabilities())
       />
 
       <div v-if="capabilities" class="caps" data-testid="caps-actions">
-        <a-tag
+        <!--
+          这排芯片此前是 <a-tag>：看着像建议，点下去什么都没有。12 个动作都 spelled 出来，
+          却要值班员自己猜"要打出哪个词才算问到了它"——本机没有 LLM 时意图只走词表规则，
+          猜错的代价是一句"未能识别意图"。现在点一下就把它自己的示例句填进输入框，
+          发不发仍由值班员决定（示例句来自能力面，词表口径只在后端一处维护）。
+        -->
+        <button
           v-for="spec in capabilities.actions"
           :key="spec.action"
-          :color="spec.available ? 'green' : 'red'"
+          type="button"
+          class="caps__chip"
+          :class="spec.available ? 'is-available' : 'is-missing'"
           :data-testid="`action-${spec.action}`"
+          :disabled="spec.example === ''"
+          :title="spec.example === '' ? '能力面没给这条动作的示例句' : `填入：${spec.example}`"
+          @click="useExample(spec)"
         >
           {{ spec.title }}{{ spec.requires_confirmation ? '（需确认）' : '' }}{{ spec.available ? '' : `：缺 ${spec.missing.join('、')}` }}
-        </a-tag>
+        </button>
         <div class="muted" data-testid="caps-ttl">
           会话保留 {{ Math.round(capabilities.session_ttl_seconds / 60) }} 分钟 ｜ 单会话最多 {{ capabilities.max_pending_actions }} 个待确认动作 ｜
           解析腿 {{ capabilities.semantic_parser ? '在位' : '缺席' }}
@@ -298,6 +315,27 @@ onMounted(() => void loadCapabilities())
 }
 .caps {
   margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.caps__chip {
+  padding: 2px 8px;
+  border: 1px solid #b7eb8f;
+  border-radius: 4px;
+  background: #f6ffed;
+  color: #389e0d;
+  font-size: 12px;
+  cursor: pointer;
+}
+.caps__chip.is-missing {
+  border-color: #ffa39e;
+  background: #fff1f0;
+  color: #cf1322;
+}
+.caps__chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 .error {
   color: #cf1322;

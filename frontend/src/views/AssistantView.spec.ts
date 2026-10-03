@@ -70,8 +70,8 @@ function capabilities(overrides: Partial<CapabilitiesDto> = {}): CapabilitiesDto
     semantic_parser: true,
     wired_actions: { list_warnings: true },
     actions: [
-      { action: 'query.warnings', title: '查询已发布预警', requires_confirmation: false, needs: ['list_warnings'], available: true, missing: [] },
-      { action: 'run.drill', title: '发起一次演练', requires_confirmation: true, needs: ['run_drill'], available: false, missing: ['run_drill'] },
+      { action: 'query.warnings', title: '查询已发布预警', requires_confirmation: false, needs: ['list_warnings'], available: true, missing: [], example: '最近发布了哪些预警' },
+      { action: 'run.drill', title: '发起一次演练', requires_confirmation: true, needs: ['run_drill'], available: false, missing: ['run_drill'], example: '发起一次演练' },
     ],
     session_ttl_seconds: 900,
     max_pending_actions: 8,
@@ -101,6 +101,51 @@ beforeEach(() => {
   mockedCapabilities.mockReset()
   mockedChat.mockReset()
   mockedConfirm.mockReset()
+})
+
+/**
+ * 建议条必须点得动。
+ *
+ * 此前这一排是 `<a-tag>`：写着"查询已发布预警"，点下去什么都没有，而本机没有 LLM 时
+ * 意图只走后端词表——值班员得自己猜该打出哪个词才问得到它，猜错就收到一句"未能识别意图"。
+ * 现在点一下把该动作自己的示例句填进输入框，发送仍由人决定。
+ */
+describe('建议条：点一下填进输入框，不代发', () => {
+  it('点芯片把该动作的示例句填入消息框，且不发请求', async () => {
+    const wrapper = await renderView()
+    await wrapper.find('[data-testid="action-query.warnings"]').trigger('click')
+    expect((wrapper.find('[data-testid="field-message"]').element as HTMLTextAreaElement).value).toBe('最近发布了哪些预警')
+    expect(mockedChat).not.toHaveBeenCalled()
+  })
+
+  it('需确认的动作也照样填得出来，确认这一步留给后端提案', async () => {
+    const wrapper = await renderView()
+    await wrapper.find('[data-testid="action-run.drill"]').trigger('click')
+    expect((wrapper.find('[data-testid="field-message"]').element as HTMLTextAreaElement).value).toBe('发起一次演练')
+    expect(wrapper.text()).toContain('需确认')
+  })
+
+  it('能力面没给示例句时这条禁用，点了不改输入框', async () => {
+    const caps = capabilities({
+      actions: [
+        { action: 'query.tasks', title: '查询任务单元', requires_confirmation: false, needs: [], available: true, missing: [], example: '' },
+      ],
+    })
+    const wrapper = await renderView(caps)
+    const chip = wrapper.find('[data-testid="action-query.tasks"]')
+    expect(chip.attributes('disabled')).toBeDefined()
+    await chip.trigger('click')
+    expect((wrapper.find('[data-testid="field-message"]').element as HTMLTextAreaElement).value).toBe('')
+  })
+
+  it('填进去的句子随后能发出去（点芯片与发送是两步，不是一步）', async () => {
+    const wrapper = await renderView()
+    mockedChat.mockReturnValue(framesOf([{ type: 'meta', session_id: 'sess_0001', llm_configured: true, actions: [] }]))
+    await wrapper.find('[data-testid="action-query.warnings"]').trigger('click')
+    await wrapper.find('[data-testid="send"]').trigger('click')
+    await flushPromises()
+    expect(mockedChat.mock.calls[0]?.[0]?.message).toBe('最近发布了哪些预警')
+  })
 })
 
 describe('能力面：读不到与没配置都不许显示成正常', () => {
@@ -136,7 +181,8 @@ describe('能力面：读不到与没配置都不许显示成正常', () => {
   it('缺依赖的动作点名缺了哪个，不显示成可用', async () => {
     const wrapper = await renderView()
     expect(byTestid(wrapper, 'action-run.drill').text()).toContain('缺 run_drill')
-    expect(byTestid(wrapper, 'action-run.drill').attributes('data-color')).toBe('red')
+    expect(byTestid(wrapper, 'action-run.drill').classes()).toContain('is-missing')
+    expect(byTestid(wrapper, 'action-query.warnings').classes()).toContain('is-available')
     expect(byTestid(wrapper, 'action-query.warnings').text()).toContain('查询已发布预警')
   })
 })
