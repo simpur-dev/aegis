@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { message } from 'ant-design-vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import api, { ApiError } from '@/api/client'
+import api from '@/api/client'
 import type { AgentInfo, ChainSummary, LatencyReport, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
 import LegStatusPanel from '@/components/system/LegStatusPanel.vue'
 import { useEventStream } from '@/composables/useEventStream'
+import { formatOperatingTime } from '@/utils/clock'
+
+const REFRESH_MS = 15_000
 
 const ready = ref<{ agents_online: number; store: Record<string, number> } | null>(null)
 const agents = ref<AgentInfo[]>([])
@@ -14,11 +17,17 @@ const warnings = ref<WarningRecord[]>([])
 const chains = ref<ChainSummary[]>([])
 const latency = ref<LatencyReport | null>(null)
 const loading = ref(false)
+/** 这页的数字是什么时候取的。没有它，"预警 3 条"到底是"只有 3 条"还是"页面 20 分钟没动"就无从判断。 */
+const updatedAt = ref<string | null>(null)
+const refreshError = ref<string | null>(null)
+let timer: ReturnType<typeof setInterval> | null = null
 const { events } = useEventStream()
 
 const kpis = computed(() => [
   { label: '在线智能体', value: ready.value?.agents_online ?? 0, suffix: '个' },
-  { label: '已发布预警', value: warnings.value.length, suffix: '条' },
+  // 取后端口径的总数，不用列表长度：`warnings` 是按 `limit: 50` 拉回来的，
+  // 拿它的长度当"已发布预警"，过 50 条之后这个数字就永远停在 50，而且看着完全正常。
+  { label: '已发布预警', value: ready.value?.store?.warning_count ?? warnings.value.length, suffix: '条' },
   { label: '任务单元', value: ready.value?.store?.task_count ?? 0, suffix: '个' },
   {
     label: '协同成功率',
@@ -60,14 +69,33 @@ async function refresh(): Promise<void> {
     warnings.value = warningList.items
     chains.value = eventList.items
     latency.value = latencyReport
+    updatedAt.value = new Date().toISOString()
+    refreshError.value = null
   } catch (error) {
-    message.error(error instanceof ApiError ? `加载失败：${error.message}` : '加载失败：未知错误')
+    // 失败要留在页面上：只弹一条 3 秒就消失的 message，值班员回头只看得到数字，
+    // 分不清"没有新预警"和"取数一直在失败"。原因也不能吞成"未知错误"——
+    // 非 ApiError 的异常（网络层抛的裸 Error 等）同样带着现场要看的字。
+    const reason = error instanceof Error ? error.message : String(error)
+    refreshError.value = reason.trim() || '未知错误'
+    message.error(`加载失败：${refreshError.value}`)
   } finally {
     loading.value = false
   }
 }
 
-onMounted(refresh)
+onMounted(() => {
+  void refresh()
+  // 页签切到后台就不发请求（与腿面板同一口径）：大屏副页签没人看，轮询却一直在打接口。
+  timer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return
+    void refresh()
+  }, REFRESH_MS)
+})
+
+onBeforeUnmount(() => {
+  if (timer !== null) clearInterval(timer)
+  timer = null
+})
 
 const stageColumns = [
   { title: '事件', dataIndex: 'trace_id', key: 'trace_id', ellipsis: true },
@@ -87,6 +115,20 @@ const agentColumns = [
 
 <template>
   <div>
+    <div class="dash-bar" data-testid="dashboard-bar">
+      <span class="dash-stamp" data-testid="dashboard-updated">
+        {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
+      </span>
+      <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
+    </div>
+    <a-alert
+      v-if="refreshError"
+      type="warning"
+      show-icon
+      :message="`最近一次取数失败：${refreshError}（页面显示的是上一次成功取到的数字）`"
+      data-testid="dashboard-error"
+      class="dash-error"
+    />
     <a-row :gutter="12">
       <a-col v-for="kpi in kpis" :key="kpi.label" :span="6">
         <a-card size="small">
@@ -149,7 +191,7 @@ const agentColumns = [
           <a-timeline>
             <a-timeline-item v-for="event in events.slice(0, 8)" :key="event.trace_id + event.ts" color="blue">
               <div>{{ event.payload.title ?? event.payload.warning_id ?? event.subject }}</div>
-              <small>{{ event.ts }}</small>
+              <small>{{ formatOperatingTime(event.ts) }}（UTC+8）</small>
             </a-timeline-item>
             <a-empty v-if="!events.length" description="暂无事件" />
           </a-timeline>
@@ -168,6 +210,20 @@ const agentColumns = [
 </template>
 
 <style scoped>
+.dash-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.dash-stamp {
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+}
+.dash-error {
+  margin-bottom: 12px;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
