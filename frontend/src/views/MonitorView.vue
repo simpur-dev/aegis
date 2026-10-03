@@ -146,6 +146,7 @@ onBeforeUnmount(() => {
             :pagination="{ pageSize: 10 }"
             row-key="(r: TelemetryReading) => r.station_id + r.observed_at"
             size="small"
+            :scroll="{ x: 'max-content' }"
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'value'">

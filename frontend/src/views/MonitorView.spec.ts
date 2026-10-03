@@ -21,7 +21,7 @@ const STUBS = {
   'a-button': { name: 'AButton', props: ['loading', 'type', 'disabled'], template: '<button class="button" :disabled="disabled"><slot /></button>' },
   'a-row': { name: 'ARow', props: ['gutter'], template: '<div class="row"><slot /></div>' },
   'a-col': { name: 'ACol', props: ['span'], template: '<div class="col"><slot /></div>' },
-  'a-table': { name: 'ATable', props: ['columns', 'dataSource', 'pagination', 'rowKey', 'size'], template: '<div class="table" />' },
+  'a-table': { name: 'ATable', props: ['columns', 'dataSource', 'pagination', 'rowKey', 'size', 'scroll'], template: '<div class="table" />' },
   'a-tag': { name: 'ATag', props: ['color'], template: '<span class="tag"><slot /></span>' },
   'a-modal': {
     name: 'AModal',
@@ -56,6 +56,19 @@ describe('监测页的实时性：标题写着"最新"，数据就不能冻在�
   function withTimers() {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
   }
+
+  /**
+   * 表格必须在自己家横向滚动，而不是把整页撑宽。
+   *
+   * 真机 900px 宽（值班指挥员的平板）走过一次：遥测明细最后两列"观测时刻 + 接入时延"
+   * 被推到 931–975px 处，页面出现横向滚动，右侧内容看不全——而这一页没有任何提示。
+   * 布局本身测不出来（jsdom 没有排版），这里钉的是"声明了内部滚动"这一条前提。
+   */
+  it('遥测明细声明了内部横向滚动，窄屏不把整页撑宽', () => {
+    const wrapper = mountView()
+    const table = wrapper.findComponent({ name: 'ATable' })
+    expect(table.props('scroll')).toEqual({ x: 'max-content' })
+  })
 
   it('每 15 秒自己再取一次遥测', async () => {
     withTimers()
