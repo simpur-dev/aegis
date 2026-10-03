@@ -1,12 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type {
-  InstanceDetail,
-  InstanceNodeRun,
-  NodeTypesResponse,
-  WorkflowClient,
-} from '@/api/workflow'
+import { WorkflowApiError, type InstanceDetail, type InstanceNodeRun, type NodeTypesResponse, type WorkflowClient } from '@/api/workflow'
 import { createNodeDef } from '@/components/workflow/registry'
 import { createWorkflowStore } from '@/stores/workflow'
 import { defToGraph, type InstanceStatus, type NodeState, type WorkflowDef } from '@/utils/graph'
@@ -259,6 +254,20 @@ describe('stores/workflow 定义编辑', () => {
     await vi.advanceTimersByTimeAsync(3_000)
     expect(running.polling).toBe(false)
     vi.useRealTimers()
+  })
+
+  it('422 的校验数组也要读得懂，不许漏出 [object Object]', () => {
+    const store = createWorkflowStore(fakeClient())()
+    const error = new WorkflowApiError(422, 'Request failed with status code 422', {
+      detail: [{ loc: ['body', 'name'], msg: 'String should have at least 1 character', type: 'string_too_short' }],
+    })
+    expect(store.describeFailure(error)).toBe('HTTP 422 name：String should have at least 1 character')
+  })
+
+  it('detail 完全缺失时退回 axios 自己的消息，不留空话', () => {
+    const store = createWorkflowStore(fakeClient())()
+    const error = new WorkflowApiError(502, 'Request failed with status code 502', undefined)
+    expect(store.describeFailure(error)).toBe('HTTP 502 Request failed with status code 502')
   })
 })
 

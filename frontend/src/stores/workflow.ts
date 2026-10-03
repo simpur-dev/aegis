@@ -13,6 +13,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import {
+  describeDetail,
   toNodeInputs,
   workflowApi,
   type DefinitionSummary,
@@ -454,18 +455,15 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       }
     }
 
-    /** 后端把 WorkflowValidationError 映射为 400 + detail 字符串，这里统一还原成人读提示。 */
+    /**
+     * 后端两类错误都要落成人读的一句话：
+     * 400 是 WorkflowValidationError 的字符串，422 是 FastAPI 的校验数组。
+     */
     function describeFailure(caught: unknown): string {
       if (caught instanceof Error && 'status' in caught) {
         const wrapped = caught as Error & { status: number; detail?: unknown }
-        const detail = wrapped.detail
-        const reason =
-          typeof detail === 'string'
-            ? detail
-            : typeof detail === 'object' && detail !== null && 'detail' in detail
-              ? String((detail as { detail: unknown }).detail)
-              : wrapped.message
-        return `HTTP ${wrapped.status} ${reason}`
+        const reason = describeDetail(wrapped.detail)
+        return `HTTP ${wrapped.status} ${reason === '' ? wrapped.message : reason}`
       }
       return caught instanceof Error ? caught.message : '未知错误'
     }

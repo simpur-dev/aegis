@@ -31,6 +31,36 @@ export function isWorkflowValidationError(error: unknown): boolean {
   return error instanceof WorkflowApiError && error.status === 400
 }
 
+/**
+ * 把后端的 detail 还原成人能读的一句话。
+ *
+ * 两种形状都得处理：`WorkflowValidationError` 的 400 发的是字符串，而 FastAPI 的 422 发的是
+ * 数组 `[{loc, msg, type}]`。此前这里对所有东西都 `String(detail)`，于是 422 在界面上显示成
+ * 一行 `HTTP 422 [object Object]`——恰好是值班员最需要知道"哪个字段不对"的那一次。
+ */
+export function describeDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail
+  if (typeof detail === 'number' || typeof detail === 'boolean') return String(detail)
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => describeDetail(item))
+      .filter((text) => text !== '')
+      .join('；')
+  }
+  if (detail !== null && typeof detail === 'object') {
+    const record = detail as Record<string, unknown>
+    if ('detail' in record) return describeDetail(record.detail)
+    const message = typeof record.msg === 'string' ? record.msg : ''
+    // `loc` 首段恒为 body/query/path，对人没信息量；下标要留着（第几个节点写错了正是要看的东西）
+    const location = Array.isArray(record.loc) ? record.loc.map(String).filter((seg) => seg !== 'body').join('.') : ''
+    if (message !== '') return location === '' ? message : `${location}：${message}`
+    return Object.entries(record)
+      .map(([key, value]) => `${key}=${describeDetail(value)}`)
+      .join(' ')
+  }
+  return ''
+}
+
 async function dispatch<T>(instance: AxiosInstance, config: AxiosRequestConfig): Promise<T> {
   try {
     const response = await instance.request<T>(config)

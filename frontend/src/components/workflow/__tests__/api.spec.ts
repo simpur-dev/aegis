@@ -2,7 +2,14 @@ import type { AxiosRequestConfig } from 'axios'
 import axios, { AxiosError } from 'axios'
 import { describe, expect, it } from 'vitest'
 
-import { createWorkflowClient, isWorkflowValidationError, toNodeInput, toNodeInputs, WorkflowApiError } from '@/api/workflow'
+import {
+  createWorkflowClient,
+  describeDetail,
+  isWorkflowValidationError,
+  toNodeInput,
+  toNodeInputs,
+  WorkflowApiError,
+} from '@/api/workflow'
 import type { NodeDef } from '@/utils/graph'
 
 /**
@@ -207,5 +214,49 @@ describe('api/workflow 失败映射', () => {
     })
     const error = await createWorkflowClient(instance).definitions().catch((caught: unknown) => caught)
     expect((error as WorkflowApiError).status).toBe(0)
+  })
+})
+
+/**
+ * 错误原因必须是人能读的一句话。
+ *
+ * 真机把接口打成 422 时，画布上飘出来的是 `HTTP 422 [object Object]`——
+ * 而 422 恰恰是最需要告诉人"哪个字段不对"的那一次（FastAPI 的 detail 是数组）。
+ */
+describe('describeDetail：后端 detail 还原成人读的一句话', () => {
+  it('400 的 WorkflowValidationError 是字符串，原样给出', () => {
+    expect(describeDetail('工作流图存在环')).toBe('工作流图存在环')
+  })
+
+  it('422 的 FastAPI 数组带出字段位置与原因', () => {
+    const text = describeDetail({
+      detail: [
+        { loc: ['body', 'nodes', 0, 'config', 'limit'], msg: 'Input should be a valid integer', type: 'int_parsing' },
+        { loc: ['body', 'name'], msg: 'String should have at least 1 character', type: 'string_too_short' },
+      ],
+    })
+    expect(text).toContain('nodes.0.config.limit：Input should be a valid integer')
+    expect(text).toContain('name：String should have at least 1 character')
+    expect(text).not.toContain('[object Object]')
+  })
+
+  it('任何形状都不许漏出 [object Object]', () => {
+    const shapes: unknown[] = [
+      undefined,
+      null,
+      42,
+      ['a', 'b'],
+      { foo: { bar: 1 } },
+      { detail: { detail: '递归一层也要读得懂' } },
+      [{ loc: ['q', 'x'], msg: '必填' }],
+    ]
+    for (const shape of shapes) {
+      const text = describeDetail(shape)
+      expect(text, JSON.stringify(shape)).not.toContain('[object Object]')
+    }
+  })
+
+  it('没有 msg 的裸对象摊成 k=v，不留空串以外的怪东西', () => {
+    expect(describeDetail({ region_code: 'bad', limit: 0 })).toBe('region_code=bad limit=0')
   })
 })
