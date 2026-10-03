@@ -244,7 +244,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 
 | 取证项 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端门禁规模 | `cd backend && uv run python -m pytest -q --junitxml=junit_final.xml` | **2457 项、0 失败、0 错误、83 跳过**（跳过全部是需真库/真总线/真图的用例；本轮前基线 2259 → +198） |
+| 后端门禁规模 | `cd backend && uv run python -m pytest -q --junitxml=junit_final.xml` | **2458 项、0 失败、0 错误、83 跳过**（跳过全部是需真库/真总线/真图的用例；本轮前基线 2259 → +199） |
 | 后端风格与类型 | `uv run ruff format --check src tests scripts` / `ruff check` / `mypy src` | 三项全绿（mypy 覆盖 99 个模块） |
 | 前端门禁规模 | `cd frontend && npm run typecheck && npm run test` | typecheck 无错；**22 文件 / 413 项全绿**（本轮前基线 327 项且有 2 条红：新增 `delivery` 腿触发的漂移门禁，已按 9 腿改判；413 是补上核签工单那 6 项后的实测） |
 | 人工上报进链路（第四条接入腿） | `POST /api/v1/reports`，文本"24小时累计降雨95毫米，沟道泥位抬升1.2米"，20 次 | 20/20 产出预警与 STU；`report_intake_seconds` 台账 **P50 1.225s / P95 1.239s**，预算 300s（≤5min 口径，占 **0.41%**）；`reports={submitted:20, measured_by_rule:20, review_required:0}` |
@@ -253,7 +253,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 | 解析基线的可追溯性 | `tests/unit/test_parsing_eval.py::test_已知判错的用例可枚举…` | 已知判错用例逐条钉住：灾种 `RPT-25`（"坝前"不在词表）；等级 `RPT-08`（速率型条件需两点序列，单条上报给不出）、`RPT-26`（0.35m 未达 0.5m 阈值）、`RPT-32`（同一句里 12/20 毫米与冻融次数竞争绑定）；新增判错用例会红，词表改进后清单需手工收缩 |
 | 规则库版本化 | `GET /api/v1/rules`、`/api/v1/rules/versions`、`tests/unit/test_trigger_rules_library.py` | 生效集 9 条、灾种 5 类、触发条件种类 **9 类**（≥5 口径达标）；SQL 种子与代码种子逐字段一致（漂移即红）；空集/同 id 多版本/混入 draft 三种装载请求全部被拒；读库失败时沿用种子并留 `rulebook_error` 一行事实 |
 | 标定闭环 | `GET /api/v1/rules/calibration` | `status=not_measured`（缺现场真值配对，批次 E1）、`auto_applied=false`、命中次数按规则实测外显；样本不足 3 条时不给精度（用例钉住"不许用 2 条样本下结论"） |
-| 语义交互白名单 | `tests/unit/test_assistant.py`（24 项）+ `POST /api/v1/assistant/chat` | 四类任务（查询/预案问答/演练/上报）全通路；"把全网预警都删掉"→ `rejected` 帧 + 留痕，**没有任何动作被执行**；LLM 越权动作建议（`delete.all`）被拒并计数；认知镜像润色若冒出事实里没有的数字则整段弃用 |
+| 语义交互白名单 | `tests/unit/test_assistant.py`（25 项，按 `--collect-only` 实数）+ `POST /api/v1/assistant/chat` | 四类任务（查询/预案问答/演练/上报）全通路；"把全网预警都删掉"→ `rejected` 帧 + 留痕，**没有任何动作被执行**；LLM 越权动作建议（`delete.all`）被拒并计数；认知镜像润色若冒出事实里没有的数字则整段弃用 |
 | 执行类人工确认 | 同上 + `POST /api/v1/assistant/confirm` | 未确认时 `reports.submitted` 不增；确认后落链路并出预警；重复确认 / 跨会话确认 / 过期确认三种路径全部拒绝且不执行 |
 | 语义腿开关 | `AEGIS_ASSISTANT_ENABLED=false` 后请求 `/api/v1/assistant/*` | 404（这个出口不存在），与"装配失败 503 + `E_ASSISTANT_UNAVAILABLE`"可区分；同形态下 `/api/v1/reports` 仍 200（上报腿不依附助手开关） |
 | 真实触达通道 | `tests/unit/test_config_knob_reachability.py::TestDeliveryChannelAssembly` | `delivery_mode=http` 已接线：缺 base_url / 缺主机白名单 / URL 内嵌凭据 / 缺通道 四种配置错误全部构造期响亮失败；白名单按主机粒度匹配，状态面 `delivery` 行只出 `scheme://host` 与发送/失败计数 |
@@ -268,6 +268,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 | 低置信度上报自动开出人工核签工单（架构文档 §6.2 场景二末段，v3.2 补掉的最后半个 ★） | `uv run python -m pytest -q tests/unit/test_report_review_flow.py`（8 项） | 三条判据各钉一头：① 申报值定级（`decided_by=rule_declared`、置信 0.55）的上报必须真开出一个 `status=waiting`、停在 `human_review` 节点的实例，**同一次调用里预警照发**（`store.warnings.size` +1）——"开单不拦发布"不是注释里的说法而是断言；② 阈值命中的上报 `review is None` 且 `reviews_opened` 不动，否则核签队列会被确定性告警淹没；③ 三选一（approve/adjust/reject）**逐个真签**：`@parametrize` 三条各起一个装配，断言"跑到的分支集合 == {review, 该选项的出口}"，把 approve 与 adjust 两条边的目标对调后这 2 条立即红、reject 不受影响（变异检查实测：`AssertionError: adjust 没走到自己的出口分支：{'ok','review'}`）。另两条边界：工单节点里刻意不放 `warning_publish`（用例直接断言模板不含该类型，防"一次核签把触达数字翻倍"）；核签流程**不进** `BUILTIN_TEMPLATES`，"5 灾种处置剧本 5/5"那条门禁的口径不变。核签流程缺失时（把定义 archive 掉再上报）返回 `review=None` + `human_review_required=true` 且计数为 0，入口不报错——降级是可见事实不是异常 |
 | 核签工单的**真机 + 真 HTTP** 闭环（浏览器提交，API 签核） | 本机：`AEGIS_HTTP_PORT=8321 python -u -m aegis.main`（内存总线 + mock 通道 + 无 LLM 凭据）+ `AEGIS_API_TARGET=http://127.0.0.1:8321 vite dev` 5173，在 `/monitor` 的"人工上报"弹窗里填表提交，再用 `POST /api/v1/workflow/instances/{id}/nodes/review/decision` 签 | 上报"发生泥石流，请求红色预警"（区划 540200、经纬度 29.65/91.13）后界面回执：定级来源"申报等级（上报人写明）"、徽标"需人工核签"、新增一行 **`核签工单 wfi_d2c8a3384723 ｜ 待签节点 review ｜ 选项 approve / adjust / reject ｜ 签核入口 /api/v1/workflow/instances/{instance_id}/nodes/{node_id}/decision`**，同一行下面仍是"链路 `trc_010de506970452b9` ｜ 预警 `wrn_166c814ac2fc24816213` ｜ 任务单元 5 个 ｜ 感知段 上报文本判定：命中 2 条（智能体 0 条）"——**预警与工单同一次产生**，现场形态下也成立。`GET` 该实例：`status=waiting`，节点四态 `review=awaiting_human / ok,adjust,drop=pending`，`payload` 里签字人要看到的事实齐全（`note=发生泥石流，请求红色预警`、`decided_by=rule_declared`、`confidence=0.55`、`why_review=['等级来自上报人申报值而非阈值命中，转人工核签']`、`location=[91.13,29.65]`、`warning_id`）。`POST` 签 `adjust`（by=值班指挥员 + 一句批注）后：`status=succeeded`，`review` 记下决策原文，**只有 `adjust` 分支 `succeeded`（`{'notified': True}`），`ok`/`drop` 都是 `skipped`**。指标出口同轮报 `reports={"submitted": 1, "measured_by_rule": 0, "review_required": 1, "reviews_opened": 1}`。**照实记取证方式**：本轮截图不可用（in-app 浏览器无可见面，`take_screenshot` 直接拒绝），上面读的是真浏览器渲染后的 DOM `textContent` 与真 HTTP 响应体，不是 jsdom 单测；页面 console 无 error/warn。8000 端口被本机另一无关进程占用（PID 6008，未动它），因此这轮用 8321 起后端、用 `AEGIS_API_TARGET` 指过去——两个都是既有的环境变量，没改任何配置文件 |
 | 工单键名的跨端漂移门禁 | `npx vitest run src/api/reports.spec.ts`（16 项） | 前端 `ReportReviewDto` 的键集合与后端 `_open_report_review()` 返回字典的键集合**逐名对比**（两边都由正则从源码现读，测试里没有第二份清单）。这条为什么值得钉：后端改键名而前端没跟上时，界面显示的是"未开出"，把一个待办悄悄读成没有待办。变异检查实测：把 `container.py` 里的 `pending_node` 改名后该条立即红（`1 failed | 15 passed`），改回即绿 |
+| 语义交互这条腿的 ≤3s 终于有人判了（完成度复核收的缺陷） | `uv run python -m pytest -q tests/unit/test_latency_report_legs.py`（4 项）+ `uv run python -m scripts.metrics_report --rounds 2` | 复核时发现 `assistant_reply_ms` **只有一个记账点、没有预算**：`register_sla_budgets` 里没登记它，于是"语义交互 ≤3s"这项考核从来不会被判违约——样本再慢也不进 `violations`。这类漏登记没有症状（本机口径下它显然远小于 3s），所以只能靠用例顶着：新用例两头都钉（出口有样本 `count==1`、账本 `budget_ms==3000`），再灌一条 5000ms 的样本断言它被判成 `violations["assistant_reply_ms"]==1`；把预算那行删掉后用例红在 `KeyError: 'budget_ms'`（变异实测）。CI 报表同时补一行"语义交互一轮响应 ≤3s"，本轮实测样本 2、P50 0.0ms、越限 0 → 达标；报表里另开一段 `语义交互腿`，明写这是"无 LLM 凭据、纯规则词表"口径 |
 | 一次门禁抖动，照实记 | `cd frontend && npm test` 复跑 | 第一次全量跑里 `src/components/map/terrain-parse.spec.ts` 记 1 failed（其 14 项显示为 skipped）；单独跑该文件 14/14 通过，随后全量复跑 407/407 通过。当时浏览器与 dev server 正在跑，**根因未定位，不当作已修处理**；下次复现时先看是否与 vitest worker 复用有关。v3.2 这轮全量跑（413/413 通过）同样是在浏览器 + dev server 在跑的条件下做的，未复现那次抖动——仍然只有一次样本，不下"已消失"的结论 | 
 | 顺带修掉的两处"线连了、值没传" | 同上（两条断言各自可变异） | ① `hazard_identify` 把结论挂在 `hazard` 子键下，`risk_assess` 原先只读顶层 → 识别→定级这条边上 hits 恒空，**永远产出"保守四级"（蓝）**；现按 2 级（橙）产出，断言直接盯 `risk_level == 2` 与依据里点名的 `R-DEBRIS-RAIN-1`。② `_situation_simulate` 原先只回传 `scenarios`/`horizon_minutes`，`degraded`/`degraded_reason`/`case_count`/`declared_level` 全被丢掉 → 画布上只剩看不出锚点与出处的等级数字；现整份外显，并从上游（含 `risk`/`hazard` 子键）并入等级、灾种、区域与命中证据 |
 
@@ -348,5 +349,16 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 13. **部署形态下「≤3min 预警生成」的合账**：真 int8 权重、真 pgvector、真 JetStream 这三件此刻都在这台机器上，compose 里把权重目录盖掉的那条缺陷也已修（见 2026-10-02「bge-m3 / bge-reranker int8 在部署镜像里真的装得上」那一行），但整条链路的端到端墙钟还没在容器形态下量过——现有的 ≤3min 数字出自宿主进程档位，不能替这一条顶数。批次 B/C/D 新增的上报腿（`report_intake_seconds`）、助手面与规则库读路径同样只有进程形态证据。2026-10-03 尝试补测时卡在环境：WSL 的 `docker-desktop` 发行版停在 Stopped、`com.docker.service` 未运行，`docker version` 一律回 "Docker Desktop is unable to start"（两次拉起未果、日志无 crash 记录），需桌面端/WSL 层面介入；compose 侧本轮只做到离线校验通过（`docker compose --env-file .env -f deploy/docker-compose.yml config`，新增 11 个键已接线）。
 14. **Graphiti 第二档**（16 条内置预案真的进图 + 混合召回）：仓库根 `.env` 里 `AEGIS_LLM_API_KEY` 为空 ⇒ `-m slow` 照旧 skip。本轮能证的是「缺凭据时命令与状态面说的是真话」（`degraded=16`、`schema_error` 点名 llm_api_key），不是写入能力本身。
 15. **Zenoh 帧开销的线上量测**：POC 已验过互通、请求-响应、边缘存留与按序重放；「4–6 字节」仍是上游调研期口径，要进报告得靠抓包，本机未做。
+16. **链路切换（光纤 / 4G-5G / 北斗短报文备用）**：架构文档 §4.3 的"弱网保障"这一行里，其余四项是真代码
+    （边缘本地闭环 `edge/`、压缩与有界缓冲、序号+ACK 按序重放、报警优先的分层出队），**只有"按链路质量自动切换"没有实现**。
+    平台侧目前的出口只有三条：MQTT、气象拉取、HTTP 外呼/触达，全部走同一张 IP 网；短报文终端与多运营商出口是硬件与现场条件，
+    缺的不是判定逻辑而是可切的目标。本轮（2026-10-03 完成度复核）发现，已从 §4.3 的既成事实列表里移出并就地标注。
+17. **数据分级（公开/内部/敏感/机密）**：架构文档 §7.2 原本把它与"血缘、质量旗标"并排写成已交付项——**不成立**。
+    仓库里没有任何密级枚举、字段标注或按级裁剪的代码（`grep 数据分级|sensitivity|classification` 在 `backend/src`、
+    `frontend/src`、`contracts/` 均无命中）。根因不是漏写一个枚举，而是**平台 HTTP API 没有鉴权模型**
+    （部署假设专网/内网，`api/app.py` 全部路由只依赖 `get_container`）：没有调用方身份，就没有"按密级少给几个字段"的落点，
+    先摆一个四级枚举只会得到"看起来分了级"。要补这条，先要三个现场决定：谁调这些接口、带什么凭据、
+    哪些字段算敏感（眼下已知的候选：`reporter` 上报人姓名、`location` 精确到小数点后 6 位的坐标、人员数量）。
+    现状唯一的真实防线是脱敏：凭据只进请求头、外呼与触达目标只报 `scheme://host`、案例出处逐条外显。
 
 上述各项补完后把命令、日期和输出摘要追加到上一节，并删掉对应条目。
