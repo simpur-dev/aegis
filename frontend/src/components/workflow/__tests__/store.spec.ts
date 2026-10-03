@@ -125,13 +125,13 @@ describe('stores/workflow 定义编辑', () => {
     expect(store.current?.version).toBe(2)
   })
 
-  it('保存载荷丢弃后端未开放的 retry 字段', async () => {
+  it('保存载荷带上 retry：打开→原样保存不会把策略抹回默认值', async () => {
     const store = await freshStore()
     const created = createNodeDef('data_fetch', 'fetch_1')
     store.addNode({ ...created, retry: { max_attempts: 3, backoff_ms: 900 } })
     await store.saveDefinition()
     const [payload] = firstCall(client, 'createDefinition') as [{ nodes: Record<string, unknown>[] }]
-    expect('retry' in (payload.nodes[0] ?? {})).toBe(false)
+    expect((payload.nodes[0] ?? {}).retry).toEqual({ max_attempts: 3, backoff_ms: 900 })
     expect(store.selectedNode?.retry.max_attempts).toBe(3)
   })
 
@@ -296,7 +296,7 @@ describe('stores/workflow 运行中操作', () => {
     expect(instanceId).toBe('wfi_0123456789ab')
     expect(payload.after).toBe('fetch_1')
     expect(payload.node.node_id).toBe('notify_9')
-    expect('retry' in payload.node).toBe(false)
+    expect(payload.node.retry).toBeDefined()
     expect(vi.mocked(client.instance).mock.calls.length).toBe(2)
   })
 

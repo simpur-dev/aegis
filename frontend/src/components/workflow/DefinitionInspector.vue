@@ -96,6 +96,9 @@ function onDescription(event: Event): void {
         <span>{{ row.name }} v{{ row.version }}</span>
         <span class="wf-def__muted">{{ row.node_count }} 节点 / {{ row.edge_count }} 连线</span>
         <span class="wf-def__muted">{{ definitionStatusLabel(row.status) }}</span>
+        <!-- 打开排在归档前面：这是一条能存不能开的链路修好后的样子，
+             顺序也是提醒——先能拿回来编辑，再谈要不要收走它 -->
+        <button type="button" class="wf-def__button" :data-testid="`open-${row.workflow_id}`" @click="store.openDefinition(row.workflow_id)">打开</button>
         <button type="button" class="wf-def__button" @click="store.archiveDefinition(row.workflow_id)">归档</button>
       </li>
     </ul>

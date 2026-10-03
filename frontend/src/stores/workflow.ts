@@ -26,6 +26,7 @@ import {
   canBypass,
   canDecide,
   canPatchRuntimeConfig,
+  defToGraph,
   findNode,
   graphToDef,
   inboundSources,
@@ -269,6 +270,27 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       definitions.value = (await client.definitions()).items
     }
 
+    /**
+     * 把一份已存的定义取回来放进画布编辑。
+     *
+     * 这条此前不存在：列表接口只报计数，画布能创建、能保存、能归档，
+     * 却打不开任何东西——"流程编排"页因此只能一次性使用，改一版模板要靠重画。
+     * 归档按钮就摆在同一行，破坏性的动作有、建设性的没有。
+     */
+    async function openDefinition(workflowId: string): Promise<boolean> {
+      return runAction(async () => {
+        const def = await client.definition(workflowId)
+        current.value = def
+        selectedNodeId.value = def.nodes[0]?.node_id ?? null
+        // 后端不存坐标（NodeDef 里没有位置字段）：打开即按分层布局重排。
+        // 坐标取自 defToGraph 的结果而不是另算一遍，画布与模型才只有一份布局口径。
+        const graph = defToGraph(def)
+        positions.value = Object.fromEntries(graph.nodes.map((node) => [node.id, node.position]))
+        stopPolling()
+        await Promise.all([loadDefinitions(), loadInstances()])
+      }, '打开定义失败')
+    }
+
     async function loadInstances(): Promise<void> {
       instances.value = (await client.instances()).items
     }
@@ -470,6 +492,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       syncUpstreamConfig,
       loadNodeTypes,
       loadDefinitions,
+      openDefinition,
       loadInstances,
       saveDefinition,
       archiveDefinition,

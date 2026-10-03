@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from aegis.container import PlatformContainer
 from aegis.domain.messages import new_trace_id
 from aegis.workflow.engine import WorkflowEngine, WorkflowValidationError
+from aegis.workflow.model import RetryPolicy
 
 
 def get_container(request: Request) -> PlatformContainer:
@@ -29,6 +30,10 @@ class NodeInput(BaseModel):
     sla_ms: int = Field(default=5_000, ge=100, le=3_600_000)
     timeout_ms: int = Field(default=5_000, ge=100, le=3_600_000)
     on_failure: str = Field(default="retry", pattern=r"^(retry|degrade|escalate|skip|abort)$")
+    #: 读接口（`NodeDef`）会带出 `retry`，写接口若不认它，"取一份定义再原样存回去"
+    #: 就会吃 422——画布的"打开→保存"走的正是这条路，症状是"我没改任何东西却存不回去"。
+    #: 读写两侧必须同一形状；这里补齐，顺带让重试策略真的可以在创建时指定。
+    retry: RetryPolicy = Field(default_factory=RetryPolicy)
 
 
 class EdgeInput(BaseModel):
@@ -184,6 +189,17 @@ def build_router() -> APIRouter:
         except WorkflowValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"trace_id": trace_id, **detail}
+
+    @router.get("/definitions/{workflow_id}")
+    async def get_definition(workflow_id: str, container: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
+        """一份定义的完整内容（节点、连线、参数）——画布"打开已有定义"靠它。
+
+        列表接口只有计数，够用来挑一条，不够把它改出来。
+        """
+        definition = engine_of(container).definition_by_id(workflow_id)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="工作流定义不存在")
+        return definition.model_dump(mode="json")
 
     @router.get("/instances")
     async def list_instances(container: PlatformContainer = Depends(get_container)) -> dict[str, Any]:

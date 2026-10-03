@@ -69,7 +69,7 @@ describe('api/workflow 请求形状', () => {
     expect(seen[1]?.method).toBe('get')
   })
 
-  it('创建定义走 POST，且载荷不含后端未开放的 retry 字段', async () => {
+  it('创建定义走 POST，载荷带 retry（读写同形，打开→保存才不会丢字段）', async () => {
     const { client, seen } = clientWith(() => ({ status: 201, data: { workflow_id: 'wf_1', name: '链路', version: 1 } }))
     await client.createDefinition({
       name: '泥石流防控链路',
@@ -85,6 +85,7 @@ describe('api/workflow 请求形状', () => {
       'name',
       'node_id',
       'on_failure',
+      'retry',
       'sla_ms',
       'timeout_ms',
       'type',
@@ -92,7 +93,7 @@ describe('api/workflow 请求形状', () => {
     expect(body.edges).toEqual([{ source: 'fetch_1', target: 'review_1', condition: 'high' }])
   })
 
-  it('toNodeInput 保留全部开放字段、丢弃 retry', () => {
+  it('toNodeInput 保留全部可写字段（含 retry）', () => {
     expect(toNodeInput(nodeDef())).toEqual({
       node_id: 'fetch_1',
       type: 'data_fetch',
@@ -101,6 +102,7 @@ describe('api/workflow 请求形状', () => {
       sla_ms: 5_000,
       timeout_ms: 4_000,
       on_failure: 'retry',
+      retry: { max_attempts: 2, backoff_ms: 300 },
     })
   })
 
@@ -160,7 +162,7 @@ describe('api/workflow 请求形状', () => {
     expect(seen[0]?.url).toBe('/api/v1/workflow/instances/wfi_1/nodes')
     const body = seen[0]?.body as { after: string; node: Record<string, unknown> }
     expect(body.after).toBe('fetch_1')
-    expect('retry' in (body.node ?? {})).toBe(false)
+    expect((body.node ?? {}).retry).toEqual({ max_attempts: 2, backoff_ms: 300 })
   })
 
   it('旁路与中止的 reason 是查询参数而非请求体', async () => {

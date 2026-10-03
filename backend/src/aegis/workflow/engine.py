@@ -263,6 +263,15 @@ class WorkflowEngine:
     def latest_definition(self, name: str) -> WorkflowDef | None:
         return self._repository.latest(name)
 
+    def definition_by_id(self, workflow_id: str) -> WorkflowDef | None:
+        """按 workflow_id 取一份完整定义（含 nodes/edges）。
+
+        存在的理由：`GET /definitions` 只报计数，画布要把一份已存的定义**重新打开来编辑**
+        时拿不到节点与连线——于是这一页能存、能归档，却打不开自己存过的东西。
+        归档态也返回：只读查看旧版本是正当需求，是不是要编辑由界面决定，不在这里拦。
+        """
+        return self._repository.get(workflow_id)
+
     # ---------- 实例执行 ----------
 
     def instance(self, instance_id: str) -> WorkflowInstance | None:

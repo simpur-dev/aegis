@@ -10,7 +10,7 @@
 
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios'
 
-import type { EdgeDef, JsonValue, NodeDef, NodeState, OnFailure } from '@/utils/graph'
+import type { EdgeDef, JsonValue, NodeDef, NodeState, OnFailure, RetryPolicy, WorkflowDef } from '@/utils/graph'
 
 const http = axios.create({ baseURL: '/', timeout: 20_000 })
 
@@ -53,6 +53,9 @@ export interface NodeInput {
   sla_ms: number
   timeout_ms: number
   on_failure: OnFailure
+  /** 与后端 `NodeInput` 同形：读接口会带出 retry，写接口也必须收得下，
+   *  否则"打开→原样保存"会把节点的重试策略静默抹回默认值。 */
+  retry: RetryPolicy
 }
 
 export interface DefinitionInput {
@@ -89,7 +92,7 @@ export interface InsertNodeInput {
   node: NodeInput
 }
 
-/** NodeDef → NodeInput：丢弃 HTTP 契约未开放的字段（retry 目前只能走定义默认值）。 */
+/** NodeDef → NodeInput：字段与后端一一对应，不再丢弃任何可写字段。 */
 export function toNodeInput(node: NodeDef): NodeInput {
   return {
     node_id: node.node_id,
@@ -99,6 +102,7 @@ export function toNodeInput(node: NodeDef): NodeInput {
     sla_ms: node.sla_ms,
     timeout_ms: node.timeout_ms,
     on_failure: node.on_failure,
+    retry: node.retry,
   }
 }
 
@@ -201,6 +205,8 @@ export function createWorkflowClient(instance: AxiosInstance) {
     nodeTypes: () => request<NodeTypesResponse>({ url: `${BASE}/node-types` }),
 
     definitions: () => request<DefinitionsResponse>({ url: `${BASE}/definitions` }),
+    /** 一份定义的完整内容（节点、连线、参数）：列表只有计数，改图必须靠这条把它取回来。 */
+    definition: (workflowId: string) => request<WorkflowDef>({ url: `${BASE}/definitions/${workflowId}` }),
 
     createDefinition: (payload: DefinitionInput) =>
       request<DefinitionWriteResult>({ url: `${BASE}/definitions`, method: 'POST', data: payload }),
