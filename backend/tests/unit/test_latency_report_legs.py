@@ -50,7 +50,7 @@ def test_真实通道形态下逐通道带出发送与失败计数() -> None:
 
 def test_上报腿与阈值版本同在一份出口里() -> None:
     report = _container().latency_report()
-    assert report["reports"] == {"submitted": 0, "measured_by_rule": 0, "review_required": 0}
+    assert report["reports"] == {"submitted": 0, "measured_by_rule": 0, "review_required": 0, "reviews_opened": 0}
     assert report["rulebook"]["rules"] == 9
     assert report["rulebook"]["source"] == "builtin"
     assert report["rulebook"]["uncalibrated"] == 9, "未标定状态必须随出口一起报出，不能只在 /api/v1/rules 里"

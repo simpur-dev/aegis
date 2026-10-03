@@ -292,6 +292,42 @@ BUILTIN_TEMPLATES: tuple[dict[str, Any], ...] = (
     AVALANCHE_TEMPLATE,
 )
 
+#: 低置信度人工上报的核签流程（架构文档 §6.2 场景二："低置信度转人工核签（human_review 节点）"）。
+#: 刻意不进 `BUILTIN_TEMPLATES`：那份清单的口径是"5 灾种处置剧本"，混进一条核签流程会让
+#: "灾种模板 5/5"与它的门禁一起失真。这张图也**刻意不再发布预警**——预警在上报进链路时
+#: 已按判据发过，核签要判的是"这条结论是否按现状生效"，重复发布会把触达数字翻倍。
+REPORT_REVIEW_TEMPLATE: dict[str, Any] = {
+    "name": "人工上报核签流程",
+    "description": "低置信度上报 → 值班指挥员核签（通过/更正转监测/驳回）→ 结果留痕广播，供阈值标定回看",
+    "nodes": [
+        {
+            "node_id": "review",
+            "type": "human_review",
+            "name": "上报核签",
+            "config": {
+                "prompt": "该上报的等级不是阈值命中所得，请核签：确认处置、更正后转加密监测，或驳回",
+                "options": ["approve", "adjust", "reject"],
+            },
+            "sla_ms": 900_000,
+            "timeout_ms": 900_000,
+            "on_failure": "escalate",
+        },
+        {"node_id": "ok", "type": "notify", "name": "核签通过", "config": {"text": "人工核签通过，上报结论按现状生效", "level": "info"}},
+        {
+            "node_id": "adjust",
+            "type": "notify",
+            "name": "更正后转监测",
+            "config": {"text": "核签更正灾种或等级，转加密监测与现场核查", "level": "warning"},
+        },
+        {"node_id": "drop", "type": "notify", "name": "驳回", "config": {"text": "人工核签驳回本次上报", "level": "info"}},
+    ],
+    "edges": [
+        {"source": "review", "target": "ok", "condition": "approve"},
+        {"source": "review", "target": "adjust", "condition": "adjust"},
+        {"source": "review", "target": "drop", "condition": "reject"},
+    ],
+}
+
 
 async def register_builtin_templates(engine: WorkflowEngine, *, force: bool = False) -> list[str]:
     """幂等注册内置模板：已存在同名模板则跳过（除非 force 产生新版本）。"""
@@ -308,3 +344,17 @@ async def register_builtin_templates(engine: WorkflowEngine, *, force: bool = Fa
         )
         created.append(template["name"])
     return created
+
+
+async def register_report_review_template(engine: WorkflowEngine, *, force: bool = False) -> str | None:
+    """注册核签流程（幂等）。与灾种剧本分开注册，理由见 `REPORT_REVIEW_TEMPLATE` 的注释。"""
+    template = REPORT_REVIEW_TEMPLATE
+    if engine.latest_definition(template["name"]) is not None and not force:
+        return None
+    await engine.create_definition(
+        name=template["name"],
+        description=template["description"],
+        nodes=template["nodes"],
+        edges=template["edges"],
+    )
+    return template["name"]

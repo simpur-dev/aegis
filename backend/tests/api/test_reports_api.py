@@ -75,7 +75,7 @@ async def test_上报进链路并留下可查事件与任务单元(container: Pl
 
         latency = (await client.get("/api/v1/metrics/latency")).json()
         assert latency["metrics"]["report_intake_seconds"]["count"] == 1
-        assert latency["reports"] == {"submitted": 1, "measured_by_rule": 1, "review_required": 0}
+        assert latency["reports"] == {"submitted": 1, "measured_by_rule": 1, "review_required": 0, "reviews_opened": 0}
 
 
 @pytest.mark.asyncio
@@ -111,7 +111,7 @@ async def test_低置信上报只统计不装作用户已确认(container: Platf
         assert body["parse"]["risk_level"] is None
         assert body["chain"]["warning_id"] is None
         latency = (await client.get("/api/v1/metrics/latency")).json()
-        assert latency["reports"] == {"submitted": 1, "measured_by_rule": 0, "review_required": 1}
+        assert latency["reports"] == {"submitted": 1, "measured_by_rule": 0, "review_required": 1, "reviews_opened": 1}
 
 
 @pytest.mark.asyncio

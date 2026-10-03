@@ -280,6 +280,9 @@ class WorkflowEngine:
             "trace_id": current.trace_id,
             "status": current.status.value,
             "error": current.error,
+            # 核签工单要能让人看见"签的是什么"：上报文本、定级来源与转核签的原因都在 payload 里，
+            # 不带上就等于把决策要依据的事实留在内存里不外显。
+            "payload": current.payload,
             "nodes": [
                 {
                     "node_id": node_id,
