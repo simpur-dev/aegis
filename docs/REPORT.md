@@ -244,7 +244,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 
 | 取证项 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端门禁规模 | `cd backend && uv run python -m pytest -q --junitxml=junit_final.xml` | **2458 项、0 失败、0 错误、83 跳过**（跳过全部是需真库/真总线/真图的用例；本轮前基线 2259 → +199） |
+| 后端门禁规模 | `cd backend && uv run python -m pytest -q --junitxml=junit_final.xml` | **2460 项、0 失败、0 错误、83 跳过**（跳过全部是需真库/真总线/真图的用例；本轮前基线 2259 → +201） |
 | 后端风格与类型 | `uv run ruff format --check src tests scripts` / `ruff check` / `mypy src` | 三项全绿（mypy 覆盖 99 个模块） |
 | 前端门禁规模 | `cd frontend && npm run typecheck && npm run test` | typecheck 无错；**22 文件 / 413 项全绿**（本轮前基线 327 项且有 2 条红：新增 `delivery` 腿触发的漂移门禁，已按 9 腿改判；413 是补上核签工单那 6 项后的实测） |
 | 人工上报进链路（第四条接入腿） | `POST /api/v1/reports`，文本"24小时累计降雨95毫米，沟道泥位抬升1.2米"，20 次 | 20/20 产出预警与 STU；`report_intake_seconds` 台账 **P50 1.225s / P95 1.239s**，预算 300s（≤5min 口径，占 **0.41%**）；`reports={submitted:20, measured_by_rule:20, review_required:0}` |
@@ -269,6 +269,9 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 | 核签工单的**真机 + 真 HTTP** 闭环（浏览器提交，API 签核） | 本机：`AEGIS_HTTP_PORT=8321 python -u -m aegis.main`（内存总线 + mock 通道 + 无 LLM 凭据）+ `AEGIS_API_TARGET=http://127.0.0.1:8321 vite dev` 5173，在 `/monitor` 的"人工上报"弹窗里填表提交，再用 `POST /api/v1/workflow/instances/{id}/nodes/review/decision` 签 | 上报"发生泥石流，请求红色预警"（区划 540200、经纬度 29.65/91.13）后界面回执：定级来源"申报等级（上报人写明）"、徽标"需人工核签"、新增一行 **`核签工单 wfi_d2c8a3384723 ｜ 待签节点 review ｜ 选项 approve / adjust / reject ｜ 签核入口 /api/v1/workflow/instances/{instance_id}/nodes/{node_id}/decision`**，同一行下面仍是"链路 `trc_010de506970452b9` ｜ 预警 `wrn_166c814ac2fc24816213` ｜ 任务单元 5 个 ｜ 感知段 上报文本判定：命中 2 条（智能体 0 条）"——**预警与工单同一次产生**，现场形态下也成立。`GET` 该实例：`status=waiting`，节点四态 `review=awaiting_human / ok,adjust,drop=pending`，`payload` 里签字人要看到的事实齐全（`note=发生泥石流，请求红色预警`、`decided_by=rule_declared`、`confidence=0.55`、`why_review=['等级来自上报人申报值而非阈值命中，转人工核签']`、`location=[91.13,29.65]`、`warning_id`）。`POST` 签 `adjust`（by=值班指挥员 + 一句批注）后：`status=succeeded`，`review` 记下决策原文，**只有 `adjust` 分支 `succeeded`（`{'notified': True}`），`ok`/`drop` 都是 `skipped`**。指标出口同轮报 `reports={"submitted": 1, "measured_by_rule": 0, "review_required": 1, "reviews_opened": 1}`。**照实记取证方式**：本轮截图不可用（in-app 浏览器无可见面，`take_screenshot` 直接拒绝），上面读的是真浏览器渲染后的 DOM `textContent` 与真 HTTP 响应体，不是 jsdom 单测；页面 console 无 error/warn。8000 端口被本机另一无关进程占用（PID 6008，未动它），因此这轮用 8321 起后端、用 `AEGIS_API_TARGET` 指过去——两个都是既有的环境变量，没改任何配置文件 |
 | 工单键名的跨端漂移门禁 | `npx vitest run src/api/reports.spec.ts`（16 项） | 前端 `ReportReviewDto` 的键集合与后端 `_open_report_review()` 返回字典的键集合**逐名对比**（两边都由正则从源码现读，测试里没有第二份清单）。这条为什么值得钉：后端改键名而前端没跟上时，界面显示的是"未开出"，把一个待办悄悄读成没有待办。变异检查实测：把 `container.py` 里的 `pending_node` 改名后该条立即红（`1 failed | 15 passed`），改回即绿 |
 | 语义交互这条腿的 ≤3s 终于有人判了（完成度复核收的缺陷） | `uv run python -m pytest -q tests/unit/test_latency_report_legs.py`（4 项）+ `uv run python -m scripts.metrics_report --rounds 2` | 复核时发现 `assistant_reply_ms` **只有一个记账点、没有预算**：`register_sla_budgets` 里没登记它，于是"语义交互 ≤3s"这项考核从来不会被判违约——样本再慢也不进 `violations`。这类漏登记没有症状（本机口径下它显然远小于 3s），所以只能靠用例顶着：新用例两头都钉（出口有样本 `count==1`、账本 `budget_ms==3000`），再灌一条 5000ms 的样本断言它被判成 `violations["assistant_reply_ms"]==1`；把预算那行删掉后用例红在 `KeyError: 'budget_ms'`（变异实测）。CI 报表同时补一行"语义交互一轮响应 ≤3s"，本轮实测样本 2、P50 0.0ms、越限 0 → 达标；报表里另开一段 `语义交互腿`，明写这是"无 LLM 凭据、纯规则词表"口径 |
+| 部署形态端到端合账（批次 D4 收口） | Docker Desktop 4.93.0（WSL2 后端）上的整栈：`aegis-nats`(JetStream) + `aegis-postgres`(`aegis-pg:local`：PG 17.5 + PostGIS 3.5.2 + pgvector 0.8.6) + `aegis-neo4j` + 现建镜像 `aegis-backend:d4`，1.1GB 权重只读挂 `/models`；命令 `docker exec aegis-backend python -m scripts.metrics_report --rounds 5 --reports 2` | 接线只认 `/api/v1/integrations`：9 条腿，`store.driver=postgres`（`migrations_on_start=true`，不再 `read_model_only`）、`retrieval.driver=bge-m3-int8` 且 `dense_leg=true`、`delivery=mock`、`knowledge` 因缺 LLM 凭据降级（外显 `schema_error`）。容器内实测：**预警生成 ≤3min** 样本 15、P50 1.677ms、P95 1.989ms、最大 2.248ms、越限 0；**人工上报 ≤5min** 样本 2、P50 0.661s、P95 1.225s、最大 1.288s；**语义交互 ≤3s** 样本 2、P50 0.154ms、越限 0；调度两段 ≤2s P95 0.05ms / 1.68ms；触达 P50 1201.976ms（**mock 注入，不是现场触达**）。阈值版本 `source=postgres`、9 条规则×5 灾种、`uncalibrated=9`；上报台账 `{submitted:2, measured_by_rule:1, review_required:1, reviews_opened:1}`（核签工单在容器形态也真开出来了）；5 轮 14 个事件、致命错误 0。**这一档没有的**：真实网关凭据、LLM 凭据、外部智能体 ⇒ 协同成功率/同步时延真样本与准确率仍是"未测得/未覆盖"，报表里如实列着 |
+| ≤3min 预警生成此前是一条永远绿的假判定（D4 才收出来） | `uv run python -m pytest -q tests/unit/test_warning_service.py`（20 项） | `warning_generation_ms` 的旧算法是 `now - record.generated_at`，而 `generated_at` 就在**同一次调用里**刚盖上——等于拿现在减自己，恒为 0.0ms：报表上那一行"样本 9、P50 0.0ms、达标"就是这么来的。修法是把链路起点（`_run_chain` 里的 `time.monotonic()`）传到执行段，没传就只量本步（含藏语翻译调用，另有一条用例断言"翻译 50ms 必须算进生成时延"）。`WarningDraft.generation_seconds` 原来是事后反推的 property，测试只写着 `>= 0.0`（永真断言）——改成随结果带出的实测秒数，并补一条"超线样本必须被判违约"（预算 180s，灌 240s → `breaches==1`）。**变异实测**：把算法改回旧口径，那条用例立即红。这条缺陷与形态无关（同一处代码），但只有在"按部署形态合账"时才会被看见——宿主档位跑报表时没人怀疑过 0.0ms |
+| live 总线用例与运行中的部署共用主题契约（改判为 skip） | `AEGIS_TEST_NATS_URL=nats://127.0.0.1:4222 uv run pytest -q tests/integration/test_nats_bus.py` | 四条用例在整栈跑着的时候整批红在 `err_code=10065 subjects overlap with an existing stream`。这不是平台缺陷：`stream_prefix` 只隔离"用例 vs 用例"，隔离不了"用例 vs 一个正在跑着的平台实例"，因为双方用的是**同一套契约主题**（`data.>` 等），而主题名是产品契约、外部智能体按它接入，不能为测试改。该文件的 docstring 2026-10-02 就写了这条前提，代码却仍然 fail ⇒ 现在按 10065 判 `pytest.skip` 并指名"本组用例需要干净的 JetStream，勿与部署共用"。判 skip 而非 fail 的理由：把"这台机器此刻有平台在占主题"报成红，下次部署形态取证会被误读成总线坏了 |
 | 一次门禁抖动，照实记 | `cd frontend && npm test` 复跑 | 第一次全量跑里 `src/components/map/terrain-parse.spec.ts` 记 1 failed（其 14 项显示为 skipped）；单独跑该文件 14/14 通过，随后全量复跑 407/407 通过。当时浏览器与 dev server 正在跑，**根因未定位，不当作已修处理**；下次复现时先看是否与 vitest worker 复用有关。v3.2 这轮全量跑（413/413 通过）同样是在浏览器 + dev server 在跑的条件下做的，未复现那次抖动——仍然只有一次样本，不下"已消失"的结论 | 
 | 顺带修掉的两处"线连了、值没传" | 同上（两条断言各自可变异） | ① `hazard_identify` 把结论挂在 `hazard` 子键下，`risk_assess` 原先只读顶层 → 识别→定级这条边上 hits 恒空，**永远产出"保守四级"（蓝）**；现按 2 级（橙）产出，断言直接盯 `risk_level == 2` 与依据里点名的 `R-DEBRIS-RAIN-1`。② `_situation_simulate` 原先只回传 `scenarios`/`horizon_minutes`，`degraded`/`degraded_reason`/`case_count`/`declared_level` 全被丢掉 → 画布上只剩看不出锚点与出处的等级数字；现整份外显，并从上游（含 `risk`/`hazard` 子键）并入等级、灾种、区域与命中证据 |
 
@@ -346,7 +349,24 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
     替身级用例（非法输出弃用、越权动作拒绝、润色编数即整段回退），但 `AEGIS_LLM_API_KEY` 为空时它们按设计
     缺席，所以"三路融合比两路好多少"这句话目前没有实测答案——需要一次带凭据的对照跑
     （`uv run python -m scripts.eval_report_parsing --with-llm`）。
-13. **部署形态下「≤3min 预警生成」的合账**：真 int8 权重、真 pgvector、真 JetStream 这三件此刻都在这台机器上，compose 里把权重目录盖掉的那条缺陷也已修（见 2026-10-02「bge-m3 / bge-reranker int8 在部署镜像里真的装得上」那一行），但整条链路的端到端墙钟还没在容器形态下量过——现有的 ≤3min 数字出自宿主进程档位，不能替这一条顶数。批次 B/C/D 新增的上报腿（`report_intake_seconds`）、助手面与规则库读路径同样只有进程形态证据。2026-10-03 尝试补测时卡在环境：WSL 的 `docker-desktop` 发行版停在 Stopped、`com.docker.service` 未运行，`docker version` 一律回 "Docker Desktop is unable to start"（两次拉起未果、日志无 crash 记录），需桌面端/WSL 层面介入；compose 侧本轮只做到离线校验通过（`docker compose --env-file .env -f deploy/docker-compose.yml config`，新增 11 个键已接线）。
+13. **部署形态下「≤3min 预警生成」的合账：2026-10-03 已补上**（本条从"未测得"改判为"已量，剩余部分另记"）。
+    环境是 Docker Desktop 4.93.0（WSL2 后端，数据盘 `D:\Docker\data`）+ `aegis-nats`（JetStream）+
+    `aegis-postgres`（自建 `aegis-pg:local`：PostgreSQL 17.5 + PostGIS 3.5.2 + pgvector 0.8.6）+ `aegis-neo4j`，
+    后端镜像由 `deploy/Dockerfile` 现建（`aegis-backend:d4`），1.1GB 检索权重只读挂载 `/models`。
+    接线与否一律读 `/api/v1/integrations`（9 条腿：`store.driver=postgres` 且不再 degraded、
+    `retrieval.driver=bge-m3-int8` 且 `dense_leg=true`、`delivery=mock`），不读 `/readyz`。
+    数字见上表"部署形态端到端合账"那一行。**这一档收出一条永远绿的假判定**（`warning_generation_ms`
+    此前恒为 0.0ms，见上表），所以"≤3min 达标"这句话在修好之前其实没人量过。
+    仍未测得的部分照实留着：真实网关凭据（触达仍是 mock 注入的 1.2s）、LLM 凭据（图谱写入与翻译腿）、
+    外部智能体（协同成功率/同步时延真样本）、现场标注案例集（准确率）——这四样都不是再写代码能关掉的。
+    环境故障的根因也记在这里，免得下次从头猜：`docker-desktop` 发行版起不来是
+    `Wsl/Service/CreateInstance/MountDisk/HCS/E_ACCESSDENIED`，指向 `D:\Docker\data\main\ext4.vhdx` 挂载被拒；
+    对照可正常启动的 `D:\WSL\Ubuntu-24.04\ext4.vhdx` 后定位到**属主差异**——那份盘属主是当前用户
+    （owner 可改 DACL，HCS 挂盘时能把本次会话的 `NT VIRTUAL MACHINE\<guid>` 加进 ACL），
+    而 Docker 的三份盘属主是 `BUILTIN\Administrators`、用户只有 `Modify`（不含 WriteAccessControl），
+    补不进那条 ACE 于是被拒。给这三份盘加上用户的 `:(F)` 后 `wsl -d docker-desktop` 直接起得来，
+    HCS 也如预期自己补了一条本次会话的 ACE。给 `NT VIRTUAL MACHINE\Virtual Machines` 组授权是无效尝试
+    （每次开机的 VM SID 是新造的 GUID，预授权那条组并不被这次挂载采用）。
 14. **Graphiti 第二档**（16 条内置预案真的进图 + 混合召回）：仓库根 `.env` 里 `AEGIS_LLM_API_KEY` 为空 ⇒ `-m slow` 照旧 skip。本轮能证的是「缺凭据时命令与状态面说的是真话」（`degraded=16`、`schema_error` 点名 llm_api_key），不是写入能力本身。
 15. **Zenoh 帧开销的线上量测**：POC 已验过互通、请求-响应、边缘存留与按序重放；「4–6 字节」仍是上游调研期口径，要进报告得靠抓包，本机未做。
 16. **链路切换（光纤 / 4G-5G / 北斗短报文备用）**：架构文档 §4.3 的"弱网保障"这一行里，其余四项是真代码
