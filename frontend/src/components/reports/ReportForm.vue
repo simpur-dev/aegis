@@ -160,6 +160,15 @@ function reset(): void {
         感知段 {{ outcome.chain.stages[0]?.note || '—' }}
       </div>
 
+      <div v-if="outcome.review" class="chain" data-testid="outcome-review-ticket">
+        核签工单 {{ outcome.review.instance_id ?? '未开出' }} ｜ 待签节点
+        {{ outcome.review.pending_node ?? '—' }} ｜ 选项 {{ outcome.review.options.join(' / ') }} ｜
+        签核入口 {{ outcome.review.decision_endpoint }}
+      </div>
+      <div v-else-if="outcome.human_review_required" class="chain" data-testid="outcome-review-ticket">
+        需人工核签，但核签流程未注册：本次没有开出工单（后端返回 review=null）
+      </div>
+
       <div class="legs" data-testid="outcome-legs">
         <div v-for="finding in outcome.parse.legs" :key="finding.leg" class="leg" :data-testid="`leg-${finding.leg}`">
           <a-tag :color="finding.used ? 'green' : 'default'">{{ finding.used ? '采纳' : '未采纳' }}</a-tag>

@@ -77,6 +77,7 @@ function outcome(overrides: Partial<ReportOutcomeDto> = {}): ReportOutcomeDto {
       evidence: [],
     },
     human_review_required: false,
+    review: null,
     intake_seconds: 0.412,
     chain: {
       trace_id: 'tr_1',
@@ -218,6 +219,38 @@ describe('回执摊开三路融合的事实', () => {
     expect(byTestid(wrapper, 'outcome-review').text()).toBe('需人工核签')
     expect(byTestid(wrapper, 'outcome-review').attributes('data-color')).toBe('red')
     expect(byTestid(wrapper, 'outcome-degradations').text()).toContain('等级来自上报人申报值而非阈值命中，转人工核签')
+  })
+
+  it('开出了工单就把工单号、待签节点与三态选项显示出来（签字人得知道去哪儿签）', async () => {
+    const seeded = outcome()
+    seeded.human_review_required = true
+    seeded.review = {
+      workflow_id: 'wf_review_1',
+      instance_id: 'wfi_01abc',
+      status: 'waiting',
+      pending_node: 'review',
+      options: ['approve', 'adjust', 'reject'],
+      decision_endpoint: '/api/v1/workflow/instances/{instance_id}/nodes/{node_id}/decision',
+    }
+    const wrapper = await rendered(seeded)
+    const ticket = byTestid(wrapper, 'outcome-review-ticket').text()
+    expect(ticket).toContain('wfi_01abc')
+    expect(ticket).toContain('待签节点 review')
+    expect(ticket).toContain('approve / adjust / reject')
+    expect(ticket).toContain('/api/v1/workflow/instances/')
+  })
+
+  it('该核签却没开出工单时，明说"没有工单"而不是留一行空白', async () => {
+    const seeded = outcome()
+    seeded.human_review_required = true
+    seeded.review = null
+    const wrapper = await rendered(seeded)
+    expect(byTestid(wrapper, 'outcome-review-ticket').text()).toContain('没有开出工单')
+  })
+
+  it('无需核签时这一行整个不出现（不给值班员制造假待办）', async () => {
+    const wrapper = await rendered(outcome())
+    expect(wrapper.find('[data-testid="outcome-review-ticket"]').exists()).toBe(false)
   })
 
   it('三路都没给出等级时显示"未定级"，不显示成 0 级', async () => {

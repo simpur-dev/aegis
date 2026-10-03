@@ -88,6 +88,7 @@ function outcome(overrides: Partial<ReportOutcomeDto> = {}): ReportOutcomeDto {
       evidence: [{ source: 'case-1', hazard_type: 'debris_flow', typical_level: 2 }],
     },
     human_review_required: false,
+    review: null,
     intake_seconds: 0.123,
     chain: {
       trace_id: 'tr_1',
@@ -229,5 +230,66 @@ describe('定级来源标签', () => {
 
   it('标签表与后端 LEG_ 常量严格同名（漂移门禁）', () => {
     expect(Object.keys(LEG_SOURCE_LABELS).sort()).toEqual(backendLegNames())
+  })
+})
+
+/**
+ * 核签工单的两端键名（跨端漂移门禁）。
+ *
+ * 真源是 `container._open_report_review()` 返回的那个字典：后端改键名而前端没跟上时，
+ * 界面只会显示"未开出"，看上去像"这条不用核签"——把一个待办悄悄读成没有待办，
+ * 是这张工单最坏的失效方式。所以这里比的是**两端的键集合**，不是两份抄写。
+ */
+function backendReviewTicketKeys(): string[] {
+  const text = readRepoFile('backend', 'src', 'aegis', 'container.py')
+  const start = text.indexOf('async def _open_report_review')
+  if (start < 0) throw new Error('container.py 里找不到 _open_report_review：开单逻辑改名或搬走了，门禁要跟着改（不是把断言删掉）')
+  const block = /\n        return \{([\s\S]*?)\n        \}/.exec(text.slice(start))
+  if (!block) throw new Error('没解析到 _open_report_review 的返回字典：写法变了，这里要跟着改')
+  const keys = [...block[1].matchAll(/^ {12}"([a-z_]+)":/gm)].map((match) => match[1] as string)
+  if (keys.length < 4) throw new Error(`工单键数解析异常（只数到 ${keys.length} 个）：先修解析器再谈断言`)
+  return [...new Set(keys)].sort()
+}
+
+function frontendReviewTicketKeys(): string[] {
+  const text = readRepoFile('frontend', 'src', 'api', 'reports.ts')
+  const block = /export interface ReportReviewDto \{([\s\S]*?)\n\}/.exec(text)
+  if (!block) throw new Error('reports.ts 里没有 ReportReviewDto：前端把工单类型删了或改名了')
+  const keys = [...block[1].matchAll(/^\s{2}(\w+)[?]?:/gm)].map((match) => match[1] as string)
+  if (keys.length < 4) throw new Error(`前端工单键数解析异常（只数到 ${keys.length} 个）`)
+  return [...new Set(keys)].sort()
+}
+
+describe('人工核签工单', () => {
+  it('回执把工单号、待签节点与签核入口原样带到界面', async () => {
+    const seeded = outcome({
+      human_review_required: true,
+      review: {
+        workflow_id: 'wf_review_1',
+        instance_id: 'wfi_01abc',
+        status: 'waiting',
+        pending_node: 'review',
+        options: ['approve', 'adjust', 'reject'],
+        decision_endpoint: '/api/v1/workflow/instances/{instance_id}/nodes/{node_id}/decision',
+      },
+    })
+    const { client } = clientWith(() => ({ status: 200, data: seeded }))
+    const result = await client.submit(toReportBody({ reporter: '村民', region_code: '540200', note: '发生泥石流，请求红色预警' }))
+    expect(result.review?.instance_id).toBe('wfi_01abc')
+    expect(result.review?.pending_node).toBe('review')
+    // 三态不许在前端被裁成一态：签字人看到的是后端给的那三个选项
+    expect(result.review?.options).toEqual(['approve', 'adjust', 'reject'])
+  })
+
+  it('核签流程没注册时后端给 null，前端据此显示"没开出工单"而不是空工单号', async () => {
+    const seeded = outcome({ human_review_required: true, review: null })
+    const { client } = clientWith(() => ({ status: 200, data: seeded }))
+    const result = await client.submit(toReportBody({ reporter: '村民', region_code: '540200', note: '发生泥石流' }))
+    expect(result.human_review_required).toBe(true)
+    expect(result.review).toBe(null)
+  })
+
+  it('工单键集合与后端返回字典严格同名（漂移门禁）', () => {
+    expect(frontendReviewTicketKeys()).toEqual(backendReviewTicketKeys())
   })
 })

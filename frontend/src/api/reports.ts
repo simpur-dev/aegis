@@ -220,10 +220,29 @@ export interface ReportEchoDto {
   location: [number, number] | null
 }
 
+/**
+ * 低置信度上报开出的人工核签工单（`container._open_report_review`）。
+ *
+ * 后端事实：`human_review_required` 为真时这里才非空——开单不拦发布，预警照发，
+ * 工单判的是"这条结论是否按现状生效"。签核走**既有**的工作流决策接口
+ * （`decision_endpoint`），平台不另起一套签字口径。
+ */
+export interface ReportReviewDto {
+  workflow_id: string
+  instance_id: string | null
+  status: string | null
+  /** 停在哪个节点（`awaiting_human`）；为空说明这条流程没等人签。 */
+  pending_node: string | null
+  options: string[]
+  decision_endpoint: string
+}
+
 export interface ReportOutcomeDto {
   report: ReportEchoDto
   parse: ParseResultDto
   human_review_required: boolean
+  /** 核签流程未注册时后端给 `null`（降级是可见事实，不是异常）。 */
+  review: ReportReviewDto | null
   intake_seconds: number
   chain: ReportChainDto
 }
