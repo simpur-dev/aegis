@@ -21,6 +21,7 @@ import {
   clusterPoints,
   detailOf,
   expandBBox,
+  groupUnlocatedByReason,
   hazardLabel,
   indexAnchors,
   isUsableBBox,
@@ -626,5 +627,53 @@ describe('装配与点击→详情', () => {
     expect(empty.stations).toEqual([])
     expect(empty.rejected[0].reason).toBe('not-a-feature-collection')
     expect(buildRenderPlan({ layers: EMPTY_LAYERS, bbox: null, zoom: 4 })).toMatchObject({ clustered: false, stations: [] })
+  })
+})
+
+describe('未定位清单：原因要说真话，总数要能拆开', () => {
+  it('站点缺坐标的原因不再写"后端尚未开放 /api/v1/stations"（那条路由早就开着）', async () => {
+    const { UNLOCATED_LABELS } = await import('@/components/map/entities')
+    expect(UNLOCATED_LABELS['station-without-coord']).not.toContain('尚未开放')
+    expect(UNLOCATED_LABELS['station-without-coord']).toContain('台账')
+  })
+
+  it('按原因分组并按数量排序：一个笼统数字答不了"缺哪几样"', () => {
+    const items = [
+      ...Array.from({ length: 6 }, (_, i) => ({ id: `station:s${i}`, kind: 'station' as const, title: `s${i}`, regionCode: '540121', reason: 'station-without-coord' as const })),
+      ...Array.from({ length: 72 }, (_, i) => ({ id: `warning:w${i}`, kind: 'warning' as const, title: `w${i}`, regionCode: '540221', reason: 'region-without-anchor' as const })),
+    ]
+    const groups = groupUnlocatedByReason(items)
+    expect(groups.map((g) => g.count)).toEqual([72, 6])
+    expect(groups[0].label).toContain('锚点')
+    expect(groups[1].label).toContain('台账')
+    expect(groups.reduce((sum, g) => sum + g.count, 0)).toBe(items.length)
+  })
+
+  it('空清单不编出分组：没缺东西就说没缺', () => {
+    expect(groupUnlocatedByReason([])).toEqual([])
+  })
+})
+
+describe('未定位清单：原因要说真话，总数要能拆开', () => {
+  it('站点缺坐标的原因不再写"后端尚未开放 /api/v1/stations"（那条路由早就开着）', async () => {
+    const { UNLOCATED_LABELS } = await import('@/components/map/entities')
+    expect(UNLOCATED_LABELS['station-without-coord']).not.toContain('尚未开放')
+    expect(UNLOCATED_LABELS['station-without-coord']).toContain('台账')
+  })
+
+  it('按原因分组并按数量排序：一个笼统数字答不了"缺哪几样"', () => {
+    const items = [
+      ...Array.from({ length: 6 }, (_, i) => ({ id: `station:s${i}`, kind: 'station' as const, title: `s${i}`, regionCode: '540121', reason: 'station-without-coord' as const })),
+      ...Array.from({ length: 72 }, (_, i) => ({ id: `warning:w${i}`, kind: 'warning' as const, title: `w${i}`, regionCode: '540221', reason: 'region-without-anchor' as const })),
+    ]
+    const groups = groupUnlocatedByReason(items)
+    expect(groups.map((g) => g.count)).toEqual([72, 6])
+    expect(groups[0].label).toContain('锚点')
+    expect(groups[1].label).toContain('台账')
+    expect(groups.reduce((sum, g) => sum + g.count, 0)).toBe(items.length)
+  })
+
+  it('空清单不编出分组：没缺东西就说没缺', () => {
+    expect(groupUnlocatedByReason([])).toEqual([])
   })
 })

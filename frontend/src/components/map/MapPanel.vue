@@ -18,7 +18,7 @@ import type {
   UnlocatedItem,
   UnlocatedReason,
 } from '@/components/map/entities'
-import { hazardLabel, riskLabel, riskLegend, UNLOCATED_LABELS } from '@/components/map/entities'
+import { hazardLabel, groupUnlocatedByReason, riskLabel, riskLegend, UNLOCATED_LABELS } from '@/components/map/entities'
 import type { NetworkStatus } from '@/components/map/offline'
 import { NETWORK_LABELS, NETWORK_TAG_COLORS } from '@/components/map/offline'
 
@@ -68,6 +68,8 @@ const station = computed(() => (props.detail?.kind === 'station' ? props.detail 
 const warning = computed(() => (props.detail?.kind === 'warning' ? props.detail : null))
 const reach = computed(() => (props.detail?.kind === 'reach' ? props.detail : null))
 const zone = computed(() => (props.detail?.kind === 'hazard-zone' ? props.detail : null))
+// 分组规则本身在 entities.ts（本组件不判断），这里只是把那份结果摆出来
+const unlocatedGroups = computed(() => groupUnlocatedByReason(props.unlocated))
 
 const detailTitle = computed(() => props.detail?.title ?? '')
 const detailColor = computed(() => props.detail?.colorCss ?? '#8c8c8c')
@@ -193,6 +195,13 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
         <a-tag v-if="props.unlocated.length" color="orange">{{ props.unlocated.length }}</a-tag>
       </template>
       <a-empty v-if="!props.unlocated.length" description="全部要素均已落到图上" />
+      <!-- 光给一个总数答不了"我到底缺哪几样"：站点缺坐标与区域没烘焙锚点
+           是两件要找不同的人办的事，混在一个数字里就都看不见了 -->
+      <div v-if="unlocatedGroups.length" class="unlocated-groups" data-testid="unlocated-groups">
+        <span v-for="group in unlocatedGroups" :key="group.reason" class="unlocated-group">
+          {{ group.label }} × {{ group.count }}
+        </span>
+      </div>
       <a-list v-else size="small" :data-source="props.unlocated">
         <template #renderItem="{ item }">
           <a-list-item>
@@ -275,6 +284,18 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
 .sample {
   font-size: 12px;
   line-height: 1.8;
+}
+.unlocated-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.65);
+}
+.unlocated-group {
+  border-left: 2px solid #faad14;
+  padding-left: 6px;
 }
 .unlocated-title {
   font-size: 13px;

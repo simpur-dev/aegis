@@ -374,9 +374,21 @@ export function toUnlocatedItems(features: readonly PointFeatureDetail[]): Unloc
 }
 
 export const UNLOCATED_LABELS: Record<UnlocatedReason, string> = {
-  'station-without-coord': '站点无经纬度（后端尚未开放 /api/v1/stations）',
+  // 这句此前写的是"后端尚未开放 /api/v1/stations"——那是路由还不存在时的老实话，
+  // 现在这条路由早就开着并返回 6 个站点，只是它们 `geom` 为 null。
+  // 照旧这么写会把"缺现场台账数据"误导成"后端功能缺失"，找错人。
+  'station-without-coord': '站点无经纬度（台账里该站没有坐标，需导入现场台账）',
   'region-without-anchor': '该区域无锚点（未烘焙 region-anchors.json）',
   'no-anchor': '后端记录里没有区域编码',
+}
+
+/** 未定位清单按原因分组：一个笼统的总数答不了"我到底缺哪几样"。 */
+export function groupUnlocatedByReason(items: readonly UnlocatedItem[]): Array<{ reason: UnlocatedReason; label: string; count: number }> {
+  const counts = new Map<UnlocatedReason, number>()
+  for (const item of items) counts.set(item.reason, (counts.get(item.reason) ?? 0) + 1)
+  return [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count, label: UNLOCATED_LABELS[reason] }))
+    .sort((left, right) => right.count - left.count)
 }
 
 function unlocatedReasonOf(feature: PointFeature): UnlocatedReason {
