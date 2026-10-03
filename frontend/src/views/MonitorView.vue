@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { message } from 'ant-design-vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import api, { ApiError } from '@/api/client'
 import type { TelemetryReading } from '@/api/types'
@@ -8,12 +8,16 @@ import EChart from '@/components/EChart.vue'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import type { ChartOption } from '@/components/echarts'
 import { formatOperatingTime, operatingClock } from '@/utils/clock'
+import { ingestLatencyLabel } from '@/utils/ingestLatency'
+
+const REFRESH_MS = 15_000
 
 const readings = ref<TelemetryReading[]>([])
 const region = ref<string>('')
 const metric = ref<string>('rain_10min')
 const loading = ref(false)
 const drilling = ref(false)
+let timer: ReturnType<typeof setInterval> | null = null
 /**
  * 人工上报（批次 B5）：这条腿是"接入 ≤5min"的第四个真实入口，
  * 表单与回执都在 `components/reports/ReportForm.vue` 一处，监测页只负责开门。
@@ -70,6 +74,10 @@ async function load(): Promise<void> {
 }
 
 async function drill(scenario: 'surge' | 'normal'): Promise<void> {
+  // 重入守卫：`:loading` 只是让按钮转圈，antd 并不会因此禁用点击（真机实测：
+  // 点击后 120ms 再点一次，第二次请求照样发出去）。一次演练会发布 14 条读数并跑完整链路，
+  // 连点就是把接入量测的样本成倍灌进账本——值班员看到的"激增"就变成了自己手抖的结果。
+  if (drilling.value) return
   drilling.value = true
   try {
     const result = await api.drill({ scenario, ticks: 1 })
@@ -86,11 +94,24 @@ async function drill(scenario: 'surge' | 'normal'): Promise<void> {
 }
 
 function latencyOf(row: TelemetryReading): string {
-  const ms = (new Date(row.ingested_at).getTime() - new Date(row.observed_at).getTime()) || 0
-  return `${ms.toFixed(0)} ms`
+  return ingestLatencyLabel(row)
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  // 这是盯实时遥测的页面，只取一次数就等于把"最新读数"冻在打开那一刻：
+  // 演练发完，表里还是旧数据，而页面标题写着"最新"。与态势总览同一口径——
+  // 15 秒一轮，页签切到后台就不打接口，卸载停表。
+  timer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return
+    void load()
+  }, REFRESH_MS)
+})
+
+onBeforeUnmount(() => {
+  if (timer !== null) clearInterval(timer)
+  timer = null
+})
 </script>
 
 <template>
@@ -106,8 +127,8 @@ onMounted(load)
         </a-select>
         <a-button @click="load">刷新</a-button>
         <a-button data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
-        <a-button type="primary" :loading="drilling" @click="drill('surge')">发起灾害演练（激增）</a-button>
-        <a-button :loading="drilling" @click="drill('normal')">发起背景演练（正常）</a-button>
+        <a-button type="primary" :loading="drilling" :disabled="drilling" data-testid="drill-surge" @click="drill('surge')">发起灾害演练（激增）</a-button>
+        <a-button :loading="drilling" :disabled="drilling" data-testid="drill-normal" @click="drill('normal')">发起背景演练（正常）</a-button>
       </a-space>
     </a-card>
 

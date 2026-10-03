@@ -18,7 +18,7 @@ const STUBS = {
   'a-space': { name: 'ASpace', props: ['wrap'], template: '<div class="space"><slot /></div>' },
   'a-select': { name: 'ASelect', props: ['value', 'placeholder'], emits: ['update:value'], template: '<div class="select"><slot /></div>' },
   'a-select-option': { name: 'ASelectOption', props: ['value'], template: '<span class="option"><slot /></span>' },
-  'a-button': { name: 'AButton', props: ['loading', 'type'], template: '<button class="button"><slot /></button>' },
+  'a-button': { name: 'AButton', props: ['loading', 'type', 'disabled'], template: '<button class="button" :disabled="disabled"><slot /></button>' },
   'a-row': { name: 'ARow', props: ['gutter'], template: '<div class="row"><slot /></div>' },
   'a-col': { name: 'ACol', props: ['span'], template: '<div class="col"><slot /></div>' },
   'a-table': { name: 'ATable', props: ['columns', 'dataSource', 'pagination', 'rowKey', 'size'], template: '<div class="table" />' },
@@ -50,6 +50,90 @@ function mountView() {
 
 beforeEach(() => {
   mockedTelemetry.mockReset().mockResolvedValue({ count: 1, items: [READING] })
+})
+
+describe('监测页的实时性：标题写着"最新"，数据就不能冻在打开那一刻', () => {
+  function withTimers() {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  }
+
+  it('每 15 秒自己再取一次遥测', async () => {
+    withTimers()
+    try {
+      mountView()
+      await flushPromises()
+      const first = mockedTelemetry.mock.calls.length
+      await vi.advanceTimersByTimeAsync(15_000)
+      await flushPromises()
+      expect(mockedTelemetry.mock.calls.length).toBeGreaterThan(first)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('离开页面就停表：切走了还在打接口是白耗', async () => {
+    withTimers()
+    try {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.unmount()
+      const atUnmount = mockedTelemetry.mock.calls.length
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(mockedTelemetry.mock.calls.length).toBe(atUnmount)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('页签在后台时跳过这一轮（不是把定时器关掉）', async () => {
+    withTimers()
+    try {
+      const original = document.visibilityState
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      mountView()
+      await flushPromises()
+      const first = mockedTelemetry.mock.calls.length
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(mockedTelemetry.mock.calls.length).toBe(first)
+      Object.defineProperty(document, 'visibilityState', { value: original, configurable: true })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('演练按钮的重复点击防护', () => {
+  /** 演练接口的替身：挂住不返回，模拟"正在跑"的那几秒。 */
+  function hangingDrill() {
+    let release: ((value: unknown) => void) | null = null
+    vi.mocked(api.drill).mockReturnValue(new Promise((resolve) => { release = resolve }) as never)
+    return () => release?.({ ingest: { readings: 0 }, regions: 0, chains: [] })
+  }
+
+  it('一次演练没跑完之前，再点不会重复发请求', async () => {
+    const release = hangingDrill()
+    const wrapper = mountView()
+    await flushPromises()
+    const surge = wrapper.find('[data-testid="drill-surge"]')
+    await surge.trigger('click')
+    await surge.trigger('click')
+    await surge.trigger('click')
+    expect(vi.mocked(api.drill)).toHaveBeenCalledTimes(1)
+    release()
+    await flushPromises()
+  })
+
+  it('跑完之前按钮是禁用的（不是只转个圈：转圈不挡点击）', async () => {
+    const release = hangingDrill()
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('[data-testid="drill-surge"]').trigger('click')
+    expect(wrapper.find('[data-testid="drill-surge"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="drill-normal"]').attributes('disabled')).toBeDefined()
+    release()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="drill-surge"]').attributes('disabled')).toBeUndefined()
+  })
 })
 
 describe('监测页的人工上报入口（B5）', () => {
