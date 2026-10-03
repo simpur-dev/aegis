@@ -64,7 +64,8 @@ aegis/
 #      AEGIS_RETRIEVAL_ENABLED=true AEGIS_RETRIEVAL_INDEX_BACKEND=seekdb uv run python -m aegis.main
 cp .env.example backend/.env
 
-# 2) 依赖（后端 uv / 前端 npm）
+# 2) 依赖（三处：仓库根的 dev 编排、后端 uv、前端 npm）
+npm install                       # 根：只装 concurrently 一个开发依赖，专为下面那条 `npm run dev`
 cd backend && uv sync --extra dev
 cd ../frontend && npm install
 
@@ -74,9 +75,13 @@ cd ../backend && uv run pytest -q
 # 4) 前端类型检查与单测
 cd ../frontend && npm run typecheck && npm run test
 
-# 5) 起服务
-cd ../backend && uv run python -m aegis.main      # API: http://127.0.0.1:8000/docs
-cd ../frontend && npm run dev                     # Web: http://localhost:5173（代理 /api 到后端）
+# 5) 起服务：仓库根一条命令同时拉起两端（Ctrl+C 一次，两个进程一起收且不留孤儿——已实测）
+cd .. && npm run dev              # API http://127.0.0.1:8000/docs ｜ Web http://localhost:5173
+
+#    要分开跑或换端口（本机 8000 可能被别的东西听过 127.0.0.1，那样后端绑 0.0.0.0:8000 会
+#    "看着起来了"而前端全是 404），两个变量必须一起改，它们只有一个真源：
+#      cd backend  && AEGIS_HTTP_PORT=8321 uv run python -m aegis.main
+#      cd frontend && AEGIS_API_TARGET=http://127.0.0.1:8321 npm run dev
 ```
 
 需要真实基础设施时按 profile 起（`observability` 先起，应用才不会把跨度只留在本地）：

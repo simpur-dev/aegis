@@ -1,0 +1,16 @@
+{
+  "name": "aegis-dev",
+  "version": "0.1.0",
+  "private": true,
+  "description": "仓库根的开发编排入口：一条 `npm run dev` 同时拉起 Python 后端与 Vue 前端。真正的产品代码在 backend/ 与 frontend/ 各自的清单里。",
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --prefix \"[{name}]\" --names backend,frontend --prefix-colors \"cyan,magenta\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && uv run python -m aegis.main",
+    "dev:frontend": "cd frontend && npm run dev",
+    "test:frontend": "cd frontend && npm run typecheck && npm run test",
+    "test:backend": "cd backend && uv run pytest -q"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
