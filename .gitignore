@@ -61,3 +61,6 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/playwright-install.log
 
+
+# 浏览器巡检的现场留档（截图、临时探针脚本）：只在本地用作证据，不入库
+frontend/.tmp-verify/
