@@ -9,7 +9,7 @@ import type {
 } from '@/api/workflow'
 import { createNodeDef } from '@/components/workflow/registry'
 import { createWorkflowStore } from '@/stores/workflow'
-import { defToGraph, type InstanceStatus, type NodeState } from '@/utils/graph'
+import { defToGraph, type InstanceStatus, type NodeState, type WorkflowDef } from '@/utils/graph'
 
 function nodeRun(nodeId: string, state: NodeState, overrides: Partial<InstanceNodeRun> = {}): InstanceNodeRun {
   return {
@@ -38,24 +38,50 @@ function detail(status: InstanceStatus = 'running', runs: InstanceNodeRun[] = []
   }
 }
 
-/** 每个用例一套独立桩：断言"派发出去的方法与载荷"，不发网络。 */
+/** 实例所绑定定义的前端视图：focusInstance 要把它取回画布，桩必须给得出。 */
+function workflowDef(): WorkflowDef {
+  return {
+    workflow_id: 'wf_0123456789ab',
+    name: '已存链路',
+    description: '',
+    version: 2,
+    nodes: [createNodeDef('data_fetch', 'fetch_1'), createNodeDef('human_review', 'review_1')],
+    edges: [{ source: 'fetch_1', target: 'review_1', condition: 'always' }],
+    created_by: 'operator',
+    status: 'active',
+  }
+}
+
+/**
+ * 每个用例一套独立桩：断言"派发出去的方法与载荷"，不发网络。
+ *
+ * 桩的键集用 `Record<keyof WorkflowClient, unknown>` 声明，客户端加方法而这里没补桩
+ * 就是编译错误。此前 `definition` 漏过一次：focusInstance 取定义时 TypeError，
+ * 被 runAction 咽成一条 error 文案，页面只表现为"画布空白、核签点不开"。
+ */
 function fakeClient(responses: Partial<Record<keyof WorkflowClient, unknown>> = {}): WorkflowClient {
   const ok = { count: 0, items: [] }
-  return {
-    nodeTypes: vi.fn(async () => responses.nodeTypes ?? ok),
-    definitions: vi.fn(async () => responses.definitions ?? ok),
-    createDefinition: vi.fn(async () => responses.createDefinition ?? { workflow_id: 'wf_new', name: '链路', version: 1 }),
-    reviseDefinition: vi.fn(async () => responses.reviseDefinition ?? { workflow_id: 'wf_new', name: '链路', version: 2 }),
-    archiveDefinition: vi.fn(async () => ({ workflow_id: 'wf_1', status: 'archived' })),
-    startInstance: vi.fn(async () => detail()),
-    instances: vi.fn(async () => ok),
-    instance: vi.fn(async () => responses.instance ?? detail()),
-    submitDecision: vi.fn(async () => detail('running', [nodeRun('review_1', 'succeeded')])),
-    patchNodeConfig: vi.fn(async () => ({ node_id: 'fetch_1', config: { limit: 50 } })),
-    insertNode: vi.fn(async () => ({ instance_id: 'wfi_0123456789ab', node_id: 'notify_9', after: 'fetch_1' })),
-    bypassNode: vi.fn(async () => detail('running', [nodeRun('fetch_1', 'bypassed')])),
-    abortInstance: vi.fn(async () => detail('aborted', [nodeRun('fetch_1', 'cancelled')])),
-  } as unknown as WorkflowClient
+  const defaults: Record<keyof WorkflowClient, unknown> = {
+    nodeTypes: ok,
+    definitions: ok,
+    definition: workflowDef(),
+    createDefinition: { workflow_id: 'wf_new', name: '链路', version: 1 },
+    reviseDefinition: { workflow_id: 'wf_new', name: '链路', version: 2 },
+    archiveDefinition: { workflow_id: 'wf_1', status: 'archived' },
+    startInstance: detail(),
+    instances: ok,
+    instance: detail(),
+    submitDecision: detail('running', [nodeRun('review_1', 'succeeded')]),
+    patchNodeConfig: { node_id: 'fetch_1', config: { limit: 50 } },
+    insertNode: { instance_id: 'wfi_0123456789ab', node_id: 'notify_9', after: 'fetch_1' },
+    bypassNode: detail('running', [nodeRun('fetch_1', 'bypassed')]),
+    abortInstance: detail('aborted', [nodeRun('fetch_1', 'cancelled')]),
+  }
+  const stubs = {} as Record<keyof WorkflowClient, unknown>
+  for (const method of Object.keys(defaults) as (keyof WorkflowClient)[]) {
+    stubs[method] = vi.fn(async () => responses[method] ?? defaults[method])
+  }
+  return stubs as unknown as WorkflowClient
 }
 
 function firstCall(client: WorkflowClient, method: keyof WorkflowClient): unknown[] {
@@ -189,6 +215,51 @@ describe('stores/workflow 定义编辑', () => {
     expect(store.current?.nodes.map((item) => item.node_id)).toEqual(['notify_1'])
     expect(store.current?.edges).toEqual([])
   })
+
+  /**
+   * 列表接口只给计数（workflow_api.py:113-130），画布能存能归档却打不开任何一张图，
+   * 这一条把"打开"钉住：取回定义、立起标题、给每个节点落位、选中首个节点。
+   */
+  it('打开已存定义：取回全文并铺成可编辑的画布', async () => {
+    const store = await freshStore()
+    expect(await store.openDefinition('wf_0123456789ab')).toBe(true)
+    expect(firstCall(client, 'definition')).toEqual(['wf_0123456789ab'])
+    expect(store.current?.name).toBe('已存链路')
+    expect(store.current?.workflow_id).toBe('wf_0123456789ab')
+    expect(Object.keys(store.positions).sort()).toEqual(['fetch_1', 'review_1'])
+    expect(store.selectedNodeId).toBe('fetch_1')
+    expect(store.error).toBeNull()
+  })
+
+  it('打开之后仍可修订：workflow_id 已就位，保存走 revise 而不是 create', async () => {
+    const store = await freshStore()
+    await store.openDefinition('wf_0123456789ab')
+    store.addNode(createNodeDef('notify', 'notify_9'))
+    expect(await store.saveDefinition()).toBe(true)
+    expect(client.createDefinition).not.toHaveBeenCalled()
+    expect(firstCall(client, 'reviseDefinition')[0]).toBe('wf_0123456789ab')
+  })
+
+  it('打开不存在的定义：报后端原因，画布保持原样', async () => {
+    const store = await freshStore()
+    vi.mocked(client.definition).mockRejectedValueOnce(new Error('HTTP 404 未找到该工作流定义'))
+    expect(await store.openDefinition('wf_missing')).toBe(false)
+    expect(store.current?.name).toBe('泥石流防控链路')
+    expect(store.error).toContain('404')
+  })
+
+  it('打开定义时停掉上一张图的轮询', async () => {
+    vi.useFakeTimers()
+    const running = createWorkflowStore(fakeClient({ instance: detail('running', [nodeRun('fetch_1', 'running')]) }))()
+    running.resetDefinition('链路')
+    await running.focusInstance('wfi_0123456789ab')
+    expect(running.polling).toBe(true)
+    expect(await running.openDefinition('wf_0123456789ab')).toBe(true)
+    expect(running.polling).toBe(false)
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(running.polling).toBe(false)
+    vi.useRealTimers()
+  })
 })
 
 describe('stores/workflow 运行中操作', () => {
@@ -202,9 +273,7 @@ describe('stores/workflow 运行中操作', () => {
     client = fakeClient({ instance: detail(status, runs) })
     const store = createWorkflowStore(client)()
     store.resetDefinition('链路')
-    store.addNode(createNodeDef('data_fetch', 'fetch_1'))
-    store.addNode(createNodeDef('human_review', 'review_1'))
-    store.patchSelected({ config: { prompt: '请确认', options: ['approve', 'reject'] } })
+    // 画布上的两个节点来自服务端定义（focusInstance 取回），本地草稿只负责把标题立起来
     await store.focusInstance('wfi_0123456789ab')
     return store
   }
@@ -243,6 +312,59 @@ describe('stores/workflow 运行中操作', () => {
     await vi.advanceTimersByTimeAsync(1_500)
     expect(store.polling).toBe(false)
     vi.useRealTimers()
+  })
+
+  /**
+   * 聚焦实例必须把"这条实例绑定的定义"一起载进画布。
+   *
+   * 真机复现的缺陷：运行区已显示"待人工核签：review"，画布仍是 0 节点、
+   * 标题"未命名防控链路"——选不到节点就打不开决策面板，值班员签不了这张工单。
+   */
+  it('聚焦实例时按 workflow_id 取回定义并铺到画布上', async () => {
+    client = fakeClient({
+      instance: detail('waiting', [nodeRun('fetch_1', 'succeeded'), nodeRun('review_1', 'awaiting_human')]),
+    })
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    expect(await store.focusInstance('wfi_0123456789ab')).toBe(true)
+    expect(firstCall(client, 'definition')).toEqual(['wf_0123456789ab'])
+    expect(store.current?.name).toBe('已存链路')
+    expect(store.current?.nodes.map((node) => node.node_id)).toEqual(['fetch_1', 'review_1'])
+    expect(Object.keys(store.positions).sort()).toEqual(['fetch_1', 'review_1'])
+    expect(store.nodeStateOf('review_1')).toBe('awaiting_human')
+    expect(store.error).toBeNull()
+  })
+
+  it('聚焦实例时自动选中待核签节点，决策面板随之可用', async () => {
+    client = fakeClient({
+      instance: detail('waiting', [nodeRun('fetch_1', 'succeeded'), nodeRun('review_1', 'awaiting_human')]),
+    })
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.focusInstance('wfi_0123456789ab')
+    expect(store.selectedNodeId).toBe('review_1')
+    expect(store.canDecideNode('review_1')).toBe(true)
+    expect(store.decisionOptions('review_1')).toEqual(['approve', 'reject'])
+    expect(await store.submitDecision('review_1', 'approve', '同意')).toBe(true)
+  })
+
+  it('无待核签节点时选中第一个，不至于选空', async () => {
+    client = fakeClient({ instance: detail('running', [nodeRun('fetch_1', 'running')]) })
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.focusInstance('wfi_0123456789ab')
+    expect(store.selectedNodeId).toBe('fetch_1')
+  })
+
+  it('取不回定义时报错而不是留下空白画布', async () => {
+    client = fakeClient({ instance: detail('waiting', [nodeRun('review_1', 'awaiting_human')]) })
+    vi.mocked(client.definition).mockRejectedValueOnce(new Error('HTTP 404 no such definition'))
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    expect(await store.focusInstance('wfi_0123456789ab')).toBe(false)
+    expect(store.current?.name).toBe('草稿')
+    expect(store.error).toContain('404')
+    expect(store.polling).toBe(false)
   })
 
   it('改参只在 pending/ready 节点上开放，且会重拉快照', async () => {

@@ -284,8 +284,10 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
         selectedNodeId.value = def.nodes[0]?.node_id ?? null
         // 后端不存坐标（NodeDef 里没有位置字段）：打开即按分层布局重排。
         // 坐标取自 defToGraph 的结果而不是另算一遍，画布与模型才只有一份布局口径。
-        const graph = defToGraph(def)
+        const graph = defToGraph(def, { descriptions: descriptionByType.value })
         positions.value = Object.fromEntries(graph.nodes.map((node) => [node.id, node.position]))
+        // 打开的是"定义"不是"实例"：上一张图的轮询必须停掉，否则定时器会继续
+        // 改写 current，把刚打开的草稿覆盖成实例快照。
         stopPolling()
         await Promise.all([loadDefinitions(), loadInstances()])
       }, '打开定义失败')
@@ -343,7 +345,24 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     async function focusInstance(instanceId: string): Promise<boolean> {
       stopPolling()
       return runAction(async () => {
-        instance.value = await client.instance(instanceId)
+        const detail = await client.instance(instanceId)
+        instance.value = detail
+        /**
+         * 把这条实例的定义与运行态一起载入画布。
+         *
+         * 此前只设 `instance`、不动画布：运行区明明写着"待人工核签：review"，
+         * 画布却仍是空白（标题"未命名防控链路"、0 节点）——选不到节点就打不开决策面板，
+         * 值班员签不了这张工单，只能回去 curl 接口。指针指到了，路没修。
+         */
+        const definition = await client.definition(detail.workflow_id)
+        current.value = definition
+        const states = Object.fromEntries(
+          detail.nodes.map((node) => [node.node_id, { state: node.state, attempts: node.attempts, note: node.error ?? '' }]),
+        )
+        const graph = defToGraph(definition, { states, descriptions: descriptionByType.value })
+        positions.value = Object.fromEntries(graph.nodes.map((node) => [node.id, node.position]))
+        const awaiting = detail.nodes.find((node) => node.state === 'awaiting_human') ?? detail.nodes[0]
+        selectedNodeId.value = awaiting?.node_id ?? null
         startPolling()
       }, '读取实例失败')
     }
