@@ -244,9 +244,9 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 
 | 取证项 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端门禁规模 | `cd backend && uv run python -m pytest -q --junitxml=junit_final.xml` | **2460 项、0 失败、0 错误、83 跳过**（跳过全部是需真库/真总线/真图的用例；本轮前基线 2259 → +201） |
+| 后端门禁规模 | `cd backend && uv run python -m pytest -q --junitxml=junit_final.xml` | **2502 项、0 失败、0 错误、83 跳过**（跳过全部是需真库/真总线/真图的用例；2259 → 2460 是批次 B/C/D 那轮，2460 → 2502 是 2026-10-04 凌晨浏览器深巡那批，见下文"夜间浏览器深巡实测"） |
 | 后端风格与类型 | `uv run ruff format --check src tests scripts` / `ruff check` / `mypy src` | 三项全绿（mypy 覆盖 99 个模块） |
-| 前端门禁规模 | `cd frontend && npm run typecheck && npm run test` | typecheck 无错；**25 文件 / 434 项全绿**（基线 327 → 413 补核签工单 6 项 → 434 是这轮真机巡检修完四处再补 `clock`/`metricUnits`/`appWiring` 三份门禁后的实测） |
+| 前端门禁规模 | `cd frontend && npm run typecheck && npm run test` | typecheck 无错；**31 文件 / 491 项全绿**（434 → 491 是 2026-10-04 凌晨浏览器深巡那批补的门禁：画布选中态与实例聚焦 8 项、时延单位出口对账 15 项、指标页读数与失败面 8 项、助手示例句与建议条 7 项、422 detail 还原 6 项、桩客户端键集编译门禁带出的 4 项等） |
 | 人工上报进链路（第四条接入腿） | `POST /api/v1/reports`，文本"24小时累计降雨95毫米，沟道泥位抬升1.2米"，20 次 | 20/20 产出预警与 STU；`report_intake_seconds` 台账 **P50 1.225s / P95 1.239s**，预算 300s（≤5min 口径，占 **0.41%**）；`reports={submitted:20, measured_by_rule:20, review_required:0}` |
 | 上报走的是同一条链路 | `GET /api/v1/events`、`GET /api/v1/tasks/{id}`、`GET /api/v1/warnings` 按上报返回的 id 回读 | 三处均命中同一条 `trace_id`/`event_id`/`warning_id`；感知段说明文字为"上报文本判定：命中 1 条…"，与遥测路径可区分 |
 | 三路融合解析准确率（合成回归集） | `uv run python -m scripts.eval_report_parsing` | 33 例、灾种覆盖 7 类；**灾种 0.9697 / 区划 1.0 / 读数精确率 0.9762 / 读数召回 0.9762 / 等级 0.9091**；`official_claim=false`（合成集，不构成官方准确率证据） |
@@ -285,6 +285,37 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 内存总线 + mock 通道 + 无 LLM 凭据的形态下完成，**带 LLM 的裁决腿与语义润色路径本轮未测得任何数字**
 （`AEGIS_LLM_API_KEY` 为空时这两条腿按设计缺席，报表里 `degradations` 会写明）。
 
+
+
+## 夜间浏览器深巡实测（2026-10-04 凌晨，本机 Windows / 内存总线 / mock 通道 / 无 LLM 凭据）
+
+这一轮的做法与前面几批不同：**用 Playwright 与内置浏览器把八张页面逐页驱动**（每张都真点、真发请求、
+真读接口回来对账），并把接口用路由拦截打成 500 / 422 / 503 各走一遍，看失败面说实话没有。
+下面每一行都是这样查出来的，没有一行是读代码读出来的结论。
+
+| 取证项 | 怎么量的 | 结果 |
+| --- | --- | --- |
+| 核签工单在画布上能签了（本轮最要紧的一处） | 真机走 `/workflow`：点实例 → 看画布 → 点"核签通过（approve）" | 修前：运行区写着"待人工核签：review"，画布却是 **0 节点**、标题"未命名防控链路"——选不到节点就打不开决策面板，值班员只能回去 curl。修后：画布出 4 颗节点、`review` 高亮并自动选中；`POST /api/v1/workflow/instances/wfi_fdedeaf56c60/nodes/review/decision` **200**，载荷 `{choice:"approve",by:"值班指挥员"}`，实例转 `succeeded`，两条未命中的分支显示"分支跳过"，三颗决策按钮转灰 |
+| 画布选中态此前只活在 Vue Flow 内部 | 真机读 `.wf-node.is-selected` 与接口轮询节奏 | 视图每次由 `defToGraph` 整体重建，1.5s 一次的实例轮询把内部点选整批冲掉：`selectedNodes: []` 而右侧检查器明明显示"人工核签"。改为选中态由模型（`store.selectedNodeId`）给出后真机命中那颗节点；`focusInstance` 的程序化选中也第一次可见 |
+| 节点组件被响应式代理（控制台脏） | 真机控制台计数 | `WORKFLOW_NODE_TYPES` 未 `markRaw`，被 Vue Flow 收进 reactive 状态后每次渲染刷 `Vue received a Component that was made a reactive object`；补 markRaw 后同一页控制台 **0 条 warning**。用例先把映射放进 `reactive()` 再问 `isReactive`——直接对导出对象问恒为 false，那样的门禁证明不了任何事 |
+| 决策按钮中间那颗露英文裸值 | 真机读三颗按钮文案 | 模板三元式只认识 approve/reject，而定义里的候选是 `["approve","adjust","reject"]`，中间那颗直接显示 `adjust`。改为"核签通过（approve）/核签更正（adjust）/核签退回（reject）"，提交出去的仍是裸值 |
+| 秒制指标被键名说成毫秒（差 1000 倍） | 真机读 `/api/v1/metrics/latency` 与页面表格逐格对账 | `ingest_end_to_end_seconds` 发的是 `p95_ms: 0.019 / budget_ms: 300`——值是按**秒**记的，键名却声称毫秒。改为账本自带 `unit` + 中性键名（`p50/p95/budget`），前端只认 `unit`；页面显示 `0.015 s / 300 s` 与真值一致。**没有改指标名**：`deploy/observability/alerts.yml` 等 44 处按名字引用，改名会打断告警与历史序列 |
+| Prometheus 直方图也在这么错 | `tests/unit/test_latency_units_contract.py`（11 项）+ 真出口复核 | 直方图叫 `aegis_latency_ms`、桶是毫秒桶，而导出器把秒值原样 `observe()`——看板读到的是"0.007 毫秒"。现在灌入前按单位换算，用例断言 `aegis_latency_ms_sum{metric="ingest_end_to_end_seconds"} == 2000`（不是 2） |
+| 毫秒级 KPI 被粗时钟量成恒为 0（本轮最难发现的一处） | 真机看 `/metrics` 那行 `assistant_reply_ms` 全 0 → 量时钟 → 改时钟 → 复量 | `time.monotonic()` 在本机是 `GetTickCount64()`，**步进 15.6 ms**（`get_clock_info` 的 resolution 实测 0.015625，最小步进实测 16.0 ms）。一轮约 0.3 ms 的语义交互被量成 0：修前账本 `p50/p95/max/mean` **全为 0.0**（客户端墙钟却是 11.85–16.56 ms）；改用 `perf_counter` 后同机复量得 **p50 0.739 / p95 2.202 / p99 2.347 / max 2.383 ms**。"语义交互一轮 ≤3s"此前是一条永绿的 0。另补源码门禁：测量起点禁用 monotonic、终点不得与起点分属两个纪元（跨纪元相减的负数会被 `max(..., 0)` 夹成一个看起来合理的 0） |
+| 人工上报接入时长用的是墙上时钟 | 同一批门禁 | `intake_seconds = max((utc_now() - started).total_seconds(), 0.0)`：一次时钟回拨就会被夹成一个像样的 0 秒。改用 `perf_counter` |
+| 跨度属性也在拿毫秒比秒级预算 | `test_秒制指标的账本预算换算成毫秒后才做超时判定` | `span_stage` 不显式传预算时直接取账本值，而秒制指标的预算按秒登记（300）——于是 1.2 秒的接入（1200 ms）会被判超标。现在按指标单位换算后再判，跨度属性 `aegis.sla.budget_ms` 写出 300000 |
+| 取不到数被显示成"现场没有" | 路由拦截把每张页打成 500/422/503，八张页各走一遍 | 首屏失败时态势总览写"在线智能体 **0** 个 / 已发布预警 **0** 条 / 任务单元 **0** 个"、指标页写"协同事务总数 **0** / 越限项数 **0**"——页脚明明说了取数失败。改为未取到一律 `—`；指标页另加一条留在页面上的原因行（首屏失败不谎称"还留着上一次的数"）。503 一轮八张页无可疑串、无 `[object Object]`、无 `NaN` |
+| 出口形状对不上时的页面行为 | 真机对着**改动前起来的旧后端进程**（出口没有 `unit`）跑新前端 | 三个统计位都是 `—`，页面写明"时延账本没有声明单位：assistant_reply_ms（拿到 undefined，只接受 ms / s）"，**无未捕获异常**——既不猜单位渲染，也不让渲染层抛错把整页打空 |
+| 422 的字段错误读不懂 | 真机把接口打成 FastAPI 的 422 数组 | 界面飘出 `HTTP 422 [object Object]`。新增 `describeDetail` 还原三种形状（400 字符串 / 422 数组带节点下标 `nodes.0.config.limit：Input should be a valid integer` / 裸对象摊成 k=v），用例对所有形状断言"不得出现 [object Object]" |
+| 助手的能力清单是一份只能看、不能用的说明书 | 真机逐条点 12 个芯片 | 芯片是 `<a-tag>`：写着"查询已发布预警"，点下去什么都没有；而本机无 LLM 时意图只走词表，值班员得自己猜该打出哪个词。改为按钮 + 能力面自带的 `example` 示例句（点一下只填不发），并补后端门禁「每个示例句都被自己的词表判回该动作」——词表改了而示例没跟上会当场响。真机复跑：点"查询指标量测"→输入框得 `p95 时延达标吗`→发送后 `intent 识别为 query.metrics（rule，置信 1.00）` |
+| 打字路径的 12 个动作逐项验真 | 真机按词表逐条发消息并读帧 | 只读 6 条全部命中正确动作且置信 1.00；`任务单元清单` 如实回"缺少任务单元 ID（stu_…）"而不是编一个；`把全网预警都删掉` 得到 **rejected 帧 + 留痕**，且没有降级成一份预警清单；`今天天气不错` 回"未能识别意图，返回可用动作清单"（置信 0.00）；写动作只产出待确认提案（`act_…`，约 30 分钟有效），确认后回执 `executed` |
+| 注入面 | 全仓 `grep v-html / innerHTML / outerHTML / insertAdjacentHTML` | **0 处**：后端文本（报表正文、案例溯源、节点名）一律经 Vue 插值转义渲染，页面上看到的长文本是原样文本 |
+| 桩客户端漏方法这一类缺陷 | `npm run typecheck` | 桩此前用 `as unknown as WorkflowClient` 绕过键集检查，漏掉 `definition` 时运行时只表现为一条 error 文案加一块空白画布。改为 `Record<keyof WorkflowClient, unknown>` 全量声明：客户端加方法而桩没补就是编译错误 |
+
+照实记三句：① 这一轮全部在**降级形态**（内存总线 + mock 通道 + 无 LLM 凭据）下取证，带 LLM 的裁决腿与
+语义润色路径本轮仍未测得数字；② 时钟那处结论只在 Windows 上成立（Linux 的 `monotonic` 是纳秒级），
+源码门禁的意义正是让两个平台都别再退回粗时钟；③ 出口改动**没有**在部署形态（真 PG/Neo4j/NATS + Prometheus
+抓取）上复跑过，`aegis_latency_ms` 的换算目前只有本机用例与本机 HTTP 出口两处证据。
 
 
 ## 还没测到的（诚实清单）
