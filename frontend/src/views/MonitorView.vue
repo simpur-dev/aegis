@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 import api, { ApiError } from '@/api/client'
 import type { TelemetryReading } from '@/api/types'
 import EChart from '@/components/EChart.vue'
+import ReportForm from '@/components/reports/ReportForm.vue'
 import type { ChartOption } from '@/components/echarts'
 
 const readings = ref<TelemetryReading[]>([])
@@ -12,6 +13,11 @@ const region = ref<string>('')
 const metric = ref<string>('rain_10min')
 const loading = ref(false)
 const drilling = ref(false)
+/**
+ * 人工上报（批次 B5）：这条腿是"接入 ≤5min"的第四个真实入口，
+ * 表单与回执都在 `components/reports/ReportForm.vue` 一处，监测页只负责开门。
+ */
+const reportOpen = ref(false)
 
 const regions = computed(() => [...new Set(readings.value.map((r) => r.region_code))].sort())
 const metrics = computed(() => [...new Set(readings.value.map((r) => r.metric))].sort())
@@ -98,6 +104,7 @@ onMounted(load)
           <a-select-option v-for="name in metrics" :key="name" :value="name">{{ name }}</a-select-option>
         </a-select>
         <a-button @click="load">刷新</a-button>
+        <a-button data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
         <a-button type="primary" :loading="drilling" @click="drill('surge')">发起灾害演练（激增）</a-button>
         <a-button :loading="drilling" @click="drill('normal')">发起背景演练（正常）</a-button>
       </a-space>
@@ -133,5 +140,9 @@ onMounted(load)
         </a-card>
       </a-col>
     </a-row>
+
+    <a-modal v-model:open="reportOpen" title="人工上报（群防群治 / 巡查）" :footer="null" width="720px" data-testid="report-modal">
+      <ReportForm :initial-region-code="region" />
+    </a-modal>
   </div>
 </template>

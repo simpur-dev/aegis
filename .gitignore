@@ -49,7 +49,9 @@ Thumbs.db
 
 # 生成产物
 backend/reports/
-reports/
+# 钉在仓库根：原来写成 `reports/` 会顺手把源码目录
+# `frontend/src/components/reports/`（批次 B5 的上报表单）也忽略掉——同名不等于同用途。
+/reports/
 
 # Cesium 静态资源由 npm run prepare:cesium 从 node_modules 落盘，属依赖产物
 frontend/public/cesium/

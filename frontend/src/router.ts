@@ -39,6 +39,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('./views/MetricsView.vue'),
     meta: { title: '指标量测' },
   },
+  {
+    path: '/assistant',
+    name: 'assistant',
+    component: () => import('./views/AssistantView.vue'),
+    meta: { title: '智能助手' },
+  },
 ]
 
 export const router = createRouter({

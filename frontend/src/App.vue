@@ -57,6 +57,9 @@ onBeforeUnmount(() => {
         <a-menu-item key="metrics">
           <router-link to="/metrics">指标量测</router-link>
         </a-menu-item>
+        <a-menu-item key="assistant">
+          <router-link to="/assistant">智能助手</router-link>
+        </a-menu-item>
       </a-menu>
     </a-layout-sider>
 
