@@ -161,9 +161,7 @@ class LatencyLedger:
         unit = unit_of_metric(name)
         values = sorted(s.value for s in self._samples if s.name == name and (outcome is None or s.outcome == outcome))
         if not values:
-            return LatencyStats(
-                count=0, p50=0.0, p95=0.0, p99=0.0, max=0.0, mean=0.0, budget=self._budgets.get(name), unit=unit
-            )
+            return LatencyStats(count=0, p50=0.0, p95=0.0, p99=0.0, max=0.0, mean=0.0, budget=self._budgets.get(name), unit=unit)
         budget = self._budgets.get(name)
         breaches = sum(1 for v in values if budget is not None and v > budget)
         return LatencyStats(

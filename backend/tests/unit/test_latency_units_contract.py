@@ -104,9 +104,7 @@ def test_指标名后缀必须落在合法集合里() -> None:
     named_without_suffix = {"collab_txn"}
     budgets = register_sla_budgets(LatencyLedger(), Settings(env="test"))
     for name in budgets:
-        assert name.endswith(("_ms", "_s", "_seconds")) or name in named_without_suffix, (
-            f"{name} 的单位后缀非法：会被当成毫秒判定"
-        )
+        assert name.endswith(("_ms", "_s", "_seconds")) or name in named_without_suffix, f"{name} 的单位后缀非法：会被当成毫秒判定"
 
 
 def test_导出器把秒制样本换算成毫秒后再观测(gateway, tracer) -> None:
@@ -121,9 +119,7 @@ def test_导出器把秒制样本换算成毫秒后再观测(gateway, tracer) ->
     text = exporter.collect().decode()
     # 直方图的 sum 必须是 2000（毫秒），不是 2（被当成 2 毫秒的秒值）
     line = next(
-        line
-        for line in text.splitlines()
-        if line.startswith("aegis_latency_ms_sum") and 'metric="ingest_end_to_end_seconds"' in line
+        line for line in text.splitlines() if line.startswith("aegis_latency_ms_sum") and 'metric="ingest_end_to_end_seconds"' in line
     )
     assert float(line.split()[-1]) == pytest.approx(2000.0)
 
@@ -134,8 +130,6 @@ def test_秒制指标的违约计数仍按同单位判定(gateway, tracer) -> No
     tracer.ledger.record("ingest_end_to_end_seconds", 301.0)
     text = exporter.collect().decode()
     line = next(
-        line
-        for line in text.splitlines()
-        if line.startswith("aegis_sla_breaches_total") and 'metric="ingest_end_to_end_seconds"' in line
+        line for line in text.splitlines() if line.startswith("aegis_sla_breaches_total") and 'metric="ingest_end_to_end_seconds"' in line
     )
     assert float(line.split()[-1]) == 1.0

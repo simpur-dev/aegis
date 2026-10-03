@@ -21,7 +21,6 @@ import pytest
 
 from aegis.config import Settings
 from aegis.container import create_container
-from aegis.services.assistant import AssistantService
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "aegis"
 

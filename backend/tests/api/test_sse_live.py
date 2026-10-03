@@ -93,9 +93,7 @@ class TestLiveServer:
         assert received, "SSE 未推送任何事件"
         assert "warning_id" in received[0]
 
-    async def test_打开流后立刻有第一帧而不是等保活周期(
-        self, live: httpx.AsyncClient
-    ) -> None:
+    async def test_打开流后立刻有第一帧而不是等保活周期(self, live: httpx.AsyncClient) -> None:
         """EventSource 要收到第一个字节才触发 `open`。
 
         原本空闲流的第一字节是 15 秒后的那条 keep-alive 注释，于是真机上每次进页面

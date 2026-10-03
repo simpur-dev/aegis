@@ -24,7 +24,7 @@ from aegis.connectors.mqtt import MqttSource
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.connectors.weather_api import WeatherApiSource
 from aegis.domain.enums import Channel
-from aegis.domain.messages import TelemetryReading, TriggerHit, utc_now
+from aegis.domain.messages import TelemetryReading, TriggerHit
 from aegis.integrations import (
     AnalyticsRecorder,
     IntegrationState,

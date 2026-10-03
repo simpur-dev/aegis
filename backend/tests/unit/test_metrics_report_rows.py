@@ -13,9 +13,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from scripts.metrics_report import INDICATORS, _table
 
 from aegis.observability.tracer import LatencyLedger
-from scripts.metrics_report import INDICATORS, _table
 
 COLLAB: dict[str, Any] = {"success_rate": None, "transactions": 0, "target": 0.9}
 
@@ -98,7 +98,10 @@ def test_两条接入腿用同一套秒制口径而毫秒腿仍是毫秒() -> No
 
 def test_出口单位与指标名后缀不一致时报表直接抛错() -> None:
     """宁可不出报表，也不出一份错 1000 倍的报表。"""
-    latency = {"metrics": {"report_intake_seconds": {"count": 1, "unit": "ms", "p50": 1.0, "p95": 1.0, "max": 1.0}}, "collaboration": COLLAB}
+    latency = {
+        "metrics": {"report_intake_seconds": {"count": 1, "unit": "ms", "p50": 1.0, "p95": 1.0, "max": 1.0}},
+        "collaboration": COLLAB,
+    }
     with pytest.raises(ValueError, match="不一致"):
         _table(latency, COLLAB)
 
