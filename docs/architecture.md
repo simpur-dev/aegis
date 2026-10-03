@@ -7,11 +7,11 @@
 
 | 层 | 职责 | 代码 |
 | --- | --- | --- |
-| L1 感知接入 | 多源采集、协议适配、时空归一、质量标记 | `backend/src/aegis/connectors/` |
-| L2 数据层 | 遥测/预警/任务/链路运行态存储；图谱与向量检索（M2 接入 Neo4j+Graphiti） | `backend/src/aegis/storage/` |
-| L3 智能层 | 五大智能体（**外部实现**，经契约接入） | `contracts/`、`backend/src/aegis/agents/`（Mock 参考） |
-| L4 服务层 | 触发规则、定级、任务拆解、预警生成、靶向触达、链路编排、HTTP API | `services/`、`pipeline/`、`api/` |
-| L5 应用层 | 纯 Web：态势总览 / 监测预警 / 预警发布 / 指标量测（Vue3 + Vite + TS + AntD + ECharts） | `frontend/src/views/` |
+| L1 感知接入 | 多源采集、协议适配、时空归一、质量标记、**人工上报（群防群治）** | `connectors/`、`api/app.py`（`POST /api/v1/reports`）、`container.submit_report` |
+| L2 数据层 | 遥测/预警/任务/链路运行态存储；图谱与向量检索（M2 接入 Neo4j+Graphiti）；**预警规则库（版本化三态）** | `backend/src/aegis/storage/`、`persistence/sql/005_trigger_rules.sql`、`persistence/rulebook.py` |
+| L3 智能层 | 五大智能体（**外部实现**，经契约接入） | `contracts/`、`agents/`（交付落点）、`backend/src/aegis/agents/`（Mock 参考） |
+| L4 服务层 | 触发规则、定级、任务拆解、**三路融合解析（规则/检索佐证/LLM）**、预警生成、靶向触达（mock + **真实 HTTP 通道**）、**语义交互（白名单动作 + 认知镜像）**、**阈值标定闭环**、链路编排、HTTP API | `services/`、`pipeline/`、`api/` |
+| L5 应用层 | 纯 Web：态势总览 / 一张图 / 监测预警 / 预警发布 / 流程编排 / 指标量测 / **智能助手**（Vue3 + Vite + TS + AntD + ECharts） | `frontend/src/views/` |
 | 基座 | 总线、能力注册、时延账本、指标导出、配置与日志 | `bus/`、`observability/`、`config.py`、`logging.py` |
 
 ## 2. 一次灾害事件的真实数据流
@@ -67,6 +67,8 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 | 调度响应 ≤2s | `stage_assess_ms` / `stage_plan_ms` | 链路分段 |
 | 重调度 ≤10s | `collab_txn`（事务口径，M2 补 `reschedule` 专项） | 网关 |
 | 接入 ≤5min | `ingest_end_to_end_seconds` | 摄取服务 |
+| 人工上报接入 ≤5min | `report_intake_seconds` | `container.submit_report`（文本→三路解析→同一条链路） |
+| 语义交互一轮 | `assistant_reply_ms` | `services/assistant.py` |
 | 预警生成 ≤3min | `warning_generation_ms` | 预警服务 |
 | 靶向触达 ≤20min | `warning_reach_ms` | 触达/链路 |
 
@@ -94,8 +96,19 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
   NexusMind 干预库），其性质与逐条出处随 `/api/v1/integrations` 与每条召回命中一起外显。
 - **分析旁路**：ClickHouse 分钟级物化与 DuckDB 边缘单文件离线分析（write-behind，热路径不等 OLAP）。
 - **可观测**：OpenTelemetry 链路（应用生命周期装配）+ 自研时延账本 + Prometheus 规则求值 +
-  Alertmanager 分发与抑制；`GET /api/v1/integrations` 把七条腿
-  （store/analytics/knowledge/retrieval/mqtt/weather/tracing）的启用与降级事实对外报出。
+  Alertmanager 分发与抑制；`GET /api/v1/integrations` 把九条腿
+  （store/analytics/knowledge/retrieval/mqtt/weather/outbound/delivery/tracing）的启用与降级事实对外报出。
+- **语义交互与人工上报（批次 B）**：`services/assistant.py` 四类任务（查询 / 预案问答 / 演练 / 上报）
+  走白名单动作，执行类必须经 `/api/v1/assistant/confirm` 人工确认（一次性、带期、限本会话）；
+  认知镜像复用 `rationale`/`degradations`/通道回执，LLM 只改措辞且**冒出事实之外的数字就整段弃用**。
+  `POST /api/v1/reports` 与助手"帮我上报"共用 `container.submit_report` 这一个入口，
+  解析后进入的是**同一条链路**（同一 trace、同一量测、同一降级留痕）。
+- **任务智能解析与规则库（批次 C）**：`services/semantic_parser.py` 三路融合
+  （规则腿为唯一判据；检索佐证只加置信；LLM 只提建议且逐字段过白名单），冲突消解固定为
+  规则 > 检索 > LLM 且三腿原始结论全部留痕；`trigger_rules` 表把阈值版本化
+  （ADR-0006，同 `rule_id` 只允许一条 active），`services/calibration.py` 出分规则命中/误报对照与
+  修订建议（`applied` 恒 false）。解析能力由 `tests/fixtures/report_parsing_cases.jsonl`（33 例）
+  + `scripts/eval_report_parsing.py` 量出可复跑的准确率，合成集不自称官方口径。
 - **一张图**：Cesium + 自建 quantized-mesh 地形 + PMTiles 离线底图（不依赖 Ion/谷歌），
   含离线与底图守卫的前端测试。
 - **弱网链路（P1 POC）**：Eclipse Zenoh 站端↔网关通道，边缘有界缓冲 + 按序重放 +
@@ -106,8 +119,12 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 - **真实并发曲线**：Locust 阈值由 `Settings` 的 SLA 反推，绝对值仍需在部署环境按站点数量梯度再量。
 - **弱网工况**：Zenoh 已在真实运行时验过互通与按序重放，但丢包/高时延数字来自本机合成注入，
   不是空口实测。
-- **真实通道对接**：交付侧 `delivery_mode=http` 尚未接线，会显式抛 `NotImplementedError`
-  而不是静默回落 mock；当前触达时延里的 1.2s 是 mock 适配器注入的模拟链路耗时。
+- **真实通道对接**：交付侧 `delivery_mode=http` 已接线（主机白名单闸 + 凭据只进请求头 + 回执入库），
+  但缺真实网关地址与凭据，所以现场触达时延仍未测得；当前 `warning_reach_ms` 的 1.2s 是
+  mock 适配器注入的模拟链路耗时，两种口径在报表里分开标注。
+- **工作流模板**：内置 5 灾种模板（批次 D2）；`situation_simulate` 已改为案例驱动多情景（D3），
+  知识腿缺席时显式 `degraded` 而不是回退到 ±1 启发式。
+- **带 LLM 的解析与润色路径**：代码与替身级用例就位，但没有凭据就没有数字（见 REPORT 诚实清单）。
 - **图谱在线**：Graphiti/Neo4j 的读写分离在单测里由替身驱动，还没在真实 neo4j 实例上跑过
   一次 `learn` + `recall`。
 - **数据侧欠的三样**：离线底图/地形只烘了**合成样本**（`scripts/build_offline_tiles.py`，0–2 层完整金字塔，

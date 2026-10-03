@@ -40,13 +40,13 @@ aegis/
 │   │   ├── knowledge/         # 预案案例库 + Graphiti 时序图谱（读路径不含 LLM）
 │   │   ├── retrieval/         # 混合检索：bge-m3 + reranker（ONNX int8 CPU），缺权重时按腿降级
 │   │   ├── pipeline/          # 灾害响应链路（智能体优先、平台降级）
-│   │   ├── services/          # 触发规则、风险定级、任务拆解、预警生成、靶向触达、LLM 网关
-│   │   ├── workflow/          # 自研 DAG 引擎（16 类节点）与内置模板
+│   │   ├── services/          # 触发规则与规则库装配、风险定级、任务拆解、三路融合解析、语义交互（助手）、预警生成、靶向触达（mock/真实 HTTP 通道）、阈值标定、解析评测、LLM 网关
+│   │   ├── workflow/          # 自研 DAG 引擎（16 类节点）与 5 灾种内置模板（含案例驱动推演节点）
 │   │   ├── edge/              # 站端↔网关弱网链路（Eclipse Zenoh POC：有界缓冲 + 按序重放）
 │   │   ├── observability/     # 时延账本、OpenTelemetry 埋点与导出、Prometheus 导出
 │   │   ├── agents/            # 参考智能体（开发与门禁用）
-│   │   └── api/               # FastAPI HTTP/SSE 接口与工作流接口
-│   ├── scripts/               # drill / metrics_report / accuracy_replay / load_curve / zenoh_poc / import_stations / ingest_cases
+│   │   └── api/               # FastAPI HTTP/SSE 接口、工作流接口、语义交互（助手 SSE + 人工确认）
+│   ├── scripts/               # drill / metrics_report / accuracy_replay / eval_report_parsing / load_curve / zenoh_poc / import_stations / ingest_cases
 │   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
 │   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / dev
 ├── frontend/                  # Vue 3 + Vite；Cesium 一张图、Vue Flow 编排画布
@@ -115,10 +115,11 @@ python scripts/fetch_retrieval_models.py
 | --- | --- | --- |
 | 态势总览 | `/dashboard` | KPI、风险区域网格、链路各段执行方式（agent/local）、智能体在线状态、SSE 实时事件、页底七条可选腿的三态面板 |
 | 一张图 | `/map` | Cesium 三维 + 站点/预警点位；底图 PMTiles、地形自建 quantized-mesh，零 Ion/谷歌依赖；缺瓦片时如实降级为"无底图 + 椭球地形" |
-| 监测预警 | `/monitor` | 遥测明细与时序曲线、劣化读数缺口显示、一键发起激增/背景演练 |
+| 监测预警 | `/monitor` | 遥测明细与时序曲线、劣化读数缺口显示、一键发起激增/背景演练；**人工上报入口**（群防群治表单 → 三路解析 → 同一条链路，回显等级/置信/`decided_by`/是否转人工核签与三腿留痕） |
 | 预警发布 | `/warnings` | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |
 | 流程编排 | `/workflow` | Vue Flow 画布：16 类节点（每一类都有引擎级分派证据，见 `tests/unit/test_workflow_node_dispatch_matrix.py`）、版本化定义与实例运行、人工决策/改参/旁路。配置里点名的 `upstream` 必须是画布上的连线，定义期就校验 |
 | 指标量测 | `/metrics` | 运行时埋点的 P50/P95/最大时延 vs 阈值判定、协同成功率、越限项 |
+| 智能助手 | `/assistant` | 语义交互：四类任务（查询 / 预案问答 / 演练 / 上报）、流式过程帧、**执行类动作必须人工确认**（越权指令一律拒绝并留痕）；未配 LLM 时页面如实显示"语义服务未配置"而不是装可用 |
 
 ## 3. 可选子系统：接得上、退得掉、看得见
 

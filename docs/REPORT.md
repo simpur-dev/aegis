@@ -237,6 +237,39 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 → users=1 requests=4 P50/P95=130/130ms、users=10 requests=84 P50/P95=7/170ms、零失败、退出码 0、
 无残留服务进程。
 
+## 批次 B/C/D 平台侧补强实测（2026-10-03，本机 Windows / 内存总线 / mock 通道 / 无 LLM 凭据）
+
+本轮落地《课题6_完善计划》批次 B（语义交互 + 人工上报）、C（三路融合解析 + 规则库版本化 + 标定闭环 +
+解析评测集）与 D2/D3（5 灾种工作流模板 + 案例驱动推演）。数字全部来自下列可复跑命令。
+
+| 取证项 | 命令 | 结果 |
+| --- | --- | --- |
+| 后端门禁规模 | `cd backend && uv run python -m pytest -q --junitxml=junit_final.xml` | **2436 项、0 失败、0 错误、83 跳过**（跳过全部是需真库/真总线/真图的用例；本轮前基线 2259 → +177） |
+| 后端风格与类型 | `uv run ruff format --check src tests scripts` / `ruff check` / `mypy src` | 三项全绿（mypy 覆盖 99 个模块） |
+| 前端门禁规模 | `cd frontend && npm run typecheck && npm run test` | typecheck 无错；**22 文件 / 407 项全绿**（本轮前基线 327 项且有 2 条红：新增 `delivery` 腿触发的漂移门禁，已按 9 腿改判） |
+| 人工上报进链路（第四条接入腿） | `POST /api/v1/reports`，文本"24小时累计降雨95毫米，沟道泥位抬升1.2米"，20 次 | 20/20 产出预警与 STU；`report_intake_seconds` 台账 **P50 1.225s / P95 1.239s**，预算 300s（≤5min 口径，占 **0.41%**）；`reports={submitted:20, measured_by_rule:20, review_required:0}` |
+| 上报走的是同一条链路 | `GET /api/v1/events`、`GET /api/v1/tasks/{id}`、`GET /api/v1/warnings` 按上报返回的 id 回读 | 三处均命中同一条 `trace_id`/`event_id`/`warning_id`；感知段说明文字为"上报文本判定：命中 1 条…"，与遥测路径可区分 |
+| 三路融合解析准确率（合成回归集） | `uv run python -m scripts.eval_report_parsing` | 33 例、灾种覆盖 7 类；**灾种 0.9697 / 区划 1.0 / 读数精确率 0.9762 / 读数召回 0.9762 / 等级 0.9091**；`official_claim=false`（合成集，不构成官方准确率证据） |
+| 解析基线的可追溯性 | `tests/unit/test_parsing_eval.py::test_已知判错的用例可枚举…` | 已知判错用例逐条钉住：灾种 `RPT-25`（"坝前"不在词表）；等级 `RPT-08`（速率型条件需两点序列，单条上报给不出）、`RPT-26`（0.35m 未达 0.5m 阈值）、`RPT-32`（同一句里 12/20 毫米与冻融次数竞争绑定）；新增判错用例会红，词表改进后清单需手工收缩 |
+| 规则库版本化 | `GET /api/v1/rules`、`/api/v1/rules/versions`、`tests/unit/test_trigger_rules_library.py` | 生效集 9 条、灾种 5 类、触发条件种类 **9 类**（≥5 口径达标）；SQL 种子与代码种子逐字段一致（漂移即红）；空集/同 id 多版本/混入 draft 三种装载请求全部被拒；读库失败时沿用种子并留 `rulebook_error` 一行事实 |
+| 标定闭环 | `GET /api/v1/rules/calibration` | `status=not_measured`（缺现场真值配对，批次 E1）、`auto_applied=false`、命中次数按规则实测外显；样本不足 3 条时不给精度（用例钉住"不许用 2 条样本下结论"） |
+| 语义交互白名单 | `tests/unit/test_assistant.py`（24 项）+ `POST /api/v1/assistant/chat` | 四类任务（查询/预案问答/演练/上报）全通路；"把全网预警都删掉"→ `rejected` 帧 + 留痕，**没有任何动作被执行**；LLM 越权动作建议（`delete.all`）被拒并计数；认知镜像润色若冒出事实里没有的数字则整段弃用 |
+| 执行类人工确认 | 同上 + `POST /api/v1/assistant/confirm` | 未确认时 `reports.submitted` 不增；确认后落链路并出预警；重复确认 / 跨会话确认 / 过期确认三种路径全部拒绝且不执行 |
+| 语义腿开关 | `AEGIS_ASSISTANT_ENABLED=false` 后请求 `/api/v1/assistant/*` | 404（这个出口不存在），与"装配失败 503 + `E_ASSISTANT_UNAVAILABLE`"可区分；同形态下 `/api/v1/reports` 仍 200（上报腿不依附助手开关） |
+| 真实触达通道 | `tests/unit/test_config_knob_reachability.py::TestDeliveryChannelAssembly` | `delivery_mode=http` 已接线：缺 base_url / 缺主机白名单 / URL 内嵌凭据 / 缺通道 四种配置错误全部构造期响亮失败；白名单按主机粒度匹配，状态面 `delivery` 行只出 `scheme://host` 与发送/失败计数 |
+| 状态面腿数 | `GET /api/v1/integrations` | 由 8 行增至 **9 行**（新增 `delivery`）；前端 `repoSource.ts` 现场解析后端源码的跨端门禁同步改判为 9 腿 |
+| 5 灾种工作流模板 | `tests/unit/test_workflow_builtin_templates.py` | 内置模板 2 → 5（泥石流/冰湖溃决/滑坡/崩塌危岩/雪崩）；模板里的每个阈值都反查自 `default_rulebook()`（用例断言，不在测试里二次列阈值）；注册幂等与 `force=True` 产生新版本均有覆盖 |
+| 案例驱动推演 | `tests/unit/test_workflow_node_dispatch_matrix.py::TestScenarios::test_识别到定级到推演必须把等级与灾种一路带到画布` | `situation_simulate` 不再回 ±1 启发式：情景带案例标题、`refs`（case_id）与量化要素（`estimated_delay_hours`/`confidence`/`applies_to_levels`，逐项标 `provenance`）；知识腿缺席或召回抛错时显式 `degraded: True` + 原因，**不编案例** |
+| 顺带修掉的两处"线连了、值没传" | 同上（两条断言各自可变异） | ① `hazard_identify` 把结论挂在 `hazard` 子键下，`risk_assess` 原先只读顶层 → 识别→定级这条边上 hits 恒空，**永远产出"保守四级"（蓝）**；现按 2 级（橙）产出，断言直接盯 `risk_level == 2` 与依据里点名的 `R-DEBRIS-RAIN-1`。② `_situation_simulate` 原先只回传 `scenarios`/`horizon_minutes`，`degraded`/`degraded_reason`/`case_count`/`declared_level` 全被丢掉 → 画布上只剩看不出锚点与出处的等级数字；现整份外显，并从上游（含 `risk`/`hazard` 子键）并入等级、灾种、区域与命中证据 |
+
+照实记三句：① 上表的解析准确率来自**平台侧自编的合成回归集**，它证的是"三路融合解析的算术与词表可达到的水平"，
+不是现场识别率——现场数字要等 E1 的标注案例集；② `report_intake_seconds` 的 P50 1.225s 与预警生成耗时同源
+（内含 mock 通道触达），因此它是"上报到链路完成"的本机口径，不是短信送达时间；③ 本轮全部取证都在
+内存总线 + mock 通道 + 无 LLM 凭据的形态下完成，**带 LLM 的裁决腿与语义润色路径本轮未测得任何数字**
+（`AEGIS_LLM_API_KEY` 为空时这两条腿按设计缺席，报表里 `degradations` 会写明）。
+
+
+
 ## 还没测到的（诚实清单）
 
 1. **部署形态的并发曲线**：真总线 + 真库那一档已在 2026-10-02 量过（见上文"部署形态复测"，
@@ -247,8 +280,11 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 2. **弱网工况**：Zenoh 链路已在真实运行时上验过互通、请求-响应、边缘存留与按序重放
    （见上表），但还没在真实丢包/高时延链路（4G/卫星回传）上量过；`poc_report.py` 的丢包梯度是
    本机注入的合成时延，不是空口实测。
-3. **真实通道对接**（短信/北斗/广播）：目前 `delivery_mode=mock`，`warning_reach_ms` 里的 1.2s
-   是 mock 适配器注入的模拟链路耗时，不是真实触达时延。
+3. **真实通道对接**（短信/北斗/广播）：`delivery_mode=http` 本轮已接线（适配器、主机白名单闸、
+   凭据只进请求头、回执入 `warning_receipts`、状态面 `delivery` 行外显发送/失败计数），
+   但**没有任何真实网关地址与凭据**，所以现场触达时延仍未测得：目前 `warning_reach_ms` 里的 1.2s
+   是 mock 适配器注入的模拟链路耗时，两种口径在报表里分开标注，mock 数字不得冒充真触达。
+   下一步要的是现场 webhook 的形状（路径/字段/回执格式），不是代码。
 4. **图谱在线**：Graphiti/Neo4j 的读写分离与召回映射在单测里用替身驱动覆盖；live 用例已拆两档，
    第一档（真 Neo4j 连通性 + 缺凭据时的类型化降级）已在 **Neo4j Kernel 5.26.31 community** 上跑过
    （见上表），但 `learn` + `recall` 第二档仍未跑——它必须有模型凭据（图谱抽取与查询向量化都由模型完成），
@@ -290,15 +326,18 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
     （`POST /api/v1/knowledge/cases` + 启动期索引初始化，见上一节新增行），但"写进去之后真图上
     确实能召回"这件事还是只有替身级证据——`AEGIS_LLM_API_KEY` 为空，`-m slow` 的第二档照旧 skip。
     另外内置 16 条预案模板没有批量回填入口（当前只能逐条 POST），新部署的图仍然是空的。
-11. **两处工程配套待补**：① 工作流外呼这条腿已经是一行 `outbound` 状态（见新增取证行），
-    但 `AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS` / `AEGIS_WORKFLOW_HTTP_TIMEOUT_MS` 两个键还没进
-    `.env.example`（该文件受工具写入策略保护，需人工补两行）；
-    ② Playwright 真机门禁仍不在 CI 与默认测试命令里（见"地图两道门禁"行的照实记②），
+11. **工程配套**：① 已销项——`AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS` / `AEGIS_WORKFLOW_HTTP_TIMEOUT_MS`
+    连同本轮新增的触达与语义腿共 11 个键已进 `.env.example`，并受
+    `tests/unit/test_config_env_surface.py`（键 ↔ `Settings` 字段双向）与
+    `tests/unit/test_config_knob_reachability.py`（每个字段都被生产代码读到，`RESERVED` 清单现应为空）
+    两条门禁夹住；② Playwright 真机门禁仍不在 CI 与默认测试命令里（见"地图两道门禁"行的照实记②），
     它是唯一能证到 GPU 那一层的证据，静默停跑的风险由人承担而不是由流水线承担。
+12. **带 LLM 的两条智能路径本轮没有数字**：任务解析的 LLM 裁决腿、语义交互的措辞润色都写完了并且有
+    替身级用例（非法输出弃用、越权动作拒绝、润色编数即整段回退），但 `AEGIS_LLM_API_KEY` 为空时它们按设计
+    缺席，所以"三路融合比两路好多少"这句话目前没有实测答案——需要一次带凭据的对照跑
+    （`uv run python -m scripts.eval_report_parsing --with-llm`）。
+13. **部署形态下「≤3min 预警生成」的合账**：真 int8 权重、真 pgvector、真 JetStream 这三件此刻都在这台机器上，compose 里把权重目录盖掉的那条缺陷也已修（见 2026-10-02「bge-m3 / bge-reranker int8 在部署镜像里真的装得上」那一行），但整条链路的端到端墙钟还没在容器形态下量过——现有的 ≤3min 数字出自宿主进程档位，不能替这一条顶数。批次 B/C/D 新增的上报腿（`report_intake_seconds`）、助手面与规则库读路径同样只有进程形态证据。2026-10-03 尝试补测时卡在环境：WSL 的 `docker-desktop` 发行版停在 Stopped、`com.docker.service` 未运行，`docker version` 一律回 "Docker Desktop is unable to start"（两次拉起未果、日志无 crash 记录），需桌面端/WSL 层面介入；compose 侧本轮只做到离线校验通过（`docker compose --env-file .env -f deploy/docker-compose.yml config`，新增 11 个键已接线）。
+14. **Graphiti 第二档**（16 条内置预案真的进图 + 混合召回）：仓库根 `.env` 里 `AEGIS_LLM_API_KEY` 为空 ⇒ `-m slow` 照旧 skip。本轮能证的是「缺凭据时命令与状态面说的是真话」（`degraded=16`、`schema_error` 点名 llm_api_key），不是写入能力本身。
+15. **Zenoh 帧开销的线上量测**：POC 已验过互通、请求-响应、边缘存留与按序重放；「4–6 字节」仍是上游调研期口径，要进报告得靠抓包，本机未做。
 
-上述十一项补完后把命令、日期和输出摘要追加到上一节，并删掉对应条目。
-
-12. **部署形态下「≤3min 预警生成」的合账**：真 int8 权重、真 pgvector、真 JetStream 这三件此刻都在这台机器上，compose 里把权重目录盖掉的那条缺陷也已修（见 2026-10-02「bge-m3 / bge-reranker int8 在部署镜像里真的装得上」那一行），但整条链路的端到端墙钟还没在容器形态下量过——现有的 ≤3min 数字出自宿主进程档位，不能替这一条顶数。
-13. **Graphiti 第二档**（16 条内置预案真的进图 + 混合召回）：仓库根 `.env` 里 `AEGIS_LLM_API_KEY` 为空 ⇒ `-m slow` 照旧 skip。本轮能证的是「缺凭据时命令与状态面说的是真话」（`degraded=16`、`schema_error` 点名 llm_api_key），不是写入能力本身。
-14. **Zenoh 帧开销的线上量测**：POC 已验过互通、请求-响应、边缘存留与按序重放；「4–6 字节」仍是上游调研期口径，要进报告得靠抓包，本机未做。
-
+上述各项补完后把命令、日期和输出摘要追加到上一节，并删掉对应条目。
