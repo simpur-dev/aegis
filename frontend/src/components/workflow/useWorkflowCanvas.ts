@@ -26,6 +26,7 @@ export function useWorkflowCanvas(store: WorkflowStore) {
       positions: store.positions,
       states,
       descriptions: store.descriptionByType,
+      selectedNodeId: store.selectedNodeId,
     })
   })
 

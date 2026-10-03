@@ -151,6 +151,18 @@ describe('utils/graph 往返映射', () => {
     expect(card?.data.description).toContain('数据接入')
   })
 
+  /**
+   * 选中态是模型给的，不是 Vue Flow 内部点出来的。
+   *
+   * 画布视图每次都由 defToGraph 整体重建，Vue Flow 的点选会在下一次实例轮询时被
+   * 整批替换掉——真机上表现为"右侧检查器改的是 review，画布上看不出是哪一颗"。
+   */
+  it('选中节点在视图里 selected=true，其余为 false', () => {
+    const view = defToGraph(fullCanvas(), { selectedNodeId: 'review_1' })
+    expect(view.nodes.filter((node) => node.selected).map((node) => node.id)).toEqual(['review_1'])
+    expect(defToGraph(fullCanvas()).nodes.every((node) => node.selected === false)).toBe(true)
+  })
+
   it('连线 id 稳定且唯一，可据此回删', () => {
     const def = fullCanvas()
     const ids = defToGraph(def).edges.map((item) => item.id)

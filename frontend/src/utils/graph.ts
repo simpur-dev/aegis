@@ -109,6 +109,9 @@ export interface FlowNode {
   id: string
   type: NodeCategory
   position: Position
+  /** 选中态由模型给出（store.selectedNodeId），不依赖 Vue Flow 的内部点选：
+   *  视图每次都由 defToGraph 重建，内部点选会在下一次轮询时被整体替换掉。 */
+  selected: boolean
   data: FlowNodeData
 }
 
@@ -340,6 +343,7 @@ export interface DefToGraphOptions {
   positions?: Readonly<Record<string, Position>>
   states?: Readonly<Record<string, { state: NodeState; attempts: number; note: string }>>
   descriptions?: Readonly<Record<string, string>>
+  selectedNodeId?: string | null
 }
 
 export function defToGraph(def: WorkflowDef, options: DefToGraphOptions = {}): GraphView {
@@ -354,6 +358,7 @@ export function defToGraph(def: WorkflowDef, options: DefToGraphOptions = {}): G
       id: node.node_id,
       type: category,
       position: options.positions?.[node.node_id] ?? fallback[node.node_id] ?? { x: 0, y: 0 },
+      selected: node.node_id === options.selectedNodeId,
       data: {
         def: node,
         category,

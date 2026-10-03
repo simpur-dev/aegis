@@ -24,6 +24,22 @@ const reason = ref('')
 const customChoice = ref('')
 const insertType = ref<NodeType>('notify')
 
+/**
+ * 决策按钮的中文标签：候选值由定义里的 options 决定（templates.py:309 是 approve/adjust/reject），
+ * 不在表里的原样显示。此前只翻译 approve/reject，adjust 直接露出英文裸值，
+ * 而按钮按数组顺序排——中间那颗恰好永远是没人看得懂的 `adjust`。
+ */
+const DECISION_LABELS: Record<string, string> = {
+  approve: '核签通过',
+  adjust: '核签更正',
+  reject: '核签退回',
+}
+
+function optionLabel(option: string): string {
+  const label = DECISION_LABELS[option]
+  return label === undefined ? option : `${label}（${option}）`
+}
+
 function submit(choice: string): void {
   void store.submitDecision(props.node.node_id, choice, comment.value)
   comment.value = ''
@@ -105,7 +121,7 @@ function insertAfter(): void {
         :disabled="!store.canDecideNode(node.node_id)"
         @click="submit(option)"
       >
-        {{ option === 'approve' ? '核签通过' : option === 'reject' ? '核签退回' : option }}
+        {{ optionLabel(option) }}
       </button>
     </div>
     <div v-else class="wf-runtime__row">

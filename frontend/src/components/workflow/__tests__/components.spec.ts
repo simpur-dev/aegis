@@ -1,6 +1,7 @@
 import { mount, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { defineComponent, h, isReactive, reactive } from 'vue'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import NodeInspector from '@/components/workflow/NodeInspector.vue'
 import NodeChips from '@/components/workflow/NodeChips.vue'
@@ -19,7 +20,8 @@ import {
   createNodeDef,
 } from '@/components/workflow/registry'
 import { WORKFLOW_NODE_TYPES } from '@/components/workflow/nodeComponents'
-import { useWorkflowStore } from '@/stores/workflow'
+import { useWorkflowCanvas } from '@/components/workflow/useWorkflowCanvas'
+import { createWorkflowStore, useWorkflowStore } from '@/stores/workflow'
 import type { NodeProps } from '@vue-flow/core'
 import { NODE_SPECS, type FlowNodeData, type NodeCategory, type NodeType } from '@/utils/graph'
 import { backendNodeTypes } from '@/testing/repoSource'
@@ -74,6 +76,22 @@ describe('节点类型注册表与后端对齐', () => {
     expect(PALETTE_GROUPS.flatMap((group) => group.types).sort()).toEqual([...BACKEND_NODE_TYPES].sort())
     expect(Object.keys(CATEGORY_LABELS).sort()).toEqual((Object.keys(WORKFLOW_NODE_TYPES) as NodeCategory[]).sort())
     expect(PALETTE_GROUPS.map((group) => group.category)).toEqual(['io', 'logic', 'intelligence', 'human'])
+  })
+
+  /**
+   * 组件定义必须是 raw 的：Vue Flow 把 node-types 收进自己的 reactive 状态，
+   * 未 markRaw 时每次渲染都会刷 "Vue received a Component that was made a reactive object"，
+   * 真机画布上 16 个节点就是满屏 warning（控制台脏 = 真事故会被淹没）。
+   *
+   * 断言先复现 Vue Flow 那一步（放进 reactive 再取出）：直接对导出对象问 isReactive
+   * 恒为 false，那样的门禁证明不了任何事。
+   */
+  it('node-types 映射里的组件扛得住 Vue Flow 的 reactive 收纳', () => {
+    const stored = reactive({ ...WORKFLOW_NODE_TYPES })
+    for (const category of Object.keys(WORKFLOW_NODE_TYPES) as NodeCategory[]) {
+      expect(isReactive(stored[category]), `${category} 被响应式代理了`).toBe(false)
+      expect(stored[category]).toBe(WORKFLOW_NODE_TYPES[category])
+    }
   })
 
   it('每类节点都有中文名、描述与默认配置，且默认配置不含未知键', () => {
@@ -263,7 +281,7 @@ describe('检查器与运行中操作', () => {
   it('等待核签的节点只放行决策与旁路', async () => {
     const store = useWorkflowStore()
     store.resetDefinition('链路')
-    const review = createNodeDef('human_review', 'review_1')
+    const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust', 'reject'] } }
     store.addNode(review)
     store.select('review_1')
     store.instance = {
@@ -279,9 +297,92 @@ describe('检查器与运行中操作', () => {
     const buttons = wrapper.findAll('button')
     const byText = (text: string) => buttons.find((button) => button.text() === text)
     expect(byText('以当前参数下发改参')?.attributes('disabled')).toBeDefined()
-    expect(byText('核签通过')?.attributes('disabled')).toBeUndefined()
-    expect(byText('核签退回')?.attributes('disabled')).toBeUndefined()
+    expect(byText('核签通过（approve）')?.attributes('disabled')).toBeUndefined()
+    expect(byText('核签退回（reject）')?.attributes('disabled')).toBeUndefined()
     expect(byText('绕过该节点')?.attributes('disabled')).toBeUndefined()
     expect(wrapper.text()).toContain('等待人工决策')
+  })
+
+  /**
+   * 三颗决策按钮必须都看得懂。
+   *
+   * 真机上中间那颗直接写着英文裸值 `adjust`：值班员不知道点下去引擎会走哪条分支，
+   * 而模板里的三元式只认识 approve/reject。标签带裸值，提交出去的也仍是裸值。
+   */
+  it('非 approve/reject 的候选也有中文标签，提交值仍是裸值', async () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust', 'reject'] } }
+    store.addNode(review)
+    store.select('review_1')
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456789ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'waiting',
+      error: null,
+      nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
+    }
+    const submit = vi.spyOn(store, 'submitDecision').mockResolvedValue(true)
+    const wrapper = mount(RuntimeActions, { props: { node: review } })
+    const adjust = wrapper.findAll('button').find((button) => button.text() === '核签更正（adjust）')
+    expect(adjust).toBeDefined()
+    expect(adjust?.attributes('disabled')).toBeUndefined()
+    await adjust?.trigger('click')
+    expect(vi.mocked(submit).mock.calls).toEqual([['review_1', 'adjust', '']])
+  })
+
+  /** 决策候选为空（引擎未登记 options，例如失败转人工）时退化为自由文本输入。 */
+  it('候选为空时给出自由文本决策框', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '失败接管', options: [] } }
+    store.addNode(review)
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456789ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'waiting',
+      error: null,
+      nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
+    }
+    const wrapper = mount(RuntimeActions, { props: { node: review } })
+    expect(wrapper.text()).not.toContain('核签通过')
+    expect(wrapper.find('input[placeholder="决策值"]').exists()).toBe(true)
+    expect(wrapper.findAll('button').find((b) => b.text() === '提交决策')?.attributes('disabled')).toBeDefined()
+  })
+})
+
+describe('画布粘合层 useWorkflowCanvas', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  /** composable 要在组件 setup 里取（useVueFlow 需要注入上下文）。 */
+  function withCanvas<R>(setup: () => R): R {
+    let out!: R
+    mount(defineComponent({ setup: () => { out = setup(); return () => h('div') } }))
+    return out
+  }
+
+  /**
+   * 画布高亮必须跟着模型走。
+   *
+   * 此前视图每次由 defToGraph 整体重建，selected 只活在 Vue Flow 的内部点选里，
+   * 1.5s 一次的实例轮询把它整批冲掉；focusInstance 的程序化选中更是完全不可见——
+   * 右侧检查器显示"人工核签"，画布上找不出哪一颗是它。
+   */
+  it('模型选中的节点在视图里高亮，取消选中后整体熄灭', () => {
+    const store = createWorkflowStore({} as never)()
+    store.resetDefinition('链路')
+    store.addNode(createNodeDef('data_fetch', 'fetch_1'))
+    store.addNode(createNodeDef('human_review', 'review_1'))
+    store.select('review_1')
+    const { view } = withCanvas(() => useWorkflowCanvas(store))
+    expect(view.value.nodes.filter((node) => node.selected).map((node) => node.id)).toEqual(['review_1'])
+    store.select(null)
+    expect(view.value.nodes.every((node) => !node.selected)).toBe(true)
   })
 })
