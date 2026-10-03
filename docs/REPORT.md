@@ -257,6 +257,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 | 执行类人工确认 | 同上 + `POST /api/v1/assistant/confirm` | 未确认时 `reports.submitted` 不增；确认后落链路并出预警；重复确认 / 跨会话确认 / 过期确认三种路径全部拒绝且不执行 |
 | 语义腿开关 | `AEGIS_ASSISTANT_ENABLED=false` 后请求 `/api/v1/assistant/*` | 404（这个出口不存在），与"装配失败 503 + `E_ASSISTANT_UNAVAILABLE`"可区分；同形态下 `/api/v1/reports` 仍 200（上报腿不依附助手开关） |
 | 真实触达通道 | `tests/unit/test_config_knob_reachability.py::TestDeliveryChannelAssembly` | `delivery_mode=http` 已接线：缺 base_url / 缺主机白名单 / URL 内嵌凭据 / 缺通道 四种配置错误全部构造期响亮失败；白名单按主机粒度匹配，状态面 `delivery` 行只出 `scheme://host` 与发送/失败计数 |
+| 触达身份写进指标出口 | `GET /api/v1/metrics/latency` 的 `delivery` 段 + `tests/unit/test_latency_report_legs.py` | 出口自带 `mode`（mock／http）与逐通道 `sent/delivered/failed/target(脱敏)`，因此 mock 演练算出的 `warning_reach_ms` 不会在同一个出口里被读成真实触达；配置没改却注入真实适配器时，`mode` 依旧报 mock，不替配置圆场 |
 | 状态面腿数 | `GET /api/v1/integrations` | 由 8 行增至 **9 行**（新增 `delivery`）；前端 `repoSource.ts` 现场解析后端源码的跨端门禁同步改判为 9 腿 |
 | 5 灾种工作流模板 | `tests/unit/test_workflow_builtin_templates.py` | 内置模板 2 → 5（泥石流/冰湖溃决/滑坡/崩塌危岩/雪崩）；模板里的每个阈值都反查自 `default_rulebook()`（用例断言，不在测试里二次列阈值）；注册幂等与 `force=True` 产生新版本均有覆盖 |
 | 案例驱动推演 | `tests/unit/test_workflow_node_dispatch_matrix.py::TestScenarios::test_识别到定级到推演必须把等级与灾种一路带到画布` | `situation_simulate` 不再回 ±1 启发式：情景带案例标题、`refs`（case_id）与量化要素（`estimated_delay_hours`/`confidence`/`applies_to_levels`，逐项标 `provenance`）；知识腿缺席或召回抛错时显式 `degraded: True` + 原因，**不编案例** |

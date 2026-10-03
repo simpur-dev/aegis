@@ -551,6 +551,9 @@ class PlatformContainer:
             "violations": violations,
             "gateway_counters": dict(self.gateway.counters),
             "reports": dict(self.report_stats),
+            # 触达口径必须自带身份：mock 通道的 1.2s 与真实网关的送达时间是两回事，
+            # 分开报才不至于让"≤20min 触达"这项在演练数字上被读成达成（铁律 7）。
+            "delivery": {"mode": s.delivery_mode, "channels": self.dispatcher.channel_status()},
             # 阈值版本的出处：指标 1"识别 ≥5 类触发条件"的证据要能落到具体版本与标定状态
             "rulebook": {**self.rule_engine.describe(), "error": self.rulebook_error, "rejected": self.rulebook_rejected[:5]},
             "store": self.store.snapshot(),
