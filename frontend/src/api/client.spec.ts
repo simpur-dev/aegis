@@ -49,6 +49,67 @@ describe('api client', () => {
     expect((error as { detail: unknown }).detail).toEqual({ detail: 'limit 必须为正' })
   })
 
+  /**
+   * 账本没声明单位就在边界上判成读失败。
+   *
+   * 放过去只有两种下游结果：渲染层抛错把整页打空，或者猜一个单位把 0.019 秒显示成
+   * 0.019 毫秒——后者正是这条链已经出过一次的那个数。宁可是"这页读不到数"这句话。
+   */
+  it('时延账本缺单位声明时判为读失败，并点名是哪条指标', async () => {
+    const client = clientWith(() => ({
+      status: 200,
+      data: {
+        sla_thresholds: {},
+        metrics: { ingest_end_to_end_seconds: { count: 3, p50: 0.01, p95: 0.02, p99: 0.02, max: 0.02, mean: 0.012 } },
+        collaboration: { transactions: 0, success_rate: null, target: 0.9, pass: false },
+        violations: {},
+        gateway_counters: {},
+        store: {},
+      },
+    }))
+    const error = await client.latency().catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toContain('ingest_end_to_end_seconds')
+    expect((error as Error).message).toContain('没有声明单位')
+  })
+
+  it('单位声明合法（ms / s）时原样放行，不改一个数', async () => {
+    const metrics = {
+      ingest_end_to_end_seconds: { count: 3, unit: 's', p50: 0.01, p95: 0.02, p99: 0.02, max: 0.02, mean: 0.012, budget: 300 },
+      warning_generation_ms: { count: 2, unit: 'ms', p50: 4000, p95: 5000, p99: 5000, max: 5000, mean: 4500 },
+    }
+    const client = clientWith(() => ({
+      status: 200,
+      data: {
+        sla_thresholds: {},
+        metrics,
+        collaboration: { transactions: 0, success_rate: null, target: 0.9, pass: false },
+        violations: {},
+        gateway_counters: {},
+        store: {},
+      },
+    }))
+    const report = await client.latency()
+    expect(report.metrics.ingest_end_to_end_seconds.p95).toBe(0.02)
+    expect(report.metrics.warning_generation_ms.unit).toBe('ms')
+  })
+
+  it('未知的第三种单位也拦下（不能默认它是毫秒）', async () => {
+    const client = clientWith(() => ({
+      status: 200,
+      data: {
+        sla_thresholds: {},
+        metrics: { collab_txn: { count: 1, unit: 'min', p50: 1, p95: 1, p99: 1, max: 1, mean: 1 } },
+        collaboration: { transactions: 0, success_rate: null, target: 0.9, pass: false },
+        violations: {},
+        gateway_counters: {},
+        store: {},
+      },
+    }))
+    const error = await client.latency().catch((caught: unknown) => caught)
+    expect((error as Error).message).toContain('只接受 ms / s')
+  })
+
   it('404 状态码可被上层区分', async () => {
     const client = clientWith(() => ({ status: 404, data: { detail: '预警不存在' } }))
     const error = await client.warning('wrn_missing').catch((e: unknown) => e)

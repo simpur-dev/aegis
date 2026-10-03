@@ -138,11 +138,12 @@ export interface AgentInfo {
  * 时延账本的一条统计。键名不声称单位：数值是毫秒还是秒，只看 `unit`。
  *
  * 后端曾经对所有指标都发 `p50_ms / budget_ms`，而 `ingest_end_to_end_seconds` 记的是秒，
- * 于是"0.019"配着 `_ms` 的键名出去，读的人差 1000 倍。现在单位由账本自己声明，
- * 前端 `unitOfMetric()` 只认它，认不出就抛错。
+ * 于是 0.019（秒）配着 `_ms` 的键名出去，按键名读的一方差 1000 倍——Prometheus 的
+ * `aegis_latency_ms` 直方图当时也在这么读它。现在单位由账本自己声明。
  */
 export interface LatencyStats {
   count: number
+  /** 账本声明的单位，只可能是 'ms' 或 's'；其它值一律由 unitOfMetric 抛错，不猜。 */
   unit: string
   p50: number
   p95: number

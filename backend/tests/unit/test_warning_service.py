@@ -112,7 +112,7 @@ class TestGeneration:
         tracer = Tracer()
         tracer.ledger.set_budget("warning_generation_ms", settings.sla_warning_gen_seconds * 1000.0)
         service = WarningService(tracer, settings=settings)
-        started = time.monotonic() - 240.0  # 链路已经走了 4 分钟才到执行段
+        started = time.perf_counter() - 240.0  # 链路已经走了 4 分钟才到执行段（必须与被测代码同一个时钟取起点）
         draft = await service.generate(verdict(), started_at=started)
         assert 239.0 < draft.generation_seconds < 245.0, draft.generation_seconds
         stats = tracer.ledger.stats("warning_generation_ms")

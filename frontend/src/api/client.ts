@@ -23,6 +23,22 @@ export class ApiError extends Error {
 
 const http = axios.create({ baseURL: '/', timeout: 20_000 })
 
+/**
+ * 时延账本必须自带单位声明——这是指标页能正确渲染的前提，不是可选项。
+ *
+ * 缺声明就在边界上判成"读失败"：渲染层拿不到单位会抛，整页打空；
+ * 猜一个单位则正是那条链上出过的 1000 倍误读（`ingest_end_to_end_seconds` 的 0.019 秒
+ * 曾被键名说成毫秒）。两种都比"这页现在读不到数"这句话更坏。
+ */
+export function requireLatencyUnits(report: LatencyReport): LatencyReport {
+  for (const [name, stats] of Object.entries(report?.metrics ?? {})) {
+    if (stats.unit !== 'ms' && stats.unit !== 's') {
+      throw new ApiError(502, `时延账本没有声明单位：${name}（拿到 ${String(stats.unit)}，只接受 ms / s）`)
+    }
+  }
+  return report
+}
+
 async function dispatch<T>(
   instance: AxiosInstance,
   config: AxiosRequestConfig,
@@ -81,7 +97,7 @@ export function createApiClient(instance: AxiosInstance) {
         url: '/api/v1/collaboration',
       }),
 
-    latency: () => request<LatencyReport>({ url: '/api/v1/metrics/latency' }),
+    latency: () => request<LatencyReport>({ url: '/api/v1/metrics/latency' }).then(requireLatencyUnits),
 
     drill: (payload: { scenario: 'surge' | 'normal'; ticks?: number; region_code?: string }) =>
       request<DrillResponse>({ url: '/api/v1/drill/run', method: 'POST', data: payload, timeout: 60_000 }),

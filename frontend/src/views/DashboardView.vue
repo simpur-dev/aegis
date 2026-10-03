@@ -23,12 +23,21 @@ const refreshError = ref<string | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 const { events } = useEventStream()
 
+/**
+ * KPI 只写"量到的数"。取数失败或还没取到时写 `—`，不写 0：
+ * 首屏 500 之后这里曾是"在线智能体 0 个 / 已发布预警 0 条 / 任务单元 0 个"，
+ * 页脚明明说了取数失败，可三个大数字看着像是"现场确实一个都没有"。
+ */
 const kpis = computed(() => [
-  { label: '在线智能体', value: ready.value?.agents_online ?? 0, suffix: '个' },
+  { label: '在线智能体', value: ready.value === null ? '—' : ready.value.agents_online, suffix: '个' },
   // 取后端口径的总数，不用列表长度：`warnings` 是按 `limit: 50` 拉回来的，
   // 拿它的长度当"已发布预警"，过 50 条之后这个数字就永远停在 50，而且看着完全正常。
-  { label: '已发布预警', value: ready.value?.store?.warning_count ?? warnings.value.length, suffix: '条' },
-  { label: '任务单元', value: ready.value?.store?.task_count ?? 0, suffix: '个' },
+  {
+    label: '已发布预警',
+    value: ready.value?.store?.warning_count ?? (warnings.value.length > 0 ? warnings.value.length : '—'),
+    suffix: '条',
+  },
+  { label: '任务单元', value: ready.value?.store?.task_count ?? '—', suffix: '个' },
   {
     label: '协同成功率',
     value: latency.value?.collaboration.success_rate == null ? '—' : `${(latency.value.collaboration.success_rate * 100).toFixed(1)}%`,

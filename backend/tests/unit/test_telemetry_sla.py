@@ -16,6 +16,7 @@ from aegis.errors import SchemaInvalidError
 from aegis.observability import telemetry
 from aegis.observability.instrumentation import (
     BREACH_ATTR,
+    BUDGET_ATTR,
     OVER_MS_ATTR,
     TRACE_ID_ATTR,
     register_sla_budgets,
@@ -104,8 +105,22 @@ class TestSpanStageLedger:
         stats = tracer.ledger.stats("stage_assess_ms")
         assert stats.count == 1
         assert stats.p50 >= 15.0, "计时必须真实（不是 0）"
-        assert stats.budget_ms == 5_000, "预算需登记进账本，与 latency_report 同源"
+        assert stats.budget == 5_000, "预算需登记进账本，与 latency_report 同源"
         assert tracer.ledger.stats("stage_assess_ms").breaches == 0
+
+    async def test_秒制指标的账本预算换算成毫秒后才做超时判定(self) -> None:
+        """账本里 `*_seconds` 的预算按秒登记（300 秒），跨度这边按毫秒判。
+
+        不换算就是拿 1.2 秒的接入时延（1200 ms）去比 300，任何真实秒级跨度都判成超标，
+        跨度属性与 Jaeger 里的红图都是假的。
+        """
+        tracer = Tracer()
+        tracer.ledger.set_budget("ingest_end_to_end_seconds", 300.0)
+        async with span_stage("ingest_end_to_end_seconds", None, tracer=tracer, trace_id=TRACE) as span:
+            tracer.ledger.record("ingest_end_to_end_seconds", 1.2)  # 1.2 秒，远低于 300 秒预算
+
+        assert span.attributes[BUDGET_ATTR] == 300_000.0, "跨度上的预算必须是毫秒：属性名写的是 budget_ms"
+        assert span.attributes.get(BREACH_ATTR) is False
 
     async def test_breach_attribute_and_over_ms_when_past_budget(self) -> None:
         tracer = Tracer()

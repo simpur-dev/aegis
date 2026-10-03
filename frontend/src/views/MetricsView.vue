@@ -2,7 +2,7 @@
 import { message } from 'ant-design-vue'
 import { computed, onMounted, ref } from 'vue'
 
-import api, { ApiError } from '@/api/client'
+import api from '@/api/client'
 import type { LatencyReport } from '@/api/types'
 import EChart from '@/components/EChart.vue'
 import type { ChartOption } from '@/components/echarts'
@@ -11,6 +11,8 @@ import { formatMetricValue, toMillis } from '@/utils/metricUnits'
 
 const report = ref<LatencyReport | null>(null)
 const loading = ref(false)
+/** 取数失败的原因留在页面上：只弹一条三秒就消失的 toast，读数字的人会把"没读到"当成"没问题"。 */
+const loadError = ref<string | null>(null)
 
 /** 与后端 latency_report() 的阈值口径保持一致，避免前端自造指标定义。 */
 const INDICATOR_LABELS: Record<string, string> = {
@@ -52,8 +54,12 @@ async function load(): Promise<void> {
   loading.value = true
   try {
     report.value = await api.latency()
+    loadError.value = null
   } catch (error) {
-    message.error(error instanceof ApiError ? `读取指标失败：${error.message}` : '读取指标失败')
+    // ApiError 与"账本没声明单位"都要把原因写出来：吞成一句"读取指标失败"就等于
+    // 让人无从判断是后端没起、还是出口形状对不上
+    loadError.value = error instanceof Error ? error.message : String(error)
+    message.error(loadError.value)
   } finally {
     loading.value = false
   }
@@ -72,12 +78,12 @@ onMounted(load)
         message="口径说明"
         description="时延类指标以 P95 判定；协同成功率取事务台账（request→response）。预警准确率需 5 灾种历史案例回放数据集方可测得，当前显式标注为未测，不以估算充数。"
       />
+      <p v-if="loadError !== null" class="metrics__error" data-testid="metrics-error">
+        本页当前读不到账本：{{ loadError }}{{ report === null ? '' : '（下面显示的是上一次成功取到的数字，不是现场实况）' }}
+      </p>
       <a-row :gutter="12" style="margin-top: 12px">
         <a-col :span="8">
-          <a-statistic
-            title="协同事务总数"
-            :value="report?.collaboration.transactions ?? 0"
-          />
+          <a-statistic title="协同事务总数" :value="report === null ? '—' : report.collaboration.transactions" />
         </a-col>
         <a-col :span="8">
           <a-statistic
@@ -88,7 +94,12 @@ onMounted(load)
           />
         </a-col>
         <a-col :span="8">
-          <a-statistic title="越限项数" :value="Object.keys(report?.violations ?? {}).length" :value-style="{ color: Object.keys(report?.violations ?? {}).length ? '#cf1322' : '#3f8600' }" />
+          <!-- 没读到账本就是「—」：0 项越限是一条会让人安心的假消息，只有量出来的 0 才能这么写 -->
+          <a-statistic
+            title="越限项数"
+            :value="report === null ? '—' : Object.keys(report.violations).length"
+            :value-style="{ color: report === null ? '#8c8c8c' : Object.keys(report.violations).length ? '#cf1322' : '#3f8600' }"
+          />
         </a-col>
       </a-row>
     </a-card>
@@ -129,3 +140,16 @@ onMounted(load)
     </a-card>
   </div>
 </template>
+
+<style scoped>
+/* 取数失败的原因要看得见：只有 toast 的话，三秒后页面就只剩一排看着正常的数字 */
+.metrics__error {
+  margin: 10px 0 0;
+  padding: 6px 10px;
+  border: 1px solid #ffccc7;
+  border-radius: 4px;
+  background: #fff2f0;
+  color: #cf1322;
+  font-size: 12px;
+}
+</style>

@@ -129,6 +129,25 @@ describe('态势总览的取数', () => {
     expect(alert.text()).toContain('上一次成功取到')
   })
 
+  /**
+   * 页脚写"取数失败"，四个大数字却写着 0——那这三行就是假消息：
+   * 值班员读到的是"现场一个智能体都没在线、一条预警都没发"，
+   * 而真实情况是"我们没能问到"。夜里那轮 500 巡检就是把这两处一起暴露出来的。
+   */
+  it('首屏取数失败时 KPI 写 —，不写成 0', async () => {
+    mocked.ready.mockRejectedValue(new Error('500'))
+    mocked.agents.mockRejectedValue(new Error('500'))
+    mocked.warnings.mockRejectedValue(new Error('500'))
+    mocked.events.mockRejectedValue(new Error('500'))
+    mocked.latency.mockRejectedValue(new Error('500'))
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="stat-在线智能体"]').text()).toBe('—个')
+    expect(wrapper.find('[data-testid="stat-已发布预警"]').text()).toBe('—条')
+    expect(wrapper.find('[data-testid="stat-任务单元"]').text()).toBe('—个')
+    expect(wrapper.find('[data-testid="stat-在线智能体"]').text()).not.toContain('0')
+  })
+
   it('SSE 事件时间按 UTC+8 显示，不给裸 ISO（跨日要进位）', async () => {
     responses()
     const wrapper = mount(DashboardView, { global: { stubs: STUBS } })

@@ -1,8 +1,8 @@
 /**
  * 指标页行换算：单位、阈值与"未设阈值 ≠ 达标"。
  *
- * 这一层存在的理由：页面模板里曾经同时做"读哪个键""怎么换算""判不判达标"三件事，
- * 于是同一条秒制指标在表里、在图里、在 tooltip 里可以是三种单位口径。
+ * 输入用的是账本出口的**真实形状**（中性键名 + unit），不是页面自己希望的形状：
+ * 后端少发一个 unit，这里必须炸给开发看，而不是渲染出一行看不出错的字。
  */
 
 import { describe, expect, it } from 'vitest'
@@ -35,16 +35,17 @@ describe('latencyRows', () => {
     expect(row?.pass, '0.019 秒 ≤ 300 秒：两侧同为秒才可比').toBe(true)
   })
 
-  it('超出阈值的毫秒指标判超标', () => {
-    const [row] = latencyRows({ warning_generation_ms: stats({ p95: 200_000, budget: 180_000 }) })
+  it('P95 超阈值的毫秒指标判超标，并带出越限样本数', () => {
+    const [row] = latencyRows({ warning_generation_ms: stats({ p95: 200_000, budget: 180_000, breaches: 7 }) })
     expect(row?.pass).toBe(false)
-    expect(row?.breaches).toBeNull()
+    expect(row?.breaches).toBe(7)
   })
 
   it('没有阈值就是 null，不是"达标"', () => {
     const [row] = latencyRows({ ingest_publish_ms: stats() })
     expect(row?.budget).toBeNull()
     expect(row?.pass).toBeNull()
+    expect(row?.breaches).toBeNull()
   })
 
   it('缺单位的出口直接抛错，不猜成毫秒', () => {
@@ -59,8 +60,8 @@ describe('latencyRows', () => {
     expect(latencyRows({ collab_txn: stats({ unit: 's' }) })[0]?.unit).toBe('s')
   })
 
-  it('缺 p95 的出口抛错：形状变了要被看见，而不是渲染成 undefined', () => {
-    const broken = { stage_plan_ms: { ...(stats() as unknown as Record<string, number>), p95: undefined } }
+  it('缺分位数键的出口抛错：形状变了要被看见，而不是渲染成 undefined', () => {
+    const broken = { stage_plan_ms: { ...(stats() as unknown as Record<string, unknown>), p95: undefined } }
     expect(() => latencyRows(broken as unknown as Record<string, LatencyStats>)).toThrow(/p95/)
   })
 

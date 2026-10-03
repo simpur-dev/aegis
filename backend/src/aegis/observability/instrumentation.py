@@ -31,6 +31,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 from aegis.observability import telemetry
+from aegis.observability.tracer import millis_of
 
 try:  # 与 telemetry 同口径：依赖缺席时本模块仍必须可导入可用
     from opentelemetry import trace as _otel_trace
@@ -492,7 +493,10 @@ async def span_stage(
     """
     ledger = tracer.ledger
     if budget_ms is None:
-        budget: float | None = ledger.budget_for(name)
+        registered = ledger.budget_for(name)
+        # 账本里的预算是"该指标自己的单位"（`*_seconds` 就是秒），而这里的超时判定按毫秒算：
+        # 不换算就会拿毫秒耗时去比秒级预算，秒制跨度在任何真实时延下都判超标。
+        budget = None if registered is None else millis_of(name, registered)
     else:
         budget = float(budget_ms)
         ledger.set_budget(name, budget)
