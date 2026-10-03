@@ -144,6 +144,7 @@ class TestMigrations:
             "002_schema.sql",
             "003_indexes.sql",
             "004_accuracy_labels.sql",
+            "005_trigger_rules.sql",
         ]
 
 

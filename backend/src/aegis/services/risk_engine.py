@@ -43,6 +43,14 @@ class RiskVerdict:
 class RiskEngine:
     def __init__(self, rule_engine: RuleEngine | None = None) -> None:
         self._rule_engine = rule_engine or RuleEngine()
+        self._refresh()
+        # 规则库换版后，等级与权重映射必须跟着换：否则研判还在按上一版阈值定级，
+        # 而 `/api/v1/rules` 已经写着新版本号——两份口径同时对外，就是最难对上的那种漂移。
+        hook = getattr(self._rule_engine, "on_reload", None)
+        if callable(hook):
+            hook(self._refresh)
+
+    def _refresh(self) -> None:
         self._levels: dict[str, RiskLevel] = {rule.rule_id: rule.triggered_level for rule in self._rule_engine.rules}
         self._weights: dict[str, float] = {rule.rule_id: rule.weight for rule in self._rule_engine.rules}
 

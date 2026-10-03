@@ -13,15 +13,23 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-from dataclasses import dataclass, field
+import json
+from collections import Counter, defaultdict
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import datetime
+from typing import Any
 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, TriggerHit, parse_iso
 
 AGGREGATIONS = ("last", "max", "sum", "avg", "rate", "count")
 OPERATORS = (">=", ">", "<=", "<", "==")
+RULE_STATUSES = ("draft", "active", "retired")
+
+#: 内置种子的标定口径。写"未标定"不是自谦，是让报表与交底书不把代码值说成专家结论。
+SEED_CALIBRATION_BASIS = "公开规范量级，未经现场标定"
+SEED_REVIEWER = "平台内置（待专家评审）"
 
 _OPS = {
     ">=": lambda a, b: a >= b,
@@ -58,6 +66,12 @@ class Rule:
     mode: str = "all"  # all | any
     triggered_level: RiskLevel = RiskLevel.ORANGE
     weight: float = 1.0
+    #: 版本化三态（批次 C2 / ADR-0006）：库里的行、代码里的种子共用这一份形状。
+    #: `version`/`status` 不参与判定算术——判据只看阈值，历史可追溯靠这两列。
+    version: int = 1
+    status: str = "active"
+    calibration_basis: str = ""
+    reviewer: str = ""
 
     def __post_init__(self) -> None:
         if not self.conditions:
@@ -66,6 +80,29 @@ class Rule:
             raise ValueError(f"不支持的组合模式: {self.mode}")
         if not 0 < self.weight <= 10:
             raise ValueError("weight 取值范围 (0, 10]")
+        if self.version < 1:
+            raise ValueError("version 从 1 起")
+        if self.status not in RULE_STATUSES:
+            raise ValueError(f"status 只允许 {RULE_STATUSES}，收到 {self.status}")
+
+    def as_row(self) -> dict[str, object]:
+        """给 `/api/v1/rules` 与回放报表的稳定行形状（字段名与 SQL 列同名）。"""
+        return {
+            "rule_id": self.rule_id,
+            "version": self.version,
+            "status": self.status,
+            "hazard_type": self.hazard_type.value,
+            "description": self.description,
+            "mode": self.mode,
+            "triggered_level": int(self.triggered_level),
+            "weight": self.weight,
+            "conditions": [
+                {"metric": c.metric, "op": c.op, "threshold": c.threshold, "agg": c.agg, "window_seconds": c.window_seconds}
+                for c in self.conditions
+            ],
+            "calibration_basis": self.calibration_basis,
+            "reviewer": self.reviewer,
+        }
 
 
 @dataclass(slots=True)
@@ -121,10 +158,51 @@ def metric_value(series: Series, condition: Condition, ref: datetime) -> float |
 class RuleEngine:
     def __init__(self, rules: list[Rule] | None = None) -> None:
         self._rules: list[Rule] = list(rules) if rules is not None else list(default_rulebook())
+        self._source = "builtin" if rules is None else "injected"
+        self._listeners: list[Callable[[], None]] = []
 
     @property
     def rules(self) -> tuple[Rule, ...]:
         return tuple(self._rules)
+
+    @property
+    def source(self) -> str:
+        """这套规则是从哪儿来的（builtin / postgres / injected）——报表要能说清在用哪一版。"""
+        return self._source
+
+    def on_reload(self, listener: Callable[[], None]) -> None:
+        self._listeners.append(listener)
+
+    def reload(self, rules: Sequence[Rule], *, source: str = "custom") -> int:
+        """换整套规则集：版本切换与回滚的唯一入口。
+
+        空集一律拒绝。规则表被读成 0 条通常意味着库里没有 active 版本、或行被 CHECK 挡了，
+        这时"什么都不判"比"沿用上一版"危险得多——等于静默停掉整条预警判据。
+        """
+        incoming = list(rules)
+        if not incoming:
+            raise ValueError("规则集为空，拒绝装载（宁可用上一版，也不要用没有判据的版本）")
+        duplicated = sorted(rule_id for rule_id, count in Counter(rule.rule_id for rule in incoming).items() if count > 1)
+        if duplicated:
+            raise ValueError(f"同一 rule_id 同时装载多个版本: {duplicated}")
+        not_active = [rule.rule_id for rule in incoming if rule.status != "active"]
+        if not_active:
+            raise ValueError(f"生效规则集里混入了非 active 版本: {not_active}")
+        self._rules = incoming
+        self._source = source
+        for listener in self._listeners:
+            listener()
+        return len(incoming)
+
+    def describe(self) -> dict[str, Any]:
+        """当前生效规则集的出处快照（进 `/api/v1/rules` 与指标出口）。"""
+        return {
+            "source": self._source,
+            "rules": len(self._rules),
+            "hazards": sorted({rule.hazard_type.value for rule in self._rules}),
+            "versions": {rule.rule_id: rule.version for rule in self._rules},
+            "uncalibrated": sum(1 for rule in self._rules if SEED_CALIBRATION_BASIS in rule.calibration_basis),
+        }
 
     def rule_by_id(self, rule_id: str) -> Rule | None:
         return next((r for r in self._rules if r.rule_id == rule_id), None)
@@ -204,7 +282,20 @@ class RuleEngine:
 
 
 def default_rulebook() -> list[Rule]:
-    """5 类高原典型灾种触发条件（阈值量级取自公开规范，可由智能体方/专家评审替换）。"""
+    """5 类高原典型灾种触发条件（阈值量级取自公开规范，可由智能体方/专家评审替换）。
+
+    这 9 条同时是 `persistence/sql/005_trigger_rules.sql` 的种子数据。两处一致性由
+    `tests/unit/test_trigger_rules_library.py` 逐字段比对钉住——阈值漂移一次，
+    "现场到底在用哪一版"就再也问不出唯一答案。
+    """
+    return [_with_seed_provenance(rule) for rule in _seed_rulebook()]
+
+
+def _with_seed_provenance(rule: Rule) -> Rule:
+    return replace(rule, calibration_basis=SEED_CALIBRATION_BASIS, reviewer=SEED_REVIEWER)
+
+
+def _seed_rulebook() -> list[Rule]:
     return [
         Rule(
             "R-DEBRIS-RAIN-1",
@@ -290,3 +381,56 @@ def default_rulebook() -> list[Rule]:
             triggered_level=RiskLevel.RED,
         ),
     ]
+
+
+def rulebook_from_rows(rows: Iterable[Mapping[str, Any]]) -> tuple[list[Rule], list[str]]:
+    """把规则库的行装配成 `Rule` 集，坏行进 `rejected` 清单而不是静默丢掉。
+
+    丢一条规则就是丢一类触发条件，而"少一条"在报表上完全看不出来——所以调用方必须
+    拿到拒绝清单并把它外显（`/api/v1/rules` 的 `rejected` 字段）。
+    """
+    rules: list[Rule] = []
+    rejected: list[str] = []
+    for index, row in enumerate(rows, start=1):
+        try:
+            rules.append(rule_from_row(row))
+        except (KeyError, TypeError, ValueError) as exc:
+            rule_id = row.get("rule_id") if isinstance(row, Mapping) else row
+            rejected.append(f"第 {index} 行 {rule_id}: {str(exc)[:180]}")
+    return rules, rejected
+
+
+def rule_from_row(row: Mapping[str, Any]) -> Rule:
+    conditions = row["conditions"]
+    if isinstance(conditions, str):
+        conditions = json.loads(conditions)
+    if not isinstance(conditions, Iterable) or isinstance(conditions, (str, bytes)):
+        raise ValueError("conditions 必须是对象数组")
+    return Rule(
+        rule_id=str(row["rule_id"]),
+        hazard_type=HazardType(str(row["hazard_type"])),
+        description=str(row["description"]),
+        conditions=tuple(_condition_from_payload(item) for item in conditions),
+        mode=str(row.get("mode") or "all"),
+        triggered_level=RiskLevel(int(row["triggered_level"])),
+        weight=float(row.get("weight", 1.0)),
+        version=int(row.get("version", 1)),
+        status=str(row.get("status") or "active"),
+        calibration_basis=str(row.get("calibration_basis") or ""),
+        reviewer=str(row.get("reviewer") or ""),
+    )
+
+
+def _condition_from_payload(item: Any) -> Condition:
+    if not isinstance(item, Mapping):
+        raise ValueError("条件项必须是对象")
+    raw_window = item.get("window_seconds")
+    return Condition(
+        metric=str(item["metric"]),
+        op=str(item["op"]),
+        threshold=float(item["threshold"]),
+        agg=str(item.get("agg") or "last"),
+        # 缺字段才用默认窗口；显式写 0 / null 必须按非法值拒掉，
+        # 用 `or 3600` 会把"0 秒窗口"静默洗成"1 小时窗口"，那是一条改不改都不报错的判据变更。
+        window_seconds=3600 if raw_window is None else int(raw_window),
+    )
