@@ -11,7 +11,8 @@ import logging
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from aegis.domain.enums import Channel
 from aegis.domain.messages import DeliveryAttempt, WarningRecord, now_iso, parse_iso, utc_now
@@ -23,6 +24,62 @@ log = logging.getLogger("aegis.services.delivery")
 
 class AllChannelsFailedError(AegisError):
     code = ErrorCode.INTERNAL
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayTarget:
+    """网关地址的两个面：`url` 只给请求用，`masked` 才是能进状态面与日志的那一份。"""
+
+    url: str
+    masked: str
+
+
+def normalize_gateway_target(raw: str, *, allowed_hosts: Sequence[str]) -> GatewayTarget:
+    """校验触达网关：只允许 http/https、主机必须精确命中白名单、地址里不允许内嵌凭据。
+
+    与 `workflow/outbound.py` 共用同一口径的理由很直接：这条路径上的载荷是"往哪些区域发什么内容"，
+    白名单写歪一次，短信网关就变成了指向内网地址的代理。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        raise ValueError("触达网关地址为空（AEGIS_DELIVERY_HTTP_BASE_URL）")
+    try:
+        parsed = urlsplit(text)
+    except ValueError as exc:
+        raise ValueError(f"触达网关地址无法解析: {exc}") from exc
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"触达网关协议只允许 http/https，收到 {scheme or '<none>'}")
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if not host:
+        raise ValueError("触达网关地址没有主机名")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("触达网关地址不允许内嵌凭据（凭据请放请求头）")
+    if host not in allowed_hosts:
+        raise ValueError(f"触达网关主机不在白名单：{host}")
+    port = f":{parsed.port}" if parsed.port else ""
+    return GatewayTarget(
+        url=f"{scheme}://{parsed.netloc}".rstrip("/"),
+        masked=f"{scheme}://{host}{port}",
+    )
+
+
+def parse_delivery_channels(raw: str) -> tuple[Channel, ...]:
+    """把 `sms,broadcast` 读成通道枚举。未知与空集都是配置错误：
+    静默丢掉一个通道，等于那一类人群永远不会被触达，而报表上写着"发布成功"。
+    """
+    names = [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
+    if not names:
+        raise ValueError("delivery_mode=http 需要至少一个通道（AEGIS_DELIVERY_HTTP_CHANNELS）")
+    resolved: list[Channel] = []
+    for name in names:
+        try:
+            channel = Channel(name)
+        except ValueError as exc:
+            raise ValueError(f"未知交付通道: {name}") from exc
+        if channel not in resolved:
+            resolved.append(channel)
+    return tuple(resolved)
 
 
 class ChannelAdapter(Protocol):
@@ -66,13 +123,35 @@ class MockChannelAdapter:
 
 
 class HttpChannelAdapter:
-    """真实网关对接（短信/北斗/广播/微信统一走 HTTP 发布网关）。"""
+    """真实网关对接（短信/北斗/广播/微信统一走 HTTP 发布网关）。
 
-    def __init__(self, name: Channel, base_url: str, client, *, timeout_ms: int = 5_000) -> None:
+    客户端由装配点注入（`container.build_delivery_client`）：不跟随重定向、凭据只在请求头。
+    失败不抛异常而是回一条 `failed` 回执——调度器据此重试，并把"哪个通道失败、为什么"
+    留在 `status()` 里（架构铁律 7：降级必须可见）。
+    """
+
+    def __init__(
+        self,
+        name: Channel,
+        base_url: str,
+        client: Any,
+        *,
+        path: str = "/publish",
+        timeout_ms: int = 5_000,
+    ) -> None:
         self.name = name
         self._base_url = base_url.rstrip("/")
+        self._path = "/" + str(path or "/publish").lstrip("/")
         self._client = client
         self._timeout = timeout_ms / 1000
+        self.sent = 0
+        self.delivered = 0
+        self.failed = 0
+        self.last_error: str | None = None
+
+    @property
+    def target(self) -> str:
+        return f"{self._base_url}{self._path}"
 
     async def send(self, record: WarningRecord, audiences: Sequence[str]) -> DeliveryAttempt:
         attempt = DeliveryAttempt(
@@ -89,17 +168,36 @@ class HttpChannelAdapter:
             "body": record.body_bo or record.body_zh,
             "audiences": list(audiences),
         }
+        self.sent += 1
         try:
-            response = await asyncio.wait_for(self._client.post(f"{self._base_url}/publish", json=body), timeout=self._timeout)
+            response = await asyncio.wait_for(self._client.post(self.target, json=body), timeout=self._timeout)
             response.raise_for_status()
             payload = response.json()
-            attempt.status = str(payload.get("status", "delivered"))
-            attempt.provider_msg_id = str(payload.get("message_id", "")) or None
-            attempt.receipt_at = now_iso() if attempt.status == "delivered" else None
+            if not isinstance(payload, dict):
+                payload = {}
+            status = str(payload.get("status", "delivered"))
+            attempt.status = status if status in ("pending", "delivered", "failed", "retried") else "delivered"
+            attempt.provider_msg_id = (str(payload.get("message_id") or payload.get("provider_msg_id") or "")) or None
+            attempt.receipt_at = now_iso() if attempt.status in ("delivered", "retried") else None
         except Exception as exc:
             attempt.status = "failed"
-            log.warning("通道下发失败", extra={"channel": self.name.value, "error": str(exc)})
+            self.failed += 1
+            # 只留类型与截断文本：网关地址与异常体都可能带凭据，不外显整段
+            self.last_error = f"{type(exc).__name__}: {str(exc)[:120]}"
+            log.warning("通道下发失败", extra={"channel": self.name.value, "error": self.last_error})
+        else:
+            self.delivered += 1 if attempt.status in ("delivered", "retried") else 0
         return attempt
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "channel": self.name.value,
+            "target": self._base_url,
+            "sent": self.sent,
+            "delivered": self.delivered,
+            "failed": self.failed,
+            "last_error": self.last_error,
+        }
 
 
 class DeliveryDispatcher:
@@ -158,6 +256,18 @@ class DeliveryDispatcher:
         if reach > self._sla_reach_seconds:
             log.warning("触达时延超 SLA", extra={"warning_id": record.warning_id, "reach_seconds": round(reach, 2)})
         return record
+
+    def channel_status(self) -> list[dict[str, Any]]:
+        """各通道的运行事实：真实通道带发送/失败计数，mock 通道明写 mock。
+
+        这一面存在的理由是考核口径本身：mock 通道的"发布成功"不能与真网关回执混成一行，
+        否则 ≤20min 触达指标就是自证。
+        """
+        rows: list[dict[str, Any]] = []
+        for channel, adapter in self._adapters.items():
+            status = getattr(adapter, "status", None)
+            rows.append(status() if callable(status) else {"channel": channel.value, "mode": "mock"})
+        return rows
 
     async def _send_one(self, adapter: ChannelAdapter, record: WarningRecord) -> DeliveryAttempt | None:
         last: DeliveryAttempt | None = None

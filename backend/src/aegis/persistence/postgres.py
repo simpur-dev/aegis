@@ -521,6 +521,25 @@ class PostgresStore:
         async with self.acquire() as conn:
             return await accuracy.replay_rows(conn, since=since, until=until, window_seconds=window_seconds, region_code=region_code)
 
+    async def trigger_rules(
+        self,
+        *,
+        status: str = "active",
+        hazard_type: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """规则库读路径（批次 C2）。
+
+        与几何查询不同，这里**不退回读视图**：阈值是判据，读不到就是读不到，
+        静默换成另一版等于在指挥员不知情的情况下改了预警等级。失败原样上抛，
+        由装配层决定"沿用内置种子并留一行事实"。
+        """
+        from aegis.persistence import rulebook  # 同包模块；函数内导入，避免与 rows/accuracy 的加载顺序绕圈
+
+        await self.connect()
+        async with self.acquire() as conn:
+            return await rulebook.fetch_rules(conn, status=status, hazard_type=hazard_type, limit=limit)
+
     async def list_stations(self, *, region_code: str | None = None, limit: int = 500) -> list[dict[str, object]]:
         """站点清单：维表行（有名称与坐标）优先，再用"报过数但不在维表"的站点补齐。
 

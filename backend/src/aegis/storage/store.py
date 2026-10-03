@@ -369,6 +369,21 @@ def geo_query_port(store: object) -> SupportsGeoQueries | None:
     return store if isinstance(store, SupportsGeoQueries) else None
 
 
+@runtime_checkable
+class SupportsRuleLibrary(Protocol):
+    """触发条件规则库（批次 C2）的可选能力面。
+
+    不进 `StoreProtocol`：内存读视图没有"版本化阈值"这件事，内置种子就是唯一版本；
+    把两个后端的差别变成协议上的一行，比让内存实现假装能查版本要诚实。
+    """
+
+    async def trigger_rules(self, *, status: str = "active", hazard_type: str | None = None, limit: int = 200) -> list[dict[str, Any]]: ...
+
+
+def rule_library_port(store: object) -> SupportsRuleLibrary | None:
+    return store if isinstance(store, SupportsRuleLibrary) else None
+
+
 def _to_iso(moment: datetime | str | None) -> str | None:
     if moment is None:
         return None

@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from aegis import __version__
+from aegis.api.assistant_api import build_router as build_assistant_router
 from aegis.api.workflow_api import build_router as build_workflow_router
 from aegis.bus import subjects
 from aegis.config import Settings, get_settings
@@ -39,7 +40,8 @@ from aegis.persistence.accuracy import (
 )
 from aegis.persistence.errors import AccuracyArgumentError, QueryArgumentError
 from aegis.persistence.replay import MIN_FIELD_CASES, ReplayDataset, measure
-from aegis.storage.store import geo_query_port
+from aegis.services.calibration import RuleSample, calibration_report, collect_rule_hits
+from aegis.storage.store import geo_query_port, rule_library_port
 
 log = logging.getLogger("aegis.api")
 
@@ -377,6 +379,76 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "summary": summary,
         }
 
+    @app.get("/api/v1/rules", tags=["rules"])
+    async def list_rules(ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
+        """当前生效的触发条件集与它的出处。
+
+        考核指标 1（识别 ≥5 类触发条件）的证据就是这一份：条数、灾种覆盖、版本号、
+        标定依据与审核人都在，未标定的那些如实写着"未经现场标定"。
+        `provenance.source` 区分"内置种子"与"规则库版本"，`error`/`rejected` 说明有没有换版失败。
+        """
+        engine = ctn.rule_engine
+        rules = [rule.as_row() for rule in engine.rules]
+        return {
+            "provenance": engine.describe(),
+            "load_error": ctn.rulebook_error,
+            "rejected_rows": ctn.rulebook_rejected,
+            "trigger_condition_kinds": len({condition.metric for rule in engine.rules for condition in rule.conditions}),
+            "hazards_covered": sorted({rule.hazard_type.value for rule in engine.rules}),
+            "items": rules,
+        }
+
+    @app.get("/api/v1/rules/versions", tags=["rules"], responses={503: {"description": "存储后端不提供规则库"}})
+    async def list_rule_versions(
+        ctn: PlatformContainer = Depends(get_container),
+        status: Literal["draft", "active", "retired", "all"] = Query(default="all"),
+        hazard_type: HazardType | None = None,
+        limit: int = Query(default=200, ge=1, le=500),
+    ) -> dict[str, Any]:
+        """规则库的版本历史（含草稿与退役）：只有 PostgreSQL 形态有这一面。
+
+        内存读视图没有"版本化阈值"这件事，内置种子就是唯一版本——所以这里如实 503，
+        而不是把当前生效集当作"v1 版本清单"再报一遍。
+        """
+        port = rule_library_port(ctn.store)
+        if port is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "E_RULEBOOK_UNAVAILABLE",
+                    "message": "当前存储后端不提供规则库版本面",
+                    "requires": "AEGIS_STORE_BACKEND=postgres（表 trigger_rules）",
+                },
+            )
+        rows = await port.trigger_rules(status=status, hazard_type=None if hazard_type is None else hazard_type.value, limit=limit)
+        return {"status": status, "count": len(rows), "items": rows}
+
+    @app.get("/api/v1/rules/calibration", tags=["rules"])
+    async def rules_calibration(
+        ctn: PlatformContainer = Depends(get_container),
+        limit: int = Query(default=2_000, ge=1, le=10_000, description="回看多少条链路台账样本"),
+    ) -> dict[str, Any]:
+        """分规则命中与误报对照（批次 C3）。**只出建议，不改阈值。**
+
+        命中次数取自平台链路台账（实测）；精度需要现场真值配对（批次 E1），缺就写
+        `not_measured`。报表里 `auto_applied` 恒为 false——阈值生效的唯一路径是
+        人工审核后把新版本写进 `trigger_rules`（见 `/api/v1/rules/versions`）。
+        """
+        rows = list(ctn.store.chains.latest(int(limit)))
+        hits = collect_rule_hits(rows)
+        samples = {
+            rule_id: RuleSample(rule_id=rule_id, hits=count)
+            for rule_id, count in hits.items()
+            if ctn.rule_engine.rule_by_id(rule_id) is not None
+        }
+        report = calibration_report(ctn.rule_engine.rules, samples, dataset_kind="unspecified", dataset_cases=0)
+        return {
+            **report.as_dict(),
+            "ledger_rows": len(rows),
+            "report_rulebook": ctn.rule_engine.describe(),
+            "off_bookrule_hits": {key: value for key, value in hits.items() if ctn.rule_engine.rule_by_id(key) is None},
+        }
+
     @app.get("/api/v1/telemetry", tags=["data"])
     async def list_telemetry(
         ctn: PlatformContainer = Depends(get_container),
@@ -411,6 +483,31 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "chains": [r.as_dict() for r in results],
             "regions": len(grouped),
         }
+
+    @app.post("/api/v1/reports", tags=["ingest"], responses={503: {"description": "解析服务未装配"}})
+    async def submit_report(
+        payload: ReportIn,
+        ctn: PlatformContainer = Depends(get_container),
+    ) -> dict[str, Any]:
+        """群防群治人工上报：文本 → 三路融合解析 → **与监测事件同一条链路**。
+
+        路由只做出口翻译。解析、定级、预警生成、触达与量测全在
+        `PlatformContainer.submit_report` 一处——助手页"帮我上报"这里也调同一个入口，
+        两条路径给出不同等级就是第二个"预警准确率"口径。
+
+        上报坐标不改判据，只进证据链：`location` 原样回显，并作为一条 evidence 挂在触发命中上。
+        """
+        if ctn.parser is None:
+            raise HTTPException(status_code=503, detail={"code": "E_PARSER_UNAVAILABLE", "message": "任务解析服务未装配"})
+        location = None if payload.lat is None or payload.lon is None else (payload.lon, payload.lat)
+        outcome = await ctn.submit_report(
+            note=payload.note,
+            region_code=payload.region_code,
+            reporter=payload.reporter,
+            hazard_hint=payload.hazard_hint,
+            location=location,
+        )
+        return {"report": {"reporter": payload.reporter, "region_code": payload.region_code, "location": location}, **outcome}
 
     @app.get("/api/v1/warnings", tags=["warning"])
     async def list_warnings(
@@ -509,6 +606,10 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         return StreamingResponse(_gen(), media_type="text/event-stream")
 
     app.include_router(build_workflow_router())
+    if cfg.assistant_enabled:
+        # 关掉的语义是"这个出口不存在"（404），而不是"存在但一律 503"：
+        # 配置面与路由面必须给外部同一个事实，否则 `/healthz` 说活着、路由说没有。
+        app.include_router(build_assistant_router())
 
     @app.exception_handler(AegisError)
     async def _aegis_error_handler(_: Request, exc: AegisError) -> Response:

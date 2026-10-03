@@ -7,8 +7,9 @@
 `weather_api_base_url`（连接器写了但装配层从不构造）、`connector_poll_seconds`（与
 `simulator_interval_seconds` 同义重复，两个旋钮管同一件事注定有一个是假的）。
 
-确实要留着但还没接线的，必须进 `RESERVED` 并给理由，而且代码路径必须响亮拒绝——
-`delivery_mode=http` 走的是 `NotImplementedError`，不是静默回落 mock 通道。
+确实要留着但还没接线的，必须进 `RESERVED` 并给理由，而且代码路径必须响亮拒绝。
+这份清单现在应当是**空的**：`delivery_mode=http` 已经在批次 D 接线（见
+`TestDeliveryChannelAssembly`），留一个幽灵条目在这里，下一次改动就不会有人来删它。
 """
 
 from __future__ import annotations
@@ -21,10 +22,8 @@ import pytest
 from aegis.config import Settings
 from aegis.container import create_container, default_channels
 
-# 声明了但故意未接线：值 → 为什么可以留着（配套必须有响亮拒绝，见下面那条参数化用例）
-RESERVED: dict[str, str] = {
-    "delivery_http_base_url": "真实短信/北斗网关待现场凭据；delivery_mode=http 显式 NotImplementedError",
-}
+# 声明了但故意未接线：值 → 为什么可以留着（配套必须有响亮拒绝）。新增条目等于新增技术债，需要理由。
+RESERVED: dict[str, str] = {}
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src" / "aegis"
 ENV_EXAMPLE = Path(__file__).resolve().parents[3] / ".env.example"
@@ -71,16 +70,59 @@ class TestKnobsAreReachable:
         assert all(name in Settings.model_fields for name in RESERVED)
 
 
-class TestReservedKnobsRefuseLoudly:
-    def test_http_delivery_mode_raises_instead_of_falling_back_to_mock(self) -> None:
-        settings = Settings(env="test", bus_backend="memory", delivery_mode="http", delivery_http_base_url="https://gw.internal")
-        with pytest.raises(NotImplementedError):
+class TestDeliveryChannelAssembly:
+    """`delivery_mode=http` 接了线，但"没配齐"仍然是响亮失败而不是静默回落 mock。
+
+    这条边界值得单独钉：回落 mock 会让报表里的"触达成功"变成演练数字（架构铁律 7）。
+    """
+
+    def test_http_mode_without_client_refuses_loudly(self) -> None:
+        settings = Settings(env="test", bus_backend="memory", delivery_mode="http")
+        with pytest.raises(ValueError, match="客户端"):
             default_channels(settings)
+
+    def test_http_mode_without_allowlist_refuses_loudly(self) -> None:
+        settings = Settings(env="test", bus_backend="memory", delivery_mode="http", delivery_http_base_url="https://gw.internal")
+        with pytest.raises(ValueError, match="白名单"):
+            default_channels(settings, client=object())
+
+    def test_http_mode_rejects_credentials_inside_url(self) -> None:
+        settings = Settings(
+            env="test",
+            bus_backend="memory",
+            delivery_mode="http",
+            delivery_http_base_url="https://user:pw@gw.internal",
+            delivery_http_allowed_hosts="gw.internal",
+        )
+        with pytest.raises(ValueError, match="凭据"):
+            default_channels(settings, client=object())
+
+    def test_http_mode_builds_only_the_configured_channels(self) -> None:
+        settings = Settings(
+            env="test",
+            bus_backend="memory",
+            delivery_mode="http",
+            delivery_http_base_url="https://gw.internal:8443/publish",
+            delivery_http_allowed_hosts="https://gw.internal/other",
+            delivery_http_channels="sms,broadcast,sms",
+        )
+        channels = default_channels(settings, client=object())
+        assert {channel.value for channel in channels} == {"sms", "broadcast"}
+        adapter = channels[next(iter(channels))]
+        assert adapter.target == "https://gw.internal:8443/publish"  # type: ignore[attr-defined]
 
     def test_mock_delivery_mode_is_the_wired_default(self) -> None:
         settings = Settings(env="test", bus_backend="memory", delivery_mode="mock")
         channels = default_channels(settings)
         assert {c.value for c in channels} == {"sms", "beidou", "broadcast", "wechat"}
+        assert all(row["mode"] == "mock" for row in _dispatcher(channels).channel_status())
+
+
+def _dispatcher(channels: object) -> object:
+    from aegis.observability.tracer import Tracer
+    from aegis.services.delivery import DeliveryDispatcher
+
+    return DeliveryDispatcher(channels, Tracer())  # type: ignore[arg-type]
 
 
 class TestWiredKnobsChangeBehavior:

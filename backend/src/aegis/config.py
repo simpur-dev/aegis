@@ -78,6 +78,17 @@ class Settings(BaseSettings):
     llm_model: str = "qwen-plus"
     llm_timeout_seconds: float = 20.0
 
+    # 语义交互（完善计划批次 B）：关掉就是"这个出口不存在"（路由一律 503），
+    # 不是"看着能用其实不能用"——路由与配置面必须给外部同一个事实。
+    assistant_enabled: bool = True
+    assistant_session_ttl_seconds: float = 1_800.0
+    # 人工上报与三路融合解析（批次 B4 + C1）：低于该置信度、或等级不是阈值命中所得 → 转人工核签
+    report_review_confidence: float = 0.6
+    # 三条腿各自可单独摘除：标定实验要能回答"去掉 LLM 腿准确率掉多少"，
+    # 而不是只能整份开或整份关。关掉后解析仍然可用（规则腿是唯一判据来源）。
+    report_llm_leg: bool = True
+    report_evidence_leg: bool = True
+
     # 契约 Schema 目录：镜像/离线部署把它指到打包位置（后端镜像里是 /contracts）。留空 = 跟着
     # 源码树走（仓库根 contracts/），本机直接跑进程时不需要配。这个键必须真实存在：Dockerfile 里
     # 写过 `ENV AEGIS_CONTRACTS_DIR=/contracts` 而配置面没有它时，`extra="ignore"` 会把它静默丢掉，
@@ -117,9 +128,16 @@ class Settings(BaseSettings):
     # 必须由现场显式决定，所以这里不默认这么做。
     retrieval_budget_ms: float = 5_000.0
 
-    # 交付通道：默认 mock，避免真实短信/北斗凭据缺失时阻塞开发
+    # 交付通道：默认 mock（演练/压测可复现），真实网关走 delivery_mode=http。
+    # http 形态的口径与工作流外呼一致：主机白名单为空就是这条腿没开，绝不"默认能发"；
+    # 凭据只在这里出现一次，状态面与日志一律脱敏为 scheme://host。
     delivery_mode: Literal["mock", "http"] = "mock"
     delivery_http_base_url: str = ""
+    delivery_http_path: str = "/publish"
+    delivery_http_channels: str = "sms,broadcast"
+    delivery_http_allowed_hosts: str = ""
+    delivery_http_timeout_ms: int = 5_000
+    delivery_http_token: str = ""
 
     # 协同框架
     heartbeat_interval_seconds: float = 3.0

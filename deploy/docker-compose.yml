@@ -168,6 +168,24 @@ services:
       # 采到的轮次/条数/失败次数由 /api/v1/integrations 的 weather 行说明。
       AEGIS_WEATHER_API_BASE_URL: ${AEGIS_WEATHER_API_BASE_URL:-}
       AEGIS_WEATHER_API_PATH: ${AEGIS_WEATHER_API_PATH:-/observation}
+      # 工作流节点外呼（api_call/device_control）与真实触达通道：两道闸都在配置面，
+      # 留空即整条腿不可用（节点响亮失败 / 通道构造期报错），而不是"默认能发"。
+      AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS: ${AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS:-}
+      AEGIS_WORKFLOW_HTTP_TIMEOUT_MS: ${AEGIS_WORKFLOW_HTTP_TIMEOUT_MS:-4000}
+      AEGIS_DELIVERY_MODE: ${AEGIS_DELIVERY_MODE:-mock}
+      AEGIS_DELIVERY_HTTP_BASE_URL: ${AEGIS_DELIVERY_HTTP_BASE_URL:-}
+      AEGIS_DELIVERY_HTTP_PATH: ${AEGIS_DELIVERY_HTTP_PATH:-/publish}
+      AEGIS_DELIVERY_HTTP_CHANNELS: ${AEGIS_DELIVERY_HTTP_CHANNELS:-sms,broadcast}
+      AEGIS_DELIVERY_HTTP_ALLOWED_HOSTS: ${AEGIS_DELIVERY_HTTP_ALLOWED_HOSTS:-}
+      AEGIS_DELIVERY_HTTP_TIMEOUT_MS: ${AEGIS_DELIVERY_HTTP_TIMEOUT_MS:-5000}
+      # 凭据只经 .env 进来、只进请求头：状态面与日志一律脱敏为 scheme://host
+      AEGIS_DELIVERY_HTTP_TOKEN: ${AEGIS_DELIVERY_HTTP_TOKEN:-}
+      # 语义交互与人工上报（批次 B/C）：助手关掉就是路由不存在；两条增强腿可单独摘除做标定对照
+      AEGIS_ASSISTANT_ENABLED: ${AEGIS_ASSISTANT_ENABLED:-true}
+      AEGIS_ASSISTANT_SESSION_TTL_SECONDS: ${AEGIS_ASSISTANT_SESSION_TTL_SECONDS:-1800}
+      AEGIS_REPORT_REVIEW_CONFIDENCE: ${AEGIS_REPORT_REVIEW_CONFIDENCE:-0.6}
+      AEGIS_REPORT_LLM_LEG: ${AEGIS_REPORT_LLM_LEG:-true}
+      AEGIS_REPORT_EVIDENCE_LEG: ${AEGIS_REPORT_EVIDENCE_LEG:-true}
       # 端点走 OTel 官方环境变量。只在 observability profile 关闭时留空即可：
       # 跨度改为只记本地，业务链路不受影响（先起 observability 再起 app 就能拿到全量证据链）。
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_ENDPOINT:-}

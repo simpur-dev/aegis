@@ -182,8 +182,15 @@ class HazardResponseChain:
         trace_id: str | None = None,
         event_id: str | None = None,
         region_code: str | None = None,
+        preset_hits: list[TriggerHit] | None = None,
+        preset_verdict: RiskVerdict | None = None,
+        intake: str = "telemetry",
     ) -> ChainResult:
         """一次灾害事件（感知→研判→决策→执行→反馈）= 一条可第三方引用的链路。
+
+        `preset_hits`/`preset_verdict` 是人工上报腿的入口（架构文档 §6.2 场景二）：灾情文本经三路
+        融合解析后已经产出触发命中与定级建议，链路从感知段之后**照常走同一条**——同一套量测、
+        同一条 trace、同一份降级留痕，而不是平行实现第二条预警链。`intake` 只改感知段的说明文字。
 
         根跨度 `hazard_chain` 只承载链路结构（父子关系、降级/故障状态），不另立计时口径：
         各段时延仍由 `_run_chain` 里的 `self._tracer.span(...)` 落账，SLA 判定继续以时延账本为准。
@@ -198,9 +205,18 @@ class HazardResponseChain:
             span_attrs={
                 "aegis.region_code": region_code or (readings[0].region_code if readings else "UNKNOWN"),
                 "aegis.readings": len(readings),
+                "aegis.intake": intake,
             },
         ) as root:
-            result = await self._run_chain(readings, trace_id=trace, event_id=event_id, region_code=region_code)
+            result = await self._run_chain(
+                readings,
+                trace_id=trace,
+                event_id=event_id,
+                region_code=region_code,
+                preset_hits=preset_hits,
+                preset_verdict=preset_verdict,
+                intake=intake,
+            )
             # 事件 ID 在链路内部才生成，回填到根跨度上，取证时可用 event_id 或 trace_id 双向检索
             instrumentation.set_attributes(
                 root,
@@ -225,20 +241,25 @@ class HazardResponseChain:
         trace_id: str | None = None,
         event_id: str | None = None,
         region_code: str | None = None,
+        preset_hits: list[TriggerHit] | None = None,
+        preset_verdict: RiskVerdict | None = None,
+        intake: str = "telemetry",
     ) -> ChainResult:
         trace = trace_id or new_trace_id()
         result = ChainResult(trace_id=trace, event_id=event_id or new_event_id())
         region = region_code or (readings[0].region_code if readings else "UNKNOWN")
+        reported = intake == "report"
 
         async with instrumentation.span("stage_perceive_ms", trace_id=trace) as perceive_span:
             with self._tracer.span("stage_perceive_ms", trace_id=trace) as sp:
-                hits, agent_hit_count = await self._perceive(readings, region, trace)
+                hits, agent_hit_count = await self._perceive(readings, region, trace, preset_hits=preset_hits)
             # 阶段结论写在账本计时之外：跨度不参与任何时延测量
             instrumentation.set_attributes(
                 perceive_span,
                 span_attrs={
                     "aegis.hits": len(hits),
                     "aegis.agent_hits": agent_hit_count,
+                    "aegis.intake": intake,
                     "aegis.mode": "hybrid" if agent_hit_count else "local",
                 },
             )
@@ -248,7 +269,7 @@ class HazardResponseChain:
                 "hybrid" if agent_hit_count else "local",
                 True,
                 sp.finished_ms or 0.0,
-                f"命中 {len(hits)} 条（智能体 {agent_hit_count} 条）",
+                ("上报文本判定：" if reported else "") + f"命中 {len(hits)} 条（智能体 {agent_hit_count} 条）",
             )
         )
         result.hits = hits
@@ -260,7 +281,9 @@ class HazardResponseChain:
         assess_degradations = len(result.degradations)
         async with instrumentation.span("stage_assess_ms", trace_id=trace) as assess_span:
             with self._tracer.span("stage_assess_ms", trace_id=trace) as sp:
-                verdict = await self._assess(hits, region, result, trace)
+                verdict, answered_by_agent = await self._assess(
+                    hits, region, result, trace, preset_verdict=preset_verdict, reported=reported
+                )
             if verdict is None:
                 instrumentation.mark_error(assess_span, "研判未产出定级结论", code="assess_failed")
             elif len(result.degradations) > assess_degradations:
@@ -276,7 +299,7 @@ class HazardResponseChain:
         result.stages.append(
             StageResult(
                 "assess",
-                "agent" if verdict and verdict.assessed_by != "platform.risk_engine" else "local",
+                "agent" if answered_by_agent else "local",
                 verdict is not None,
                 sp.finished_ms or 0.0,
                 f"等级 {int(verdict.risk_level)}" if verdict else "定级失败",
@@ -344,8 +367,16 @@ class HazardResponseChain:
 
     # ---------- 各段实现 ----------
 
-    async def _perceive(self, readings: list[TelemetryReading], region: str, trace: str) -> tuple[list[TriggerHit], int]:
-        local_hits = self._rule_engine.evaluate(readings, region_code=region).hits
+    async def _perceive(
+        self,
+        readings: list[TelemetryReading],
+        region: str,
+        trace: str,
+        *,
+        preset_hits: list[TriggerHit] | None = None,
+    ) -> tuple[list[TriggerHit], int]:
+        # 上报腿的命中是 `services/semantic_parser` 用同一张规则表算出来的，这里不重算阈值。
+        local_hits = list(preset_hits) if preset_hits is not None else self._rule_engine.evaluate(readings, region_code=region).hits
         agent_hits = self._drain_agent_hits(region)
         merged = list(local_hits)
         seen = {h.rule_id for h in merged}
@@ -354,10 +385,21 @@ class HazardResponseChain:
             self._tracer.record("perceive_agent_hit_ms", 0.0, trace_id=trace, outcome="agent")
         return merged, len(agent_hits)
 
-    async def _assess(self, hits: list[TriggerHit], region: str, result: ChainResult, trace: str) -> RiskVerdict | None:
-        local = self._risk_engine.assess(hits, region_code=region)
+    async def _assess(
+        self,
+        hits: list[TriggerHit],
+        region: str,
+        result: ChainResult,
+        trace: str,
+        *,
+        preset_verdict: RiskVerdict | None = None,
+        reported: bool = False,
+    ) -> tuple[RiskVerdict | None, bool]:
+        """返回 (结论, 是否由总线智能体应答)。降级路径的结论来自规则引擎或上报解析腿。"""
+        local = preset_verdict or self._risk_engine.assess(hits, region_code=region)
+        fallback_note = "采用上报解析定级" if preset_verdict is not None else "采用规则定级"
         if self._registry.pick(AgentType.ASSESS.value, "risk_assess") is None:
-            return local
+            return local, False
         try:
             response = await self._gateway.dispatch(
                 AgentType.ASSESS,
@@ -367,6 +409,7 @@ class HazardResponseChain:
                     "window": "1h",
                     "candidate_hazards": sorted({h.hazard_type for h in hits}),
                     "hits": [h.model_dump() for h in hits],
+                    "intake": "report" if reported else "telemetry",
                 },
                 trace_id=trace,
                 capability="risk_assess",
@@ -375,12 +418,12 @@ class HazardResponseChain:
             )
         except AegisError as exc:
             result.degradations.append(f"研判降级: {exc.message}")
-            return local
+            return local, False
 
         if (verdict := self._parse_agent_assessment(response.payload, region, hits)) is not None:
-            return verdict
-        result.degradations.append("研判结论不合契约，采用规则定级")
-        return local
+            return verdict, True
+        result.degradations.append(f"研判结论不合契约，{fallback_note}")
+        return local, False
 
     @staticmethod
     def _parse_agent_assessment(payload: dict[str, Any], region: str, hits: list[TriggerHit]) -> RiskVerdict | None:

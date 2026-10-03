@@ -355,7 +355,7 @@ class TestContainerWiring:
         assert ctn.weather is None
         # 按名字断言而不是按位置：状态列表是对外契约，加一条腿不该把既有断言整体挪位
         status = {state.name: state for state in ctn.integration_status()}
-        assert set(status) == {"store", "analytics", "knowledge", "retrieval", "mqtt", "weather", "outbound", "tracing"}
+        assert set(status) == {"store", "analytics", "knowledge", "retrieval", "mqtt", "weather", "outbound", "delivery", "tracing"}
         assert (status["store"].enabled, status["store"].driver) == (True, "memory")
         assert status["analytics"].enabled is False
         assert status["knowledge"].enabled is True
