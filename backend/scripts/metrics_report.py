@@ -43,7 +43,18 @@ INDICATORS: dict[str, tuple[float, str]] = {
     "warning_reach_ms": (1_200_000.0, "预警信息靶向触达 ≤20min"),
 }
 
-INGEST_INDICATOR = ("ingest_end_to_end_seconds", 300_000.0, "多源数据接入时延 ≤5分钟")
+INGEST_INDICATOR = ("ingest_end_to_end_seconds", 300.0, "多源数据接入时延 ≤5分钟（秒制）")
+
+#: 人工上报是"接入 ≤5min"的第四条腿（批次 B4）。它同样以秒记录，所以判定要和 ingest 一起
+#: 走秒制那一支——塞进 INDICATORS 会让 0.1 秒的样本去和毫秒阈值比，永远"达标"得毫无意义。
+REPORT_INTAKE_INDICATOR = ("report_intake_seconds", 300.0, "人工上报接入时延 ≤5分钟（第四条腿，秒制）")
+
+#: 固定两条上报文本：一条够得上阈值（该报警），一条只描述现象（不该报警）。
+#: 用固定文本而不是随机句子，是为了让"报表里的 20 例"每次都能被逐条复跑对上。
+REPORT_SAMPLES: tuple[tuple[str, str], ...] = (
+    ("24小时累计降雨95毫米，沟道泥位抬升1.2米，下游约300人受威胁", "540121"),
+    ("坡面出现裂缝并有石块滚落，暂无其它数据", "540200"),
+)
 
 ACCURACY_HINT = "需 5 灾种标注案例回放：`--dataset <labels.jsonl>`（现场标注口径见 persistence/replay.py）"
 
@@ -126,18 +137,24 @@ def _table(latency: dict[str, Any], collaboration: dict[str, Any]) -> list[dict[
             }
         )
 
-    ingest_name, ingest_budget, ingest_desc = INGEST_INDICATOR
-    ingest_stats = metrics.get(ingest_name)
-    if ingest_stats and ingest_stats["count"]:
-        # 该指标以"秒"记录，转为毫秒与阈值比较
-        p95_ms = ingest_stats["p95_ms"]
+    # 这两条都以"秒"记值，所以列名与阈值都写 `_s`：原来把秒数拿去和 300000（毫秒）比，
+    # 任何时延都会"达标"——那是一行永远绿的假判定（容器侧踩过同单位的坑，见 container.latency_report 注释）。
+    for name, budget_seconds, description in (INGEST_INDICATOR, REPORT_INTAKE_INDICATOR):
+        stats = metrics.get(name)
+        if not stats or not stats["count"]:
+            rows.append({"指标": description, "样本": 0, "P95_s": None, "阈值_s": budget_seconds, "判定": "未测得"})
+            continue
+        p95_seconds = stats["p95_ms"]  # 账本按指标名后缀的单位存值：`_seconds` 存的就是秒
         rows.append(
             {
-                "指标": ingest_desc,
-                "样本": ingest_stats["count"],
-                "P95_ms": p95_ms,
-                "阈值_ms": ingest_budget,
-                "判定": "达标" if p95_ms <= ingest_budget else "超标",
+                "指标": description,
+                "样本": stats["count"],
+                "P50_s": stats["p50_ms"],
+                "P95_s": p95_seconds,
+                "最大_s": stats["max_ms"],
+                "阈值_s": budget_seconds,
+                "判定": "达标" if p95_seconds <= budget_seconds else "超标",
+                "越限样本": stats.get("breaches", 0),
             }
         )
 
@@ -158,6 +175,7 @@ def _table(latency: dict[str, Any], collaboration: dict[str, Any]) -> list[dict[
 async def run(
     *,
     rounds: int,
+    reports: int = 2,
     with_agents: bool,
     seed: int,
     out: Path | None,
@@ -182,6 +200,17 @@ async def run(
             acted += sum(1 for r in results if r.acted)
             fatal += sum(1 for r in results if r.errors)
             await drain_pending(container.transport, timeout=5.0)
+        # 上报腿：两条固定文本各跑一遍（一条该报警、一条不该报），
+        # 让"接入 ≤5min"这项在报表里有一条属于人工上报的独立样本，而不是只蹭遥测那条腿
+        submitted = reviewed = with_warning = 0
+        for index in range(reports):
+            text, region = REPORT_SAMPLES[index % len(REPORT_SAMPLES)]
+            outcome = await container.submit_report(note=text, region_code=region, reporter=f"metrics-report-{index + 1}")
+            submitted += 1
+            reviewed += 1 if outcome["human_review_required"] else 0
+            with_warning += 1 if outcome["chain"]["warning_id"] else 0
+            fatal += 1 if outcome["chain"]["errors"] else 0
+            await drain_pending(container.transport, timeout=5.0)
         latency = container.latency_report()
     finally:
         await container.shutdown()
@@ -197,6 +226,13 @@ async def run(
 
     report = {
         "运行参数": {"rounds": rounds, "with_mock_agents": with_agents, "seed": seed, "事件产出": acted, "致命错误": fatal},
+        "人工上报腿": {
+            "受理": submitted,
+            "产出预警": with_warning,
+            "转人工核签": reviewed,
+            "台账计数": latency.get("reports"),
+            "阈值版本": latency.get("rulebook"),
+        },
         "指标判定": rows,
         "准确率回放": accuracy.as_dict(),
         "未覆盖指标": uncovered,
@@ -216,6 +252,7 @@ async def run(
 def main() -> int:
     parser = argparse.ArgumentParser(description="AEGIS 考核指标实测报告")
     parser.add_argument("--rounds", type=int, default=10)
+    parser.add_argument("--reports", type=int, default=2, help="人工上报腿的样本条数（0 即不测这条腿，报表会写「未测得」）")
     parser.add_argument("--agents", action="store_true", help="使用 Mock 智能体（否则测平台降级路径）")
     parser.add_argument("--seed", type=int, default=202_609)
     parser.add_argument("--out", type=Path, default=None, help="同时把报告写入 JSON 文件")
@@ -229,6 +266,7 @@ def main() -> int:
     return asyncio.run(
         run(
             rounds=args.rounds,
+            reports=max(0, args.reports),
             with_agents=args.agents,
             seed=args.seed,
             out=args.out,
