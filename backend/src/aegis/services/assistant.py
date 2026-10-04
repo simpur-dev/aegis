@@ -790,6 +790,13 @@ def _case_line(case: dict[str, Any]) -> str:
 def narrate_result(action: str, result: dict[str, Any]) -> str:
     if "error" in result:
         return str(result["error"])
+    if result.get("found") is False:
+        # 「没找到」必须说出口。`_brief` 会滤掉假值字段，于是 explain 落空时那句话只剩
+        # `warning_id=wrn_…`——读起来像查到了，而 `found: False` 这个事实被丢了（真机量过）。
+        ident = str(result.get("warning_id") or result.get("trace_id") or "").strip()
+        note = str(result.get("note") or "").strip()
+        reason = note or "预警与链路的读视图只保留本进程最近若干条"
+        return f"没找到 {ident}：{reason}" if ident else f"没找到这条记录：{reason}"
     if action == "query.metrics":
         metrics = result.get("metrics") or {}
         # 键名中性（p50/p95）、单位随 payload：这里若还按 `p50_ms` 读，秒制那几条会静默变 None

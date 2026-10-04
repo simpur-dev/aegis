@@ -137,6 +137,28 @@ def settings(**overrides: Any) -> Settings:
 
 
 @pytest.mark.asyncio
+async def test_查不到号时那句回答必须说没找到() -> None:
+    """真机量的：问"解释 wrn_000… 为什么定这个等级"，答案帧给出的是
+    `warning_id=wrn_00000000000000000000`——`found: False` 被 `_brief` 当假值滤掉了，
+    整句读起来像查到了。读不到就说读不到，别让人对着一句像成功的话猜。"""
+    service = AssistantService(actions=build_actions(Recorder()), settings=settings())
+    events = await collect(service, "解释 wrn_00000000000000000000 为什么定这个等级", reporter="值班员")
+    answer = next(event for event in events if event.type == "answer")
+    assert "没找到" in answer.data["text"], answer.data["text"]
+    assert "wrn_00000000000000000000" in answer.data["text"], answer.data["text"]
+
+
+@pytest.mark.asyncio
+async def test_查到号时答案仍是那段解释() -> None:
+    """上面的对照：别把"没找到"当成万能前缀——查到了还得给出定级依据与触达回执。"""
+    service = AssistantService(actions=build_actions(Recorder()), settings=settings())
+    events = await collect(service, "解释 wrn_0123456789abcdef0123 为什么定这个等级", reporter="值班员")
+    answer = next(event for event in events if event.type == "answer")
+    assert "没找到" not in answer.data["text"], answer.data["text"]
+    assert "sms=delivered" in answer.data["text"], answer.data["text"]
+
+
+@pytest.mark.asyncio
 async def test_越权指令被拒且留痕而不是降级成一个查询() -> None:
     rec = Recorder()
     service = AssistantService(actions=build_actions(rec), settings=settings())
