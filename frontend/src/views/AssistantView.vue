@@ -16,7 +16,7 @@ import { message } from 'ant-design-vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import type { ActionSpecDto, AssistantFrame, CapabilitiesDto, ConfirmResultDto, ProposalFrame } from '@/api/assistant'
-import { assistantApi, isAssistantDisabled, isAssistantUnavailable } from '@/api/assistant'
+import { assistantApi, CHAT_LIMITS, isAssistantDisabled, isAssistantUnavailable, preflightChat } from '@/api/assistant'
 import ReportForm from '@/components/reports/ReportForm.vue'
 
 /** 待确认动作在这页只有三种下落：后端回执、本地收起、请求没发出去。 */
@@ -102,19 +102,23 @@ function useExample(spec: ActionSpecDto): void {
 
 async function send(): Promise<void> {
   const text = draft.value.trim()
-  if (!text) {
-    streamError.value = '消息为空：后端要求 1..2000 字，这里不发空请求。'
+  const request = {
+    message: text,
+    session_id: sessionId.value ?? undefined,
+    reporter: reporter.value.trim() || undefined,
+    region_code: regionCode.value.trim() || undefined,
+  }
+  // 发出前按后端口径挡一次（数值与本文件的正则由跨端门禁对着 assistant_api.py 校验）：
+  // 空、超长、区划代码写成小写，都在这一步拦下，而不是等一个 422 回来。
+  const blocked = preflightChat(request)
+  if (blocked !== '') {
+    streamError.value = blocked
     return
   }
   streaming.value = true
   streamError.value = ''
   try {
-    for await (const frame of assistantApi.chat({
-      message: text,
-      session_id: sessionId.value ?? undefined,
-      reporter: reporter.value || undefined,
-      region_code: regionCode.value || undefined,
-    })) {
+    for await (const frame of assistantApi.chat(request)) {
       if (frame.type === 'meta') sessionId.value = frame.session_id
       frames.value.push(frame)
     }
@@ -134,7 +138,7 @@ async function confirmProposal(proposal: ProposalFrame): Promise<void> {
     const result = await assistantApi.confirm({
       session_id: proposal.session_id,
       action_id: proposal.action_id,
-      actor: reporter.value || undefined,
+      actor: reporter.value.trim() || undefined,
     })
     decisions[proposal.action_id] = { kind: 'result', result }
     if (result.status !== 'executed') {
@@ -246,11 +250,25 @@ onMounted(() => void loadCapabilities())
 
     <a-card size="small" title="对话" style="margin-top: 12px">
       <a-space wrap style="margin-bottom: 8px">
-        <a-input v-model:value="reporter" style="width: 160px" placeholder="上报人名义" data-testid="field-reporter" />
-        <a-input v-model:value="regionCode" style="width: 160px" placeholder="区划代码（可选）" data-testid="field-region" />
+        <a-input v-model:value="reporter" :maxlength="CHAT_LIMITS.reporter.max" style="width: 160px" placeholder="上报人名义" data-testid="field-reporter" />
+        <a-input
+          v-model:value="regionCode"
+          :maxlength="24"
+          style="width: 160px"
+          placeholder="区划代码（6–24 位大写字母数字）"
+          data-testid="field-region"
+        />
         <span class="muted" data-testid="session-id">会话 {{ sessionId ?? '未开始（由后端 meta 帧给出）' }}</span>
       </a-space>
-      <a-textarea v-model:value="draft" :rows="3" placeholder="如：最近发布了哪些预警 / 帮我上报 540121 沟道泥位抬升" data-testid="field-message" />
+      <a-textarea
+        v-model:value="draft"
+        :rows="3"
+        :maxlength="CHAT_LIMITS.message.max"
+        placeholder="如：最近发布了哪些预警 / 帮我上报 540121 沟道泥位抬升"
+        data-testid="field-message"
+      />
+      <!-- 计数自己渲染而不是用 antd 的 show-count：那一个的文本挂在 data-count 上，界面上看得见却测不着 -->
+      <div class="muted" data-testid="char-count">{{ draft.length }} / {{ CHAT_LIMITS.message.max }} 字</div>
       <a-space style="margin-top: 8px">
         <a-button type="primary" :loading="streaming" data-testid="send" @click="send">发送</a-button>
         <a-button data-testid="clear" @click="frames = []">清空时间线</a-button>

@@ -24,7 +24,25 @@
 
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios'
 
+import { describeValidationDetail } from '@/utils/validationDetail'
+
 const http = axios.create({ baseURL: '/', timeout: 20_000 })
+
+/**
+ * 对话/确认这两个请求体的字段在界面上的叫法，供 422 的字段名配中文。
+ *
+ * 后端全是 `extra="forbid"` + 正则/长度约束（assistant_api.py:32-47），撞一次 422 的概率不低
+ * （超长文本、会话号写错、区划代码不是 6 位以上大写字母数字），而机器名对值班员没有信息量。
+ */
+export const ASSISTANT_FIELD_LABELS: Record<string, string> = {
+  message: '对话内容',
+  session_id: '会话号',
+  reporter: '上报人名义',
+  region_code: '区划代码',
+  hazard_hint: '灾种提示',
+  action_id: '动作号',
+  actor: '确认人名义',
+}
 
 export const ASSISTANT_ENDPOINTS = {
   capabilities: '/api/v1/assistant/capabilities',
@@ -66,13 +84,35 @@ export function isAssistantDisabled(error: unknown): boolean {
   return error instanceof AssistantApiError && error.status === 404 && error.code === ''
 }
 
+/**
+ * detail → 界面上能读的一句原因。认不出形状时返回空串，由调用方回落（这里不编造原因）。
+ *
+ * 两条出口都要走它：`/chat` 是 fetch（自己读 body），能力面/确认/会话是 axios。
+ * 以前只有 fetch 那条翻了原因，axios 那条直接把 `error.message`（"Request failed with status code 422"）
+ * 交给界面——同一个错误在同一个页面上分成两种写法，英文那句对值班员等于没说。
+ */
+function readableReason(detail: unknown): string {
+  const record = (detail ?? {}) as Record<string, unknown>
+  const nested = (record.detail ?? record) as Record<string, unknown>
+  if (typeof nested?.message === 'string') return nested.message
+  return describeValidationDetail(detail, ASSISTANT_FIELD_LABELS)
+}
+
+function withReason(prefix: string, reason: string): string {
+  return reason === '' ? prefix : `${prefix}：${reason}`
+}
+
 async function dispatch<T>(instance: AxiosInstance, config: AxiosRequestConfig): Promise<T> {
   try {
     const response = await instance.request<T>(config)
     return response.data
   } catch (error) {
     if (error instanceof AxiosError) {
-      throw new AssistantApiError(error.response?.status ?? 0, error.message, error.response?.data)
+      const status = error.response?.status ?? 0
+      const detail = error.response?.data
+      // 没有响应体（超时、连接被拒）时保留 axios 自己的话——那句里带的是"请求没成功"这一事实
+      if (detail === undefined) throw new AssistantApiError(status, `助手接口调用失败（HTTP ${status}）：${error.message}`, undefined)
+      throw new AssistantApiError(status, withReason(`助手接口调用失败（HTTP ${status}）`, readableReason(detail)), detail)
     }
     throw error
   }
@@ -189,6 +229,55 @@ export function toChatBody(request: ChatRequestDto): ChatRequestDto {
   if (request.region_code) body.region_code = request.region_code
   if (request.hazard_hint) body.hazard_hint = request.hazard_hint
   return body
+}
+
+/**
+ * 对话请求体的口径，逐条抄自后端 `ChatRequest`（assistant_api.py:35-39）。
+ *
+ * 抄来的东西会被校验：`api/assistant.spec.ts` 里的跨端门禁直接读
+ * `assistant_api.py` 源码比对这里的数字与正则——后端改了上限而这里没跟上就是红灯，
+ * 免得两份口径各自演化（那是"前端放过去、后端 422"这类来回的源头）。
+ */
+export const CHAT_LIMITS = {
+  message: { min: 1, max: 2_000 },
+  reporter: { min: 2, max: 64 },
+  hazard_hint: { max: 64 },
+  region_code: { pattern: /^[0-9A-Z]{6,24}$/ },
+} as const
+
+/**
+ * 发出前按后端口径本地挡一次：撞 422 要等一个来回，而这一页对的是值班员的手速；
+ * 更糟的是"发出去了、时间线上什么都没有"那种观感。
+ *
+ * 只挡**人填的**三格。`session_id` 刻意不在这里挡：它是后端 `meta` 帧给的，
+ * 万一哪天与后端自己的模式不一致，本地拒绝会把整场对话锁死，
+ * 而后端的 422 至少把"哪一格、为什么"原样说出来——那种不一致不该由前端掩盖。
+ *
+ * 返回空串表示"按这份口径这一条能过"，不保证后端一定收（还有一堆语义判据）。
+ */
+export function preflightChat(request: ChatRequestDto): string {
+  const text = request.message
+  if (text.length < CHAT_LIMITS.message.min) {
+    return `对话内容为空：后端要求 ${CHAT_LIMITS.message.min}..${CHAT_LIMITS.message.max} 字，这一条没有发出去。`
+  }
+  if (text.length > CHAT_LIMITS.message.max) {
+    return `对话内容 ${text.length} 字，超过后端的 ${CHAT_LIMITS.message.max} 字上限：请缩短后重发。`
+  }
+  const reporter = request.reporter
+  if (reporter !== undefined && reporter !== '') {
+    if (reporter.length < CHAT_LIMITS.reporter.min || reporter.length > CHAT_LIMITS.reporter.max) {
+      return `上报人名义「${reporter}」不合口径：后端要求 ${CHAT_LIMITS.reporter.min}..${CHAT_LIMITS.reporter.max} 字，这一条没有发出去。`
+    }
+  }
+  const region = request.region_code
+  if (region !== undefined && region !== '' && !CHAT_LIMITS.region_code.pattern.test(region)) {
+    return `区划代码「${region}」不合口径：后端要求 6..24 位大写字母或数字，这一条没有发出去。`
+  }
+  const hint = request.hazard_hint
+  if (hint !== undefined && hint.length > CHAT_LIMITS.hazard_hint.max) {
+    return `灾种提示 ${hint.length} 字，超过后端的 ${CHAT_LIMITS.hazard_hint.max} 字上限。`
+  }
+  return ''
 }
 
 // ---------- SSE 帧 ----------
@@ -364,10 +453,10 @@ async function toApiError(response: ChatResponseLike): Promise<AssistantApiError
   } catch {
     detail = await response.text().catch(() => '')
   }
-  const record = (detail ?? {}) as Record<string, unknown>
-  const nested = (record.detail ?? record) as Record<string, unknown>
-  const message = typeof nested?.message === 'string' ? nested.message : `对话请求失败（HTTP ${response.status}）`
-  return new AssistantApiError(response.status, message, detail)
+  // 422 的 detail 是 FastAPI 的校验数组：以前这里只落到"HTTP 422"一句话，
+  // 把"哪一格、为什么"整段丢了——贴一段长文本进来被拒，用户完全不知道在说什么。
+  const reason = readableReason(detail)
+  return new AssistantApiError(response.status, withReason(`对话请求失败（HTTP ${response.status}）`, reason), detail)
 }
 
 /**

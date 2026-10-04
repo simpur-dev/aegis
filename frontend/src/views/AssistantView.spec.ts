@@ -2,7 +2,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AssistantFrame, CapabilitiesDto } from '@/api/assistant'
-import { AssistantApiError, assistantApi } from '@/api/assistant'
+import { AssistantApiError, assistantApi, CHAT_LIMITS } from '@/api/assistant'
+import { readRepoFile } from '@/testing/repoSource'
 import AssistantView from '@/views/AssistantView.vue'
 
 vi.mock('@/api/assistant', async (importOriginal) => {
@@ -237,7 +238,54 @@ describe('对话：每一帧都留在时间线上', () => {
     const wrapper = await renderView()
     await sendMessage(wrapper, '   ')
     expect(mockedChat).not.toHaveBeenCalled()
-    expect(byTestid(wrapper, 'stream-error').text()).toContain('消息为空')
+    expect(byTestid(wrapper, 'stream-error').text()).toContain('对话内容为空')
+  })
+
+  /**
+   * 上限要在**填之前**就看得见。
+   *
+   * 真机贴一段 2001 字的险情进去，页面以前要等到 422 回来才说"失败了"，
+   * 而那一整段话还留在框里，没人知道自己写长了。现在计数条把余量摆出来，
+   * 超出部分由 antd 在输入处截断（真机：填 2005 字，`textarea.value.length` 是 2000）。
+   *
+   * 这条读模板而不是读 DOM：antd 的 TextArea 把 `maxlength` 当 prop 吃掉，
+   * 渲染出来的 `<textarea>` 上并没有 maxlength 属性（真机实测 `getAttribute('maxlength')` 为 null），
+   * 断言挂在属性上就是在测替身，不是测组件。
+   */
+  it('消息框把后端那份上限交给输入框，并显示当前字数', async () => {
+    const view = readRepoFile('frontend', 'src', 'views', 'AssistantView.vue')
+    expect(view).toContain(':maxlength="CHAT_LIMITS.message.max"')
+    const wrapper = await renderView()
+    expect(byTestid(wrapper, 'char-count').text()).toContain(`0 / ${CHAT_LIMITS.message.max}`)
+    await byTestid(wrapper, 'field-message').setValue('查预警')
+    expect(byTestid(wrapper, 'char-count').text()).toContain(`3 / ${CHAT_LIMITS.message.max}`)
+  })
+
+  it('区划代码写成小写时不发请求，就地按后端口径说明', async () => {
+    const wrapper = await renderView()
+    await wrapper.find('[data-testid="field-region"]').setValue('54012a')
+    await sendMessage(wrapper, '查预警')
+    expect(mockedChat).not.toHaveBeenCalled()
+    expect(byTestid(wrapper, 'stream-error').text()).toContain('区划代码「54012a」')
+  })
+
+  it('上报人名义只剩 1 个字时不发请求（后端要求 2..64）', async () => {
+    const wrapper = await renderView()
+    await wrapper.find('[data-testid="field-reporter"]').setValue('李')
+    await sendMessage(wrapper, '查预警')
+    expect(mockedChat).not.toHaveBeenCalled()
+    expect(byTestid(wrapper, 'stream-error').text()).toContain('上报人名义「李」')
+  })
+
+  it('区划代码合法时照常发出，带的是去掉空格后的那份', async () => {
+    mockedChat.mockReturnValue(framesOf([{ type: 'meta', session_id: 'sess_0001', llm_configured: true, actions: [] }]))
+    const wrapper = await renderView()
+    await wrapper.find('[data-testid="field-region"]').setValue(' 540121 ')
+    await wrapper.find('[data-testid="field-reporter"]').setValue(' 扎西 ')
+    await sendMessage(wrapper, '查预警')
+    const sent = mockedChat.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    expect(sent.region_code).toBe('540121')
+    expect(sent.reporter).toBe('扎西')
   })
 
   it('rejected 帧渲染成明确的拒绝并带原因，不是"没有结果"', async () => {
