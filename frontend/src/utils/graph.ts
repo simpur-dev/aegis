@@ -223,7 +223,13 @@ export const ON_FAILURE_LABELS: Record<OnFailure, string> = {
   abort: '中止实例',
 }
 
-/** 与后端一致的取值域（workflow_api.py:22-49）。 */
+/**
+ * 与后端一致的取值域（写接口 `workflow_api.py` 的 DefinitionInput/NodeInput 与 `model.py` 的 RetryPolicy）。
+ *
+ * 这些数是抄来的，抄错的症状不是报错而是"来回"：前端放行、后端 422，
+ * 或前端把合法值夹住、用户以为界面坏了。所以 `graphLimitsContract.spec.ts`
+ * 直接读后端源码逐个比对——改后端不改这里就是红灯。
+ */
 export const NODE_ID_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/
 export const NODE_TYPE_PATTERN = /^[a-z][a-z0-9_]{1,31}$/
 export const MAX_NODES = 64
@@ -232,6 +238,10 @@ export const SLA_MIN_MS = 100
 export const SLA_MAX_MS = 3_600_000
 export const MAX_ATTEMPTS = 5
 export const MAX_BACKOFF_MS = 60_000
+export const MIN_DEFINITION_NAME_CHARS = 2
+export const MAX_DEFINITION_NAME_CHARS = 64
+export const MAX_DESCRIPTION_CHARS = 512
+export const MAX_NODE_NAME_CHARS = 64
 
 const LAYER_GAP_X = 280
 const NODE_GAP_Y = 132
@@ -379,11 +389,17 @@ export function defToGraph(def: WorkflowDef, options: DefToGraphOptions = {}): G
   return { nodes, edges }
 }
 
-/** 逆映射：视图 → 可提交后端的定义。身份字段取自 base，positions 不上线（后端 extra=forbid）。 */
+/**
+ * 逆映射：视图 → 可提交后端的定义。身份字段取自 base，positions 不上线（后端 extra=forbid）。
+ *
+ * 节点名在这里裁一次首尾空格：后端也裁（`workflow_api.py` 的 `_TrimsText`），
+ * 但只裁服务端的话画布上还留着空格、存完重开才变——"保存改了我的名字"看着像 bug。
+ * 在这里裁，提交的、留在 store 的、画布显示的是同一份。
+ */
 export function graphToDef(view: GraphView, base: WorkflowDef): WorkflowDef {
   return {
     ...base,
-    nodes: view.nodes.map((node) => node.data.def),
+    nodes: view.nodes.map((node) => ({ ...node.data.def, name: node.data.def.name.trim() })),
     edges: view.edges.map((edge) => edge.data),
   }
 }
@@ -506,9 +522,9 @@ function checkConfig(node: NodeDef, errors: string[]): void {
  */
 export function validateGraph(def: WorkflowDef): string[] {
   const errors: string[] = []
-  if (def.name.trim().length < 2) errors.push('工作流名称至少 2 个字符')
-  if (def.name.length > 64) errors.push('工作流名称不得超过 64 字符')
-  if (def.description.length > 512) errors.push('工作流描述不得超过 512 字符')
+  if (def.name.trim().length < MIN_DEFINITION_NAME_CHARS) errors.push(`工作流名称至少 ${MIN_DEFINITION_NAME_CHARS} 个字符`)
+  if (def.name.length > MAX_DEFINITION_NAME_CHARS) errors.push(`工作流名称不得超过 ${MAX_DEFINITION_NAME_CHARS} 字符`)
+  if (def.description.length > MAX_DESCRIPTION_CHARS) errors.push(`工作流描述不得超过 ${MAX_DESCRIPTION_CHARS} 字符`)
   if (def.nodes.length === 0) errors.push('工作流至少需要一个节点')
   if (def.nodes.length > MAX_NODES) errors.push(`节点数不得超过 ${MAX_NODES}`)
   if (def.edges.length > MAX_EDGES) errors.push(`连线数不得超过 ${MAX_EDGES}`)
@@ -522,7 +538,7 @@ export function validateGraph(def: WorkflowDef): string[] {
     if (!(node.on_failure in ON_FAILURE_LABELS)) {
       errors.push(`节点 [${node.node_id}] 失败策略非法: ${String(node.on_failure)}`)
     }
-    if (node.name.length > 64) errors.push(`节点 ${node.node_id} 名称不得超过 64 字符`)
+    if (node.name.length > MAX_NODE_NAME_CHARS) errors.push(`节点 ${node.node_id} 名称不得超过 ${MAX_NODE_NAME_CHARS} 字符`)
     if (node.sla_ms < SLA_MIN_MS || node.sla_ms > SLA_MAX_MS) {
       errors.push(`节点 [${node.node_id}] sla_ms 须在 ${SLA_MIN_MS}-${SLA_MAX_MS} 之间`)
     }

@@ -110,6 +110,58 @@ async def test_取出来原样存回去不丢字段(container: PlatformContainer
 
 
 @pytest.mark.asyncio
+async def test_名称与说明里的首尾空格不进定义(container: PlatformContainer) -> None:
+    """人在画布上多敲一个空格，不该变成"两个看着同名的节点"。
+
+    三个写模型（`NodeInput`/`DefinitionInput`/`ReviseInput`）共用一个混入裁剪器，
+    而它用的是 `check_fields=False`——字段改名后校验器会**悄悄不生效**，光读代码是绿的。
+    所以三条出口各钉一次真行为：创建回执、存进去的定义、修订后的定义。
+    """
+    async with _client(container) as client:
+        listed = (await client.get("/api/v1/workflow/definitions")).json()["items"]
+        target = next(row for row in listed if row["node_count"] > 1)
+        nodes = (await client.get(f"/api/v1/workflow/definitions/{target['workflow_id']}")).json()["nodes"]
+        edges = (await client.get(f"/api/v1/workflow/definitions/{target['workflow_id']}")).json()["edges"]
+        padded_nodes = [{**node, "name": f"  {node['name']}  "} for node in nodes]
+
+        created = await client.post(
+            "/api/v1/workflow/definitions",
+            json={"name": "  夜间巡检流程  ", "description": "  一行说明  ", "nodes": padded_nodes, "edges": edges},
+        )
+        assert created.status_code == 201, created.text
+        new_id = created.json()["workflow_id"]
+        assert created.json()["name"] == "夜间巡检流程", "创建回执里的名字还带着空格"
+
+        stored = (await client.get(f"/api/v1/workflow/definitions/{new_id}")).json()
+        assert stored["description"] == "一行说明"
+        assert [node["name"] for node in stored["nodes"]] == [node["name"] for node in nodes], "节点名空格里外都没裁"
+
+        revised = await client.post(f"/api/v1/workflow/definitions/{new_id}/revise", json={"description": "  改一版  "})
+        assert revised.status_code == 200, revised.text
+        # 修订是"新版本、新 workflow_id"（旧那份仍在，供在途实例绑定）：读回执里的那个号
+        revised_id = revised.json()["workflow_id"]
+        after = (await client.get(f"/api/v1/workflow/definitions/{revised_id}")).json()
+        assert after["description"] == "改一版"
+        assert after["version"] > stored["version"]
+
+
+@pytest.mark.asyncio
+async def test_全空白的流程名是422不是500(container: PlatformContainer) -> None:
+    """`"    "` 裁完是空串，`min_length=2` 就该在这儿判死。
+
+    不裁的话四个空格能过长度校验，一路存进定义，界面上是一行"看不见的名字"。
+    """
+    async with _client(container) as client:
+        response = await client.post(
+            "/api/v1/workflow/definitions",
+            json={"name": "    ", "description": "", "nodes": [], "edges": []},
+        )
+        assert response.status_code == 422, response.text
+        detail = response.json()["detail"]
+        assert any(item["loc"][-1] == "name" for item in detail), f"422 里点名不了是哪一格：{detail}"
+
+
+@pytest.mark.asyncio
 async def test_不存在的定义给404而不是空白定义(container: PlatformContainer) -> None:
     async with _client(container) as client:
         response = await client.get("/api/v1/workflow/definitions/wf_000000000000")

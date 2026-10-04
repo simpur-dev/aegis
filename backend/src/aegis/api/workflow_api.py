@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aegis.container import PlatformContainer
 from aegis.domain.messages import new_trace_id
@@ -20,7 +20,25 @@ def get_container(request: Request) -> PlatformContainer:
     return container
 
 
-class NodeInput(BaseModel):
+class _TrimsText:
+    """写接口共用：先裁掉首尾空白，再走长度/模式校验。
+
+    真机在画布上把节点名改成 `数据接入 `（尾巴多一个空格）保存后重新打开，
+    列表里就出现了"看着同名、其实不同名"的两行；定义名与说明同理。
+    人在名称里多敲的空格不是内容，不该进定义——存进去那一刻就该抹掉。
+
+    `check_fields=False` 是因为这是混入：哪个子类有哪些字段由子类决定。
+    代价是"字段改名后校验器悄悄失效"，所以 `tests/api/test_workflow_api.py` 里
+    对三个写模型各钉了一条行为断言（不是只测这里写了代码）。
+    """
+
+    @field_validator("name", "description", mode="before", check_fields=False)
+    @classmethod
+    def _trim_text(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class NodeInput(_TrimsText, BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     node_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
@@ -44,7 +62,7 @@ class EdgeInput(BaseModel):
     condition: str = ""
 
 
-class DefinitionInput(BaseModel):
+class DefinitionInput(_TrimsText, BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=2, max_length=64)
@@ -53,7 +71,7 @@ class DefinitionInput(BaseModel):
     edges: list[EdgeInput] = Field(default_factory=list, max_length=256)
 
 
-class ReviseInput(BaseModel):
+class ReviseInput(_TrimsText, BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     nodes: list[NodeInput] | None = None

@@ -25,7 +25,7 @@ import { WORKFLOW_NODE_TYPES } from '@/components/workflow/nodeComponents'
 import { useWorkflowCanvas } from '@/components/workflow/useWorkflowCanvas'
 import { createWorkflowStore, useWorkflowStore } from '@/stores/workflow'
 import type { NodeProps } from '@vue-flow/core'
-import { NODE_SPECS, type FlowNodeData, type NodeCategory, type NodeType } from '@/utils/graph'
+import { MAX_ATTEMPTS, MAX_BACKOFF_MS, NODE_SPECS, type FlowNodeData, type NodeCategory, type NodeType } from '@/utils/graph'
 import { backendNodeTypes } from '@/testing/repoSource'
 
 /**
@@ -267,6 +267,58 @@ describe('检查器与运行中操作', () => {
     const timeout = wrapper.findAll('input[type="number"]').at(1)
     expect(timeout?.attributes('max')).toBe('12000')
     expect(wrapper.text()).toContain('风险定级')
+  })
+
+  /**
+   * `max` 属性只管住浏览器的步进按钮，管不住键入的数字：
+   * 敲 999999 仍然进模型，差别只在"什么时候发现"。这里要求**改完就夹住**，
+   * 而不是等到点保存才吃一条 validateGraph 的红字。
+   */
+  it('敲进超界的超时值会被夹到该节点 SLA', async () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    store.addNode({ ...createNodeDef('risk_assess', 'assess_1'), sla_ms: 12_000, timeout_ms: 9_000 })
+    store.select('assess_1')
+    const wrapper = mount(NodeInspector, { global: { stubs: { RuntimeActions: true, ConfigFields: true } } })
+    const timeout = wrapper.findAll('input[type="number"]').at(1)
+    await timeout?.setValue('999999')
+    await timeout?.trigger('change')
+    expect(store.selectedNode?.timeout_ms).toBe(12_000)
+    expect(store.selectedNode?.sla_ms).toBe(12_000)
+  })
+
+  it('重试两格同样夹住（上界来自 model.py 的那条口径）', async () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    store.addNode({ ...createNodeDef('notify', 'notify_1'), retry: { max_attempts: 1, backoff_ms: 200 } })
+    store.select('notify_1')
+    const wrapper = mount(NodeInspector, { global: { stubs: { RuntimeActions: true, ConfigFields: true } } })
+    const [attempts, backoff] = wrapper.findAll('input[type="number"]').slice(2)
+    expect(attempts?.attributes('max')).toBe(String(MAX_ATTEMPTS))
+    expect(backoff?.attributes('max')).toBe(String(MAX_BACKOFF_MS))
+    await attempts?.setValue('99')
+    await attempts?.trigger('change')
+    await backoff?.setValue('900000')
+    await backoff?.trigger('change')
+    expect(store.selectedNode?.retry).toEqual({ max_attempts: MAX_ATTEMPTS, backoff_ms: MAX_BACKOFF_MS })
+  })
+
+  /**
+   * 界面上的说明不许与系统实际做的事相反。
+   *
+   * 这句 hint 曾写着"定义接口当前不接受 retry 字段，保存时不下发，仅本地留存"，
+   * 而 `NodeInput` 早已收 retry（后端补齐它正是为了让"打开→存回"不吃 422）：
+   * 值班员照着这句话会以为改白改了，于是又点一次、再点一次。
+   */
+  it('retry 的说明与写接口一致：它会随定义保存', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    store.addNode(createNodeDef('notify', 'notify_1'))
+    store.select('notify_1')
+    const wrapper = mount(NodeInspector, { global: { stubs: { RuntimeActions: true, ConfigFields: true } } })
+    const text = wrapper.text()
+    expect(text).not.toContain('不接受 retry 字段')
+    expect(text).toContain('会随定义一起保存')
   })
 
   it('无实例时运行中操作整体不可用', () => {

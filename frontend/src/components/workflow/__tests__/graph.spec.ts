@@ -129,6 +129,23 @@ describe('utils/graph 往返映射', () => {
     expect(graphToDef(moved, def)).toEqual(def)
   })
 
+  /**
+   * 真机测出来的：节点名写成 `数据接入 `（尾巴多一个空格）保存后，
+   * 列表里出现"看着同名、其实不同名"的两行。后端已裁（`_TrimsText`），
+   * 这里同步裁，否则画布与存进去的内容差一个空格，重开才"变"。
+   */
+  it('节点名带首尾空格时逆映射裁掉，其余字段一个都不动', () => {
+    const def = fullCanvas()
+    const padded: WorkflowDef = {
+      ...def,
+      nodes: def.nodes.map((node, index) => (index === 0 ? { ...node, name: '  数据接入  ' } : node)),
+    }
+    const back = graphToDef(defToGraph(padded), padded)
+    expect(back.nodes[0]?.name).toBe('数据接入')
+    expect(back.nodes[0]).toEqual({ ...padded.nodes[0], name: '数据接入' })
+    expect(back.nodes.map((node) => node.name).slice(1)).toEqual(def.nodes.slice(1).map((node) => node.name))
+  })
+
   it('视图节点携带完整定义与类别，运行态缺省为 null', () => {
     const view = defToGraph(fullCanvas())
     const first = view.nodes[0]

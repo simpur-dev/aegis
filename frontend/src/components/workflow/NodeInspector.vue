@@ -4,6 +4,9 @@ import { computed } from 'vue'
 
 import { useWorkflowStore } from '@/stores/workflow'
 import {
+  MAX_ATTEMPTS,
+  MAX_BACKOFF_MS,
+  MAX_NODE_NAME_CHARS,
   ON_FAILURE_LABELS,
   SLA_MAX_MS,
   SLA_MIN_MS,
@@ -36,7 +39,7 @@ function numberValue(event: Event): number | null {
 }
 
 function onName(event: Event): void {
-  patch({ name: (event.target as HTMLInputElement).value.slice(0, 64) })
+  patch({ name: (event.target as HTMLInputElement).value.slice(0, MAX_NODE_NAME_CHARS) })
 }
 
 function onFailure(event: Event): void {
@@ -47,8 +50,10 @@ function onFailure(event: Event): void {
 function onBudget(event: Event, key: 'sla_ms' | 'timeout_ms'): void {
   const parsed = numberValue(event)
   if (parsed === null) return
-  // 取值域与后端一致（workflow_api.py:29-30），越界直接夹住，省一轮 422。
-  const bounded = Math.min(Math.max(parsed, SLA_MIN_MS), SLA_MAX_MS)
+  // 取值域与后端一致（workflow_api.py 的 NodeInput），越界直接夹住，省一轮 422。
+  // 超时那一格的上限还要压到本节点的 SLA：界面上写着"上限＝SLA"，就得真是那个数。
+  const cap = key === 'timeout_ms' ? Math.min(node.value?.sla_ms ?? SLA_MAX_MS, SLA_MAX_MS) : SLA_MAX_MS
+  const bounded = Math.min(Math.max(parsed, SLA_MIN_MS), cap)
   patch(key === 'sla_ms' ? { sla_ms: bounded } : { timeout_ms: bounded })
 }
 
@@ -56,7 +61,13 @@ function onRetry(event: Event, key: 'max_attempts' | 'backoff_ms'): void {
   const current = node.value?.retry
   const parsed = numberValue(event)
   if (current === undefined || parsed === null) return
-  const next = key === 'max_attempts' ? { ...current, max_attempts: parsed } : { ...current, backoff_ms: parsed }
+  // 与 onBudget 同一手法：越界先夹住，别让人白敲一次再吃 validateGraph 的红字。
+  // 上界取自 utils/graph 的那批常量（有跨端门禁对着 model.py 校验）。
+  const clamp = (value: number, max: number) => Math.min(Math.max(value, 0), max)
+  const next =
+    key === 'max_attempts'
+      ? { ...current, max_attempts: clamp(parsed, MAX_ATTEMPTS) }
+      : { ...current, backoff_ms: clamp(parsed, MAX_BACKOFF_MS) }
   patch({ retry: next })
 }
 
@@ -78,7 +89,7 @@ function onConfig(next: Record<string, JsonValue>): void {
 
     <label class="wf-inspector__row">
       <span>节点显示名</span>
-      <input class="wf-inspector__input" type="text" :value="node.name" @input="onName" />
+      <input class="wf-inspector__input" type="text" :maxlength="MAX_NODE_NAME_CHARS" :value="node.name" @input="onName" />
     </label>
 
     <div class="wf-inspector__grid">
@@ -117,15 +128,29 @@ function onConfig(next: Record<string, JsonValue>): void {
     <div class="wf-inspector__grid">
       <label class="wf-inspector__row">
         <span>重试次数（不含首次）</span>
-        <input class="wf-inspector__input" type="number" min="0" max="5" :value="node.retry.max_attempts" @change="onRetry($event, 'max_attempts')" />
+        <input
+          class="wf-inspector__input"
+          type="number"
+          min="0"
+          :max="MAX_ATTEMPTS"
+          :value="node.retry.max_attempts"
+          @change="onRetry($event, 'max_attempts')"
+        />
       </label>
       <label class="wf-inspector__row">
         <span>重试退避（毫秒）</span>
-        <input class="wf-inspector__input" type="number" min="0" max="60000" :value="node.retry.backoff_ms" @change="onRetry($event, 'backoff_ms')" />
+        <input
+          class="wf-inspector__input"
+          type="number"
+          min="0"
+          :max="MAX_BACKOFF_MS"
+          :value="node.retry.backoff_ms"
+          @change="onRetry($event, 'backoff_ms')"
+        />
       </label>
     </div>
     <p class="wf-inspector__hint">
-      重试 0 表示不重试；定义接口当前不接受 retry 字段（workflow_api.py:22-31），保存时不下发，仅本地留存。
+      重试 0 表示不重试；这一条会随定义一起保存（写接口认 retry），改动后仍需点"保存定义"才落到服务端。
     </p>
 
     <fieldset class="wf-inspector__config">
