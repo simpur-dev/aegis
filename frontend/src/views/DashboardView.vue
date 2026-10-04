@@ -220,6 +220,11 @@ const agentColumns = [
       <a-col :span="14">
         <a-card title="链路执行记录（最新在上；感知→研判→决策→执行→反馈）" size="small" :loading="loading">
           <a-table :columns="stageColumns" :data-source="recentChains" :pagination="{ pageSize: 6 }" row-key="trace_id" size="small">
+            <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：这一张正是"最近做了什么"，
+                 第一屏留一句英文，等于既没说"还没有跑过链路"，也没说去哪儿跑一条。 -->
+            <template #emptyText>
+              <div data-testid="chains-empty">还没有链路执行记录。在监测页发起一次演练（激增/背景任一），五段链路就会跑起来并出现在这里。</div>
+            </template>
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'result'">
                 <a-tag :color="record.errors.length ? 'red' : record.ok ? 'green' : 'orange'">

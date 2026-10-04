@@ -78,7 +78,13 @@ const STUBS = {
   'a-col': { name: 'ACol', props: ['span'], template: '<div class="col"><slot /></div>' },
   'a-statistic': { name: 'AStatistic', props: ['title', 'value', 'suffix'], template: '<div class="stat" :data-testid="`stat-${title}`">{{ value }}{{ suffix }}</div>' },
   'a-tag': { name: 'ATag', props: ['color'], template: '<span class="tag"><slot /></span>' },
-  'a-table': { name: 'ATable', props: ['columns', 'dataSource', 'pagination', 'rowKey', 'size'], template: '<div class="table"></div>' },
+  'a-table': {
+    name: 'ATable',
+    props: ['columns', 'dataSource', 'pagination', 'rowKey', 'size'],
+    // 真表在 dataSource 为空时渲染 emptyText 插槽；替身不 render 它，空态断言就是空跑
+    template:
+      '<div class="table"><div v-if="!dataSource || dataSource.length === 0" class="empty-text"><slot name="emptyText" /></div></div>',
+  },
   'a-empty': { name: 'AEmpty', props: ['description'], template: '<div class="empty">{{ description }}</div>' },
   'a-button': { name: 'AButton', props: ['loading', 'size'], template: '<button class="button" :disabled="loading"><slot /></button>' },
   'a-alert': { name: 'AAlert', props: ['message', 'type', 'showIcon'], template: '<div class="alert">{{ message }}</div>' },
@@ -293,6 +299,26 @@ describe('链路执行记录的两个写手不许互相抹', () => {
     releaseBackfill({ items: [chainOf('trc_a')] })
     await flushPromises()
     expect(rows().map((row) => row.trace_id), '补数那趟比轮询先发，迟到了就该让位').toContain('trc_new_1')
+    wrapper.unmount()
+  })
+})
+
+/**
+ * 全新生起的后端（0 条链路、0 条预警）走查每个页面时量到的：这两张表落回 antd 默认的
+ * 英文 "No data"。整站是简体中文值班台，第一屏唯一的一句英文既不说明"确实还没有"，
+ * 也不说下一步去哪儿造一条——而这台机器上线第一天的默认画面就是这个样子。
+ */
+describe('空表要说人话也要说下一步', () => {
+  it('还没有链路时给出中文说明与"去哪儿跑一条"', async () => {
+    responses()
+    mocked.events.mockResolvedValue({ items: [] } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const empty = wrapper.find('[data-testid="chains-empty"]')
+    expect(empty.exists(), '不能只剩 antd 默认的英文 "No data"').toBe(true)
+    expect(empty.text()).toContain('还没有链路执行记录')
+    expect(empty.text()).toContain('演练')
+    expect(wrapper.text()).not.toContain('No data')
     wrapper.unmount()
   })
 })

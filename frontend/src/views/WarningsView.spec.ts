@@ -71,6 +71,8 @@ const STUBS = {
             <template v-else>{{ row[c.dataIndex] }}</template>
           </div>
         </div>
+        <!-- 真表在 dataSource 为空时渲染 emptyText 插槽；替身不render它，空态断言就是空跑 -->
+        <div v-if="!dataSource || dataSource.length === 0" class="empty-text"><slot name="emptyText" /></div>
       </div>`,
   },
   'a-tag': { name: 'ATag', props: ['color'], template: '<span class="tag"><slot /></span>' },
@@ -347,5 +349,25 @@ describe('刚发布的预警不许被压到最后一页', () => {
     const wrapper = mountView()
     await flushPromises()
     expect(headerText(wrapper, '生成时间')).toContain('最新在上')
+  })
+})
+
+/**
+ * 空表要说人话，也要说下一步。
+ *
+ * 全新生起的后端（0 条预警、0 条链路）走一遍每个页面量到的：这两张表落回 antd 的默认英文
+ * "No data"——一个中文值班台界面上唯一的一句英文，而且分不清"确实还没有"与"取数没成功"。
+ * 这台机器的现场形态是新站点上线第一天，第一屏就是这个样子。
+ */
+describe('空表要说人话也要说下一步', () => {
+  it('一条预警都没有时，给出中文说明与造出预警的路径', async () => {
+    mockedWarnings.mockResolvedValue({ count: 0, items: [] } as never)
+    const wrapper = mountView()
+    await flushPromises()
+    const empty = wrapper.find('[data-testid="warnings-empty"]')
+    expect(empty.exists(), '空表不能只剩 antd 默认的英文 "No data"').toBe(true)
+    expect(empty.text()).toContain('还没有预警')
+    expect(empty.text()).toContain('演练')
+    expect(wrapper.text()).not.toContain('No data')
   })
 })

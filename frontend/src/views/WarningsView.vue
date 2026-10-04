@@ -134,6 +134,11 @@ onBeforeUnmount(() => {
         </a-space>
       </template>
       <a-table :columns="columns" :data-source="orderedWarnings" row-key="warning_id" :pagination="{ pageSize: 10 }" size="small">
+        <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：中文值班台上一句英文，
+             还分不清"确实还没有"与"取数没成功"，也不说下一步去哪造一条。 -->
+        <template #emptyText>
+          <div data-testid="warnings-empty">还没有预警。这个进程启动后没有产出过预警——在监测页发起一次演练，或提交一条会命中阈值的上报，这里就会有内容。</div>
+        </template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'hazard'">{{ HAZARD_LABELS[record.hazard_type as keyof typeof HAZARD_LABELS] }}</template>
           <template v-else-if="column.key === 'level'">
