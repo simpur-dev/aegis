@@ -264,10 +264,21 @@ describe('stores/workflow 定义编辑', () => {
     expect(store.describeFailure(error)).toBe('HTTP 422：流程名称（name）：String should have at least 1 character')
   })
 
-  it('detail 完全缺失时退回 axios 自己的消息，不留空话', () => {
+  /**
+   * 超时、连不上这类错误没有响应体，客户端构造时已经把 HTTP 码写进 message 了。
+   * store 再拼一次 `HTTP ${status}：` 就是"HTTP 0：接口调用失败（HTTP 0）：…"——
+   * 一句错误里两个码，读的人会以为是两次故障。
+   */
+  it('detail 缺失时直接用客户端那句，不再自己拼一遍 HTTP 码', () => {
     const store = createWorkflowStore(fakeClient())()
-    const error = new WorkflowApiError(502, 'Request failed with status code 502', undefined)
-    expect(store.describeFailure(error)).toBe('HTTP 502：Request failed with status code 502')
+    const error = new WorkflowApiError(0, '接口调用失败（HTTP 0）：timeout of 20000ms exceeded', undefined)
+    expect(store.describeFailure(error)).toBe('接口调用失败（HTTP 0）：timeout of 20000ms exceeded')
+  })
+
+  it('有 detail 时码与原因分开写，原因取后端原文', () => {
+    const store = createWorkflowStore(fakeClient())()
+    const error = new WorkflowApiError(400, 'Request failed with status code 400', { detail: '工作流图存在环' })
+    expect(store.describeFailure(error)).toBe('HTTP 400：工作流图存在环')
   })
 })
 

@@ -488,12 +488,14 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
      *
      * 码与原因之间要有分隔：拼成 `HTTP 422 流程名称（name）：…` 时，
      * 读的人会把"HTTP 422"当成字段名的一部分。
+     * 而 `detail` 缺失时不能再自己拼码——客户端构造的那句里已经带了
+     * （`接口调用失败（HTTP 0）：timeout…`），再拼一次就是两个前缀。
      */
     function describeFailure(caught: unknown): string {
       if (caught instanceof Error && 'status' in caught) {
         const wrapped = caught as Error & { status: number; detail?: unknown }
         const reason = describeDetail(wrapped.detail)
-        return `HTTP ${wrapped.status}：${reason === '' ? wrapped.message : reason}`
+        return reason === '' ? wrapped.message : `HTTP ${wrapped.status}：${reason}`
       }
       return caught instanceof Error ? caught.message : '未知错误'
     }

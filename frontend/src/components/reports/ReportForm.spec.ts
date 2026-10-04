@@ -307,6 +307,23 @@ describe('后端拒绝时读后端的话', () => {
   })
 
   /**
+   * 一句错误里出现两个 HTTP 码，读的人会以为是两次故障。
+   *
+   * 客户端构造期已经把码与原因写进 message（`上报接口调用失败（HTTP 0）：timeout…`），
+   * 表单再冠一句"上报失败："就重复了。超时这一头尤其常见——它连响应体都没有。
+   */
+  it('非 422 的失败不套两层前缀', async () => {
+    const wrapper = await renderForm()
+    await fill(wrapper, { 'field-reporter': '村民', 'field-region': '540121', 'field-note': '沟道泥位抬升' })
+    mockedSubmit.mockRejectedValue(new ReportApiError(0, '上报接口调用失败（HTTP 0）：timeout of 20000ms exceeded', undefined))
+    await byTestid(wrapper, 'report-submit').trigger('click')
+    await flushPromises()
+    const shown = byTestid(wrapper, 'report-error').text()
+    expect(shown).toBe('上报接口调用失败（HTTP 0）：timeout of 20000ms exceeded')
+    expect(shown.match(/HTTP 0/g)).toHaveLength(1)
+  })
+
+  /**
    * 四个空格不是"一条正文"。
    *
    * 真机在正文里敲空格：`min_length=4` 放它过去，一路走到解析腿才被

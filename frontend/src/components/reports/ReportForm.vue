@@ -80,7 +80,9 @@ async function submit(): Promise<void> {
       backendError.value = error instanceof Error ? error.message : String(error)
     } else {
       const detail = describeValidationError(error)
-      backendError.value = detail || (error instanceof Error ? `上报失败：${error.message}` : '上报失败')
+      // 非 422 直接用客户端构造好的那句（里面已有 HTTP 码与原因）：
+      // 再冠一句"上报失败："就是两个前缀，读的人以为是两次故障。
+      backendError.value = detail || (error instanceof Error ? error.message : '上报失败：原因未知')
     }
   } finally {
     submitting.value = false
