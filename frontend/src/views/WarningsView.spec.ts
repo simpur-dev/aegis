@@ -198,3 +198,116 @@ describe('列表要会自己更新', () => {
     }
   })
 })
+
+/**
+ * 真机量到的一条（`.tmp-verify/warnings-detail-race.mjs`，把第一趟 /api/v1/events 人为拖 2.5 秒）：
+ * 先点 A（它那条不在链路窗口里），500ms 后点 B（B 的链路真有 4 个任务单元）。
+ * B 的表正常列出来了，可 A 迟到的那句也贴了上来——抽屉里同时写着
+ * "最近 200 条链路里没有这条预警的执行记录"和 4 行任务单元，自相矛盾，
+ * 而且那句是对 B 的一个谎：值班员会以为这条预警没派任务。
+ */
+describe('点开另一条预警时，迟到的回查不许写在新的那条上', () => {
+  function twoWarnings() {
+    mockedWarnings.mockResolvedValue({
+      items: [warning(), warning({ warning_id: 'wrn_2', event_id: 'evt_2', trace_id: 'trc_2', title_zh: '西藏滑坡预警（橙色）' })],
+    } as never)
+  }
+
+  it('A 的回查慢了一步、抽屉已换成 B：B 不该带上 A 那句"无从判断"', async () => {
+    twoWarnings()
+    let release: (value: unknown) => void = () => {}
+    const stalled = new Promise((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    mockedEvents.mockImplementation((() => {
+      calls += 1
+      return calls === 1 ? stalled : Promise.resolve({ items: [{ warning_id: 'wrn_2', task_units: ['stu_a', 'stu_b'] }] })
+    }) as never)
+    mockedTask.mockImplementation(
+      (async (id: string) => ({ task_unit_id: id, objective: '巡查' + id, sla_seconds: 60, owner_role: '巡护员', created_by: 'plan.mock' })) as never,
+    )
+    const wrapper = mountView()
+    await flushPromises()
+    const buttons = wrapper.findAll('[data-testid="cell-action"] .button')
+    await buttons[0].trigger('click')
+    await buttons[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('巡查stu_a')
+    expect(wrapper.text()).toContain('巡查stu_b')
+
+    release({ items: [] })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="tasks-notice"]').exists(), 'A 那句"没有执行记录"不该贴到 B 的抽屉上').toBe(false)
+    expect(wrapper.text()).not.toContain('无从判断')
+  })
+
+  it('A 的迟到响应不许把 B 判成"没有产出任务单元"，B 自己回来才轮到说这句话', async () => {
+    twoWarnings()
+    const gates: Array<{ promise: Promise<unknown>; resolve: (value: unknown) => void }> = []
+    mockedEvents.mockImplementation((() => {
+      let resolve: ((value: unknown) => void) | null = null
+      const promise = new Promise<unknown>((r) => {
+        resolve = r
+      })
+      gates.push({ promise, resolve: (value: unknown) => resolve?.(value) })
+      return promise
+    }) as never)
+    const wrapper = mountView()
+    await flushPromises()
+    const buttons = wrapper.findAll('[data-testid="cell-action"] .button')
+    await buttons[0].trigger('click')
+    await buttons[1].trigger('click')
+    await flushPromises()
+    expect(gates).toHaveLength(2)
+
+    gates[0].resolve({ items: [] })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="tasks-notice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="tasks-empty"]').exists(), 'B 那一趟还在路上，不能被 A 的迟到响应判完结').toBe(false)
+
+    gates[1].resolve({ items: [{ warning_id: 'wrn_2', task_units: [] }] })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="tasks-empty"]').text()).toContain('没有产出任务单元')
+  })
+})
+
+describe('点开另一条预警时，迟到的任务单元回查也不许盖上来', () => {
+  it('A 的任务单元取得慢、抽屉已换成 B：A 那一串不许替换掉 B 的表', async () => {
+    mockedWarnings.mockResolvedValue({
+      items: [
+        warning(),
+        warning({ warning_id: 'wrn_2', event_id: 'evt_2', trace_id: 'trc_2', title_zh: '西藏滑坡预警（橙色）' }),
+      ],
+    } as never)
+    mockedEvents.mockImplementation(
+      ((async () => ({
+        items: [
+          { warning_id: 'wrn_1', task_units: ['stu_a1', 'stu_a2'] },
+          { warning_id: 'wrn_2', task_units: ['stu_b1'] },
+        ],
+      })) as never),
+    )
+    let releaseTasks: (value: unknown) => void = () => {}
+    const slow = new Promise((resolve) => {
+      releaseTasks = resolve
+    })
+    mockedTask.mockImplementation(((id: string) => {
+      if (id.startsWith('stu_a')) return slow
+      return Promise.resolve({ task_unit_id: id, objective: '巡查' + id, sla_seconds: 60, owner_role: '巡护员', created_by: 'plan.mock' })
+    }) as never)
+    const wrapper = mountView()
+    await flushPromises()
+    const buttons = wrapper.findAll('[data-testid="cell-action"] .button')
+    await buttons[0].trigger('click')
+    await buttons[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('巡查stu_b1')
+
+    releaseTasks({ task_unit_id: 'stu_a1', objective: '巡查stu_a1', sla_seconds: 60, owner_role: '巡护员', created_by: 'plan.mock' })
+    await flushPromises()
+    const drawer = wrapper.find('.drawer').text()
+    expect(drawer, 'A 那两条迟到落地也不能把 B 的表换掉').not.toContain('巡查stu_a1')
+    expect(drawer).toContain('巡查stu_b1')
+  })
+})

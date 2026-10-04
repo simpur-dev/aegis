@@ -22,6 +22,13 @@ const tasksError = ref<string | null>(null)
 /** 触达通道的形态（mock / http / null=没读到），来自状态面那条 delivery 腿。 */
 const deliveryMode = ref<string | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
+/**
+ * 第几次点开详情。抽屉里同时挂着"这条预警的正文"和"它的任务单元"，
+ * 而任务单元要回查最近 200 条链路才能算出来——真机量到过：先点的那条回查慢了 2.5 秒，
+ * 人在这期间点了另一条，于是抽屉挂着 B 的标题、表里是 B 的 4 个任务单元，
+ * 顶上却写着 A 那句"最近 200 条链路里没有这条预警的执行记录"。
+ */
+let inspectSeq = 0
 
 const reachTitle = computed(() => (deliveryMode.value === 'mock' ? '触达（演练口径）' : '触达'))
 
@@ -55,6 +62,7 @@ async function load(): Promise<void> {
 }
 
 async function inspect(record: WarningRecord): Promise<void> {
+  const seq = ++inspectSeq
   current.value = record
   open.value = true
   currentTasks.value = []
@@ -63,6 +71,8 @@ async function inspect(record: WarningRecord): Promise<void> {
   try {
     // 任务单元通过 event_id 关联：逐个按 ID 取回（后端提供 /tasks/{id}）
     const events = await api.events(EVENT_WINDOW)
+    // 这一趟回查在路上时人可能已经点开另一条预警：迟到的结论只属于原来那条。
+    if (seq !== inspectSeq) return
     const chain = events.items.find((item) => item.warning_id === record.warning_id)
     if (!chain) {
       // "最近窗口里找不到"不等于"这条预警没有任务单元"：把两者说成一句话，
@@ -71,12 +81,15 @@ async function inspect(record: WarningRecord): Promise<void> {
       return
     }
     const units = await Promise.all((chain.task_units ?? []).map((id) => api.task(id).catch(() => null)))
+    if (seq !== inspectSeq) return
     currentTasks.value = units.filter((unit): unit is TaskUnit => unit !== null)
     if (chain.task_units?.length && currentTasks.value.length < chain.task_units.length) {
       tasksError.value = `${chain.task_units.length} 个任务单元里有 ${chain.task_units.length - currentTasks.value.length} 个取不回来，上面只列取到的`
     }
   } finally {
-    tasksLoading.value = false
+    // 只由"当前这次点开"收尾：否则上一条的迟到响应会把这一条的加载圈关掉，
+    // 看着像已经取完了。
+    if (seq === inspectSeq) tasksLoading.value = false
   }
 }
 
