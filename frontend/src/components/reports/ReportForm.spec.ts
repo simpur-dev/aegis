@@ -324,6 +324,36 @@ describe('后端拒绝时读后端的话', () => {
   })
 
   /**
+   * 受理成功后正文留在框里，再点一次就又发了一条。
+   *
+   * 真机连点的实测：`POST /api/v1/reports` 从 1 变 2，两条链路、两条预警——
+   * 同一条险情对公众发两遍预警不是"多一次保险"，是重复告警。
+   * 判重按「区划 + 正文」：换个县说同一句话是另一条险情，得能报。
+   */
+  it('同一条区划 + 正文受理后再点不重复发，改动正文才放行', async () => {
+    const wrapper = await renderForm()
+    mockedSubmit.mockResolvedValue(outcome())
+    await fill(wrapper, { 'field-reporter': '村民', 'field-region': '540121', 'field-note': '沟道泥位抬升 1.2 米' })
+    await byTestid(wrapper, 'report-submit').trigger('click')
+    await flushPromises()
+    expect(mockedSubmit).toHaveBeenCalledTimes(1)
+
+    const submit = byTestid(wrapper, 'report-submit')
+    expect(submit.attributes('disabled')).toBeDefined()
+    expect(byTestid(wrapper, 'duplicate-warning').text()).toContain('重复预警')
+    await submit.trigger('click')
+    await flushPromises()
+    expect(mockedSubmit).toHaveBeenCalledTimes(1)
+
+    await byTestid(wrapper, 'field-note').setValue('沟道泥位抬升 1.5 米')
+    await flushPromises()
+    expect(byTestid(wrapper, 'report-submit').attributes('disabled')).toBeUndefined()
+    await byTestid(wrapper, 'report-submit').trigger('click')
+    await flushPromises()
+    expect(mockedSubmit).toHaveBeenCalledTimes(2)
+  })
+
+  /**
    * 四个空格不是"一条正文"。
    *
    * 真机在正文里敲空格：`min_length=4` 放它过去，一路走到解析腿才被

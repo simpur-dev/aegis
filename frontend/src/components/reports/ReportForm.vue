@@ -47,6 +47,20 @@ const halfCoordinate = computed(() => {
   return hasLat !== hasLon
 })
 
+/**
+ * 刚受理的那条险情。真机测出来的问题是：提交成功后正文留在框里，回执看着
+ * 像"还在跑"时就再点一次——同一条险情于是发出第二条预警（实测连点后
+ * `POST /api/v1/reports` 从 1 变 2，两条链路两条预警）。
+ *
+ * 判重按「区划 + 正文」一起看：换个县报同一句话是另一条险情，合法；
+ * 一字不改地再发一次才是重复。要再报就得改动正文或区划（新的泥位、新的雨量）。
+ */
+const filedKey = ref<string | null>(null)
+function keyOf(body: { region_code: string; note: string }): string {
+  return `${body.region_code}\u0000${body.note}`
+}
+const duplicateSubmit = computed(() => filedKey.value !== null && filedKey.value === keyOf(toReportBody(form)))
+
 function levelLabel(level: number | null): string {
   if (level === null) return '未定级'
   return `${RISK_LABELS[level as keyof typeof RISK_LABELS] ?? level}（${level} 级）`
@@ -75,6 +89,7 @@ async function submit(): Promise<void> {
   try {
     const result = await reportsApi.submit(body)
     outcome.value = result
+    filedKey.value = keyOf(body)
     message.success(`上报已进链路：${result.chain.trace_id}`)
     emit('submitted', result)
   } catch (error) {
@@ -189,8 +204,14 @@ function reset(): void {
       <div v-if="halfCoordinate" class="hint" data-testid="coordinate-warning">
         只填了半边坐标：后端按「未定位」处理（app.py:431），这一条不会带上经纬度证据。
       </div>
+      <div v-if="duplicateSubmit" class="hint" data-testid="duplicate-warning">
+        这条区划 + 正文刚刚已经受理（回执在下面）。原样再发一次会产出第二条重复预警，
+        所以按钮先按住：要报新的情况，改动正文或区划（新的泥位、新的雨量）就能提交。
+      </div>
       <a-space>
-        <a-button type="primary" :loading="submitting" data-testid="report-submit" @click="submit">提交上报</a-button>
+        <a-button type="primary" :loading="submitting" :disabled="duplicateSubmit" data-testid="report-submit" @click="submit">
+          提交上报
+        </a-button>
         <a-button data-testid="report-reset" @click="reset">清空回执</a-button>
       </a-space>
     </a-form>
