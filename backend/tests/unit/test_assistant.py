@@ -364,3 +364,33 @@ async def test_会话数量有上界且空消息不出答案() -> None:
     for index in range(260):
         await collect(service, "查询所有站点", session_id=f"as_session{index:04d}")
     assert len(service._sessions) <= 200
+
+
+@pytest.mark.asyncio
+async def test_缺参数的那三条示例句要说清这个ID在哪个页面读得到() -> None:
+    """能力面把每条动作的 example 交给前端当"点这里试一条"的预填文本（`assistant.py` 里
+    `ActionSpec.example` 的注释就是这么写的）。可三条带标识符的示例句原样发出去都必然缺参数：
+    真机在全新后端上点「查询任务单元」，答案帧就停在"缺少任务单元 ID（stu_…）"——
+    芯片成了死胡同，页面上哪儿能读到这个 ID 一个字没说。
+    """
+    service = AssistantService(actions=build_actions(Recorder()), settings=settings())
+    cases = [
+        ("任务单元清单", ("stu_", "预警发布")),
+        ("解释 wrn_… 为什么定这个等级", ("wrn_", "预警标识")),
+        ("链路追踪 trc_… 每段耗时", ("trc_", "链路执行记录")),
+    ]
+    for text, needles in cases:
+        events = await collect(service, text, reporter="值班员")
+        answer = next(event for event in events if event.type == "answer")
+        sentence = str(answer.data["text"])
+        for needle in needles:
+            assert needle in sentence, f"{text} 那句回答里没指路：{sentence}"
+
+
+@pytest.mark.asyncio
+async def test_缺参数不等于出错路径闭嘴但也不假称查到了() -> None:
+    """上面那条的对照：指路归指路，仍要明说这次没给 ID、所以什么都没查。"""
+    service = AssistantService(actions=build_actions(Recorder()), settings=settings())
+    events = await collect(service, "任务单元清单", reporter="值班员")
+    answer = next(event for event in events if event.type == "answer")
+    assert "缺少" in str(answer.data["text"]), answer.data["text"]

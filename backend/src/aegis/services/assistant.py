@@ -538,7 +538,12 @@ class AssistantService:
         if action == "query.tasks":
             task_id = str(args.get("task_unit_id", ""))
             if not task_id:
-                return {"error": "缺少任务单元 ID（stu_…）"}
+                # 能力面把 example 当"点这里试一条"的预填文本交给前端，这句缺参数是必经之路：
+                # 只说"缺少 stu_…"就是把芯片做成死胡同，得同时说出这个 ID 在哪儿能读到。
+                return {
+                    "error": "缺少任务单元 ID（stu_…）：这次什么都没查。ID 在「预警发布」页点「详情」后"
+                    "那张「关联任务单元」表的任务标识列；也可以先「查询最近链路」，结果里的 task_units 就是这些 ID"
+                }
             return {"task": await _call(a.get_task, task_id)}
         if action == "query.stations":
             rows = await _call(a.list_stations, region_code=args.get("region_code") or None, limit=int(args.get("limit", 20)))
@@ -579,7 +584,9 @@ class AssistantService:
 
     async def _explain_warning(self, warning_id: str, session: AssistantSession) -> dict[str, Any]:
         if not warning_id:
-            return {"error": "缺少预警编号（wrn_…）"}
+            return {
+                "error": "缺少预警编号（wrn_…）：这句里没读到编号，所以什么都没查。编号在「预警发布」页点「详情」后抽屉顶部的「预警标识」"
+            }
         record = await _call(self._actions.get_warning, warning_id)
         if record is None:
             return {"warning_id": warning_id, "found": False}
@@ -592,7 +599,7 @@ class AssistantService:
 
     async def _explain_chain(self, trace_id: str, session: AssistantSession) -> dict[str, Any]:
         if not trace_id:
-            return {"error": "缺少链路标识（trc_/evt_…）"}
+            return {"error": "缺少链路标识（trc_/evt_…）：这句里没读到标识符，所以什么都没查。链路号在总览页「链路执行记录」的第一列"}
         chain = await _call(self._actions.get_chain, trace_id) if self._actions.get_chain is not None else None
         if chain is None:
             return {"trace_id": trace_id, "found": False, "note": "链路读视图只保留进程内最近事件"}

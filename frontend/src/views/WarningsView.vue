@@ -170,6 +170,9 @@ onBeforeUnmount(() => {
     <a-drawer v-model:open="open" :width="720" title="预警详情与处置任务">
       <template v-if="current">
         <a-descriptions :column="1" bordered size="small">
+          <!-- 助手页的「解释一条预警」要 wrn_ 编号，此前整个界面没有一处显示它，
+               那条芯片点下去只能得到"缺少预警编号"。编号得在能读到它的地方。 -->
+          <a-descriptions-item label="预警标识">{{ current.warning_id }}</a-descriptions-item>
           <a-descriptions-item label="标题">{{ current.title_zh }}</a-descriptions-item>
           <a-descriptions-item label="中文正文">{{ current.body_zh }}</a-descriptions-item>
           <a-descriptions-item label="藏文正文">
@@ -221,6 +224,7 @@ onBeforeUnmount(() => {
           :data-source="currentTasks"
           :loading="tasksLoading"
           :columns="[
+            { title: '任务标识', dataIndex: 'task_unit_id', key: 'task_unit_id' },
             { title: '任务', dataIndex: 'objective', key: 'objective' },
             { title: '时限', dataIndex: 'sla_seconds', key: 'sla_seconds' },
             { title: '责任角色', dataIndex: 'owner_role', key: 'owner_role' },

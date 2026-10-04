@@ -371,3 +371,32 @@ describe('空表要说人话也要说下一步', () => {
     expect(wrapper.text()).not.toContain('No data')
   })
 })
+
+/**
+ * 助手页有三条芯片要一个标识符（`解释 wrn_…`、`链路追踪 trc_…`、`查询任务单元`），
+ * 而此前整个界面没有一处显示 `wrn_`/`stu_` 编号——点芯片得到的"缺少 …ID"根本没法自助解决。
+ * 后端那句回答现在会指路到这张抽屉，所以抽屉里必须真能读到那两个标识。
+ */
+describe('抽屉里要能读到助手指名要的那个标识', () => {
+  it('预警标识写在抽屉顶上：助手「解释 wrn_…」缺参数时指的就是这里', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('[data-testid="cell-action"] .button').trigger('click')
+    await flushPromises()
+    const text = wrapper.find('.drawer').text()
+    expect(text).toContain('预警标识')
+    expect(text).toContain('wrn_1')
+  })
+
+  it('任务单元表带任务标识列：助手「查询任务单元」缺参数时指的就是这里', async () => {
+    mockedEvents.mockResolvedValue({ items: [{ warning_id: 'wrn_1', task_units: ['stu_a1'] }] } as never)
+    mockedTask.mockResolvedValue({ task_unit_id: 'stu_a1', objective: '巡查', sla_seconds: 60, owner_role: '巡护员', created_by: 'plan.mock' } as never)
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('[data-testid="cell-action"] .button').trigger('click')
+    await flushPromises()
+    const text = wrapper.find('.drawer').text()
+    expect(text).toContain('任务标识')
+    expect(text).toContain('stu_a1')
+  })
+})
