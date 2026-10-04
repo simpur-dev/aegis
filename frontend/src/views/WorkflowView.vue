@@ -24,7 +24,7 @@ import NodeInspector from '@/components/workflow/NodeInspector.vue'
 import NodePalette from '@/components/workflow/NodePalette.vue'
 import RuntimePanel from '@/components/workflow/RuntimePanel.vue'
 import { WORKFLOW_NODE_TYPES } from '@/components/workflow/nodeComponents'
-import { confirmDiscardUnsaved } from '@/components/workflow/confirmDiscard'
+import { confirmDiscardUnsaved, installUnsavedGuard } from '@/components/workflow/confirmDiscard'
 import { useWorkflowCanvas } from '@/components/workflow/useWorkflowCanvas'
 
 const store = useWorkflowStore()
@@ -56,8 +56,18 @@ async function createDraft(): Promise<void> {
   else proceed()
 }
 
-onMounted(bootstrap)
-onUnmounted(() => store.stopPolling())
+let detachUnsavedGuard: (() => void) | null = null
+
+onMounted(() => {
+  void bootstrap()
+  // 画布上写着"未保存"，就不能让 F5 一声不响把它清掉（真机：刷新后 3 个节点归零、0 次确认）
+  detachUnsavedGuard = installUnsavedGuard(() => store.isDirty)
+})
+onUnmounted(() => {
+  store.stopPolling()
+  detachUnsavedGuard?.()
+  detachUnsavedGuard = null
+})
 </script>
 
 <template>

@@ -26,7 +26,8 @@ import { useWorkflowCanvas } from '@/components/workflow/useWorkflowCanvas'
 import { createWorkflowStore, useWorkflowStore } from '@/stores/workflow'
 import type { NodeProps } from '@vue-flow/core'
 import { MAX_ATTEMPTS, MAX_BACKOFF_MS, NODE_SPECS, type FlowNodeData, type NodeCategory, type NodeType } from '@/utils/graph'
-import { backendNodeTypes } from '@/testing/repoSource'
+import { installUnsavedGuard } from '@/components/workflow/confirmDiscard'
+import { backendNodeTypes, readRepoFile } from '@/testing/repoSource'
 
 /**
  * 后端节点类型从 `backend/src/aegis/workflow/nodes.py` 现解析，不在前端抄一份清单：
@@ -447,6 +448,57 @@ describe('画布粘合层 useWorkflowCanvas', () => {
  * 真机上这一步是直接的：摆了五个节点没保存，点一下别的定义，五个就没了，
  * 页面连一句"未保存"都不说。这里验的是接线：脏的时候走确认，不脏的时候直接打开。
  */
+/**
+ * 刷新/关标签页这一路。
+ *
+ * 真机量过的原样：画布上摆好 3 个节点、界面上写着"未保存"，按 F5 之后节点归零，
+ * 浏览器一次确认都没弹。站内覆盖有确认框，最容易丢图的那一下却什么都没拦。
+ */
+describe('installUnsavedGuard：刷新前的未保存拦截', () => {
+  /**
+   * 只看 `defaultPrevented`。
+   *
+   * `returnValue` 在现代浏览器里是"给旧 Safari 看的字符串"，jsdom 却把它实现成
+   * DOM Level 2 的**布尔别名**（`event.returnValue = ''` 会读回 `false`），
+   * 拿它断言等于在测替身的方言。真正让浏览器弹确认框的是 `preventDefault()`。
+   */
+  function fireUnload(): boolean {
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    return event.defaultPrevented
+  }
+
+  it('有未保存改动时拦住这次刷新', () => {
+    const detach = installUnsavedGuard(() => true)
+    try {
+      expect(fireUnload()).toBe(true)
+    } finally {
+      detach()
+    }
+  })
+
+  it('没有改动就不拦：不然每次刷新都要人多按一下', () => {
+    const detach = installUnsavedGuard(() => false)
+    try {
+      expect(fireUnload()).toBe(false)
+    } finally {
+      detach()
+    }
+  })
+
+  it('解除监听后不再拦：离开这页就不该替别的页面管刷新', () => {
+    const detach = installUnsavedGuard(() => true)
+    detach()
+    expect(fireUnload()).toBe(false)
+  })
+
+  it('编排页真的装上了它（只在工具函数里写着等于没写）', () => {
+    const view = readRepoFile('frontend', 'src', 'views', 'WorkflowView.vue')
+    expect(view).toContain('installUnsavedGuard(() => store.isDirty)')
+    expect(view).toContain('detachUnsavedGuard?.()')
+  })
+})
+
 describe('DefinitionInspector 打开前的未保存确认', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
