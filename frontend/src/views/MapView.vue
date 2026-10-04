@@ -25,6 +25,7 @@ import {
   DEFAULT_LAYER_VISIBILITY,
   detailOf,
   expandBBox,
+  focusAllNote,
   layerCounts,
   TIBET_RECTANGLE,
   toUnlocatedItems,
@@ -63,6 +64,8 @@ const bbox = ref<BBox | null>(null)
 const zoom = ref(0)
 const visibility = ref<LayerVisibility>({ ...DEFAULT_LAYER_VISIBILITY })
 const selectedId = ref<string | null>(null)
+/** 「定位到有点的区域」按完之后的下落；空串表示没什么要说。 */
+const focusNote = ref('')
 
 /** 纯逻辑装配：一处产出全部图层数据，页面其余部分只读它。 */
 const layers = computed<MapLayers>(() =>
@@ -195,8 +198,15 @@ function selectFeature(id: string): void {
 function focusAll(): void {
   selectedId.value = null
   // 外接框由 entities.bboxOfPoints 算（纯函数、已单测），这里只决定相机去哪
-  const box = bboxOfPoints(layers.value.stations.map((feature) => feature.lonlat))
+  const points = layers.value.stations.map((feature) => feature.lonlat)
+  const located = points.filter((point): point is NonNullable<typeof point> => point !== null).length
+  // 总数要算上没有坐标的那批：它们只在「未定位清单」里，不在 stations 图层里。
+  // 先前的文案对着 `points.length` 说"还没有在册站点"，而同一页的未定位清单写着
+  // "站点无经纬度 × 6"——两处隔着几十像素互相打脸。
+  const missingStations = unlocated.value.filter((item) => item.kind === 'station').length
+  const box = bboxOfPoints(points)
   scene.value?.fitBBox(box ? expandBBox(box) : TIBET_RECTANGLE)
+  focusNote.value = focusAllNote(located, located + missingStations)
 }
 
 function onBrowserOffline(): void {
@@ -258,6 +268,8 @@ watch(visibility, (value) => {
         </a-space>
       </template>
       <a-alert v-for="note in notes" :key="note" type="warning" show-icon banner :message="note" style="margin-bottom: 4px" />
+      <!-- 定位这颗按钮先前点了没反应也不解释；现在把"退不回全局视野的原因"说一句 -->
+      <p v-if="focusNote" class="muted" data-testid="focus-note">{{ focusNote }}</p>
     </a-card>
 
     <a-row :gutter="12" style="margin-top: 12px">

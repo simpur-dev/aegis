@@ -73,6 +73,23 @@ export function indexAnchors(anchors: readonly RegionAnchorDto[]): Record<string
   return index
 }
 
+/**
+ * 「定位到有点的区域」按下去之后该说什么。
+ *
+ * 站点在册却一个经纬度都没有时（本机形态的台账就是这样，`/api/v1/stations` 的
+ * `lon/lat` 全为 null），外接框算不出来，相机只能退回全局视野——按钮看着像死的。
+ * 那不是按钮坏了，是"点"根本不在这份数据里；不把这句话放到界面上，
+ * 值班员的下一动作就是再点一次。
+ *
+ * 返回空串表示"没什么要说"（全都定位上了）。
+ */
+export function focusAllNote(locatedCount: number, totalCount: number): string {
+  if (totalCount === 0) return '还没有在册站点，已退回全局视野。'
+  if (locatedCount === 0) return `${totalCount} 个在册站点都没有经纬度，只能退回全局视野；站点台账入库后才会真的定位。`
+  if (locatedCount < totalCount) return `按 ${locatedCount}/${totalCount} 个有坐标的站点定位，其余在未定位清单里。`
+  return ''
+}
+
 // ---------- 风险 → 颜色 / 标签 ----------
 
 /** 与 5 级"无风险"灰（#8c8c8c）刻意区分：等级未知不等于判过是无风险。 */

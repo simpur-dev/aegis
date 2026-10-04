@@ -1,5 +1,5 @@
 /**
- * entities.ts 单测：坐标判定、风险配色、三个图层的映射、视野过滤、聚合与详情索引。
+ * entities.ts 单测：坐标判定、风险配色、三个图层的映射、视野过滤、聚合与详情索引、定位提示。
  *
  * 约定：**不 import cesium、不 import vue、不触网**（jsdom 无 WebGL）。
  * 这里断言的是"映射结果"，不是渲染结果——渲染在 viewer.ts，被这条边界挡在测试之外。
@@ -21,6 +21,7 @@ import {
   clusterPoints,
   detailOf,
   expandBBox,
+  focusAllNote,
   groupUnlocatedByReason,
   hazardLabel,
   indexAnchors,
@@ -653,27 +654,28 @@ describe('未定位清单：原因要说真话，总数要能拆开', () => {
     expect(groupUnlocatedByReason([])).toEqual([])
   })
 })
-
-describe('未定位清单：原因要说真话，总数要能拆开', () => {
-  it('站点缺坐标的原因不再写"后端尚未开放 /api/v1/stations"（那条路由早就开着）', async () => {
-    const { UNLOCATED_LABELS } = await import('@/components/map/entities')
-    expect(UNLOCATED_LABELS['station-without-coord']).not.toContain('尚未开放')
-    expect(UNLOCATED_LABELS['station-without-coord']).toContain('台账')
+/**
+ * 「定位到有点的区域」先前点了没任何反应：本机形态的站点台账一个经纬度都没有
+ * （`/api/v1/stations` 的 `lon/lat` 全为 null），外接框算不出来，相机退回全局视野，
+ * 而界面正停在全局视野上——于是这颗按钮看起来是死的，读的人只能再点一次。
+ * 按钮该做的是把"退不回"的原因说出来。
+ */
+describe('focusAllNote：定位按完该说什么', () => {
+  it('一个在册站点都没有', () => {
+    expect(focusAllNote(0, 0)).toBe('还没有在册站点，已退回全局视野。')
   })
 
-  it('按原因分组并按数量排序：一个笼统数字答不了"缺哪几样"', () => {
-    const items = [
-      ...Array.from({ length: 6 }, (_, i) => ({ id: `station:s${i}`, kind: 'station' as const, title: `s${i}`, regionCode: '540121', reason: 'station-without-coord' as const })),
-      ...Array.from({ length: 72 }, (_, i) => ({ id: `warning:w${i}`, kind: 'warning' as const, title: `w${i}`, regionCode: '540221', reason: 'region-without-anchor' as const })),
-    ]
-    const groups = groupUnlocatedByReason(items)
-    expect(groups.map((g) => g.count)).toEqual([72, 6])
-    expect(groups[0].label).toContain('锚点')
-    expect(groups[1].label).toContain('台账')
-    expect(groups.reduce((sum, g) => sum + g.count, 0)).toBe(items.length)
+  it('站点在册但全都没有经纬度', () => {
+    const note = focusAllNote(0, 5)
+    expect(note).toContain('5 个在册站点都没有经纬度')
+    expect(note).toContain('站点台账入库')
   })
 
-  it('空清单不编出分组：没缺东西就说没缺', () => {
-    expect(groupUnlocatedByReason([])).toEqual([])
+  it('部分有坐标：说清按几个点定位，其余仍在未定位清单里', () => {
+    expect(focusAllNote(3, 5)).toContain('3/5')
+  })
+
+  it('全都定位上了就闭嘴（没话说时不编一句提示）', () => {
+    expect(focusAllNote(5, 5)).toBe('')
   })
 })
