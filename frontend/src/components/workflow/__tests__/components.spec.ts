@@ -1,5 +1,5 @@
 import { mount, shallowMount } from '@vue/test-utils'
-import { Modal } from 'ant-design-vue'
+import { Modal, message } from 'ant-design-vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h, isReactive, reactive } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -383,6 +383,43 @@ describe('检查器与运行中操作', () => {
     const text = wrapper.text()
     expect(text).toContain('SLA、超时、重试不在这条接口上')
     expect(text).toContain('只影响之后启动的实例')
+  })
+
+  /**
+   * 插入的节点只属于这条实例：画布画的是定义那一张图，点完画面一动不动。
+   * 真机实测（wfi_cf831d8cd1a8）：接口 200、实例里多出 `notify_1`、签完 approve 它真的 `succeeded`，
+   * 而画布上找不着它——于是这一下看着像没发生。点名一句是这里能给的最便宜的诚实。
+   */
+  it('插入成功要说出新节点的号；失败不报喜', async () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const anchor = createNodeDef('data_fetch', 'fetch_1')
+    store.addNode(anchor)
+    store.select('fetch_1')
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456789ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'waiting',
+      error: null,
+      nodes: [{ node_id: 'fetch_1', type: 'data_fetch', state: 'pending', attempts: 0, schedule_latency_ms: null, duration_ms: null, output: {}, error: null, notes: [] }],
+    }
+    const inserted = vi.spyOn(store, 'insertRuntimeNode').mockResolvedValue(true)
+    const say = vi.spyOn(message, 'success').mockImplementation(() => ({ key: 'k' }) as never)
+    const wrapper = mount(RuntimeActions, { props: { node: anchor } })
+    const button = wrapper.findAll('button').find((item) => item.text() === '在此节点后插入')
+    await button?.trigger('click')
+    expect(inserted).toHaveBeenCalledTimes(1)
+    expect(say).toHaveBeenCalledTimes(1)
+    expect(String(say.mock.calls[0]?.[0])).toContain('notify_1')
+
+    say.mockClear()
+    inserted.mockResolvedValue(false)
+    await button?.trigger('click')
+    expect(say, '插入失败不能报喜').not.toHaveBeenCalled()
+    say.mockRestore()
+    inserted.mockRestore()
   })
 
   /**

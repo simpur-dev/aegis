@@ -3,6 +3,7 @@
  * 选中节点的运行中操作：改参 / 绕过 / 人工核签。
  * 按钮可用性直接来自引擎规则（engine.py:515、539、582），前端不另立标准也不假装能改。
  */
+import { message } from 'ant-design-vue'
 import { computed, ref } from 'vue'
 
 import { useWorkflowStore } from '@/stores/workflow'
@@ -55,10 +56,14 @@ function pushConfig(): void {
 }
 
 /** 在选中节点之后插入：后端会把选中节点的原出边重接到新节点（engine.py:558-565）。 */
-function insertAfter(): void {
+async function insertAfter(): Promise<void> {
   const taken = (store.instance?.nodes ?? []).map((item) => item.node_id)
   const created = createNodeDef(insertType.value, nextAvailableId(taken, insertType.value))
-  void store.insertRuntimeNode(props.node.node_id, created)
+  // 插进去的节点只属于这条实例：画布画的是定义那一张图，点了之后画面一动不动。
+  // 不点名的成功提示是这里唯一能给的诚实——否则这一下看着像没发生。
+  if (await store.insertRuntimeNode(props.node.node_id, created)) {
+    message.success(`已在实例里插入 ${created.node_id}（画布显示的是定义那一张，这个节点只属于这条实例）`)
+  }
 }
 </script>
 
