@@ -58,6 +58,8 @@ const hazardDocument = ref<unknown>(null)
 const loading = ref(false)
 const autoRefresh = ref(true)
 const regionCode = ref<string>('')
+/** 第几趟 `load()`：换筛选、点刷新、30 秒自动刷新都算一次，只有最新那趟的结果才落页面。 */
+let loadSeq = 0
 const notes = ref<string[]>([])
 // 开局还没探过测：状态按保守的"降级"显示，但说明必须写"尚未探测"，
 // 不能一上来就替现场断言"至少一路缺位"——那是一句没有证据的结论。
@@ -123,6 +125,7 @@ function rejectedReason(result: PromiseSettledResult<unknown>): unknown {
 /** 区域过滤走后端真实查询参数（app.py 的 telemetry/warnings 都收 region_code），不在前端假过滤。 */
 async function load(): Promise<void> {
   loading.value = true
+  const seq = ++loadSeq
   const filter = regionCode.value ? { region_code: regionCode.value } : {}
   const [telemetry, warningList, eventList, stationList, anchorFile, zoneFile] = await Promise.allSettled([
     mapApi.telemetry({ ...filter, limit: 2_000 }),
@@ -132,6 +135,12 @@ async function load(): Promise<void> {
     mapApi.regionAnchors(),
     mapApi.hazardZones(),
   ])
+  /**
+   * 这一趟在路上时，人可能已经换了区域（或 30 秒自动刷新与手动刷新撞在一起）。
+   * 真机量到：切到 540121 之后清单是 18 条，3 秒后那一趟**无过滤**的旧快照迟到落地，
+   * 数字跳回全区域的 64 条并停在那里，而选框上仍写着 540121——筛的是 A、图上画的是全部。
+   */
+  if (seq !== loadSeq) return
 
   readings.value = settled(telemetry)?.items ?? []
   warnings.value = settled(warningList)?.items ?? []

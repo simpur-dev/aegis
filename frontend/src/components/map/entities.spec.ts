@@ -713,3 +713,39 @@ describe('plottedCount：只数开着的层', () => {
     expect(view).not.toContain('counts.value.stations + counts.value.warnings')
   })
 })
+
+/**
+ * 一张图 `load()` 的迟到响应守卫。
+ *
+ * 真机量到（`.tmp-verify/map-region-stale.mjs`，把无过滤那一趟 `/api/v1/warnings` 的**响应**
+ * 延迟 3 秒递回——`route.fetch()` 先取走快照再 `fulfill`，只迟"送"不迟"发"）：
+ * 点刷新 → 立刻把区域换成 540121，清单先是对的 **18 条**；3.1 秒后那一趟无过滤的旧快照递进来，
+ * 数字跳回全区域的 **64 条**并一直停在那里，而选框上仍写着 `540121`——筛的是 A、图上画的是全部，
+ * 页面一句提示都没有。30 秒自动刷新与手动刷新撞在一起也是同一条路径。
+ *
+ * MapView 挂着 Cesium，这一页没有组件级挂载用例，所以这里对源码对账；
+ * 三条都要"摘掉守卫即红"（见提交说明里的变异记录）。
+ */
+describe('一张图 load() 的迟到响应守卫', () => {
+  function text(): string {
+    return readRepoFile('frontend', 'src', 'views', 'MapView.vue')
+  }
+
+  it('每一趟 load 占一个号，写画面之前先比对', () => {
+    expect(text()).toContain('const seq = ++loadSeq')
+    expect(text()).toMatch(/if \(seq !== loadSeq\) return/)
+  })
+
+  it('比对必须排在第一次写画面之前', () => {
+    const source = text()
+    const guard = source.indexOf('if (seq !== loadSeq) return')
+    const firstWrite = source.indexOf('readings.value = settled(telemetry)')
+    expect(guard, '守卫不在就等于没有守卫').toBeGreaterThanOrEqual(0)
+    expect(firstWrite).toBeGreaterThan(guard)
+  })
+
+  it('号在发请求之前占：晚占就变成"谁后回谁赢"，而人要的是"谁后点谁赢"', () => {
+    const source = text()
+    expect(source.indexOf('const seq = ++loadSeq')).toBeLessThan(source.indexOf('await Promise.allSettled(['))
+  })
+})
