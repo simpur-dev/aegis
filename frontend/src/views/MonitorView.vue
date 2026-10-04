@@ -133,8 +133,25 @@ function latencyOf(row: TelemetryReading): string {
   return ingestLatencyLabel(row)
 }
 
-// 筛选条件是查询参数而不是本地过滤器：改了就得重取，否则界面显示的仍是上一个区域的数。
+/**
+ * 页码归自己管：换筛选条件就回第 1 页。
+ *
+ * antd 的表格在数据换一批时**不会**把 `current` 拉回来：先翻到第 200 页
+ * （每个区域都有 2,000 条读数，今天真的存在第 200 页），再把指标换成一个只有
+ * 几十条的，`current` 仍是 200 而新数据只有 4 页——表格里一行都没有，
+ * 页面上也没有任何一句"你现在在第 200 页，这个筛选下只有 4 页"。
+ * 值班员看到的就是"这个区域这个指标没数据"，而事实是筛完的页码还留在原地。
+ */
+const tablePage = ref(1)
+const tablePagination = computed(() => ({ current: tablePage.value, pageSize: 10 }))
+
+function onTableChange(pagination: { current?: number }): void {
+  tablePage.value = pagination.current ?? 1
+}
+
+/** 筛选条件是查询参数而不是本地过滤器：改了就得重取，否则界面显示的仍是上一个区域的数。 */
 watch([region, metric], () => {
+  tablePage.value = 1
   void load()
 })
 
@@ -185,10 +202,11 @@ onBeforeUnmount(() => {
           <a-table
             :columns="columns"
             :data-source="readings"
-            :pagination="{ pageSize: 10 }"
+            :pagination="tablePagination"
             row-key="(r: TelemetryReading) => r.station_id + r.observed_at"
             size="small"
             :scroll="{ x: 'max-content' }"
+            @change="onTableChange"
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'value'">

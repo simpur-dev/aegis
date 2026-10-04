@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 
 import api, { type TelemetryQuery } from '@/api/client'
 import mapApi from '@/api/map'
@@ -238,6 +239,28 @@ describe('监测页的筛选是后端查询', () => {
     const options = wrapper.findAllComponents({ name: 'ASelectOption' }).map((option) => String(option.props('value')))
     // 540700 在读数里从没出现过（READING 只有 540121），但它是在册区域：以前这种区域选不到
     expect(options).toContain('540700')
+  })
+
+  /**
+   * 翻页后换筛选条件，页码不能留在原地。
+   *
+   * antd 表格在数据换一批时不会自己把 `current` 拉回第 1 页：今天每个区域都有
+   * 2,000 条读数（真的存在第 200 页），翻到很远再换成一个只有几十条的指标，
+   * 表格就会停在一个不存在的页上——一行都没有，也不说为什么，
+   * 读的人只能得出"这个区域这个指标没数据"。
+   */
+  it('翻页是受控的，换筛选条件时回到第 1 页', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const table = wrapper.findComponent({ name: 'ATable' })
+    table.vm.$emit('change', { current: 180 }, {}, {})
+    await nextTick()
+    expect((table.props('pagination') as { current: number }).current).toBe(180)
+
+    const [regionSelect] = selectPair(wrapper)
+    regionSelect.vm.$emit('update:value', '540221')
+    await flushPromises()
+    expect((table.props('pagination') as { current: number }).current).toBe(1)
   })
 
   /**
