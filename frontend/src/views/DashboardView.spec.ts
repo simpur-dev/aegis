@@ -228,3 +228,71 @@ describe('态势总览的取数', () => {
     expect(timeline.text()).not.toMatch(/\d{2}:\d{2}:\d{2}\.\d+Z/)
   })
 })
+
+/**
+ * 这张表有两个写手：15 秒轮询（`refresh()`）与事件流触发的补数（watch 里那次）。
+ * 真机不会自然撞上，得把其中一趟响应拖住才看得出来（本机接口 1ms 级）：
+ * 轮询先发、补数后发却先回，于是刚补上的那条新链路排在表头；
+ * 等轮询那份**更早**的快照迟到落地，它又把表整个替换回旧的一份——
+ * 补数这件事本来就是为"时间线有了、这张表还没有"而加的，结果被一次迟到的轮询抹平。
+ */
+describe('链路执行记录的两个写手不许互相抹', () => {
+  it('轮询的旧快照迟到时，不许把刚补上的那条新链路又抹掉', async () => {
+    responses()
+    let releaseRefresh: (value: unknown) => void = () => {}
+    const pending = new Promise((resolve) => {
+      releaseRefresh = resolve
+    })
+    let calls = 0
+    mocked.events.mockImplementation((() => {
+      calls += 1
+      // 第 1 趟是挂载时的轮询（它的快照更早），故意让它迟回；第 2 趟是补数，立刻回。
+      return calls === 1 ? pending : Promise.resolve({ items: [chainOf('trc_new_1'), chainOf('trc_a')] })
+    }) as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    if (capturedEvents === null) throw new Error('useEventStream 的替身没被抓到，这条用例空跑了')
+
+    capturedEvents.value = [{ trace_id: 'trc_new_1', ts: 'x', subject: 'warning.published', payload: {} }]
+    await vi.advanceTimersByTimeAsync(1_300)
+    await flushPromises()
+    const rows = () => wrapper.findAllComponents({ name: 'ATable' })[0].props('dataSource') as Array<{ trace_id: string }>
+    expect(rows().map((row) => row.trace_id)).toContain('trc_new_1')
+
+    releaseRefresh({ items: [chainOf('trc_a')] })
+    await flushPromises()
+    expect(rows().map((row) => row.trace_id), '更旧的快照迟到就该丢掉，不然新那条又从表里消失了').toContain('trc_new_1')
+    wrapper.unmount()
+  })
+
+  it('反过来也一样：补数迟到时，不许盖掉更新的那一次轮询', async () => {
+    responses()
+    let releaseBackfill: (value: unknown) => void = () => {}
+    const pending = new Promise((resolve) => {
+      releaseBackfill = resolve
+    })
+    let calls = 0
+    mocked.events.mockImplementation((() => {
+      calls += 1
+      if (calls === 1) return Promise.resolve({ items: [chainOf('trc_a')] })
+      // 第 2 趟是补数（先发但迟回），第 3 趟是 15 秒轮询（后发、快照更新）。
+      if (calls === 2) return pending
+      return Promise.resolve({ items: [chainOf('trc_new_1'), chainOf('trc_a')] })
+    }) as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    if (capturedEvents === null) throw new Error('useEventStream 的替身没被抓到，这条用例空跑了')
+
+    capturedEvents.value = [{ trace_id: 'trc_new_1', ts: 'x', subject: 'warning.published', payload: {} }]
+    await vi.advanceTimersByTimeAsync(1_300)
+    await vi.advanceTimersByTimeAsync(14_000)
+    await flushPromises()
+    const rows = () => wrapper.findAllComponents({ name: 'ATable' })[0].props('dataSource') as Array<{ trace_id: string }>
+    expect(rows().map((row) => row.trace_id)).toContain('trc_new_1')
+
+    releaseBackfill({ items: [chainOf('trc_a')] })
+    await flushPromises()
+    expect(rows().map((row) => row.trace_id), '补数那趟比轮询先发，迟到了就该让位').toContain('trc_new_1')
+    wrapper.unmount()
+  })
+})

@@ -22,6 +22,12 @@ const updatedAt = ref<string | null>(null)
 const refreshError = ref<string | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 let eventTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * "最新那趟取链路的人"的编号。这张表有两个写手：15 秒轮询与事件流触发的补数。
+ * 补数本来就是为"时间线已经有了、这张表还要等下一次轮询"而加的，
+ * 若轮询那份更早发出的快照迟到落地又把表整个换回去，刚补上的那条就再次消失。
+ */
+let chainsSeq = 0
 const { events } = useEventStream()
 
 /**
@@ -76,6 +82,7 @@ const regionGrid = computed(() => {
 
 async function refresh(): Promise<void> {
   loading.value = true
+  const seq = ++chainsSeq
   try {
     const [readyInfo, agentInfo, warningList, eventList, latencyReport] = await Promise.all([
       api.ready(),
@@ -87,7 +94,8 @@ async function refresh(): Promise<void> {
     ready.value = { agents_online: readyInfo.agents_online, store: readyInfo.store }
     agents.value = agentInfo.items
     warnings.value = warningList.items
-    chains.value = eventList.items
+    // 这趟在路上时补数可能已经把新链路补进来了：更旧的快照迟到就丢掉。
+    if (seq === chainsSeq) chains.value = eventList.items
     latency.value = latencyReport
     updatedAt.value = new Date().toISOString()
     refreshError.value = null
@@ -135,10 +143,15 @@ watch(
       eventTimer = null
       if (document.visibilityState !== 'visible') return
       void (async () => {
+        const seq = ++chainsSeq
         try {
           const list = await api.events(20)
-          chains.value = list.items
-          updatedAt.value = new Date().toISOString()
+          // 补数拿到的必然是更新的一份，所以它也要占号；但若这趟在路上时
+          // 轮询又发了更新的一趟（seq 已不是自己），那次才该写。
+          if (seq === chainsSeq) {
+            chains.value = list.items
+            updatedAt.value = new Date().toISOString()
+          }
           refreshError.value = null
         } catch (caught) {
           // 后台补数失败也要看得见：静默失败正是"页面数字停在旧值却像现场没动静"
