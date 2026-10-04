@@ -76,6 +76,19 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     const savedSnapshot = ref<string | null>(null)
     let timer: ReturnType<typeof setInterval> | null = null
 
+    /**
+     * "用户此刻看的是哪一条"的序号：每切一次加一，任何异步回写动手之前先比对。
+     *
+     * 真机量到两种迟到的回写都会把页面写成两条不同的链路：
+     * ① 连开两条定义，先点的那条响应慢了 2 秒，后到的旧答案把画布盖回它身上
+     *（标题「雪崩气象型预警与交通管控流程」、11 个节点，而人最后开的是 4 节点那条）；
+     * ② 等签实例的一次轮询慢了 2 秒，人在这 2 秒里改点另一条，于是面板实例号是
+     * `wfi_ed2670e23f3a`、画布画的是 `wfi_ac42219df5d8` 的那一张，而轮询还在替前者跑。
+     * 第二种更要命：接着在画布上点节点提交决策，发出去的是"这条实例 + 那张图的节点号"，
+     * 打的是一件谁也没在看的事。
+     */
+    let viewToken = 0
+
     function snapshotOf(def: WorkflowDef | null, pos: Record<string, Position>): string {
       return JSON.stringify({ def, pos })
     }
@@ -168,6 +181,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     }
 
     function resetDefinition(name = '未命名防控链路'): void {
+      viewToken += 1
       current.value = {
         workflow_id: '',
         name,
@@ -302,7 +316,9 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
      */
     async function openDefinition(workflowId: string): Promise<boolean> {
       return runAction(async () => {
+        const token = ++viewToken
         const def = await client.definition(workflowId)
+        if (token !== viewToken) return
         current.value = def
         selectedNodeId.value = def.nodes[0]?.node_id ?? null
         // 后端不存坐标（NodeDef 里没有位置字段）：打开即按分层布局重排。
@@ -336,6 +352,17 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     }
 
     /**
+     * 动作回的是"那一条实例"的快照，只有人还看着它时才盖到页面上。
+     * 切走了还照样盖，就等于把 A 的运行态画在 B 的图上——节点号对不上那张图。
+     * 返回是否真的盖了，调用方据此决定要不要顺手停掉轮询。
+     */
+    function applyInstanceSnapshot(instanceId: string, snapshot: InstanceDetail): boolean {
+      if (instance.value?.instance_id !== instanceId) return false
+      instance.value = snapshot
+      return true
+    }
+
+    /**
      * 保存：workflow_id 为空走创建，否则修订出新版本。
      * 传入画布当前视图时以视图为准（graphToDef 逆映射），保证"所见的图即提交的图"。
      */
@@ -350,11 +377,15 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
         return false
       }
       return runAction(async () => {
+        const token = viewToken
         const nodes = toNodeInputs(def.nodes)
         const result =
           def.workflow_id === ''
             ? await client.createDefinition({ name: def.name, description: def.description, nodes, edges: def.edges })
             : await client.reviseDefinition(def.workflow_id, { nodes, edges: def.edges, description: def.description })
+        // 存这一趟在路上时人已经切去开别的定义/实例，或另起了空白画布：
+        // 把刚存的那份盖到别人正在看的那张图上，就是替人改了他眼前的东西。
+        if (token !== viewToken) return
         current.value = { ...def, workflow_id: result.workflow_id, name: result.name, version: result.version }
         markSaved()
         await loadDefinitions()
@@ -395,8 +426,11 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
         return false
       }
       return runAction(async () => {
-        instance.value = await client.startInstance({ workflow_id: def.workflow_id, payload })
-        await loadInstances()
+        const token = ++viewToken
+        const created = await client.startInstance({ workflow_id: def.workflow_id, payload })
+        await syncInstancesQuietly()
+        if (token !== viewToken) return
+        instance.value = created
         startPolling()
       }, '启动实例失败')
     }
@@ -404,7 +438,9 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     async function focusInstance(instanceId: string): Promise<boolean> {
       stopPolling()
       return runAction(async () => {
+        const token = ++viewToken
         const detail = await client.instance(instanceId)
+        if (token !== viewToken) return
         instance.value = detail
         /**
          * 把这条实例的定义与运行态一起载入画布。
@@ -414,6 +450,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
          * 值班员签不了这张工单，只能回去 curl 接口。指针指到了，路没修。
          */
         const definition = await client.definition(detail.workflow_id)
+        if (token !== viewToken) return
         current.value = definition
         const states = Object.fromEntries(
           detail.nodes.map((node) => [node.node_id, { state: node.state, attempts: node.attempts, note: node.error ?? '' }]),
@@ -432,8 +469,16 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return
       const wasMutable = instanceMutable.value
+      const token = viewToken
       try {
         const next = await client.instance(instanceId)
+        /**
+         * 迟到的轮询不许把面板翻回上一条。
+         * 真机量过：等签实例的一次轮询拖 2 秒，人在这 2 秒里改点了另一条，
+         * 于是面板实例号是 `wfi_ed2670e23f3a`、画布画的是 `wfi_ac42219df5d8` 那一张，
+         * 定时器还接着替不被看着的那条跑下去。
+         */
+        if (token !== viewToken || instance.value?.instance_id !== instanceId) return
         instance.value = next
         // 轮询发现这条跑完了，顺手把列表对一遍：面板上"等人签 N 张"数的是列表，
         // 而签掉一张的人就在这页上——真机量到签完之后接口归零、小标题还写着 1 张。
@@ -475,7 +520,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
         // 平台没有登录态：签字人是谁只能由签的人自己写。留空时不发 by 这个键，
         // 让服务端按它的默认记成 unknown——把"值班指挥员"当成默认值等于替人签名。
         const payload = by === '' ? { choice, comment } : { choice, by, comment }
-        instance.value = await client.submitDecision(instanceId, nodeId, payload)
+        applyInstanceSnapshot(instanceId, await client.submitDecision(instanceId, nodeId, payload))
         await syncInstancesQuietly()
       }, '提交人工核签失败')
     }
@@ -506,7 +551,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       return runAction(async () => {
         await client.insertNode(instanceId, { after, node: toNodeInputs([node])[0] })
         // 插入接口不返回实例快照（engine.py:569），重拉以拿到新节点的运行态。
-        instance.value = await client.instance(instanceId)
+        applyInstanceSnapshot(instanceId, await client.instance(instanceId))
       }, '插入节点失败')
     }
 
@@ -514,7 +559,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return false
       return runAction(async () => {
-        instance.value = await client.bypassNode(instanceId, nodeId, reason)
+        applyInstanceSnapshot(instanceId, await client.bypassNode(instanceId, nodeId, reason))
         await syncInstancesQuietly()
       }, '绕过节点失败')
     }
@@ -523,8 +568,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return false
       return runAction(async () => {
-        instance.value = await client.abortInstance(instanceId, reason)
-        stopPolling()
+        if (applyInstanceSnapshot(instanceId, await client.abortInstance(instanceId, reason))) stopPolling()
         await syncInstancesQuietly()
       }, '中止实例失败')
     }

@@ -706,3 +706,197 @@ describe('stores/workflow 未保存改动', () => {
     expect(store.current?.status).toBe('active')
   })
 })
+
+/**
+ * 迟到的回写不许盖掉人正在看的那一条。
+ *
+ * 真机量到两条动线（`.tmp-verify/stale-write-live.mjs`，用 `page.route` 把某一趟响应人为拖 2 秒）：
+ * ① 连开两条定义，先点的那条后到——画布标题停在「雪崩气象型预警与交通管控流程」、11 个节点，
+ *    而人最后打开的是 4 节点那一条；
+ * ② 等签实例的一次轮询慢了 2 秒，人在这 2 秒里改点另一条——面板实例号是 `wfi_ed2670e23f3a`，
+ *    画布画的却是 `wfi_ac42219df5d8` 那一张，轮询还继续替不被看着的那条跑。
+ * 第二种最要命：这时在画布上点一个节点提交决策，发出去的是"这条实例 + 那张图的节点号"。
+ */
+describe('stores/workflow 迟到的响应不许盖掉当前视图', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((r) => {
+      resolve = r
+    })
+    return { promise, resolve }
+  }
+
+  function defNamed(name: string, workflowId: string): WorkflowDef {
+    return {
+      ...workflowDef(),
+      workflow_id: workflowId,
+      name,
+      nodes: [createNodeDef('data_fetch', workflowId + '_a')],
+      edges: [],
+    }
+  }
+
+  function instanceNamed(instanceId: string, workflowId: string, status: InstanceStatus, runs: InstanceNodeRun[]): InstanceDetail {
+    return { ...detail(status, runs), instance_id: instanceId, workflow_id: workflowId }
+  }
+
+  function snapshotOf(instanceId: string, status: InstanceStatus = 'waiting'): InstanceDetail {
+    const workflowId = instanceId === 'wfi_a' ? 'wf_slow' : 'wf_fast'
+    return instanceNamed(instanceId, workflowId, status, [nodeRun(workflowId + '_a', 'awaiting_human')])
+  }
+
+  /** 按 id 分派的桩：wfi_a 是"人先看的那条"，wfi_b 是"后来改点的那条"。 */
+  function twoInstanceClient(): WorkflowClient {
+    const client = fakeClient()
+    vi.mocked(client.instance).mockImplementation((instanceId: string) => Promise.resolve(snapshotOf(instanceId)))
+    vi.mocked(client.definition).mockImplementation((workflowId: string) =>
+      Promise.resolve(defNamed(workflowId === 'wf_slow' ? '慢的那条' : '快的那条', workflowId)),
+    )
+    return client
+  }
+
+  it('连开两条定义：先点的那条响应后到，也不能把画布翻回它', async () => {
+    const client = fakeClient()
+    const gate = deferred<WorkflowDef>()
+    vi.mocked(client.definition).mockImplementation((workflowId: string) =>
+      workflowId === 'wf_slow' ? gate.promise : Promise.resolve(defNamed('快的那条', 'wf_fast')),
+    )
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    const slow = store.openDefinition('wf_slow')
+    await Promise.resolve()
+    expect(await store.openDefinition('wf_fast')).toBe(true)
+    expect(store.current?.name).toBe('快的那条')
+    gate.resolve(defNamed('慢的那条', 'wf_slow'))
+    expect(await slow).toBe(true)
+    expect(store.current?.name, '旧答案后到就丢掉：画布要留在人最后打开的那条').toBe('快的那条')
+    expect(Object.keys(store.positions)).toEqual(['wf_fast_a'])
+  })
+
+  it('人已经新建空白画布：迟到的定义响应不许把图铺回去', async () => {
+    const client = fakeClient()
+    const gate = deferred<WorkflowDef>()
+    vi.mocked(client.definition).mockImplementation(() => gate.promise)
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    const opening = store.openDefinition('wf_slow')
+    await Promise.resolve()
+    store.resetDefinition('新草稿')
+    gate.resolve(defNamed('慢的那条', 'wf_slow'))
+    expect(await opening).toBe(true)
+    expect(store.current?.name).toBe('新草稿')
+    expect(store.current?.nodes).toHaveLength(0)
+  })
+
+  it('连点两条实例：慢的那条后到，面板号、画布标题、选中节点都留在最后点的那条', async () => {
+    const held: Array<(value: InstanceDetail) => void> = []
+    const client = twoInstanceClient()
+    vi.mocked(client.instance).mockImplementation((instanceId: string) =>
+      instanceId === 'wfi_a'
+        ? new Promise<InstanceDetail>((resolve) => {
+            held.push(resolve)
+          })
+        : Promise.resolve(snapshotOf('wfi_b')),
+    )
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    const slow = store.focusInstance('wfi_a')
+    await Promise.resolve()
+    expect(await store.focusInstance('wfi_b')).toBe(true)
+    held.forEach((resolve) => resolve(snapshotOf('wfi_a', 'running')))
+    expect(await slow).toBe(true)
+    expect(store.instance?.instance_id, '面板不能翻回没在看的那条').toBe('wfi_b')
+    expect(store.current?.name).toBe('快的那条')
+    expect(store.selectedNodeId).toBe('wf_fast_a')
+  })
+
+  it('轮询在路上迟到了：不许把面板翻回上一条，轮询要跟着人新点的那条走', async () => {
+    vi.useFakeTimers()
+    const gate = deferred<InstanceDetail>()
+    // 用对象装着这次挂住的轮询：TS 不会把闭包里写进去的属性窄化成 undefined，
+    // 换成 let + null 就得靠一次 as 才能过编译。
+    const held: { ref?: typeof gate } = {}
+    let aCalls = 0
+    const client = twoInstanceClient()
+    vi.mocked(client.instance).mockImplementation((instanceId: string) => {
+      // 第一次取 wfi_a 是"点开它"，要正常回；第二次起才是轮询，把那一次挂住。
+      if (instanceId === 'wfi_a') {
+        aCalls += 1
+        if (aCalls >= 2 && held.ref === undefined) {
+          held.ref = gate
+          return gate.promise
+        }
+      }
+      return Promise.resolve(snapshotOf(instanceId))
+    })
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.focusInstance('wfi_a')
+    expect(store.instance?.instance_id).toBe('wfi_a')
+    expect(store.polling).toBe(true)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(held.ref, '这一趟轮询该正卡在路上').toBeDefined()
+    await store.focusInstance('wfi_b')
+    held.ref?.resolve(snapshotOf('wfi_a', 'succeeded'))
+    await vi.advanceTimersByTimeAsync(1)
+    expect(store.instance?.instance_id, '迟到的轮询不许把面板翻回 wfi_a').toBe('wfi_b')
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(vi.mocked(client.instance).mock.calls.at(-1)?.[0], '轮询要替人正在看的这条跑').toBe('wfi_b')
+    vi.useRealTimers()
+  })
+
+  it('提交核签的响应回来时人已切到别的实例：那份快照不盖到页面上', async () => {
+    const client = twoInstanceClient()
+    const gate = deferred<InstanceDetail>()
+    vi.mocked(client.submitDecision).mockReturnValue(gate.promise)
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.focusInstance('wfi_a')
+    const signing = store.submitDecision('wf_slow_a', 'approve', '同意', '值班指挥员')
+    await Promise.resolve()
+    await store.focusInstance('wfi_b')
+    gate.resolve(snapshotOf('wfi_a', 'running'))
+    expect(await signing).toBe(true)
+    expect(store.instance?.instance_id, 'A 的快照盖到 B 的页面上，节点号就对不上那张图').toBe('wfi_b')
+  })
+
+  it('中止的是已经不在看的那条：不许把现在这条的轮询停掉', async () => {
+    const client = twoInstanceClient()
+    vi.mocked(client.instance).mockImplementation((instanceId: string) =>
+      Promise.resolve(snapshotOf(instanceId, instanceId === 'wfi_a' ? 'running' : 'waiting')),
+    )
+    const gate = deferred<InstanceDetail>()
+    vi.mocked(client.abortInstance).mockReturnValue(gate.promise)
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.focusInstance('wfi_a')
+    const aborting = store.abortInstance('上游数据中断')
+    await Promise.resolve()
+    await store.focusInstance('wfi_b')
+    gate.resolve(snapshotOf('wfi_a', 'aborted'))
+    expect(await aborting).toBe(true)
+    expect(store.instance?.instance_id).toBe('wfi_b')
+    expect(store.polling, 'B 还等着人签，轮询不能因为 A 的回执迟到就停').toBe(true)
+  })
+
+  it('存定义的路上被人切走了：刚存的那份不覆盖眼前的新画布', async () => {
+    const client = twoInstanceClient()
+    const gate = deferred<{ workflow_id: string; name: string; version: number }>()
+    vi.mocked(client.createDefinition).mockReturnValue(gate.promise)
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('要存的草稿')
+    store.addNode(createNodeDef('data_fetch', 'fetch_1'))
+    store.addNode(createNodeDef('notify', 'notify_1'))
+    const saving = store.saveDefinition()
+    await Promise.resolve()
+    store.resetDefinition('新画布')
+    gate.resolve({ workflow_id: 'wf_new', name: '要存的草稿', version: 1 })
+    expect(await saving).toBe(true)
+    expect(store.current?.name, '切走之后迟到的保存结果不该把图铺回来').toBe('新画布')
+    expect(store.current?.nodes).toHaveLength(0)
+  })
+})
