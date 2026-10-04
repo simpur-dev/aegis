@@ -65,9 +65,18 @@ const columns = [
   { title: '指标', dataIndex: 'metric', key: 'metric' },
   { title: '数值', key: 'value' },
   { title: '质量', dataIndex: 'quality_flag', key: 'quality_flag' },
-  { title: '观测时刻（UTC+8）', dataIndex: 'observed_at', key: 'observed_at' },
+  { title: '观测时刻（UTC+8，最新在上）', dataIndex: 'observed_at', key: 'observed_at' },
   { title: '接入时延', key: 'latency' },
 ]
+
+/**
+ * 表格单独排一份最新在上：接口给的是旧→新（500 条窗口），照原样摆进每页 10 条的台账，
+ * 第一页就是最旧的 10 条，刚进来的那条要翻到第 49 页——这张页的标题是"实时监测"。
+ * 时序图反过来读会错（左到右就该是旧到新），所以图表仍用 `readings` 原序。
+ */
+const ledgerReadings = computed<TelemetryReading[]>(() =>
+  [...readings.value].sort((a, b) => (a.observed_at < b.observed_at ? 1 : a.observed_at > b.observed_at ? -1 : 0)),
+)
 
 /**
  * 取数。区域与指标**都作为查询参数发给后端**（`/api/v1/telemetry` 收 `region_code`/`metric`，
@@ -201,7 +210,7 @@ onBeforeUnmount(() => {
         <a-card size="small" title="最新遥测明细" :loading="loading">
           <a-table
             :columns="columns"
-            :data-source="readings"
+            :data-source="ledgerReadings"
             :pagination="tablePagination"
             row-key="(r: TelemetryReading) => r.station_id + r.observed_at"
             size="small"

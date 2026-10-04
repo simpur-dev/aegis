@@ -295,3 +295,51 @@ describe('监测页的筛选是后端查询', () => {
     }
   })
 })
+
+/**
+ * 台账表格（每页 10 条）与时序图共用同一个 `readings` 数组，而接口给的是**旧→新**：
+ * 500 条窗口下第一页摆的是最旧的 10 条，最新那条要翻到第 49 页才看到——
+ * 这张页的名字是"实时监测"，值班员刷新后想看的是刚刚那一次读数。
+ *
+ * 但时间轴反过来是对的（左到右就该是旧到新），所以不能整体翻转 `readings`，
+ * 只能给表格单独排一份。三条用例分别钉住：表格倒序、图表正序、列头写明口径。
+ */
+describe('监测台账要最新在上，而时序图不许跟着翻', () => {
+  const oldest = { ...READING, observed_at: '2026-10-03T02:00:00Z', value: 1 }
+  const middle = { ...READING, observed_at: '2026-10-03T04:00:00Z', value: 2 }
+  const newest = { ...READING, observed_at: '2026-10-03T06:00:00Z', value: 3 }
+
+  function threeRows() {
+    mockedTelemetry.mockResolvedValue({ count: 3, items: [oldest, middle, newest] } as never)
+  }
+
+  it('台账第一行是最新那条读数', async () => {
+    threeRows()
+    const wrapper = mountView()
+    await flushPromises()
+    const rows = wrapper.findComponent({ name: 'ATable' }).props('dataSource') as TelemetryReading[]
+    expect(rows.map((row) => row.observed_at)).toEqual(['2026-10-03T06:00:00Z', '2026-10-03T04:00:00Z', '2026-10-03T02:00:00Z'])
+  })
+
+  it('时序图仍按旧→新排：翻表格不能把时间轴也翻过去', async () => {
+    threeRows()
+    const wrapper = mountView()
+    await flushPromises()
+    const option = wrapper.findComponent({ name: 'EChart' }).props('option') as {
+      xAxis: { data: string[] }
+      series: Array<{ data: Array<number | null> }>
+    }
+    // 轴与数据要成对判：只查 series 时，把 xAxis 翻过去的改动能躲过这条用例（实测躲过一次）。
+    // operatingClock 是 UTC+8 的时分秒：02:00Z→10:00:00、04:00Z→12:00:00、06:00Z→14:00:00。
+    expect(option.xAxis.data).toEqual(['10:00:00', '12:00:00', '14:00:00'])
+    expect(option.series[0].data).toEqual([1, 2, 3])
+  })
+
+  it('列头写明"最新在上"：读的人不用先猜这张表是怎么排的', async () => {
+    threeRows()
+    const wrapper = mountView()
+    await flushPromises()
+    const columns = wrapper.findComponent({ name: 'ATable' }).props('columns') as Array<{ key: string; title: string }>
+    expect(columns.find((column) => column.key === 'observed_at')?.title).toContain('最新在上')
+  })
+})
