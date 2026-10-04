@@ -62,6 +62,10 @@ async function submit(): Promise<void> {
   // 省一个来回，更重要的是把原因说在这一格上，而不是等后端回一串英文。
   const blocked = preflightReport(body)
   if (blocked !== '') {
+    // 上一条的回执必须先收掉：本地拦下意味着"这一次没发出去"，
+    // 而屏幕上还挂着上一次成功的 `链路 trc_… ｜ 预警 wrn_…`，读的人以为那是刚提交这条的下落。
+    outcome.value = null
+    unavailable.value = false
     backendError.value = blocked
     return
   }

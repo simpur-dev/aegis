@@ -348,6 +348,29 @@ describe('后端拒绝时读后端的话', () => {
     expect(byTestid(wrapper, 'report-error').text()).toContain('区划代码「54012a」')
   })
 
+  /**
+   * 拦下来之后，屏幕上不能还挂着上一条的回执。
+   *
+   * 真机顺序是：提交一条合法的（出红色预警）→ 改坏区划 → 再提交。本地拦下那一
+   * 只写了错误行、没收回执，页面上同时存在"链路 trc_… ｜ 预警 wrn_…"和
+   * "这一条没有发出去"——前一句看着就像刚提交这条的下落。
+   */
+  it('被本地拦下时上一条回执一起收掉，错误行不跟旧回执并存', async () => {
+    const wrapper = await renderForm()
+    mockedSubmit.mockResolvedValue(outcome())
+    await fill(wrapper, { 'field-reporter': '村民', 'field-region': '540121', 'field-note': '沟道泥位抬升' })
+    await byTestid(wrapper, 'report-submit').trigger('click')
+    await flushPromises()
+    expect(byTestid(wrapper, 'report-outcome').exists()).toBe(true)
+
+    await byTestid(wrapper, 'field-region').setValue('54012a')
+    await byTestid(wrapper, 'report-submit').trigger('click')
+    await flushPromises()
+    expect(mockedSubmit).toHaveBeenCalledTimes(1)
+    expect(byTestid(wrapper, 'report-outcome').exists()).toBe(false)
+    expect(byTestid(wrapper, 'report-error').text()).toContain('这一条没有发出去')
+  })
+
   /** 正文是唯一可能写很长的格子：标题里那句"4..2000 字"看不见余量，撞线要自己说。 */
   it('正文字数条随输入变化，撞满上限时改口', async () => {
     const wrapper = await renderForm()
