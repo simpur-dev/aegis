@@ -290,8 +290,9 @@ describe('后端拒绝时读后端的话', () => {
     await byTestid(wrapper, 'report-submit').trigger('click')
     await flushPromises()
     const shown = byTestid(wrapper, 'report-error').text()
-    expect(shown).toContain('reporter：String should have at least 2 characters')
-    expect(shown).toContain("region_code：String does match '^[0-9A-Z]{6,24}$'")
+    // 规则原文照抄（那是后端口径），字段名换成页面上的叫法：值班员不必先做一次中英对照
+    expect(shown).toContain('上报人（reporter）：String should have at least 2 characters')
+    expect(shown).toContain("区划代码（region_code）：String does match '^[0-9A-Z]{6,24}$'")
     expect(byTestid(wrapper, 'report-outcome').exists()).toBe(false)
   })
 
@@ -303,6 +304,44 @@ describe('后端拒绝时读后端的话', () => {
     await flushPromises()
     expect(byTestid(wrapper, 'report-unavailable').text()).toContain('解析腿未装配')
     expect(byTestid(wrapper, 'report-error').exists()).toBe(false)
+  })
+
+  /**
+   * 四个空格不是"一条正文"。
+   *
+   * 真机在正文里敲空格：`min_length=4` 放它过去，一路走到解析腿才被
+   * `ValueError("待解析文本为空")` 拦下——那是个裸 ValueError，界面上就是
+   * HTTP 500 + "Internal Server Error"。现在前端不发这一条，后端也同步裁剪。
+   */
+  it('正文只有空格时不发请求，并把原因说在错误行里', async () => {
+    const wrapper = await renderForm()
+    await fill(wrapper, { 'field-reporter': '村民', 'field-region': '540121', 'field-note': '    ' })
+    await byTestid(wrapper, 'report-submit').trigger('click')
+    await flushPromises()
+    expect(mockedSubmit).not.toHaveBeenCalled()
+    expect(byTestid(wrapper, 'report-error').text()).toContain('没有发出去')
+  })
+
+  it('发出去的是裁过首尾空白的文本', async () => {
+    const wrapper = await renderForm()
+    await fill(wrapper, { 'field-reporter': '  村民  ', 'field-region': ' 540121 ', 'field-note': '\n 沟道泥位抬升 \n' })
+    mockedSubmit.mockResolvedValue(outcome())
+    await byTestid(wrapper, 'report-submit').trigger('click')
+    await flushPromises()
+    expect(mockedSubmit.mock.calls[0]?.[0]).toMatchObject({
+      reporter: '村民',
+      region_code: '540121',
+      note: '沟道泥位抬升',
+    })
+  })
+
+  it('灾种提示只有空格时不带键（后端按"未填"处理）', async () => {
+    const wrapper = await renderForm()
+    await fill(wrapper, { 'field-reporter': '村民', 'field-region': '540121', 'field-note': '沟道泥位抬升', 'field-hazard-hint': '   ' })
+    mockedSubmit.mockResolvedValue(outcome())
+    await byTestid(wrapper, 'report-submit').trigger('click')
+    await flushPromises()
+    expect(Object.keys(mockedSubmit.mock.calls[0]?.[0] ?? {})).not.toContain('hazard_hint')
   })
 
   it('后端不可达时给状态说明，不假装已提交', async () => {

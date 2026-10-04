@@ -57,11 +57,17 @@ function legLevel(finding: LegFindingDto): string {
 }
 
 async function submit(): Promise<void> {
+  const body = toReportBody(form)
+  // 空正文不发请求：省一次往返，更重要的是把原因说在这—格上，而不是等后端回一串英文
+  if (body.note === '') {
+    backendError.value = '险情描述去掉空格后是空的：这一条没有发出去（后端要求 4..2000 字）'
+    return
+  }
   submitting.value = true
   backendError.value = ''
   unavailable.value = false
   try {
-    const result = await reportsApi.submit(toReportBody(form))
+    const result = await reportsApi.submit(body)
     outcome.value = result
     message.success(`上报已进链路：${result.chain.trace_id}`)
     emit('submitted', result)

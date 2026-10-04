@@ -52,8 +52,29 @@ export function isParserUnavailable(error: unknown): boolean {
 /**
  * 422 的 detail 是 FastAPI 的校验错误数组（`{loc, msg, type}`）。
  * 现场要读的是"哪一格不合格"，所以把后端原文拼成一行，不翻译成我们自己的措辞——
- * 翻译一次就多一个可能说错的口径。
+ * 翻译一次就多一个可能说错的口径。但**字段名要给中文**：这一页的标签本来就叫
+ * "上报人 / 区划代码 / 险情描述"，报错里却写 `reporter`、`region_code`，
+ * 值班员得先把中英文对上才知道刚才填的是哪一格。规则原文照抄，字段名用页面上的叫法。
  */
+export const REPORT_FIELD_LABELS: Record<string, string> = {
+  reporter: '上报人',
+  region_code: '区划代码',
+  hazard_hint: '灾种提示',
+  note: '险情描述',
+  lat: '纬度',
+  lon: '经度',
+  scenario: '演练场景',
+  ticks: '演练轮数',
+  message: '消息',
+  session_id: '会话号',
+  action_id: '动作号',
+}
+
+function fieldLabel(segment: string): string {
+  const label = REPORT_FIELD_LABELS[segment]
+  return label === undefined ? segment : `${label}（${segment}）`
+}
+
 export function describeValidationError(error: unknown): string {
   if (!(error instanceof ReportApiError) || error.status !== 422) return ''
   const detail = (error.detail as Record<string, unknown> | undefined)?.detail
@@ -61,9 +82,13 @@ export function describeValidationError(error: unknown): string {
   if (!Array.isArray(detail)) return error.message
   const parts = detail.map((item) => {
     const record = (item ?? {}) as Record<string, unknown>
-    const loc = Array.isArray(record.loc) ? record.loc.filter((seg) => seg !== 'body').join('.') : ''
+    const segments = Array.isArray(record.loc) ? record.loc.map(String).filter((seg) => seg !== 'body') : []
     const msg = typeof record.msg === 'string' ? record.msg : String(item)
-    return loc ? `${loc}：${msg}` : msg
+    if (segments.length === 0) return msg
+    const head = segments[0] as string
+    const rest = segments.slice(1).join('.')
+    const named = rest === '' ? fieldLabel(head) : `${head}.${rest}`
+    return `${named}：${msg}`
   })
   return parts.filter(Boolean).join('；')
 }
@@ -108,10 +133,19 @@ export interface ReportDraftDto {
  * 白名单收敛：`lat`/`lon` 要么都带要么都不带——这不是前端加的规矩，是后端的口径
  * （app.py:431 `None if payload.lat is None or payload.lon is None`）：只有一个值时
  * 后端整段按"没定位"处理。表单侧另有提示，免得用户以为坐标发出去了。
+ *
+ * 文本字段一律先裁首尾空白再发：`"    "`（四个空格）满足 `note` 的 min_length=4，
+ * 会一路走到解析腿才被 `ValueError("待解析文本为空")` 拦下——那是个裸 ValueError，
+ * 出口就成了 HTTP 500。真机在表单里敲四个空格就是这么撞的（后端现已同步裁剪）。
  */
 export function toReportBody(input: ReportDraftDto): ReportInputDto {
-  const body: ReportInputDto = { reporter: input.reporter, region_code: input.region_code, note: input.note }
-  if (input.hazard_hint) body.hazard_hint = input.hazard_hint
+  const body: ReportInputDto = {
+    reporter: input.reporter.trim(),
+    region_code: input.region_code.trim(),
+    note: input.note.trim(),
+  }
+  const hint = input.hazard_hint?.trim() ?? ''
+  if (hint !== '') body.hazard_hint = hint
   if (typeof input.lat === 'number' && typeof input.lon === 'number') {
     body.lat = input.lat
     body.lon = input.lon

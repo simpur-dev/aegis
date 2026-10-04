@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from aegis import __version__
 from aegis.api.assistant_api import build_router as build_assistant_router
@@ -61,6 +61,18 @@ class ReportIn(BaseModel):
     note: str = Field(min_length=4, max_length=2_000)
     lat: float | None = Field(default=None, ge=-90, le=90)
     lon: float | None = Field(default=None, ge=-180, le=180)
+
+    @field_validator("reporter", "region_code", "hazard_hint", "note", mode="before")
+    @classmethod
+    def _trim(cls, value: object) -> object:
+        """先裁首尾空白再判长度。
+
+        不裁的话 `"    "`（4 个空格）能过 `min_length=4`，一路走到解析腿才被
+        `semantic_parser.parse` 的 `ValueError("待解析文本为空")` 拦下——那是个裸 ValueError，
+        FastAPI 不认，出口就成了 **HTTP 500 + Internal Server Error**。真机在表单里敲四个空格
+        就是这么撞的：现场看到的是一句"服务器错误"，而事实是"你没写正文"。
+        """
+        return value.strip() if isinstance(value, str) else value
 
 
 def get_container(request: Request) -> PlatformContainer:

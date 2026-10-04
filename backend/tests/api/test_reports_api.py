@@ -53,6 +53,37 @@ async def container() -> AsyncIterator[PlatformContainer]:
 
 
 @pytest.mark.asyncio
+async def test_只有空格的正文判成校验错而不是服务器错(container: PlatformContainer) -> None:
+    """四个空格满足 `min_length=4`，一路走到解析腿才被 ValueError 拦下。
+
+    那个 ValueError 是裸的，FastAPI 不认，出口就成了 **HTTP 500 + Internal Server Error**：
+    现场看到的是一句"服务器错了"，而事实是"你没写正文"。真机在表单里敲空格就是这么撞的。
+    现在入口先裁空白，这一条在 422 就停下，并且根本没进链路。
+    """
+    async with _client(container) as client:
+        response = await client.post("/api/v1/reports", json={"reporter": "巡护员扎西", "region_code": REGION, "note": "    "})
+        assert response.status_code == 422, response.text
+        detail = response.json()["detail"]
+        assert any(item["loc"][-1] == "note" and item["type"] == "string_too_short" for item in detail), detail
+        assert (await client.get("/api/v1/events")).json()["items"] == [], "空正文不该留下一条链路"
+        assert (await client.get("/api/v1/metrics/latency")).json()["reports"]["submitted"] == 0
+
+
+@pytest.mark.asyncio
+async def test_首尾空白在入口裁掉后判据与回执都用裁过的文本(container: PlatformContainer) -> None:
+    async with _client(container) as client:
+        response = await client.post(
+            "/api/v1/reports",
+            json={"reporter": "  巡护员扎西  ", "region_code": f" {REGION} ", "note": f"\n  {HEAVY_RAIN_REPORT}  \n"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["report"]["reporter"] == "巡护员扎西"
+        assert body["report"]["region_code"] == REGION
+        assert body["parse"]["text"] == HEAVY_RAIN_REPORT
+
+
+@pytest.mark.asyncio
 async def test_上报进链路并留下可查事件与任务单元(container: PlatformContainer) -> None:
     async with _client(container) as client:
         response = await client.post("/api/v1/reports", json={"reporter": "巡护员扎西", "region_code": REGION, "note": HEAVY_RAIN_REPORT})

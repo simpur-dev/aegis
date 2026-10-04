@@ -19,6 +19,7 @@ import {
   legSourceLabel,
   LEG_SOURCE_LABELS,
   REPORT_ENDPOINT,
+  REPORT_FIELD_LABELS,
   ReportApiError,
   toReportBody,
 } from './reports'
@@ -181,8 +182,40 @@ describe('错误外显：后端原文不许被翻译', () => {
     expect((error as ReportApiError).status).toBe(422)
     expect((error as ReportApiError).detail).toEqual(detail)
     expect(describeValidationError(error)).toBe(
-      "region_code：String does match '^[0-9A-Z]{6,24}$'；note：String should have at least 4 characters",
+      "区划代码（region_code）：String does match '^[0-9A-Z]{6,24}$'；险情描述（note）：String should have at least 4 characters",
     )
+  })
+
+  /**
+   * 报错里的字段名必须是页面上那个中文名。
+   *
+   * 真机在表单里敲四个空格、填五位区划码，界面回的是
+   * `reporter：String should have at least 2 characters；region_code：…` ——
+   * 规则原文照抄是对的（那是后端口径），但字段名得用页面自己的叫法，
+   * 否则值班员要先做一次中英对照才知道刚才动的是哪一格。
+   */
+  it('后端 ReportIn 的每个字段都有中文标签（新增字段不许漏）', () => {
+    const text = readRepoFile('backend', 'src', 'aegis', 'api', 'app.py')
+    const block = text.slice(text.indexOf('class ReportIn'), text.indexOf('def get_container'))
+    const fields = [...block.matchAll(/^\s{4}([a-z_]+)\s*:\s/gm)].map((m) => m[1] as string)
+    expect(fields.length, '解析不到 ReportIn 的字段：写法变了要一起改这条门禁').toBeGreaterThanOrEqual(6)
+    for (const field of fields) {
+      expect(REPORT_FIELD_LABELS[field], `ReportIn.${field} 没有中文名，报错行会露出裸键名`).toBeTruthy()
+    }
+  })
+
+  it('嵌套 loc 保留路径形状，只给首段加中文', () => {
+    const error = new ReportApiError(422, 'Request failed', {
+      detail: [{ loc: ['body', 'note'], msg: 'String should have at most 2000 characters', type: 'string_too_long' }],
+    })
+    expect(describeValidationError(error)).toBe('险情描述（note）：String should have at most 2000 characters')
+  })
+
+  it('认不出的字段名原样给出，不编一个中文标签', () => {
+    const error = new ReportApiError(422, 'Request failed', {
+      detail: [{ loc: ['body', 'brand_new_field'], msg: 'Field required', type: 'missing' }],
+    })
+    expect(describeValidationError(error)).toBe('brand_new_field：Field required')
   })
 
   it('422 的 detail 是字符串时也照原样给出去', () => {
