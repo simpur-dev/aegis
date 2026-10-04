@@ -391,6 +391,22 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
     expect(decision).not.toContain('已取消')
   })
 
+  /**
+   * 真机量过：放弃一张演练卡之后按 F5，卡片回到"待确认"、确认按钮又能点了——
+   * 等于把刚被拒绝的演练重新递给值班员。时间线存了而决定没存，就是这个下场。
+   */
+  it('放弃之后刷新，这张卡不会被重新递一遍', async () => {
+    const wrapper = await renderWithProposal()
+    await wrapper.find('[data-testid="dismiss-act_abc123"]').trigger('click')
+    await flushPromises()
+    wrapper.unmount()
+
+    reloadAssistantSession()
+    const again = await renderView()
+    expect(byTestid(again, 'decision').text()).toContain('后端没有取消接口')
+    expect(byTestid(again, 'confirm-act_abc123').attributes('disabled'), '拒绝过的动作不能刷新后又变成可确认').toBeDefined()
+  })
+
   it('处置后的卡片不给第二次点击：确认是一次性的', async () => {
     const wrapper = await renderWithProposal()
     mockedConfirm.mockResolvedValue({ status: 'executed', action_id: 'act_abc123', action: 'create.report' })

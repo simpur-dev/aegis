@@ -41,9 +41,13 @@ export function rehydrate(): void {
   }
   if (raw === null) return
   try {
-    const saved = JSON.parse(raw) as { frames?: AssistantFrame[]; session_id?: string | null }
+    const saved = JSON.parse(raw) as { frames?: AssistantFrame[]; session_id?: string | null; decisions?: Record<string, Decision> }
     frames.value = Array.isArray(saved.frames) ? saved.frames : []
     sessionId.value = typeof saved.session_id === 'string' ? saved.session_id : null
+    for (const key of Object.keys(decisions)) delete decisions[key]
+    // 「放弃」只在这页记录（后端没有取消接口），所以它必须跟时间线一起活过刷新：
+    // 只存时间线不存决定，刷一次页就让人刚拒绝的演练又变回一颗可点的「确认」。
+    Object.assign(decisions, saved.decisions ?? {})
   } catch {
     // 存不下或读不出都按"没有上一段"处理：宁可重开一场，也不要拿半截 JSON 画时间线
     frames.value = []
@@ -56,14 +60,14 @@ function persist(): void {
   if (bucket === null) return
   const recent = frames.value.slice(-MAX_PERSISTED_FRAMES)
   try {
-    bucket.setItem(STORAGE_KEY, JSON.stringify({ frames: recent, session_id: sessionId.value }))
+    bucket.setItem(STORAGE_KEY, JSON.stringify({ frames: recent, session_id: sessionId.value, decisions: { ...decisions } }))
   } catch {
     // 配额或隐私模式写不进：页面上这段对话照样还在，换页照样接得上，只是刷新接不上
   }
 }
 
 rehydrate()
-watch([frames, sessionId], persist, { deep: true })
+watch([frames, sessionId, decisions], persist, { deep: true })
 
 /** 清的是这一屏的记录；会话号留着，后端那段会话还在时限内就仍接得上。 */
 export function clearTimeline(): void {
