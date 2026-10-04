@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssistantFrame, CapabilitiesDto } from '@/api/assistant'
 import { AssistantApiError, assistantApi, CHAT_LIMITS } from '@/api/assistant'
 import { readRepoFile } from '@/testing/repoSource'
+import { resetAssistantSession } from '@/composables/useAssistantSession'
 import AssistantView from '@/views/AssistantView.vue'
 
 vi.mock('@/api/assistant', async (importOriginal) => {
@@ -102,6 +103,8 @@ beforeEach(() => {
   mockedCapabilities.mockReset()
   mockedChat.mockReset()
   mockedConfirm.mockReset()
+  // 时间线与会话号现在是模块级状态（换页接得上），用例之间必须从头开始
+  resetAssistantSession()
 })
 
 /**
@@ -478,5 +481,44 @@ describe('对话框的 Enter / Shift+Enter', () => {
     const wrapper = await renderView()
     expect(byTestid(wrapper, 'char-count').text()).toContain('Enter 发送')
     expect(byTestid(wrapper, 'char-count').text()).toContain('Shift+Enter 换行')
+  })
+})
+
+/**
+ * 真机量过的一下：发一条消息拿到会话 `as_8bd49f9a44e2`，切到"一张图"看一眼再回来，
+ * 时间线整段没了、会话号回到"未开始"，而这一页的能力条写着"会话保留 30 分钟"（后端给的 TTL）。
+ * 值班员去图上确认那个沟在哪儿是再自然不过的动作，不该顺手把对话——以及没来得及签的
+ * 待确认动作——一起丢掉，而且丢得不说一个字。
+ */
+describe('换页再回来：对话要接得上（后端会话还在时限内）', () => {
+  const thread: AssistantFrame[] = [
+    { type: 'meta', session_id: 'as_live_1', llm_configured: false, actions: ['query.warnings'] },
+    { type: 'intent', action: 'query.warnings', args: {}, confidence: 0.8, decided_by: 'rule', note: '', requires_confirmation: false },
+    { type: 'answer', text: '沟口那条村当前有 1 条红色预警' },
+    { type: 'done', session_id: 'as_live_1', latency_ms: 5.1, rejected_count: 0 },
+  ]
+
+  it('卸载重挂之后，会话号与时间线都还在', async () => {
+    mockedChat.mockReturnValue(framesOf(thread))
+    const first = await renderView()
+    await sendMessage(first, '沟口那个村现在什么状态')
+    expect(byTestid(first, 'session-id').text()).toContain('as_live_1')
+    expect(byTestid(first, 'frame-answer').text()).toContain('红色预警')
+    first.unmount()
+
+    const second = await renderView()
+    expect(byTestid(second, 'session-id').text(), '换页回来该接上原来那段会话').toContain('as_live_1')
+    expect(byTestid(second, 'frame-answer').text(), '原来那几帧还得在').toContain('红色预警')
+  })
+
+  /** 「清空时间线」是显式动作：清这一屏的记录，但会话号归会话号，后端那 30 分钟还接得上。 */
+  it('清空时间线不顺手把会话号也丢了', async () => {
+    mockedChat.mockReturnValue(framesOf(thread))
+    const wrapper = await renderView()
+    await sendMessage(wrapper, '沟口那个村现在什么状态')
+    await wrapper.find('[data-testid="clear"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="frame-answer"]').exists()).toBe(false)
+    expect(byTestid(wrapper, 'session-id').text()).toContain('as_live_1')
   })
 })

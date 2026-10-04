@@ -13,28 +13,25 @@
  *    （`assistant_api.py:57-63` 与 `app.py:538-541`）。
  */
 import { message } from 'ant-design-vue'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import type { ActionSpecDto, AssistantFrame, CapabilitiesDto, ConfirmResultDto, ProposalFrame } from '@/api/assistant'
 import { assistantApi, CHAT_LIMITS, isAssistantDisabled, isAssistantUnavailable, preflightChat } from '@/api/assistant'
 import ReportForm from '@/components/reports/ReportForm.vue'
-
-/** 待确认动作在这页只有三种下落：后端回执、本地收起、请求没发出去。 */
-type Decision = { kind: 'busy' } | { kind: 'dismissed' } | { kind: 'error'; message: string } | { kind: 'result'; result: ConfirmResultDto }
+import { useAssistantSession } from '@/composables/useAssistantSession'
 
 const capabilities = ref<CapabilitiesDto | null>(null)
 const capabilitiesError = ref('')
 const capabilitiesKind = ref<'none' | 'unavailable' | 'disabled' | 'other'>('none')
 const capabilitiesLoading = ref(false)
 
-const sessionId = ref<string | null>(null)
+// 时间线与会话号在组件外面：换菜单再回来还得接得上（见 useAssistantSession 的说明）
+const { frames, sessionId, decisions, clearTimeline } = useAssistantSession()
 const reporter = ref('值班员')
 const regionCode = ref('')
 const draft = ref('')
-const frames = ref<AssistantFrame[]>([])
 const streaming = ref(false)
 const streamError = ref('')
-const decisions = reactive<Record<string, Decision>>({})
 const reportOpen = ref(false)
 
 const llmConfigured = computed(() => capabilities.value?.llm_configured === true)
@@ -293,7 +290,7 @@ onMounted(() => void loadCapabilities())
       </div>
       <a-space style="margin-top: 8px">
         <a-button type="primary" :loading="streaming" data-testid="send" @click="send">发送</a-button>
-        <a-button data-testid="clear" @click="frames = []">清空时间线</a-button>
+        <a-button data-testid="clear" @click="clearTimeline">清空时间线</a-button>
       </a-space>
 
       <p v-if="streamError" class="error" data-testid="stream-error">{{ streamError }}</p>
