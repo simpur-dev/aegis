@@ -33,6 +33,7 @@ from aegis.workflow.model import (
     WorkflowDef,
     WorkflowInstance,
     find_cycle,
+    normalize_branch,
 )
 from aegis.workflow.nodes import (
     HumanRequired,
@@ -438,7 +439,25 @@ class WorkflowEngine:
             return False
         if not edge.condition:
             return True
-        return str(source_run.output.get("branch", "")) == edge.condition
+        # 两边都归一：条件存的就是 normalize_branch 后的值，分支名却是人写的原样
+        return normalize_branch(str(source_run.output.get("branch", ""))) == edge.condition
+
+    def _note_unmatched_branch(self, instance: _MutableInstance, node_id: str) -> None:
+        """分支值没有任何出口可走时，把原因写在**发出分支的那个节点**上。
+
+        下游只会得到一句"上游分支未命中，级联跳过"，看不出是哪个分支值没处去，
+        而实例状态照样写成 succeeded——通知一条都没发出去，屏幕上却没有线索。
+        """
+        run = instance.runs[node_id]
+        raw_branch = str(run.output.get("branch", ""))
+        emitted = normalize_branch(raw_branch)
+        outgoing = [edge for edge in instance.edges if edge.source == node_id]
+        if not outgoing:
+            return
+        if any(not edge.condition or edge.condition == emitted for edge in outgoing):
+            return
+        labels = "、".join(sorted({edge.condition for edge in outgoing if edge.condition}))
+        run.notes.append(f"分支 {raw_branch} 没有任何出口连线匹配（连线上写的分支名：{labels}）；下游会被级联跳过")
 
     async def _execute_node(self, instance: _MutableInstance, node_id: str) -> None:
         node = instance.nodes[node_id]
@@ -533,6 +552,7 @@ class WorkflowEngine:
                 run.output = dict(outcome.output)
                 if outcome.branch:
                     run.output.setdefault("branch", outcome.branch)
+                    self._note_unmatched_branch(instance, node_id)
                 if outcome.note:
                     run.notes.append(outcome.note)
                 run.state = NodeState.SUCCEEDED

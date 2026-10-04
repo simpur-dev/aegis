@@ -18,6 +18,17 @@ MAX_NODES = 64
 MAX_EDGES = 256
 
 
+def normalize_branch(value: str) -> str:
+    """分支名与边条件的**同一套**归一规则。
+
+    两边必须走这一个函数：`condition` 存的是归一后的值，而节点发出的分支名是原样的
+    （`branch` 节点的 `then` 由人填、人工核签的 choice 也由人写）。只在存的一侧归一，
+    "规则写 then=OK、边条件也写 OK"就会永远对不上——两条下游一起被级联跳过，
+    而实例状态仍写着 succeeded（真机量到的正是这一件）。
+    """
+    return value.strip().lower()
+
+
 class NodeState(StrEnum):
     PENDING = "pending"
     READY = "ready"
@@ -76,7 +87,7 @@ class EdgeDef(BaseModel):
     @field_validator("condition")
     @classmethod
     def _normalise_condition(cls, value: str) -> str:
-        return value.strip().lower()
+        return normalize_branch(value)
 
 
 class WorkflowDef(BaseModel):

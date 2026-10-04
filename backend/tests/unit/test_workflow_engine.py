@@ -152,6 +152,62 @@ class TestExecutionSemantics:
         assert states["assess"] == "skipped", "未命中分支的下游应级联跳过"
         assert detail["status"] == "succeeded"
 
+    async def test_分支名与边条件只差大小写时也要走对出口(self) -> None:
+        """`EdgeDef.condition` 存下来是 `.strip().lower()` 过的（model.py 的校验器），
+        而节点发出的分支名是**原样**（`branch=str(rule["then"])`、人工核签的 choice 也是人写的字）。
+        真机量到：规则 then="OK"、边条件写 "OK"，实例里 gate `succeeded` 输出 branch="OK"，
+        两条下游却都是 `skipped`，实例状态还写着 `succeeded` —— 通知一条没发出去，屏幕上没有任何线索。
+        """
+
+        async def notify(_payload: dict) -> None:
+            return None
+
+        async def query(**_kwargs: object) -> list[dict]:
+            return [{"metric": "rain_10min", "value": 5.0, "quality_flag": "ok"}]
+
+        engine = make_engine(WorkflowServices(notify=notify, telemetry_query=query))
+        workflow_id = await make_definition(
+            engine,
+            [
+                node("gate", "branch", {"rules": [{"when": "risk_level", "op": ">=", "value": 1, "then": "OK"}], "default": "else"}),
+                node("notify_ok", "notify", {"text": "命中 OK 分支"}),
+                node("notify_else", "notify", {"text": "走默认分支"}),
+            ],
+            [
+                edge("gate", "notify_ok", "OK"),
+                edge("gate", "notify_else", "else"),
+            ],
+        )
+        detail = await engine.start(workflow_id, trace_id="trc_" + "b" * 16, payload={"risk_level": 3})
+        states = {n["node_id"]: n["state"] for n in detail["nodes"]}
+        gate = next(n for n in detail["nodes"] if n["node_id"] == "gate")
+        assert gate["output"]["branch"] == "OK", gate["output"]
+        assert states["notify_ok"] == "succeeded", f"边条件存成小写后就再也匹配不上分支名 OK：{states}"
+        assert states["notify_else"] == "skipped"
+
+    async def test_分支没有出口可走时要把原因写在节点上(self) -> None:
+        """大小写统一之后仍会有一种真情况：发出的分支名根本没有对应连线。
+        以前这些下游只带一句"上游分支未命中，级联跳过"，看不出**是哪个分支值**没处去。"""
+
+        async def notify(_payload: dict) -> None:
+            return None
+
+        engine = make_engine(WorkflowServices(notify=notify))
+        workflow_id = await make_definition(
+            engine,
+            [
+                node("gate", "branch", {"rules": [{"when": "risk_level", "op": ">=", "value": 1, "then": "escalate"}], "default": "else"}),
+                node("notify_ok", "notify", {"text": "只连了 ok 这一条"}),
+            ],
+            [edge("gate", "notify_ok", "ok")],
+        )
+        detail = await engine.start(workflow_id, trace_id="trc_" + "c" * 16, payload={"risk_level": 3})
+        gate = next(n for n in detail["nodes"] if n["node_id"] == "gate")
+        joined = " ".join(gate["notes"])
+        assert gate["output"]["branch"] == "escalate", gate["output"]
+        assert "escalate" in joined, f"节点上没写明是哪个分支值没出口：{gate['notes']}"
+        assert "ok" in joined, f"也没给出连线上的可选分支名：{gate['notes']}"
+
     async def test_parallel_branches_run_concurrently(self) -> None:
         async def slow_query(**_kwargs: object) -> list[dict]:
             await asyncio.sleep(0.12)
