@@ -11,7 +11,6 @@
 
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
 
 import api from '@/api/client'
 import DashboardView from '@/views/DashboardView.vue'
@@ -30,12 +29,22 @@ vi.mock('@/api/client', async (importOriginal) => {
   }
 })
 
-vi.mock('@/composables/useEventStream', () => ({
-  // 必须是真 ref：模板的自动解包只认 `isRef`，给 `{value: [...]}` 会在 `events.slice` 上炸
-  useEventStream: () => ({
-    events: ref([{ trace_id: 'trc_1', ts: '2026-10-03T16:45:13.840Z', subject: 'warning.published', payload: { title: '西藏滑坡预警（红色）' } }]),
-  }),
-}))
+vi.mock('@/composables/useEventStream', async () => {
+  const { ref } = await import('vue')
+  return {
+    // 必须是真 ref：模板的自动解包只认 `isRef`，给 `{value: [...]}` 会在 `events.slice` 上炸。
+    // 每次调用新建一份并留给用例引用，因为"事件流来了新链路"这层行为要靠改它来触发。
+    useEventStream: () => {
+      const events = ref([
+        { trace_id: 'trc_1', ts: '2026-10-03T16:45:13.840Z', subject: 'warning.published', payload: { title: '西藏滑坡预警（红色）' } },
+      ])
+      capturedEvents = events as never
+      return { events }
+    },
+  }
+})
+
+let capturedEvents: { value: Array<Record<string, unknown>> } | null = null
 
 const mocked = vi.mocked(api, true) as unknown as Record<string, ReturnType<typeof vi.fn>>
 
@@ -48,8 +57,23 @@ function responses(overrides: { warning_count?: number; warnings?: number } = {}
   mocked.latency.mockResolvedValue({ metrics: {}, sla_thresholds: {}, collaboration: {}, violations: {} } as never)
 }
 
+/** 一条最小可用的链路摘要：表格里只用到 trace_id / stages / errors / task_units。 */
+function chainOf(traceId: string) {
+  return {
+    trace_id: traceId,
+    event_id: `evt_${traceId.slice(-4)}`,
+    ok: true,
+    acted: true,
+    stages: [{ name: 'perceive', mode: 'local', ok: true, latency_ms: 1, note: '' }],
+    errors: [],
+    task_units: ['stu_0001'],
+    degradations: [],
+    risk: null,
+  }
+}
+
 const STUBS = {
-  'a-card': { name: 'ACard', props: ['title', 'loading', 'size'], template: '<div class="card"><slot /></div>' },
+  'a-card': { name: 'ACard', props: ['title', 'loading', 'size'], template: '<div class="card"><div class="card-title">{{ title }}</div><slot /></div>' },
   'a-row': { name: 'ARow', props: ['gutter'], template: '<div class="row"><slot /></div>' },
   'a-col': { name: 'ACol', props: ['span'], template: '<div class="col"><slot /></div>' },
   'a-statistic': { name: 'AStatistic', props: ['title', 'value', 'suffix'], template: '<div class="stat" :data-testid="`stat-${title}`">{{ value }}{{ suffix }}</div>' },
@@ -64,7 +88,7 @@ const STUBS = {
 
 beforeEach(() => {
   vi.stubGlobal('message', { error: vi.fn(), success: vi.fn() })
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
 })
 
 afterEach(() => {
@@ -91,6 +115,53 @@ describe('态势总览的取数', () => {
     await vi.advanceTimersByTimeAsync(15_000)
     await flushPromises()
     expect(mocked.ready.mock.calls.length).toBeGreaterThan(first)
+  })
+
+  /**
+   * 后端 `BoundedCollection.latest()` 给的是"最近 N 条、旧→新"，这个契约本身没错，
+   * 错在照原样摆进一张叫"链路执行记录"的表：真机连点两次上报，时间线立刻出
+   * "西藏泥石流预警（橙色）"，这张表第一页一个字没变——刚发生的那条在第 2 页，
+   * "最近做了什么"要翻到最后一页才看得见。
+   */
+  it('链路执行记录把最新一条排在最前，标题也这么说', async () => {
+    responses()
+    mocked.events.mockResolvedValue({ items: [chainOf('trc_a'), chainOf('trc_b'), chainOf('trc_c')] } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const table = wrapper.findAllComponents({ name: 'ATable' })[0]
+    const rows = table.props('dataSource') as Array<{ trace_id: string }>
+    expect(rows.map((row) => row.trace_id)).toEqual(['trc_c', 'trc_b', 'trc_a'])
+    expect(wrapper.text()).toContain('最新在上')
+  })
+
+  /**
+   * 时间线是即时的，这张表原先最长要等 15 秒才补上——同一块屏幕上
+   * "已经发生"与"记录里没有"并存。看到新链路的头一帧就补一次取数，
+   * 一次演练连发十几条也只补一次（否则就是请求风暴）。
+   */
+  it('事件流出现新链路时补一次取数，一串事件只补一次', async () => {
+    responses()
+    // 表里已经有 trc_a：末尾再推它一次时不该打接口
+    mocked.events.mockResolvedValue({ items: [chainOf('trc_a')] } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const before = mocked.events.mock.calls.length
+
+    if (capturedEvents === null) throw new Error('useEventStream 的替身没被抓到，这条用例空跑了')
+    capturedEvents.value = [{ trace_id: 'trc_new_1', ts: 'x', subject: 'warning.published', payload: {} }]
+    await vi.advanceTimersByTimeAsync(600)
+    capturedEvents.value = [{ trace_id: 'trc_new_2', ts: 'x', subject: 'feedback.status', payload: {} }, ...capturedEvents.value]
+    await vi.advanceTimersByTimeAsync(700)
+    await flushPromises()
+    expect(mocked.events.mock.calls.length).toBe(before + 1)
+
+    // 已经在这张表里的链路再推一帧：不该打接口
+    const afterBurst = mocked.events.mock.calls.length
+    capturedEvents.value = [{ trace_id: 'trc_a', ts: 'x', subject: 'warning.published', payload: {} }]
+    await vi.advanceTimersByTimeAsync(2_000)
+    await flushPromises()
+    expect(mocked.events.mock.calls.length).toBe(afterBurst)
+    wrapper.unmount()
   })
 
   it('卸载就停表：离开这页还继续打接口是白耗', async () => {

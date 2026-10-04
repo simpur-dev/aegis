@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { message } from 'ant-design-vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import api from '@/api/client'
 import type { AgentInfo, ChainSummary, LatencyReport, WarningRecord } from '@/api/types'
@@ -21,6 +21,7 @@ const loading = ref(false)
 const updatedAt = ref<string | null>(null)
 const refreshError = ref<string | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
+let eventTimer: ReturnType<typeof setTimeout> | null = null
 const { events } = useEventStream()
 
 /**
@@ -44,6 +45,16 @@ const kpis = computed(() => [
     suffix: latency.value?.collaboration.pass ? '达标' : '样本不足',
   },
 ])
+
+/**
+ * 表格里按"最新在上"呈现。
+ *
+ * 后端 `/api/v1/events` 给的是最近 N 条**按时间正序**（`BoundedCollection.latest`：
+ * 取尾部窗口，旧→新），照原样摆上去，第一页就永远是几条最旧的：真机连点两次上报，
+ * 时间线立刻出"西藏泥石流预警（橙色）"，而这张"链路执行记录"第一页一个字没变——
+ * 刚发生的那条排在第 2 页，等于"最近做了什么"要翻到最后一页才看得见。
+ */
+const recentChains = computed<ChainSummary[]>(() => [...chains.value].reverse())
 
 const regionGrid = computed(() => {
   const byRegion = new Map<string, ChainSummary>()
@@ -104,7 +115,39 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (timer !== null) clearInterval(timer)
   timer = null
+  if (eventTimer !== null) clearTimeout(eventTimer)
+  eventTimer = null
 })
+
+/**
+ * 事件流里出现新链路时补一次取数（1.2 秒内多条事件只补一次）。
+ *
+ * 这张表本来 15 秒轮询一次，而时间线是即时的：真机上刚发的预警已经出现在时间线里，
+ * "链路执行记录"却还要等下一次轮询才有它——同一块屏幕上"已经发生"与"记录里没有"并存。
+ * 一次演练会连发十几条事件，逐条打接口就是请求风暴，所以按下同一把计时器。
+ */
+watch(
+  () => events.value[0]?.trace_id ?? '',
+  (trace) => {
+    if (trace === '' || eventTimer !== null) return
+    if (chains.value.some((chain) => chain.trace_id === trace)) return
+    eventTimer = setTimeout(() => {
+      eventTimer = null
+      if (document.visibilityState !== 'visible') return
+      void (async () => {
+        try {
+          const list = await api.events(20)
+          chains.value = list.items
+          updatedAt.value = new Date().toISOString()
+          refreshError.value = null
+        } catch (caught) {
+          // 后台补数失败也要看得见：静默失败正是"页面数字停在旧值却像现场没动静"
+          refreshError.value = caught instanceof Error ? caught.message : String(caught)
+        }
+      })()
+    }, 1_200)
+  },
+)
 
 const stageColumns = [
   { title: '事件', dataIndex: 'trace_id', key: 'trace_id', ellipsis: true },
@@ -162,8 +205,8 @@ const agentColumns = [
       </a-col>
 
       <a-col :span="14">
-        <a-card title="链路执行记录（感知→研判→决策→执行→反馈）" size="small" :loading="loading">
-          <a-table :columns="stageColumns" :data-source="chains" :pagination="{ pageSize: 6 }" row-key="trace_id" size="small">
+        <a-card title="链路执行记录（最新在上；感知→研判→决策→执行→反馈）" size="small" :loading="loading">
+          <a-table :columns="stageColumns" :data-source="recentChains" :pagination="{ pageSize: 6 }" row-key="trace_id" size="small">
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'result'">
                 <a-tag :color="record.errors.length ? 'red' : record.ok ? 'green' : 'orange'">
