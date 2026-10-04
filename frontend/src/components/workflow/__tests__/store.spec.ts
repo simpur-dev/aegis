@@ -497,6 +497,120 @@ describe('stores/workflow 运行中操作', () => {
 })
 
 /**
+ * 面板小标题"等人签 N 张"数的是实例列表（RuntimePanel 的 waitingRows），
+ * 而运行中操作此前只更新当前那一条的详情——列表没人管。
+ *
+ * 真机量到的一轮：新实例接口上 `waiting` 为 1，面板写"等人签 1 张"；点「核签通过」后
+ * 2.5 秒、再过 6 秒，接口已经是 0，面板还写"等人签 1 张"；连顶栏「刷新实例」点下去
+ * 都没变（那颗按钮只重拉详情）。数错张数不是难看而已——值班员会按这个数判断还剩几张。
+ */
+describe('stores/workflow 实例列表与「等人签」计数对账', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function rows(count: number) {
+    return {
+      count,
+      items: Array.from({ length: count }, (_, index) => ({
+        ...detail('waiting', [nodeRun('review_1', 'awaiting_human')]),
+        instance_id: `wfi_0000000000${index}`,
+      })),
+    }
+  }
+
+  /** 先把列表种成"有 1 张等人签"，再把服务端换成"签完了"：只有真的重拉才看得到差别。 */
+  async function storeShowingOneTicket(client: WorkflowClient) {
+    vi.mocked(client.instances).mockResolvedValue(rows(1))
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.focusInstance('wfi_0123456789ab')
+    await store.loadInstances()
+    expect(store.instances.filter((row) => row.status === 'waiting')).toHaveLength(1)
+    vi.mocked(client.instances).mockResolvedValue(rows(0))
+    return store
+  }
+
+  it('签掉一张工单后把列表拉一遍，小标题的张数才会降下来', async () => {
+    const client = fakeClient({
+      instance: detail('waiting', [nodeRun('review_1', 'awaiting_human')]),
+      submitDecision: detail('running', [nodeRun('review_1', 'succeeded')]),
+    })
+    const store = await storeShowingOneTicket(client)
+    expect(await store.submitDecision('review_1', 'approve', '同意', '值班指挥员')).toBe(true)
+    expect(store.instances.filter((row) => row.status === 'waiting'), '签完还留着那张，面板就一直写「等人签 1 张」').toHaveLength(0)
+  })
+
+  it('绕过之后重拉列表', async () => {
+    const bypassStore = await storeShowingOneTicket(
+      fakeClient({ instance: detail('waiting', [nodeRun('review_1', 'awaiting_human')]) }),
+    )
+    expect(await bypassStore.bypassNode('review_1', '现场已处置')).toBe(true)
+    expect(bypassStore.instances.filter((row) => row.status === 'waiting')).toHaveLength(0)
+  })
+
+  it('中止之后重拉列表', async () => {
+    const abortStore = await storeShowingOneTicket(
+      fakeClient({ instance: detail('waiting', [nodeRun('review_1', 'awaiting_human')]) }),
+    )
+    expect(await abortStore.abortInstance('上游数据中断')).toBe(true)
+    expect(abortStore.instances.filter((row) => row.status === 'waiting')).toHaveLength(0)
+  })
+
+  it('顶栏「刷新实例」把这一页的实例信息都对新：详情和列表一起拉', async () => {
+    const client = fakeClient({ instance: detail('waiting', [nodeRun('review_1', 'awaiting_human')]) })
+    const store = await storeShowingOneTicket(client)
+    const detailCalls = vi.mocked(client.instance).mock.calls.length
+    expect(await store.refreshAll()).toBe(true)
+    expect(vi.mocked(client.instance).mock.calls.length).toBe(detailCalls + 1)
+    expect(store.instances.filter((row) => row.status === 'waiting'), '按钮点下去张数还不变，就等于这个按钮没用').toHaveLength(0)
+  })
+
+  it('轮询发现这条进了终态才重拉列表，还挂在人工这步时不多打一次接口', async () => {
+    vi.useFakeTimers()
+    const client = fakeClient({ instance: detail('waiting', [nodeRun('review_1', 'awaiting_human')]) })
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.focusInstance('wfi_0123456789ab')
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(vi.mocked(client.instances).mock.calls.length, '实例还等着人签，列表没有变化，不该白打一次').toBe(0)
+    vi.mocked(client.instance).mockResolvedValue(detail('succeeded', []))
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(vi.mocked(client.instances).mock.calls.length).toBe(1)
+    vi.useRealTimers()
+  })
+
+  it('后端给了前端没映射的状态时不崩，也不当成终态去重拉', async () => {
+    vi.useFakeTimers()
+    const client = fakeClient({ instance: detail('waiting', [nodeRun('review_1', 'awaiting_human')]) })
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.focusInstance('wfi_0123456789ab')
+    vi.mocked(client.instance).mockResolvedValue({ ...detail('waiting', []), status: 'paused_by_operator' })
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(store.instanceStatus).toBeNull()
+    expect(store.error).toBeNull()
+    expect(vi.mocked(client.instances).mock.calls.length).toBe(0)
+    vi.useRealTimers()
+  })
+
+  it('列表没拉回来不能报成「核签失败」：单子已经签出去了，说反了会让人重签一次', async () => {
+    const client = fakeClient({
+      instance: detail('waiting', [nodeRun('review_1', 'awaiting_human')]),
+      submitDecision: detail('running', [nodeRun('review_1', 'succeeded')]),
+    })
+    vi.mocked(client.instances).mockRejectedValue(new Error('接口调用失败（HTTP 503）：upstream unavailable'))
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.focusInstance('wfi_0123456789ab')
+    expect(await store.submitDecision('review_1', 'approve', '同意', '值班指挥员')).toBe(true)
+    expect(store.instance?.status).toBe('running')
+    expect(store.error).toContain('实例列表没刷新')
+    expect(store.error, '把列表的失败说成核签的失败，是凭空多出来的一句谎').not.toContain('核签失败')
+  })
+})
+
+/**
  * "有没有未保存改动"必须是个算得出来的事实。
  *
  * 真机上"新建画布"和"打开已存定义"都是直接覆盖画布：摆了五个节点还没保存，

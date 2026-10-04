@@ -80,7 +80,7 @@ onUnmounted(() => {
       </a-button>
       <a-button size="small" @click="createDraft">新建画布</a-button>
       <a-button size="small" @click="store.autoLayout()">自动布局</a-button>
-      <a-button size="small" @click="store.refreshInstance">刷新实例</a-button>
+      <a-button size="small" @click="store.refreshAll">刷新实例</a-button>
       <span v-if="store.polling" class="wf__polling">实例状态轮询中</span>
     </header>
 

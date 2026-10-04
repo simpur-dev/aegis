@@ -323,6 +323,19 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     }
 
     /**
+     * 运行中操作改的就是列表上那一行（等人签 → 已停止），做完必须把列表对一遍。
+     * 列表拉取失败不能算成"核签失败"：单子已经签出去了，只是没看到新数字，
+     * 说反了一句会让人回头重签一次。
+     */
+    async function syncInstancesQuietly(): Promise<void> {
+      try {
+        await loadInstances()
+      } catch (caught) {
+        error.value = `实例列表没刷新：${describeFailure(caught)}`
+      }
+    }
+
+    /**
      * 保存：workflow_id 为空走创建，否则修订出新版本。
      * 传入画布当前视图时以视图为准（graphToDef 逆映射），保证"所见的图即提交的图"。
      */
@@ -418,11 +431,23 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     async function refreshInstance(): Promise<void> {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return
+      const wasMutable = instanceMutable.value
       try {
-        instance.value = await client.instance(instanceId)
+        const next = await client.instance(instanceId)
+        instance.value = next
+        // 轮询发现这条跑完了，顺手把列表对一遍：面板上"等人签 N 张"数的是列表，
+        // 而签掉一张的人就在这页上——真机量到签完之后接口归零、小标题还写着 1 张。
+        if (wasMutable && isInstanceStatus(next.status) && isInstanceStateTerminal(next.status)) await loadInstances()
       } catch (caught) {
         error.value = describeFailure(caught)
       }
+    }
+
+    /** 顶栏那颗"刷新实例"：用户按它是要把这一页的实例信息都对新，不只当前那条。 */
+    async function refreshAll(): Promise<boolean> {
+      return runAction(async () => {
+        await Promise.all([refreshInstance(), loadInstances()])
+      }, '刷新实例失败')
     }
 
     function startPolling(): void {
@@ -451,6 +476,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
         // 让服务端按它的默认记成 unknown——把"值班指挥员"当成默认值等于替人签名。
         const payload = by === '' ? { choice, comment } : { choice, by, comment }
         instance.value = await client.submitDecision(instanceId, nodeId, payload)
+        await syncInstancesQuietly()
       }, '提交人工核签失败')
     }
 
@@ -489,6 +515,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       if (instanceId === undefined) return false
       return runAction(async () => {
         instance.value = await client.bypassNode(instanceId, nodeId, reason)
+        await syncInstancesQuietly()
       }, '绕过节点失败')
     }
 
@@ -498,6 +525,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       return runAction(async () => {
         instance.value = await client.abortInstance(instanceId, reason)
         stopPolling()
+        await syncInstancesQuietly()
       }, '中止实例失败')
     }
 
@@ -583,6 +611,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       startInstance,
       focusInstance,
       refreshInstance,
+      refreshAll,
       startPolling,
       stopPolling,
       submitDecision,

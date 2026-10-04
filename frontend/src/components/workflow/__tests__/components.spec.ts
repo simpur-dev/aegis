@@ -865,3 +865,30 @@ describe('RuntimePanel 等人签的工单要数得出来、找得到', () => {
     expect(wrapper.text()).toContain('这一列里没有等人签的实例了')
   })
 })
+
+/**
+ * 「刷新实例」这颗按钮接的是哪个方法，是真机上量出来的差别：只重拉当前实例详情时，
+ * 点它之后小标题的"等人签 1 张"纹丝不动（接口那边已经归零）。
+ * 组件用例都在自己桩里直接调 store，没人管视图上这颗按钮接没接对，所以这里读源码对账。
+ */
+describe('编排页顶栏「刷新实例」的接线', () => {
+  it('绑的是 refreshAll（详情与列表一起对），不是只拉详情的 refreshInstance', () => {
+    const view = readRepoFile('frontend', 'src', 'views', 'WorkflowView.vue')
+    expect(view).toMatch(/@click="store\.refreshAll"\s*>\s*刷新实例/)
+    expect(view, '这颗按钮只拉详情，点下去张数不变，等于没这个按钮').not.toMatch(/@click="store\.refreshInstance"[^>]*>\s*刷新实例/)
+  })
+
+  it('store 真的导出了 refreshAll：视图取用未导出的方法，运行时就是 undefined', () => {
+    const store = readRepoFile('frontend', 'src', 'stores', 'workflow.ts')
+    expect(store).toMatch(/^\s+refreshAll,$/m)
+  })
+
+  it('运行中三个会改变「等人签」张数的动作都补了列表对账', () => {
+    const source = readRepoFile('frontend', 'src', 'stores', 'workflow.ts')
+    for (const action of ['submitDecision', 'bypassNode', 'abortInstance']) {
+      const start = source.indexOf(`async function ${action}(`)
+      expect(start, `${action} 的实现找不到`).toBeGreaterThan(-1)
+      expect(source.slice(start, start + 1_200), `${action} 之后要把实例列表重拉一遍`).toContain('syncInstancesQuietly()')
+    }
+  })
+})
