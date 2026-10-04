@@ -443,11 +443,14 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       polling.value = false
     }
 
-    async function submitDecision(nodeId: string, choice: string, comment = ''): Promise<boolean> {
+    async function submitDecision(nodeId: string, choice: string, comment = '', by = ''): Promise<boolean> {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return false
       return runAction(async () => {
-        instance.value = await client.submitDecision(instanceId, nodeId, { choice, by: '值班指挥员', comment })
+        // 平台没有登录态：签字人是谁只能由签的人自己写。留空时不发 by 这个键，
+        // 让服务端按它的默认记成 unknown——把"值班指挥员"当成默认值等于替人签名。
+        const payload = by === '' ? { choice, comment } : { choice, by, comment }
+        instance.value = await client.submitDecision(instanceId, nodeId, payload)
       }, '提交人工核签失败')
     }
 

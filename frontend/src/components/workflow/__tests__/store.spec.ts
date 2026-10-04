@@ -434,14 +434,29 @@ describe('stores/workflow 运行中操作', () => {
   it('核签候选来自定义的 options，提交后走 decision 接口', async () => {
     const store = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
     expect(store.decisionOptions('review_1')).toEqual(['approve', 'reject'])
-    expect(await store.submitDecision('review_1', 'approve', '同意')).toBe(true)
+    expect(await store.submitDecision('review_1', 'approve', '同意', '巡护员扎西')).toBe(true)
     expect(firstCall(client, 'submitDecision')).toEqual([
       'wfi_0123456789ab',
       'review_1',
-      { choice: 'approve', by: '值班指挥员', comment: '同意' },
+      { choice: 'approve', by: '巡护员扎西', comment: '同意' },
     ])
     expect(store.nodeStateOf('review_1')).toBe('succeeded')
     expect(store.awaitingNodes).toEqual([])
+  })
+
+  /**
+   * 平台没有登录态：签字人只能由签字的人自己写。
+   * 此前前端把 `by` 固定写成"值班指挥员"——等于代码替所有人签名，台账上那句"谁签的"从来不是事实。
+   * 不填就**不发这个键**，让后端按它的默认记成 unknown。
+   */
+  it('没填签字人时不发 by 键，由后端记成 unknown', async () => {
+    const store = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
+    expect(await store.submitDecision('review_1', 'reject', '现场已核实无险情')).toBe(true)
+    expect(firstCall(client, 'submitDecision')).toEqual([
+      'wfi_0123456789ab',
+      'review_1',
+      { choice: 'reject', comment: '现场已核实无险情' },
+    ])
   })
 
   it('非 awaiting_human 节点不可核签（engine.py:515）', async () => {

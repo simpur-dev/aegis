@@ -122,7 +122,9 @@ export interface StartInput {
 export interface DecisionInput {
   /** 必须命中节点 options（engine.py:518-522 会先做小写比对）。 */
   choice: string
-  by: string
+  /** 后端这格有默认值（`by: str = Field(default="unknown")`，workflow_api.py:95），
+   *  所以"没填"应当是不发这个键，而不是前端替人填一个角色名。 */
+  by?: string
   comment: string
 }
 

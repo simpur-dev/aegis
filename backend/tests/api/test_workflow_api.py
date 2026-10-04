@@ -179,6 +179,39 @@ async def test_节点类型出口与后端注册表同源(container: PlatformCon
         assert body["count"] == len(names) == 16, f"节点类型数变了（{len(names)}），前端镜像与文档都要跟着改"
 
 
+@pytest.mark.asyncio
+async def test_核签台账的签字人来自提交者而不是接口默认(container: PlatformContainer) -> None:
+    """平台没有登录态：`by` 只能是签字的人自己写的字。
+
+    前端此前把它固定写成"值班指挥员"，于是台账上那句"谁签的"从来不是一条事实，而是一句套话。
+    接口这边要钉住两件事：填了就用填的，没填就落到 `unknown`（那是"没人署名"的样子，
+    不是某个角色的名字）。
+    """
+    async with _client(container) as client:
+        started = await client.post("/api/v1/workflow/instances", json={"workflow_name": "人工上报核签流程", "payload": {}})
+        assert started.status_code == 200, started.text
+        instance_id = started.json()["instance_id"]
+
+        anonymous = await client.post(
+            f"/api/v1/workflow/instances/{instance_id}/nodes/review/decision",
+            json={"choice": "approve", "comment": ""},
+        )
+        assert anonymous.status_code == 200, anonymous.text
+        review = next(row for row in anonymous.json()["nodes"] if row["node_id"] == "review")
+        assert review["output"]["decision"]["by"] == "unknown", "没署名就不能凭空有个名字"
+
+        second = await client.post("/api/v1/workflow/instances", json={"workflow_name": "人工上报核签流程", "payload": {}})
+        second_id = second.json()["instance_id"]
+        named = await client.post(
+            f"/api/v1/workflow/instances/{second_id}/nodes/review/decision",
+            json={"choice": "adjust", "by": "巡护员扎西", "comment": "改判滑坡"},
+        )
+        assert named.status_code == 200, named.text
+        signed = next(row for row in named.json()["nodes"] if row["node_id"] == "review")
+        assert signed["output"]["decision"]["by"] == "巡护员扎西", "写进去的名字要原样留在台账里"
+        assert signed["output"]["decision"]["comment"] == "改判滑坡"
+
+
 async def _copy_of_builtin(client: httpx.AsyncClient, tag: str) -> str:
     """借一份内置定义的节点/连线建副本：省得在测试里重抄图，图一变就维护不住。"""
     listed = (await client.get("/api/v1/workflow/definitions")).json()["items"]

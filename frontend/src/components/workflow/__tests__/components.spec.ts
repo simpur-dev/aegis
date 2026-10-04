@@ -449,7 +449,103 @@ describe('检查器与运行中操作', () => {
     expect(adjust).toBeDefined()
     expect(adjust?.attributes('disabled')).toBeUndefined()
     await adjust?.trigger('click')
-    expect(vi.mocked(submit).mock.calls).toEqual([['review_1', 'adjust', '']])
+    expect(vi.mocked(submit).mock.calls).toEqual([['review_1', 'adjust', '', '']])
+  })
+
+  /**
+   * 真机实测（wfi_53cfe5b1d5eb）：签"核签更正"并写了批注，接口台账里全
+   * （`output.decision` = 选项 + 签字人 + 批注），而页面上一个字都不显示——
+   * 节点卡还是那句提问，运行态面板还是"等待人工决策"。这套流程的说明写着
+   * "结果留痕…供阈值标定回看"，回看的人在自己脸上看不到自己签了什么。
+   */
+  it('签过的决策在运行态面板里读得回来：选项、签字人、批注', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust', 'reject'] } }
+    store.addNode(review)
+    store.select('review_1')
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456789ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'succeeded',
+      error: null,
+      nodes: [
+        {
+          node_id: 'review_1',
+          type: 'human_review',
+          state: 'succeeded',
+          attempts: 1,
+          schedule_latency_ms: 1,
+          duration_ms: 2,
+          output: { decision: { choice: 'adjust', by: '巡护员扎西', comment: '实际是坡面裂缝，改判滑坡' }, choice: 'adjust' },
+          error: null,
+          notes: [],
+        },
+      ],
+    }
+    const trace = mount(RuntimeActions, { props: { node: review } }).find('[data-testid="decision-trace"]')
+    expect(trace.exists()).toBe(true)
+    expect(trace.text()).toContain('核签更正（adjust）')
+    expect(trace.text()).toContain('巡护员扎西')
+    expect(trace.text()).toContain('实际是坡面裂缝，改判滑坡')
+  })
+
+  it('台账里的签字人是 unknown 时，页面不替它扮一个角色', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve'] } }
+    store.addNode(review)
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456789ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'succeeded',
+      error: null,
+      nodes: [
+        {
+          node_id: 'review_1',
+          type: 'human_review',
+          state: 'succeeded',
+          attempts: 1,
+          schedule_latency_ms: 1,
+          duration_ms: 2,
+          output: { decision: { choice: 'approve', by: 'unknown', comment: '' } },
+          error: null,
+          notes: [],
+        },
+      ],
+    }
+    const trace = mount(RuntimeActions, { props: { node: review } }).find('[data-testid="decision-trace"]').text()
+    expect(trace).toContain('未填（台账记为 unknown）')
+    expect(trace).toContain('（无批注）')
+  })
+
+  /** 没签过的节点不给留痕行；签字人那一格写进提交载荷（不填由 store 侧省略该键）。 */
+  it('签字人填了才进载荷，未签的节点不显示留痕行', async () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'reject'] } }
+    store.addNode(review)
+    store.select('review_1')
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456789ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'waiting',
+      error: null,
+      nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
+    }
+    const submitted = vi.spyOn(store, 'submitDecision').mockResolvedValue(true)
+    const wrapper = mount(RuntimeActions, { props: { node: review } })
+    expect(wrapper.find('[data-testid="decision-trace"]').exists(), '还没签，不该凭空冒出一行留痕').toBe(false)
+    await wrapper.find('[data-testid="decision-signer"]').setValue('值班员李四')
+    await wrapper.findAll('button').find((b) => b.text() === '核签通过（approve）')?.trigger('click')
+    expect(submitted.mock.calls).toEqual([['review_1', 'approve', '', '值班员李四']])
+    submitted.mockRestore()
   })
 
   /** 决策候选为空（引擎未登记 options，例如失败转人工）时退化为自由文本输入。 */

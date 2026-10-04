@@ -22,6 +22,7 @@ import {
   MAX_EDGES,
   MAX_NODE_NAME_CHARS,
   MAX_NODES,
+  MAX_SIGNER_CHARS,
   MIN_DEFINITION_NAME_CHARS,
   NODE_ID_PATTERN,
   NODE_TYPE_PATTERN,
@@ -97,6 +98,8 @@ describe('画布取值域与后端一致', () => {
     expect(intOf(choice, 'min_length')).toBe(1)
     expect(MAX_CHOICE_CHARS).toBe(intOf(choice, 'max_length'))
     expect(MAX_DECISION_COMMENT_CHARS).toBe(intOf(fieldLine(API, 'DecisionInput', 'comment'), 'max_length'))
+    // 签字人这一格是"由签字的人自己填"，长度界必须跟后端同一条
+    expect(MAX_SIGNER_CHARS).toBe(intOf(fieldLine(API, 'DecisionInput', 'by'), 'max_length'))
   })
 
   it('流程名与说明的长度界取自 DefinitionInput', () => {

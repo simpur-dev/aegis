@@ -246,6 +246,8 @@ export const MAX_NODE_NAME_CHARS = 64
 export const MAX_CHOICE_CHARS = 32
 /** 核签意见的上界（DecisionInput.comment max_length）。 */
 export const MAX_DECISION_COMMENT_CHARS = 512
+/** 签字人的上界（DecisionInput.by max_length）。平台没有登录态，这一格由签字的人自己填。 */
+export const MAX_SIGNER_CHARS = 64
 
 const LAYER_GAP_X = 280
 const NODE_GAP_Y = 132

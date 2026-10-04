@@ -7,7 +7,7 @@ import { message } from 'ant-design-vue'
 import { computed, ref } from 'vue'
 
 import { useWorkflowStore } from '@/stores/workflow'
-import { MAX_CHOICE_CHARS, MAX_DECISION_COMMENT_CHARS, nextAvailableId, stateStyle, type NodeDef, type NodeType } from '@/utils/graph'
+import { MAX_CHOICE_CHARS, MAX_DECISION_COMMENT_CHARS, MAX_SIGNER_CHARS, nextAvailableId, stateStyle, type NodeDef, type NodeType } from '@/utils/graph'
 
 import { createNodeDef, NODE_META, PALETTE_GROUPS } from './registry'
 
@@ -24,6 +24,29 @@ const comment = ref('')
 const reason = ref('')
 const customChoice = ref('')
 const insertType = ref<NodeType>('notify')
+/** 签字人：平台没有登录态，只能由签的人自己写；留空就不发这个键（见 store.submitDecision）。 */
+const signer = ref('')
+
+/**
+ * 签完之后的留痕。
+ *
+ * 真机测过：签"核签更正"并写了批注，接口台账里全（`output.decision` = 选项 + 签字人 + 批注），
+ * 而页面上一个字都不显示——节点卡还是那句提问，面板还是"等待人工决策"。
+ * 这套流程的说明写着"结果留痕…供阈值标定回看"，回看的人在自己脸上看不到自己签了什么。
+ */
+const signed = computed(() => {
+  const decision = (run.value?.output as { decision?: { choice?: string; by?: string; comment?: string } } | undefined)?.decision
+  if (decision === undefined) return null
+  const choice = decision.choice
+  if (typeof choice !== 'string' || choice === '') return null
+  const by = typeof decision.by === 'string' ? decision.by : ''
+  const note = typeof decision.comment === 'string' ? decision.comment : ''
+  return {
+    choice,
+    who: by === '' || by === 'unknown' ? '未填（台账记为 unknown）' : by,
+    note: note === '' ? '（无批注）' : note,
+  }
+})
 
 /**
  * 决策按钮的中文标签：候选值由定义里的 options 决定（templates.py:309 是 approve/adjust/reject），
@@ -42,7 +65,7 @@ function optionLabel(option: string): string {
 }
 
 function submit(choice: string): void {
-  void store.submitDecision(props.node.node_id, choice, comment.value)
+  void store.submitDecision(props.node.node_id, choice, comment.value, signer.value)
   comment.value = ''
 }
 
@@ -85,6 +108,12 @@ async function insertAfter(): Promise<void> {
       <li v-for="(note, index) in run.notes.slice(-3)" :key="index">{{ note }}</li>
     </ul>
 
+    <!-- 签过的决策必须看得见：接口的 output.decision 里有选项、签字人与批注，
+         而此前页面上一个字都不显示——节点卡还是那句提问，面板还是"等待人工决策" -->
+    <p v-if="signed !== null" class="wf-runtime__signed" data-testid="decision-trace">
+      已签：{{ optionLabel(signed.choice) }} ｜ 签字人 {{ signed.who }} ｜ 批注 {{ signed.note }}
+    </p>
+
     <div class="wf-runtime__row">
       <button type="button" class="wf-runtime__button" :disabled="!store.canPatchRuntime(node.node_id)" @click="pushConfig">
         以当前参数下发改参
@@ -117,6 +146,16 @@ async function insertAfter(): Promise<void> {
       插入会重接本节点原出边；引擎不会在插入瞬间驱动新节点（engine.py:547-569），故仅在实例未终态时开放。
     </span>
 
+    <div class="wf-runtime__row">
+      <input
+        v-model="signer"
+        class="wf-runtime__input"
+        type="text"
+        placeholder="签字人（写谁就是谁；不填台账记 unknown）"
+        :maxlength="MAX_SIGNER_CHARS"
+        data-testid="decision-signer"
+      />
+    </div>
     <div class="wf-runtime__row">
       <input v-model="comment" class="wf-runtime__input" type="text" placeholder="核签意见（可选）" :maxlength="MAX_DECISION_COMMENT_CHARS" />
     </div>
@@ -171,6 +210,11 @@ async function insertAfter(): Promise<void> {
 .wf-runtime__notes {
   margin: 0;
   color: #8c8c8c;
+  font-size: 11px;
+}
+.wf-runtime__signed {
+  margin: 0;
+  color: #237804;
   font-size: 11px;
 }
 .wf-runtime__error {
