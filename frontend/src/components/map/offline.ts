@@ -73,6 +73,9 @@ export interface OfflineMachine {
   at: number | null
 }
 
+/** 还没探过测的时候面板该说什么：不能替现场断言"哪一路缺位"。 */
+export const NOT_PROBED_YET = '尚未探测源可用性，等待第一轮结果'
+
 export type OfflineEvent =
   | { type: 'browser_offline'; at?: number }
   | { type: 'browser_online'; at?: number }
@@ -84,8 +87,8 @@ export const FALLBACK_REASONS: Record<NetworkStatus, string> = {
   offline: '实时数据与本地底图都不可用，仅显示文字清单',
 }
 
-export function initialMachine(status: NetworkStatus = 'degraded'): OfflineMachine {
-  return { status, pendingStatus: null, pendingSamples: 0, reason: FALLBACK_REASONS[status], at: null }
+export function initialMachine(status: NetworkStatus = 'degraded', reason: string = FALLBACK_REASONS[status]): OfflineMachine {
+  return { status, pendingStatus: null, pendingSamples: 0, reason, at: null }
 }
 
 /** 接受一个探针结论即视为"回升计数"作废：中途来一次同档/更差档的探针，升档确认必须从头数。 */
@@ -112,14 +115,25 @@ export function reduceOffline(machine: OfflineMachine, event: OfflineEvent): Off
   if (severityOf(target) >= severityOf(machine.status)) {
     return adopt(machine, target, reasonFor(target, event.facts), at)
   }
-  if (machine.pendingStatus === target) {
-    const samples = machine.pendingSamples + 1
-    if (samples >= RECOVERY_SAMPLES) {
-      return adopt(machine, target, reasonFor(target, event.facts), at)
-    }
-    return { ...machine, pendingStatus: target, pendingSamples: samples, reason: reasonFor(target, event.facts), at }
+  const samples = machine.pendingStatus === target ? machine.pendingSamples + 1 : 1
+  if (samples >= RECOVERY_SAMPLES) {
+    return adopt(machine, target, reasonFor(target, event.facts), at)
   }
-  return { ...machine, pendingStatus: target, pendingSamples: 1, reason: reasonFor(target, event.facts), at }
+  /**
+   * 升档还在数样本：状态没变，文案也不能先变。
+   *
+   * 这里曾经写 `reasonFor(target, …)`，于是真机面板上同时出现"降级运行"的标签和
+   * "后端 / 底图 / 地形三路均可用"的说明——两行各自都没错，合在一起是错的。
+   * 待确认期间只说"当前仍按 X 显示、正在确认 Y、还差几次"：不复述目标档的结论，
+   * 也不复述当前档的那句"缺哪一路"（这轮探针恰恰没发现缺，复述就是另一句假话）。
+   */
+  return {
+    ...machine,
+    pendingStatus: target,
+    pendingSamples: samples,
+    reason: `当前仍按「${NETWORK_LABELS[machine.status]}」显示；探针已连续 ${samples}/${RECOVERY_SAMPLES} 次指向「${NETWORK_LABELS[target]}」，确认后才切档`,
+    at,
+  }
 }
 
 function reasonFor(status: NetworkStatus, facts: SourceFacts): string {

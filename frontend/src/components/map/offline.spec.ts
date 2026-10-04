@@ -8,9 +8,12 @@ import type { ProbeFetch, ProbeTargets, SourceFacts } from './offline'
 import {
   classifyFacts,
   collectFacts,
+  FALLBACK_REASONS,
   initialMachine,
   isHtmlResponse,
   isLocalAssetUrl,
+  NETWORK_LABELS,
+  NOT_PROBED_YET,
   PROBE_TIMEOUT_MS,
   probeSource,
   reduceOffline,
@@ -87,6 +90,33 @@ describe('状态机转移：降档立即、升档要连续确认', () => {
     machine = reduceOffline(machine, { type: 'probe', facts: facts() })
     expect(machine.status).toBe('online')
     expect(machine.pendingSamples).toBe(0)
+  })
+
+  /**
+   * 待确认期间，说明不许先切档。
+   *
+   * 真机上出现过"降级运行 · 缩放 9"配着一行"后端 / 底图 / 地形三路均可用"：
+   * 标签是旧档、说明是目标档，两行各自都没错，合在一起是把还没确认的事说成已经发生。
+   * 升档要连续两次探针，这中间读面板的人必须看到"当前仍是降级，正在确认什么"。
+   */
+  it('升档待确认时说明描述当前档，并写明在等什么', () => {
+    let machine = reduceOffline(initialMachine('degraded'), { type: 'probe', facts: facts() })
+    expect(machine.status).toBe('degraded')
+    expect(machine.reason).not.toContain(FALLBACK_REASONS.online)
+    // 也不许复述当前档那句"缺哪一路"：这轮探针恰恰没发现缺
+    expect(machine.reason).not.toContain(FALLBACK_REASONS.degraded)
+    expect(machine.reason).toContain(`1/${RECOVERY_SAMPLES}`)
+    expect(machine.reason).toContain('当前仍按「降级运行」')
+    expect(machine.reason).toContain(NETWORK_LABELS.online)
+    machine = reduceOffline(machine, { type: 'probe', facts: facts() })
+    expect(machine.status).toBe('online')
+    expect(machine.reason).toBe(FALLBACK_REASONS.online)
+  })
+
+  it('开局没探测过就不许下"缺哪一路"的结论', () => {
+    const machine = initialMachine('degraded', NOT_PROBED_YET)
+    expect(machine.reason).toBe(NOT_PROBED_YET)
+    expect(machine.reason).not.toContain('缺')
   })
 
   it('恢复过程中一次失败探针会把确认计数清零', () => {

@@ -29,7 +29,7 @@ import {
   TIBET_RECTANGLE,
   toUnlocatedItems,
 } from '@/components/map/entities'
-import { collectFacts, initialMachine, reduceOffline, tileUrlForTemplate } from '@/components/map/offline'
+import { collectFacts, initialMachine, NOT_PROBED_YET, reduceOffline, tileUrlForTemplate } from '@/components/map/offline'
 import type { OfflineMachine } from '@/components/map/offline'
 import MapPanel from '@/components/map/MapPanel.vue'
 import { terrainProbeUrl } from '@/components/map/terrain'
@@ -56,7 +56,9 @@ const loading = ref(false)
 const autoRefresh = ref(true)
 const regionCode = ref<string>('')
 const notes = ref<string[]>([])
-const machine = ref<OfflineMachine>(initialMachine())
+// 开局还没探过测：状态按保守的"降级"显示，但说明必须写"尚未探测"，
+// 不能一上来就替现场断言"至少一路缺位"——那是一句没有证据的结论。
+const machine = ref<OfflineMachine>(initialMachine('degraded', NOT_PROBED_YET))
 const bbox = ref<BBox | null>(null)
 const zoom = ref(0)
 const visibility = ref<LayerVisibility>({ ...DEFAULT_LAYER_VISIBILITY })
