@@ -181,6 +181,28 @@ const CONFIRM_STATUS_LABELS: Record<ConfirmResultDto['status'], string> = {
   failed: '执行失败',
 }
 
+/**
+ * 执行类动作的闭环：把能跟进的号带回来。
+ *
+ * `/confirm` 的后端回执其实整份结果都带着（`assistant.py` 的 `result`：上报回执里有链路、
+ * 可能还有预警与核签工单），但页面上此前只剩一句"已执行 create.report"——
+ * 值班员经助手报上去一条险情，手里一个号都没有，要去别的页翻着找自己刚报的东西。
+ */
+function executionHandles(result: ConfirmResultDto): string {
+  const raw = JSON.stringify(result.result ?? {})
+  const found: string[] = []
+  const patterns: ReadonlyArray<readonly [string, RegExp]> = [
+    ['链路', /trc_[0-9a-f]{6,}/],
+    ['预警', /wrn_[0-9a-f]{6,}/],
+    ['工单', /wfi_[0-9a-f]{6,}/],
+  ]
+  for (const [label, pattern] of patterns) {
+    const hit = raw.match(pattern)
+    if (hit !== null) found.push(`${label} ${hit[0]}`)
+  }
+  return found.length > 0 ? `｜ ${found.join(' ｜ ')}` : '｜ 后端没回可跟进的号，请到"预警发布"或"流程编排"页核对是否真的落地'
+}
+
 function decisionText(actionId: string): string {
   const decision = decisions[actionId]
   if (!decision) return ''
@@ -189,7 +211,7 @@ function decisionText(actionId: string): string {
   if (decision.kind === 'error') return `确认请求失败：${decision.message}`
   const result = decision.result
   const label = CONFIRM_STATUS_LABELS[result.status] ?? result.status
-  if (result.status === 'executed') return `${label} ${result.action ?? ''}（后端回执 ${result.status}）`.trim()
+  if (result.status === 'executed') return `${label} ${result.action ?? ''}（后端回执 ${result.status}）${executionHandles(result)}`.trim()
   return `${label}：${result.reason ?? result.error ?? '后端未给出原因'}`
 }
 

@@ -363,6 +363,40 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
     expect(byTestid(wrapper, 'decision').text()).toContain('create.report')
   })
 
+  /**
+   * 后端 /confirm 把整份执行结果都带回来了（上报回执里有链路、可能还有预警与工单），
+   * 页面上此前只剩"已执行 create.report"——经助手报上去一条险情，手里一个号都没有。
+   */
+  it('执行成功要把能跟进的号带回来', async () => {
+    const wrapper = await renderWithProposal()
+    mockedConfirm.mockResolvedValue({
+      status: 'executed',
+      action_id: 'act_abc123',
+      action: 'create.report',
+      result: {
+        report: {
+          trace_id: 'trc_0123456789abcdef',
+          warning: { warning_id: 'wrn_fedcba9876543210' },
+          review: { instance_id: 'wfi_abcdef012345' },
+        },
+      },
+    })
+    await wrapper.find('[data-testid="confirm-act_abc123"]').trigger('click')
+    await flushPromises()
+    const decision = byTestid(wrapper, 'decision').text()
+    expect(decision).toContain('trc_0123456789abcdef')
+    expect(decision).toContain('wrn_fedcba9876543210')
+    expect(decision).toContain('wfi_abcdef012345')
+  })
+
+  it('后端没回号时明说没回，而不是只写"已执行"', async () => {
+    const wrapper = await renderWithProposal()
+    mockedConfirm.mockResolvedValue({ status: 'executed', action_id: 'act_abc123', action: 'run.drill', result: {} })
+    await wrapper.find('[data-testid="confirm-act_abc123"]').trigger('click')
+    await flushPromises()
+    expect(byTestid(wrapper, 'decision').text()).toContain('没回可跟进的号')
+  })
+
   it.each([
     ['rejected', '动作已处置（executed），不重复执行', '已拒绝'],
     ['expired', '确认超时，动作已过期', '已过期'],
