@@ -11,6 +11,7 @@
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios'
 
 import type { EdgeDef, JsonValue, NodeDef, NodeState, OnFailure, RetryPolicy, WorkflowDef } from '@/utils/graph'
+import { describeValidationDetail } from '@/utils/validationDetail'
 
 const http = axios.create({ baseURL: '/', timeout: 20_000 })
 
@@ -32,33 +33,35 @@ export function isWorkflowValidationError(error: unknown): boolean {
 }
 
 /**
+ * 画布上这些格子的叫法，用来给 422 里的字段名配中文。
+ *
+ * 只给**单层**字段配：`nodes.0.config.limit` 这种路径保持原形——下标（第几个节点）
+ * 正是要看的信息，翻译反而会把定位线索绕晕。
+ */
+export const WORKFLOW_FIELD_LABELS: Record<string, string> = {
+  name: '流程名称',
+  description: '流程说明',
+  nodes: '节点清单',
+  edges: '连线清单',
+  workflow_id: '流程号',
+  choice: '决策选项',
+  by: '决策人',
+  comment: '决策备注',
+  after: '插入位置节点号',
+}
+
+/**
  * 把后端的 detail 还原成人能读的一句话。
  *
  * 两种形状都得处理：`WorkflowValidationError` 的 400 发的是字符串，而 FastAPI 的 422 发的是
  * 数组 `[{loc, msg, type}]`。此前这里对所有东西都 `String(detail)`，于是 422 在界面上显示成
  * 一行 `HTTP 422 [object Object]`——恰好是值班员最需要知道"哪个字段不对"的那一次。
+ *
+ * 拼装逻辑已收到 `@/utils/validationDetail`（上报页、助手页同一份）：
+ * 三个出口各写一遍时，同一个错误在三个页面上长成三种样子，改一处漏两处。
  */
 export function describeDetail(detail: unknown): string {
-  if (typeof detail === 'string') return detail
-  if (typeof detail === 'number' || typeof detail === 'boolean') return String(detail)
-  if (Array.isArray(detail)) {
-    return detail
-      .map((item) => describeDetail(item))
-      .filter((text) => text !== '')
-      .join('；')
-  }
-  if (detail !== null && typeof detail === 'object') {
-    const record = detail as Record<string, unknown>
-    if ('detail' in record) return describeDetail(record.detail)
-    const message = typeof record.msg === 'string' ? record.msg : ''
-    // `loc` 首段恒为 body/query/path，对人没信息量；下标要留着（第几个节点写错了正是要看的东西）
-    const location = Array.isArray(record.loc) ? record.loc.map(String).filter((seg) => seg !== 'body').join('.') : ''
-    if (message !== '') return location === '' ? message : `${location}：${message}`
-    return Object.entries(record)
-      .map(([key, value]) => `${key}=${describeDetail(value)}`)
-      .join(' ')
-  }
-  return ''
+  return describeValidationDetail(detail, WORKFLOW_FIELD_LABELS)
 }
 
 async function dispatch<T>(instance: AxiosInstance, config: AxiosRequestConfig): Promise<T> {

@@ -21,6 +21,7 @@
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios'
 
 import type { HazardType, RiskLevel, StageResult } from './types'
+import { describeValidationDetail } from '@/utils/validationDetail'
 
 const http = axios.create({ baseURL: '/', timeout: 30_000 })
 
@@ -65,32 +66,12 @@ export const REPORT_FIELD_LABELS: Record<string, string> = {
   lon: '经度',
   scenario: '演练场景',
   ticks: '演练轮数',
-  message: '消息',
-  session_id: '会话号',
-  action_id: '动作号',
-}
-
-function fieldLabel(segment: string): string {
-  const label = REPORT_FIELD_LABELS[segment]
-  return label === undefined ? segment : `${label}（${segment}）`
 }
 
 export function describeValidationError(error: unknown): string {
   if (!(error instanceof ReportApiError) || error.status !== 422) return ''
-  const detail = (error.detail as Record<string, unknown> | undefined)?.detail
-  if (typeof detail === 'string') return detail
-  if (!Array.isArray(detail)) return error.message
-  const parts = detail.map((item) => {
-    const record = (item ?? {}) as Record<string, unknown>
-    const segments = Array.isArray(record.loc) ? record.loc.map(String).filter((seg) => seg !== 'body') : []
-    const msg = typeof record.msg === 'string' ? record.msg : String(item)
-    if (segments.length === 0) return msg
-    const head = segments[0] as string
-    const rest = segments.slice(1).join('.')
-    const named = rest === '' ? fieldLabel(head) : `${head}.${rest}`
-    return `${named}：${msg}`
-  })
-  return parts.filter(Boolean).join('；')
+  const text = describeValidationDetail(error.detail, REPORT_FIELD_LABELS)
+  return text === '' ? error.message : text
 }
 
 async function dispatch<T>(instance: AxiosInstance, config: AxiosRequestConfig): Promise<T> {

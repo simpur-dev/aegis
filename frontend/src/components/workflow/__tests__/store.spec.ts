@@ -261,13 +261,13 @@ describe('stores/workflow 定义编辑', () => {
     const error = new WorkflowApiError(422, 'Request failed with status code 422', {
       detail: [{ loc: ['body', 'name'], msg: 'String should have at least 1 character', type: 'string_too_short' }],
     })
-    expect(store.describeFailure(error)).toBe('HTTP 422 name：String should have at least 1 character')
+    expect(store.describeFailure(error)).toBe('HTTP 422：流程名称（name）：String should have at least 1 character')
   })
 
   it('detail 完全缺失时退回 axios 自己的消息，不留空话', () => {
     const store = createWorkflowStore(fakeClient())()
     const error = new WorkflowApiError(502, 'Request failed with status code 502', undefined)
-    expect(store.describeFailure(error)).toBe('HTTP 502 Request failed with status code 502')
+    expect(store.describeFailure(error)).toBe('HTTP 502：Request failed with status code 502')
   })
 })
 

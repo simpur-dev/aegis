@@ -236,7 +236,9 @@ describe('describeDetail：后端 detail 还原成人读的一句话', () => {
       ],
     })
     expect(text).toContain('nodes.0.config.limit：Input should be a valid integer')
-    expect(text).toContain('name：String should have at least 1 character')
+    expect(text).toContain('流程名称（name）：String should have at least 1 character')
+    // 带下标的路径不配中文标签：`节点清单（nodes）.0...` 会把定位线索绕成三段
+    expect(text).not.toContain('节点清单（nodes）')
     expect(text).not.toContain('[object Object]')
   })
 
