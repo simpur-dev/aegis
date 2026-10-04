@@ -15,7 +15,7 @@ import { message } from 'ant-design-vue'
 import { computed, reactive, ref } from 'vue'
 
 import type { LegFindingDto, ReportDraftDto, ReportOutcomeDto } from '@/api/reports'
-import { describeValidationError, isParserUnavailable, legSourceLabel, reportsApi, toReportBody } from '@/api/reports'
+import { describeValidationError, isParserUnavailable, legSourceLabel, preflightReport, REPORT_LIMITS, reportsApi, toReportBody } from '@/api/reports'
 import { HAZARD_LABELS, RISK_LABELS } from '@/api/types'
 
 const props = withDefaults(
@@ -58,9 +58,11 @@ function legLevel(finding: LegFindingDto): string {
 
 async function submit(): Promise<void> {
   const body = toReportBody(form)
-  // 空正文不发请求：省一次往返，更重要的是把原因说在这—格上，而不是等后端回一串英文
-  if (body.note === '') {
-    backendError.value = '险情描述去掉空格后是空的：这一条没有发出去（后端要求 4..2000 字）'
+  // 空正文、超长、区划代码写成小写——都在发出前按后端口径拦一次：
+  // 省一个来回，更重要的是把原因说在这一格上，而不是等后端回一串英文。
+  const blocked = preflightReport(body)
+  if (blocked !== '') {
+    backendError.value = blocked
     return
   }
   submitting.value = true
@@ -108,30 +110,73 @@ function reset(): void {
       <a-row :gutter="12">
         <a-col :span="12">
           <a-form-item label="上报人（2..64 字，后端校验）">
-            <a-input v-model:value="form.reporter" placeholder="如：巡护员扎西" data-testid="field-reporter" />
+            <a-input
+              v-model:value="form.reporter"
+              :maxlength="REPORT_LIMITS.reporter.max"
+              placeholder="如：巡护员扎西"
+              data-testid="field-reporter"
+            />
           </a-form-item>
         </a-col>
         <a-col :span="12">
           <a-form-item label="区划代码（6..24 位大写字母/数字）">
-            <a-input v-model:value="form.region_code" placeholder="如：540121" data-testid="field-region" />
+            <a-input
+              v-model:value="form.region_code"
+              :maxlength="24"
+              placeholder="如：540121"
+              data-testid="field-region"
+            />
           </a-form-item>
         </a-col>
       </a-row>
       <a-form-item label="灾种提示（可空，仅辅助规则词表）">
-        <a-input v-model:value="form.hazard_hint" placeholder="如：泥石流" data-testid="field-hazard-hint" />
+        <a-input
+          v-model:value="form.hazard_hint"
+          :maxlength="REPORT_LIMITS.hazard_hint.max"
+          placeholder="如：泥石流"
+          data-testid="field-hazard-hint"
+        />
       </a-form-item>
       <a-form-item label="险情描述（4..2000 字，进三路融合解析）">
-        <a-textarea v-model:value="form.note" :rows="3" placeholder="如：24 小时累计降雨 95 毫米，沟道泥位抬升 1.2 米" data-testid="field-note" />
+        <a-textarea
+          v-model:value="form.note"
+          :rows="3"
+          :maxlength="REPORT_LIMITS.note.max"
+          placeholder="如：24 小时累计降雨 95 毫米，沟道泥位抬升 1.2 米"
+          data-testid="field-note"
+        />
+        <!-- 计数条自己渲染：正文是唯一可能写很长的格子，光有标题里那句"4..2000 字"看不见余量 -->
+        <p
+          class="report-note__count"
+          :class="{ 'report-note__count--full': form.note.length >= REPORT_LIMITS.note.max }"
+          data-testid="note-count"
+        >
+          {{ form.note.length }} / {{ REPORT_LIMITS.note.max }} 字{{ form.note.length >= REPORT_LIMITS.note.max ? '（再长就不收了）' : '' }}
+        </p>
       </a-form-item>
       <a-row :gutter="12">
         <a-col :span="12">
           <a-form-item label="纬度（可选，只进证据链不改判据）">
-            <a-input-number v-model:value="form.lat" style="width: 100%" :min="-90" :max="90" :step="0.000001" data-testid="field-lat" />
+            <a-input-number
+              v-model:value="form.lat"
+              style="width: 100%"
+              :min="REPORT_LIMITS.lat.min"
+              :max="REPORT_LIMITS.lat.max"
+              :step="0.000001"
+              data-testid="field-lat"
+            />
           </a-form-item>
         </a-col>
         <a-col :span="12">
           <a-form-item label="经度（可选）">
-            <a-input-number v-model:value="form.lon" style="width: 100%" :min="-180" :max="180" :step="0.000001" data-testid="field-lon" />
+            <a-input-number
+              v-model:value="form.lon"
+              style="width: 100%"
+              :min="REPORT_LIMITS.lon.min"
+              :max="REPORT_LIMITS.lon.max"
+              :step="0.000001"
+              data-testid="field-lon"
+            />
           </a-form-item>
         </a-col>
       </a-row>
@@ -203,6 +248,15 @@ function reset(): void {
   color: #d46b08;
   font-size: 12px;
   margin-bottom: 8px;
+}
+.report-note__count {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  margin: 2px 0 0;
+}
+/* 撞到上限时后面再敲的字是被丢掉的，这一格要自己说得出"满了" */
+.report-note__count--full {
+  color: #d46b08;
 }
 .backend-error {
   color: #cf1322;

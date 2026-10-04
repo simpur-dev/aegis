@@ -15,6 +15,8 @@ import { readRepoFile } from '@/testing/repoSource'
 import {
   MAX_ATTEMPTS,
   MAX_BACKOFF_MS,
+  MAX_CHOICE_CHARS,
+  MAX_DECISION_COMMENT_CHARS,
   MAX_DEFINITION_NAME_CHARS,
   MAX_DESCRIPTION_CHARS,
   MAX_EDGES,
@@ -46,7 +48,8 @@ function fieldLine(source: string, className: string, field: string): string {
 }
 
 function intOf(line: string, key: 'ge' | 'le' | 'min_length' | 'max_length'): number {
-  const match = line.match(new RegExp(`${key}=(\\d[\\d_]*)`))
+  // 允许负号：经纬度那一类界是负数，不认就会把"后端写了"读成"后端没写"
+  const match = line.match(new RegExp(`${key}=(-?\\d[\\d_]*)`))
   if (match === null) throw new Error(`那行没写 ${key}：${line.trim()}`)
   return Number(match[1]?.replace(/_/g, ''))
 }
@@ -85,10 +88,23 @@ describe('画布取值域与后端一致', () => {
     expect(MAX_NODE_NAME_CHARS).toBe(intOf(fieldLine(API, 'NodeInput', 'name'), 'max_length'))
   })
 
+  /**
+   * 决策那两格是签工单时真会敲的：后端把 choice 限到 32，界面上却让人填 40 字，
+   * 症状是"点了核签没反应，回来一条 422"。
+   */
+  it('决策值与核签意见的上界取自 DecisionInput', () => {
+    const choice = fieldLine(API, 'DecisionInput', 'choice')
+    expect(intOf(choice, 'min_length')).toBe(1)
+    expect(MAX_CHOICE_CHARS).toBe(intOf(choice, 'max_length'))
+    expect(MAX_DECISION_COMMENT_CHARS).toBe(intOf(fieldLine(API, 'DecisionInput', 'comment'), 'max_length'))
+  })
+
   it('流程名与说明的长度界取自 DefinitionInput', () => {
     const name = fieldLine(API, 'DefinitionInput', 'name')
     expect(MIN_DEFINITION_NAME_CHARS).toBe(intOf(name, 'min_length'))
     expect(MAX_DEFINITION_NAME_CHARS).toBe(intOf(name, 'max_length'))
     expect(MAX_DESCRIPTION_CHARS).toBe(intOf(fieldLine(API, 'DefinitionInput', 'description'), 'max_length'))
+    // 修订那格的说明与创建同一条口径，两处 maxlength 不能各自演化
+    expect(MAX_DESCRIPTION_CHARS).toBe(intOf(fieldLine(API, 'ReviseInput', 'description'), 'max_length'))
   })
 })

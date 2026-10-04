@@ -9,7 +9,7 @@ import { computed } from 'vue'
 import { confirmDiscardUnsaved } from './confirmDiscard'
 
 import { useWorkflowStore } from '@/stores/workflow'
-import { definitionStatusLabel, edgeId, type EdgeDef } from '@/utils/graph'
+import { definitionStatusLabel, edgeId, MAX_DEFINITION_NAME_CHARS, MAX_DESCRIPTION_CHARS, type EdgeDef } from '@/utils/graph'
 
 const store = useWorkflowStore()
 
@@ -59,11 +59,11 @@ function onDescription(event: Event): void {
     <h3 class="wf-def__title">工作流定义</h3>
     <label class="wf-def__row">
       <span>名称</span>
-      <input class="wf-def__input" type="text" :value="def.name" maxlength="64" @change="onName" />
+      <input class="wf-def__input" type="text" :value="def.name" :maxlength="MAX_DEFINITION_NAME_CHARS" @change="onName" />
     </label>
     <label class="wf-def__row">
       <span>描述</span>
-      <textarea class="wf-def__input" rows="2" :value="def.description" maxlength="512" @change="onDescription" />
+      <textarea class="wf-def__input" rows="2" :value="def.description" :maxlength="MAX_DESCRIPTION_CHARS" @change="onDescription" />
     </label>
     <p class="wf-def__identity">
       <code>{{ def.workflow_id === '' ? '未保存' : def.workflow_id }}</code>

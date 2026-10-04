@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReportOutcomeDto } from '@/api/reports'
-import { ReportApiError, reportsApi } from '@/api/reports'
+import { REPORT_LIMITS, ReportApiError, reportsApi } from '@/api/reports'
 import ReportForm from '@/components/reports/ReportForm.vue'
 
 vi.mock('@/api/reports', async (importOriginal) => {
@@ -276,23 +276,23 @@ describe('回执摊开三路融合的事实', () => {
 })
 
 describe('后端拒绝时读后端的话', () => {
+  /**
+   * 填的是本地放行、后端仍可能判死的形状：本地口径只挡"抄得到的那几条"（长度、模式、区间），
+   * 枚举与在册清单这类判据在后端，422 照样会回来——这条测的就是回来之后怎么说。
+   */
   it('422 显示后端点名的字段与原文，不换成前端自己的措辞', async () => {
     const wrapper = await renderForm()
-    await fill(wrapper, { 'field-reporter': '村', 'field-region': '5401', 'field-note': '短' })
+    await fill(wrapper, { 'field-reporter': '村民', 'field-region': '540121', 'field-hazard-hint': '泥石流', 'field-note': '沟道泥位抬升 1.2 米' })
     mockedSubmit.mockRejectedValue(
       new ReportApiError(422, 'Request failed with status code 422', {
-        detail: [
-          { loc: ['body', 'reporter'], msg: 'String should have at least 2 characters', type: 'string_too_short' },
-          { loc: ['body', 'region_code'], msg: "String does match '^[0-9A-Z]{6,24}$'", type: 'string_pattern_mismatch' },
-        ],
+        detail: [{ loc: ['body', 'hazard_hint'], msg: "Input should be 'debris_flow' or 'flood'", type: 'enum' }],
       }),
     )
     await byTestid(wrapper, 'report-submit').trigger('click')
     await flushPromises()
     const shown = byTestid(wrapper, 'report-error').text()
     // 规则原文照抄（那是后端口径），字段名换成页面上的叫法：值班员不必先做一次中英对照
-    expect(shown).toContain('上报人（reporter）：String should have at least 2 characters')
-    expect(shown).toContain("区划代码（region_code）：String does match '^[0-9A-Z]{6,24}$'")
+    expect(shown).toContain("灾种提示（hazard_hint）：Input should be 'debris_flow' or 'flood'")
     expect(byTestid(wrapper, 'report-outcome').exists()).toBe(false)
   })
 
@@ -320,6 +320,27 @@ describe('后端拒绝时读后端的话', () => {
     await flushPromises()
     expect(mockedSubmit).not.toHaveBeenCalled()
     expect(byTestid(wrapper, 'report-error').text()).toContain('没有发出去')
+  })
+
+  it('区划代码写成小写时不发请求，就地按后端口径说明', async () => {
+    const wrapper = await renderForm()
+    await fill(wrapper, { 'field-reporter': '村民', 'field-region': '54012a', 'field-note': '沟道泥位抬升' })
+    await byTestid(wrapper, 'report-submit').trigger('click')
+    await flushPromises()
+    expect(mockedSubmit).not.toHaveBeenCalled()
+    expect(byTestid(wrapper, 'report-error').text()).toContain('区划代码「54012a」')
+  })
+
+  /** 正文是唯一可能写很长的格子：标题里那句"4..2000 字"看不见余量，撞线要自己说。 */
+  it('正文字数条随输入变化，撞满上限时改口', async () => {
+    const wrapper = await renderForm()
+    expect(byTestid(wrapper, 'note-count').text()).toContain(`0 / ${REPORT_LIMITS.note.max}`)
+    await byTestid(wrapper, 'field-note').setValue('沟道泥位抬升')
+    expect(byTestid(wrapper, 'note-count').text()).toContain(`6 / ${REPORT_LIMITS.note.max}`)
+    await byTestid(wrapper, 'field-note').setValue('泥'.repeat(REPORT_LIMITS.note.max))
+    const full = byTestid(wrapper, 'note-count')
+    expect(full.text()).toContain('（再长就不收了）')
+    expect(full.classes()).toContain('report-note__count--full')
   })
 
   it('发出去的是裁过首尾空白的文本', async () => {

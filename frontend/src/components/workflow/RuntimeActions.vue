@@ -6,7 +6,7 @@
 import { computed, ref } from 'vue'
 
 import { useWorkflowStore } from '@/stores/workflow'
-import { nextAvailableId, stateStyle, type NodeDef, type NodeType } from '@/utils/graph'
+import { MAX_CHOICE_CHARS, MAX_DECISION_COMMENT_CHARS, nextAvailableId, stateStyle, type NodeDef, type NodeType } from '@/utils/graph'
 
 import { createNodeDef, NODE_META, PALETTE_GROUPS } from './registry'
 
@@ -110,7 +110,7 @@ function insertAfter(): void {
     </span>
 
     <div class="wf-runtime__row">
-      <input v-model="comment" class="wf-runtime__input" type="text" placeholder="核签意见（可选）" maxlength="512" />
+      <input v-model="comment" class="wf-runtime__input" type="text" placeholder="核签意见（可选）" :maxlength="MAX_DECISION_COMMENT_CHARS" />
     </div>
     <div v-if="options.length > 0" class="wf-runtime__decisions">
       <button
@@ -125,7 +125,7 @@ function insertAfter(): void {
       </button>
     </div>
     <div v-else class="wf-runtime__row">
-      <input v-model="customChoice" class="wf-runtime__input" type="text" placeholder="决策值" />
+      <input v-model="customChoice" class="wf-runtime__input" type="text" placeholder="决策值" :maxlength="MAX_CHOICE_CHARS" />
       <button
         type="button"
         class="wf-runtime__button"

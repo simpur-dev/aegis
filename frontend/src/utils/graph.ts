@@ -242,6 +242,10 @@ export const MIN_DEFINITION_NAME_CHARS = 2
 export const MAX_DEFINITION_NAME_CHARS = 64
 export const MAX_DESCRIPTION_CHARS = 512
 export const MAX_NODE_NAME_CHARS = 64
+/** 自定义决策值的上界（DecisionInput.choice：min 1 / max 32）。 */
+export const MAX_CHOICE_CHARS = 32
+/** 核签意见的上界（DecisionInput.comment max_length）。 */
+export const MAX_DECISION_COMMENT_CHARS = 512
 
 const LAYER_GAP_X = 280
 const NODE_GAP_Y = 132

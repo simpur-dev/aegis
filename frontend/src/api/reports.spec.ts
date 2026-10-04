@@ -18,8 +18,10 @@ import {
   isParserUnavailable,
   legSourceLabel,
   LEG_SOURCE_LABELS,
+  preflightReport,
   REPORT_ENDPOINT,
   REPORT_FIELD_LABELS,
+  REPORT_LIMITS,
   ReportApiError,
   toReportBody,
 } from './reports'
@@ -202,6 +204,57 @@ describe('错误外显：后端原文不许被翻译', () => {
     for (const field of fields) {
       expect(REPORT_FIELD_LABELS[field], `ReportIn.${field} 没有中文名，报错行会露出裸键名`).toBeTruthy()
     }
+  })
+
+  /**
+   * 表单标题里写着"2..64 字，后端校验"，那这些数就得真是那些数。
+   *
+   * 抄来的上限最坏的地方是悄悄过期：后端把正文从 2000 调到 800，前端还按 2000 放行，
+   * 症状是"贴着标题写的字数上报却总失败"。这里不写死期望值，直接读 `app.py` 的 `ReportIn`。
+   */
+  it('REPORT_LIMITS 与后端 ReportIn 逐条对账', () => {
+    const text = readRepoFile('backend', 'src', 'aegis', 'api', 'app.py')
+    const block = text.slice(text.indexOf('class ReportIn'), text.indexOf('def get_container'))
+    const line = (field: string): string => {
+      const match = block.match(new RegExp(`^[ \\t]+${field}: .*$`, 'm'))
+      if (match === null) throw new Error(`ReportIn 里没有 ${field} 这一格：口径变了，门禁要跟着改`)
+      return match[0]
+    }
+    const num = (field: string, key: 'ge' | 'le' | 'min_length' | 'max_length'): number => {
+      // 经纬度的界是负数（ge=-90），正则不认负号就会把这条门禁读成"后端没写"
+      const match = line(field).match(new RegExp(`${key}=(-?\\d[\\d_]*)`))
+      if (match === null) throw new Error(`ReportIn.${field} 那行没写 ${key}：${line(field).trim()}`)
+      return Number(match[1]?.replace(/_/g, ''))
+    }
+    expect(REPORT_LIMITS.reporter.min).toBe(num('reporter', 'min_length'))
+    expect(REPORT_LIMITS.reporter.max).toBe(num('reporter', 'max_length'))
+    expect(REPORT_LIMITS.note.min).toBe(num('note', 'min_length'))
+    expect(REPORT_LIMITS.note.max).toBe(num('note', 'max_length'))
+    expect(REPORT_LIMITS.hazard_hint.max).toBe(num('hazard_hint', 'max_length'))
+    expect(REPORT_LIMITS.lat.min).toBe(num('lat', 'ge'))
+    expect(REPORT_LIMITS.lat.max).toBe(num('lat', 'le'))
+    expect(REPORT_LIMITS.lon.min).toBe(num('lon', 'ge'))
+    expect(REPORT_LIMITS.lon.max).toBe(num('lon', 'le'))
+    expect(REPORT_LIMITS.region_code.pattern.source).toBe('^[0-9A-Z]{6,24}$')
+  })
+
+  /** 表单里的 maxlength / min / max 必须真读这份常量，否则对账通过而界面仍是硬编码。 */
+  it('上报表单的边界都挂在 REPORT_LIMITS 上，不是另一份抄本', () => {
+    const form = readRepoFile('frontend', 'src', 'components', 'reports', 'ReportForm.vue')
+    expect(form).toContain(':maxlength="REPORT_LIMITS.note.max"')
+    expect(form).toContain(':maxlength="REPORT_LIMITS.reporter.max"')
+    expect(form).toContain(':min="REPORT_LIMITS.lat.min"')
+    expect(form).toContain(':max="REPORT_LIMITS.lon.max"')
+  })
+
+  it('发出前按后端口径拦一次：空正文、短上报人、小写区划都到不了网络', () => {
+    expect(preflightReport(toReportBody({ reporter: '巡护员扎西', region_code: '540121', note: '沟道泥位抬升 1.2 米' }))).toBe('')
+    expect(preflightReport(toReportBody({ reporter: '巡护员扎西', region_code: '540121', note: '    ' }))).toContain('去掉空格后是空的')
+    expect(preflightReport(toReportBody({ reporter: '李', region_code: '540121', note: '沟道泥位抬升' }))).toContain('上报人「李」')
+    expect(preflightReport(toReportBody({ reporter: '巡护员扎西', region_code: '54012a', note: '沟道泥位抬升' }))).toContain('区划代码「54012a」')
+    expect(preflightReport(toReportBody({ reporter: '巡护员扎西', region_code: '540121', note: '泥'.repeat(2001) }))).toContain('是 2001 字')
+    expect(preflightReport(toReportBody({ reporter: '巡护员扎西', region_code: '540121', note: '沟道泥位抬升 1.2 米', lat: 91, lon: 92 }))).toContain('纬度 91')
+    expect(preflightReport(toReportBody({ reporter: '巡护员扎西', region_code: '540121', note: '沟道泥位抬升 1.2 米', lat: 30, lon: -181 }))).toContain('经度 -181')
   })
 
   it('嵌套 loc 保留路径形状，只给首段加中文', () => {

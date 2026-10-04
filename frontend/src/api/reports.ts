@@ -134,8 +134,56 @@ export function toReportBody(input: ReportDraftDto): ReportInputDto {
   return body
 }
 
-// ---------- 响应体 ----------
+/**
+ * 上报表单的取值域，逐条抄自后端 `ReportIn`（app.py:58-63）。
+ *
+ * 表单标题里本来就写着"2..64 字，后端校验"——写着上限却不拦住，等于让人敲完
+ * 七十个字再吃一次 422。数值不写死在测试里：`api/reports.spec.ts` 现读 app.py 比对。
+ */
+export const REPORT_LIMITS = {
+  reporter: { min: 2, max: 64 },
+  region_code: { pattern: /^[0-9A-Z]{6,24}$/ },
+  hazard_hint: { max: 64 },
+  note: { min: 4, max: 2_000 },
+  lat: { min: -90, max: 90 },
+  lon: { min: -180, max: 180 },
+} as const
 
+/**
+ * 发出前按后端口径本地挡一次（助手页同一手法）。
+ *
+ * 这里最先要拦的是**只有空格的正文**：`"    "` 满足 `min_length=4`，
+ * 曾经一路走到解析腿才被裸 `ValueError` 拦下，出口就是 HTTP 500。
+ * 传进来的应是 `toReportBody()` 裁过的形状（本函数不再裁）。
+ */
+export function preflightReport(body: ReportInputDto): string {
+  const note = body.note
+  if (note.length < REPORT_LIMITS.note.min || note.length > REPORT_LIMITS.note.max) {
+    const how = note.length === 0 ? '去掉空格后是空的' : `是 ${note.length} 字`
+    return `险情描述${how}：后端要求 ${REPORT_LIMITS.note.min}..${REPORT_LIMITS.note.max} 字，这一条没有发出去。`
+  }
+  const reporter = body.reporter
+  if (reporter.length < REPORT_LIMITS.reporter.min || reporter.length > REPORT_LIMITS.reporter.max) {
+    return `上报人「${reporter}」不合口径：后端要求 ${REPORT_LIMITS.reporter.min}..${REPORT_LIMITS.reporter.max} 字，这一条没有发出去。`
+  }
+  const region = body.region_code
+  if (!REPORT_LIMITS.region_code.pattern.test(region)) {
+    return `区划代码「${region}」不合口径：后端要求 6..24 位大写字母或数字，这一条没有发出去。`
+  }
+  const hint = body.hazard_hint ?? ''
+  if (hint.length > REPORT_LIMITS.hazard_hint.max) {
+    return `灾种提示 ${hint.length} 字，超过后端的 ${REPORT_LIMITS.hazard_hint.max} 字上限：这一条没有发出去。`
+  }
+  if (typeof body.lat === 'number' && (body.lat < REPORT_LIMITS.lat.min || body.lat > REPORT_LIMITS.lat.max)) {
+    return `纬度 ${body.lat} 超出 ${REPORT_LIMITS.lat.min}..${REPORT_LIMITS.lat.max}：这一条没有发出去。`
+  }
+  if (typeof body.lon === 'number' && (body.lon < REPORT_LIMITS.lon.min || body.lon > REPORT_LIMITS.lon.max)) {
+    return `经度 ${body.lon} 超出 ${REPORT_LIMITS.lon.min}..${REPORT_LIMITS.lon.max}：这一条没有发出去。`
+  }
+  return ''
+}
+
+// ---------- 响应体 ----------
 /** 三路融合的四条结论键（semantic_parser.py:33-38 与 :576 的 `"none"`）：与后端同名，不改写。 */
 export type ParseLeg = 'rule' | 'rule_declared' | 'retrieval' | 'llm' | 'none'
 
