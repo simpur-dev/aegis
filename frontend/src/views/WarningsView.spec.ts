@@ -29,6 +29,7 @@ vi.mock('@/api/integrations', () => ({ fetchIntegrations: vi.fn() }))
 const mockedWarnings = vi.mocked(api.warnings)
 const mockedEvents = vi.mocked(api.events)
 const mockedTask = vi.mocked(api.task)
+const mockedReady = vi.mocked(api.ready)
 const mockedIntegrations = vi.mocked(fetchIntegrations)
 
 function warning(overrides: Partial<WarningRecord> = {}): WarningRecord {
@@ -398,5 +399,47 @@ describe('抽屉里要能读到助手指名要的那个标识', () => {
     const text = wrapper.find('.drawer').text()
     expect(text).toContain('任务标识')
     expect(text).toContain('stu_a1')
+  })
+})
+
+/**
+ * 列表取的是"最近 N 条"，页面就得说 N 是多少、服务端一共有多少。
+ *
+ * 真机量到（把这台进程演练到 113 条预警之后）：`/warnings` 取 `limit=100`，
+ * 页面上"窗口/最近/上限"一个字都没有——13 条预警就消失了，而屏幕上的表格、
+ * 6 个页码按钮看起来就是"所有预警"。`/dashboard` 的链路表同理：`events(20)`
+ * 之外还有 88 条，卡片标题只说"最新在上"。
+ */
+describe('列表是窗口就得说窗口', () => {
+  it('取满 100 条时说明这是最近 100 条、服务端共 113 条', async () => {
+    mockedReady.mockResolvedValue({
+      status: 'ready',
+      bus: 'memory',
+      agents_online: 5,
+      store: { warning_count: 113, task_count: 504, chain_count: 108, telemetry_count: 50_000 },
+    } as never)
+    mockedWarnings.mockResolvedValue({
+      count: 100,
+      items: Array.from({ length: 100 }, (_, i) => warning({ warning_id: `wrn_${i}`, generated_at: `2026-10-03T${String(10 + (i % 8)).padStart(2, '0')}:00:00.000Z` })),
+    } as never)
+    const wrapper = mountView()
+    await flushPromises()
+    const note = wrapper.find('[data-testid="window-note"]')
+    expect(note.exists(), '取满窗口却不说窗口，13 条预警就等于凭空消失').toBe(true)
+    expect(note.text()).toContain('最近 100 条')
+    expect(note.text()).toContain('113')
+  })
+
+  it('没取满窗口就不多嘴：100 条以内不需要说"这只是最近 100 条"', async () => {
+    mockedReady.mockResolvedValue({
+      status: 'ready',
+      bus: 'memory',
+      agents_online: 5,
+      store: { warning_count: 3, task_count: 8, chain_count: 3, telemetry_count: 5_000 },
+    } as never)
+    mockedWarnings.mockResolvedValue({ count: 3, items: [warning(), warning({ warning_id: 'wrn_2' }), warning({ warning_id: 'wrn_3' })] } as never)
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="window-note"]').exists()).toBe(false)
   })
 })

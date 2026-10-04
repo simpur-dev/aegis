@@ -322,3 +322,47 @@ describe('空表要说人话也要说下一步', () => {
     wrapper.unmount()
   })
 })
+
+/**
+ * 这张表取的是最近 20 条链路。真机把这台进程演练到 108 条之后量到：卡片只说
+ * "最新在上"，看不出 88 条在表外——`/readyz` 的 chain_count 才是总数。
+ */
+describe('链路表的窗口口径', () => {
+  it('卡片标题说出窗口与总数：与 /readyz 的台账对得上', async () => {
+    responses()
+    mocked.ready.mockResolvedValue({
+      agents_online: 5,
+      store: { warning_count: 113, task_count: 504, chain_count: 108, telemetry_count: 50_000 },
+    } as never)
+    mocked.events.mockResolvedValue({ items: Array.from({ length: 20 }, (_, i) => chainOf(`trc_${String(i).padStart(2, '0')}`)) } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const title =
+      wrapper
+        .findAllComponents({ name: 'ACard' })
+        .map((card) => String(card.props('title')))
+        .find((t) => t.startsWith('链路执行记录')) ?? ''
+    expect(title).toContain('最近 20 条')
+    expect(title).toContain('共 108 条')
+    wrapper.unmount()
+  })
+
+  it('链路没超过窗口时不说"共 N 条"，免得凭空造出一个对比', async () => {
+    responses()
+    mocked.ready.mockResolvedValue({
+      agents_online: 5,
+      store: { warning_count: 2, task_count: 6, chain_count: 2, telemetry_count: 5_000 },
+    } as never)
+    mocked.events.mockResolvedValue({ items: [chainOf('trc_a'), chainOf('trc_b')] } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const title =
+      wrapper
+        .findAllComponents({ name: 'ACard' })
+        .map((card) => String(card.props('title')))
+        .find((t) => t.startsWith('链路执行记录')) ?? ''
+    expect(title).toContain('最近 20 条')
+    expect(title).not.toContain('共')
+    wrapper.unmount()
+  })
+})

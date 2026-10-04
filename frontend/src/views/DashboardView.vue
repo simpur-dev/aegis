@@ -10,6 +10,8 @@ import { useEventStream } from '@/composables/useEventStream'
 import { formatOperatingTime } from '@/utils/clock'
 
 const REFRESH_MS = 15_000
+/** 链路表与事件补数都取这个窗口，卡片标题里的"最近 N 条"必须与它同一个数。 */
+const CHAIN_WINDOW = 20
 
 const ready = ref<{ agents_online: number; store: Record<string, number> } | null>(null)
 const agents = ref<AgentInfo[]>([])
@@ -62,6 +64,16 @@ const kpis = computed(() => [
  */
 const recentChains = computed<ChainSummary[]>(() => [...chains.value].reverse())
 
+/**
+ * 这张表取的是最近 N 条链路，标题里就得写 N：真机把这台进程演练到 108 条之后，
+ * 卡片只说"最新在上"，看不出 88 条在表外（`/readyz` 的 chain_count 才是总数）。
+ */
+const chainsTitle = computed<string>(() => {
+  const base = `链路执行记录（最近 ${CHAIN_WINDOW} 条，最新在上；感知→研判→决策→执行→反馈）`
+  const total = ready.value?.store?.chain_count ?? null
+  return total !== null && total > CHAIN_WINDOW ? `${base}｜服务端共 ${total} 条` : base
+})
+
 const regionGrid = computed(() => {
   const byRegion = new Map<string, ChainSummary>()
   for (const chain of chains.value) {
@@ -88,7 +100,7 @@ async function refresh(): Promise<void> {
       api.ready(),
       api.agents(),
       api.warnings({ limit: 50 }),
-      api.events(20),
+      api.events(CHAIN_WINDOW),
       api.latency(),
     ])
     ready.value = { agents_online: readyInfo.agents_online, store: readyInfo.store }
@@ -145,7 +157,7 @@ watch(
       void (async () => {
         const seq = ++chainsSeq
         try {
-          const list = await api.events(20)
+          const list = await api.events(CHAIN_WINDOW)
           // 补数拿到的必然是更新的一份，所以它也要占号；但若这趟在路上时
           // 轮询又发了更新的一趟（seq 已不是自己），那次才该写。
           if (seq === chainsSeq) {
@@ -218,7 +230,7 @@ const agentColumns = [
       </a-col>
 
       <a-col :span="14">
-        <a-card title="链路执行记录（最新在上；感知→研判→决策→执行→反馈）" size="small" :loading="loading">
+        <a-card :title="chainsTitle" size="small" :loading="loading">
           <a-table :columns="stageColumns" :data-source="recentChains" :pagination="{ pageSize: 6 }" row-key="trace_id" size="small">
             <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：这一张正是"最近做了什么"，
                  第一屏留一句英文，等于既没说"还没有跑过链路"，也没说去哪儿跑一条。 -->

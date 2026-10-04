@@ -9,8 +9,12 @@ import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
 import { formatOperatingTime } from '@/utils/clock'
 
 const REFRESH_MS = 15_000
-/** 详情里回查链路时取多少条最近链路。写死一处，"找不到"的提示才与实取窗口一致。 */
+/**
+ * 详情里回查链路时取多少条最近链路。写死一处，"找不到"的提示才与实取窗口一致。
+ */
 const EVENT_WINDOW = 200
+/** 列表取多少条预警。也写死一处，"这只是最近 N 条"那句话才与实取窗口一致。 */
+const WARNING_LIST_LIMIT = 100
 
 const warnings = ref<WarningRecord[]>([])
 const loading = ref(false)
@@ -21,6 +25,8 @@ const tasksLoading = ref(false)
 const tasksError = ref<string | null>(null)
 /** 触达通道的形态（mock / http / null=没读到），来自状态面那条 delivery 腿。 */
 const deliveryMode = ref<string | null>(null)
+/** 服务端一共多少条预警（`/readyz` 的台账数）；读不到就是 null，此时只报窗口不报总数。 */
+const storeTotal = ref<number | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 /**
  * 第几次点开详情。抽屉里同时挂着"这条预警的正文"和"它的任务单元"，
@@ -53,11 +59,31 @@ const orderedWarnings = computed<WarningRecord[]>(() =>
   [...warnings.value].sort((a, b) => (a.generated_at < b.generated_at ? 1 : a.generated_at > b.generated_at ? -1 : 0)),
 )
 
+/**
+ * 取满窗口 = 有预警在这一页之外。真机把这台进程演练到 113 条时量到：列表取 100 条，
+ * 页面上"窗口/最近/上限"一个字都没有，6 个页码按钮看起来就是"所有预警"——
+ * 13 条预警等于凭空消失。
+ */
+const windowNote = computed<string>(() => {
+  if (warnings.value.length < WARNING_LIST_LIMIT) return ''
+  const total = storeTotal.value
+  if (total === null) return `列表取的是最近 ${WARNING_LIST_LIMIT} 条（服务端总数没读到，这一页可能还有更早的预警）`
+  if (total <= WARNING_LIST_LIMIT) return ''
+  return `列表取的是最近 ${WARNING_LIST_LIMIT} 条，服务端共 ${total} 条——另外 ${total - WARNING_LIST_LIMIT} 条在这一页之外（本页没有翻页到更早数据的入口）`
+})
+
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [data, legs] = await Promise.all([api.warnings({ limit: 100 }), fetchIntegrations().catch(() => null)])
+    const [data, legs] = await Promise.all([api.warnings({ limit: WARNING_LIST_LIMIT }), fetchIntegrations().catch(() => null)])
     warnings.value = data.items
+    // 台账总数单独取一次，失败绝不把整次取数带红：窗口那句提示可以只报"最近 N 条"。
+    try {
+      const info = await api.ready()
+      storeTotal.value = info?.store?.warning_count ?? null
+    } catch {
+      storeTotal.value = null
+    }
     if (legs) {
       const row = legs.items.find((item) => item.name === 'delivery')
       // 触达口径只认状态面那一条事实：`driver=mock` 时"4/4 通道成功"是演练出来的，
@@ -133,6 +159,9 @@ onBeforeUnmount(() => {
           <span style="font-size: 12px; color: #8c8c8c">红色预警含北斗短报文兜底通道</span>
         </a-space>
       </template>
+      <p v-if="windowNote" data-testid="window-note" style="margin: 0 0 6px; color: #8c8c8c; font-size: 12px">
+        {{ windowNote }}
+      </p>
       <a-table :columns="columns" :data-source="orderedWarnings" row-key="warning_id" :pagination="{ pageSize: 10 }" size="small">
         <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：中文值班台上一句英文，
              还分不清"确实还没有"与"取数没成功"，也不说下一步去哪造一条。 -->
