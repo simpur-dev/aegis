@@ -11,6 +11,7 @@ import { INSTANCE_STATUS_LABELS, isInstanceStatus, type InstanceStatus } from '@
 const store = useWorkflowStore()
 
 const abortReason = ref('')
+const onlyWaiting = ref(false)
 
 const statusLabel = computed<string>(() => {
   const status = store.instanceStatus
@@ -40,6 +41,21 @@ function abort(): void {
   void store.abortInstance(abortReason.value)
   abortReason.value = ''
 }
+
+/**
+ * 等人签的实例排在最前，其余按新到旧。
+ *
+ * 真机量过一轮：低置信度上报开出的核签工单只出现在这张列表里，
+ * 而列表是后端 `instances()` 的创建顺序（最旧的在第一行），11 张等签的混在 16 条里
+ * 没有任何一处说明"有几张在等人"——`/dashboard`、`/warnings` 上"核签/待签/人工"字样各 0 次。
+ * 一张工单等着的是"这条预警要不要按现状生效"，靠人滚动去撞见是不负责任的。
+ */
+const waitingRows = computed(() => store.instances.filter((row) => row.status === 'waiting'))
+const listedInstances = computed(() => {
+  const newestFirst = [...store.instances].reverse()
+  const ranked = [...newestFirst].sort((a, b) => (b.status === 'waiting' ? 1 : 0) - (a.status === 'waiting' ? 1 : 0))
+  return onlyWaiting.value ? ranked.filter((row) => row.status === 'waiting') : ranked
+})
 </script>
 
 <template>
@@ -66,9 +82,19 @@ function abort(): void {
     </p>
     <p v-if="store.instance?.error" class="wf-run__error">{{ store.instance.error }}</p>
 
-    <h4 class="wf-run__subtitle">服务端实例（{{ store.instances.length }}）</h4>
+    <h4 class="wf-run__subtitle">
+      服务端实例（{{ store.instances.length }}）
+      <label v-if="waitingRows.length > 0 || onlyWaiting" class="wf-run__waiting">
+        等人签 {{ waitingRows.length }} 张
+        <input v-model="onlyWaiting" type="checkbox" data-testid="only-waiting" />
+        只看这些
+      </label>
+    </h4>
+    <!-- 勾了"只看这些"之后一张都没剩下时，必须说一句"签完了"：
+         留一个空列表不解释，读的人会得出"没有工单功能"的结论（监测页同款坑） -->
+    <p v-if="onlyWaiting && waitingRows.length === 0" class="wf-run__hint">这一列里没有等人签的实例了。</p>
     <ul class="wf-run__list">
-      <li v-for="row in store.instances" :key="row.instance_id">
+      <li v-for="row in listedInstances" :key="row.instance_id">
         <button type="button" class="wf-run__pick" :class="[`is-${statusTone(row.status)}`]" @click="store.focusInstance(row.instance_id)">
           <span>{{ row.instance_id }}</span>
           <span>{{ label(row.status) }}</span>
@@ -97,6 +123,11 @@ function abort(): void {
   margin-top: 6px;
   color: #595959;
   font-size: 12px;
+}
+.wf-run__waiting {
+  margin-left: 6px;
+  color: #cf1322;
+  font-weight: 400;
 }
 .wf-run__bar {
   display: flex;

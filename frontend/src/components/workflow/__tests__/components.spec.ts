@@ -14,6 +14,7 @@ import NodeLogic from '@/components/workflow/NodeLogic.vue'
 import NodePalette from '@/components/workflow/NodePalette.vue'
 import NodeShell from '@/components/workflow/NodeShell.vue'
 import RuntimeActions from '@/components/workflow/RuntimeActions.vue'
+import RuntimePanel from '@/components/workflow/RuntimePanel.vue'
 import {
   CATEGORY_LABELS,
   NODE_META,
@@ -796,5 +797,71 @@ describe('DefinitionInspector 归档与取消归档', () => {
     // 状态改回来要落在画布上：否则标题旁继续写"启用中"，而列表里它已经是归档的那一版
     const store = readRepoFile('frontend', 'src', 'stores', 'workflow.ts')
     expect(store).toContain('syncCurrentStatus')
+  })
+})
+
+/**
+ * 真机一轮量出来的：低置信度上报开出的核签工单只出现在这张列表里，
+ * 列表又是后端给的创建顺序（最旧的在第一行），11 张等签的混在 16 条里，
+ * 而 `/dashboard`、`/warnings` 上"核签 / 待签 / 人工"字样各 0 次——
+ * 一张等着"这条预警要不要按现状生效"的单，靠人滚动去撞见是不负责任的。
+ */
+describe('RuntimePanel 等人签的工单要数得出来、找得到', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function row(instanceId: string, status: string) {
+    return {
+      instance_id: instanceId,
+      workflow_id: 'wf_0123456789ab',
+      workflow_version: 1,
+      trace_id: `trc_${instanceId}`,
+      status,
+      error: null,
+      nodes: [],
+    }
+  }
+
+  function picked(wrapper: ReturnType<typeof mount>): string[] {
+    return wrapper.findAll('.wf-run__pick').map((button) => button.find('span').text())
+  }
+
+  it('等人签的排最前，其余按新到旧（创建顺序倒过来）', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    store.instances = [row('wfi_旧签', 'waiting'), row('wfi_已完', 'succeeded'), row('wfi_新签', 'waiting')]
+    const wrapper = mount(RuntimePanel)
+    expect(picked(wrapper)).toEqual(['wfi_新签', 'wfi_旧签', 'wfi_已完'])
+    expect(wrapper.text()).toContain('等人签 2 张')
+  })
+
+  it('没有等签的实例时不喊"等人签 0 张"', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    store.instances = [row('wfi_已完', 'succeeded')]
+    const wrapper = mount(RuntimePanel)
+    expect(wrapper.text()).not.toContain('等人签')
+  })
+
+  it('勾选"只看这些"就把列表收成等签的那几张', async () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    store.instances = [row('wfi_旧签', 'waiting'), row('wfi_已完', 'succeeded'), row('wfi_新签', 'waiting')]
+    const wrapper = mount(RuntimePanel)
+    await wrapper.find('[data-testid="only-waiting"]').setValue(true)
+    expect(picked(wrapper)).toEqual(['wfi_新签', 'wfi_旧签'])
+  })
+
+  it('筛完之后一张都不剩要说一句，别留个空列表不解释', async () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    store.instances = [row('wfi_在签', 'waiting')]
+    const wrapper = mount(RuntimePanel)
+    await wrapper.find('[data-testid="only-waiting"]').setValue(true)
+    store.instances = [row('wfi_在签', 'succeeded')]
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="only-waiting"]').exists(), '勾选状态要看得见，不然人不知道列表为什么是空的').toBe(true)
+    expect(wrapper.text()).toContain('这一列里没有等人签的实例了')
   })
 })
