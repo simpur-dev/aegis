@@ -60,6 +60,32 @@ async def test_注册是幂等的(platform: PlatformContainer) -> None:
 
 
 @pytest.mark.asyncio
+async def test_核签流程被归档后_重新注册会把开单能力带回来(platform: PlatformContainer) -> None:
+    """现场动线：值班员在 /workflow 把「人工上报核签流程」归档（一按就生效，没有确认），
+    此后每一条低置信度上报都只留 `human_review_required` 标志、开不出工单；
+    注册只在启动期跑一次，运行中不会补，所以这个班次的核签腿就断在这里。
+    这里两头都钉：归档确实断单，重新注册确实恢复。"""
+    name = REPORT_REVIEW_TEMPLATE["name"]
+    active = platform.workflow.latest_definition(name)
+    assert active is not None and active.status == "active"
+    await platform.workflow.archive(active.workflow_id)
+
+    blocked = await platform.submit_report(note=DECLARED_ONLY, region_code="540200", reporter="村民")
+    assert blocked["human_review_required"] is True
+    assert blocked["review"] is None, "归档态不该被当成可用定义——这条就是修复前的现场"
+
+    assert await register_report_review_template(platform.workflow) == name
+    revived = platform.workflow.latest_definition(name)
+    assert revived is not None and revived.status == "active"
+    assert revived.version == active.version + 1
+
+    opened = await platform.submit_report(note=DECLARED_ONLY, region_code="540200", reporter="村民")
+    review = opened["review"]
+    assert review is not None and review["status"] == "waiting", "恢复的是开单能力，不是多一行定义"
+    assert review["workflow_id"] == revived.workflow_id
+
+
+@pytest.mark.asyncio
 async def test_阈值命中的上报不开核签单(platform: PlatformContainer) -> None:
     result = await platform.submit_report(note=HEAVY_RAIN, region_code="540121", reporter="巡护员")
     assert result["parse"]["decided_by"] == "rule"

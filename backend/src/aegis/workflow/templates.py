@@ -329,12 +329,24 @@ REPORT_REVIEW_TEMPLATE: dict[str, Any] = {
 }
 
 
+def _needs_registration(existing: Any) -> bool:
+    """幂等判据要认状态：只有"已有一份**启用中**的同名定义"才算注册过。
+
+    归档只把 status 改成 archived，定义仍留在版本链上，所以把"存在过"当成"已注册"的
+    后果是：值班员误归档一套内置剧本之后，注册只在 `container.start()` 跑过一次，
+    运行中不会补注册——本进程余下的整个班次里，该灾种的剧本打不开、
+    低置信度上报的核签工单开不出来（实测：每次上报都只 `review=None`），
+    而现场只留一行 log warning。
+    """
+    return existing is None or existing.status != "active"
+
+
 async def register_builtin_templates(engine: WorkflowEngine, *, force: bool = False) -> list[str]:
-    """幂等注册内置模板：已存在同名模板则跳过（除非 force 产生新版本）。"""
+    """幂等注册内置模板：已有启用中的同名模板则跳过（force 或已被归档时产生新版本）。"""
     created: list[str] = []
     for template in BUILTIN_TEMPLATES:
         existing = engine.latest_definition(template["name"])
-        if existing is not None and not force:
+        if not force and not _needs_registration(existing):
             continue
         await engine.create_definition(
             name=template["name"],
@@ -349,7 +361,7 @@ async def register_builtin_templates(engine: WorkflowEngine, *, force: bool = Fa
 async def register_report_review_template(engine: WorkflowEngine, *, force: bool = False) -> str | None:
     """注册核签流程（幂等）。与灾种剧本分开注册，理由见 `REPORT_REVIEW_TEMPLATE` 的注释。"""
     template = REPORT_REVIEW_TEMPLATE
-    if engine.latest_definition(template["name"]) is not None and not force:
+    if not force and not _needs_registration(engine.latest_definition(template["name"])):
         return None
     await engine.create_definition(
         name=template["name"],

@@ -287,6 +287,24 @@ class TestRegistrationIsIdempotent:
             assert definition.version == 1
             assert len(definition.nodes) >= 3, f"{name} 的节点数少得不像一套剧本"
 
+    async def test_归档过的内置剧本会在下次注册时回来(self) -> None:
+        """幂等判据必须认状态：归档只是把 status 改掉，定义仍留在版本链上，
+        而注册只在 `container.start()` 跑一次、运行中不补。把"存在过"当成"已注册"的后果是
+        值班员误归档一套剧本之后，本进程余下的整个班次里这套处置都回不来——页面只在列表里少一行。"""
+        engine = make_engine()
+        await register_builtin_templates(engine)
+        name = _template_names()[0]
+        first = engine.latest_definition(name)
+        assert first is not None
+        await engine.archive(first.workflow_id)
+
+        created = await register_builtin_templates(engine)
+        assert created == [name], "只该重注册被归档的那一套，其余四套不受牵连"
+        revived = engine.latest_definition(name)
+        assert revived is not None and revived.status == "active", "带回来的必须是启用中的版本"
+        assert revived.version == 2, "旧版本不可变：恢复只能走新版本，历史要留得下"
+        assert engine.definition_by_id(first.workflow_id) is not None, "归档的那版不能凭空消失"
+
     async def test_重复注册不产生新版本也不重复落库(self) -> None:
         """`container.start()` 每次进程都要调它：不幂等就是每次重启往版本链上堆一层。"""
         engine = make_engine()
