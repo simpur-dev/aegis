@@ -455,9 +455,19 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return false
       return runAction(async () => {
-        await client.patchNodeConfig(instanceId, nodeId, config)
-        // 改参接口只回 {node_id, config}（engine.py:545），需再拉一次实例快照刷新画布状态。
+        const result = await client.patchNodeConfig(instanceId, nodeId, config)
+        // 改参接口只回 {node_id, config}（engine.py:699），需再拉一次实例快照刷新画布状态。
         await refreshInstance()
+        /**
+         * 引擎按"合并这些键"实现（engine.py:695 `{**node.config, **config}`），
+         * 而界面上把一格清空等于把这个键从载荷里删掉——两者一撞，结果是
+         * **旧值原地留着、画布显示空、HTTP 200**：值班员以为通知正文清掉了，
+         * 实际照旧发出去。删除在这条接口上表达不出来，就至少把它说明白。
+         */
+        const kept = Object.keys(result.config).filter((key) => !(key in config))
+        if (kept.length > 0) {
+          error.value = `这 ${kept.length} 格没能改成空：${kept.join('、')}——改参接口按键合并，清空表达不出"删除"，服务端仍是原值；要改请填新值`
+        }
       }, '运行中改参失败')
     }
 

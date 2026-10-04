@@ -360,6 +360,32 @@ describe('检查器与运行中操作', () => {
   })
 
   /**
+   * 真机上把 SLA 改成 -5（框里夹回 100）再点「以当前参数下发改参」：请求照发、200 回来，
+   * 可里面只有节点参数——SLA/超时/重试是定义级字段（后端 `ConfigPatch` 只带 config）。
+   * 按钮写着"当前参数"而人刚改的正是 SLA，所以这句范围得印在旁边，而不是等人去猜哪一下生效了。
+   */
+  it('改参的说明写明 SLA、超时、重试不在这条接口上', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const fetch = createNodeDef('data_fetch', 'fetch_1')
+    store.addNode(fetch)
+    store.select('fetch_1')
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456789ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'running',
+      error: null,
+      nodes: [{ node_id: 'fetch_1', type: 'data_fetch', state: 'pending', attempts: 0, schedule_latency_ms: null, duration_ms: null, output: {}, error: null, notes: [] }],
+    }
+    const wrapper = mount(RuntimeActions, { props: { node: fetch } })
+    const text = wrapper.text()
+    expect(text).toContain('SLA、超时、重试不在这条接口上')
+    expect(text).toContain('只影响之后启动的实例')
+  })
+
+  /**
    * 三颗决策按钮必须都看得懂。
    *
    * 真机上中间那颗直接写着英文裸值 `adjust`：值班员不知道点下去引擎会走哪条分支，

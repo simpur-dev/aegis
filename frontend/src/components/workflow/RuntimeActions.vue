@@ -84,7 +84,10 @@ function insertAfter(): void {
       <button type="button" class="wf-runtime__button" :disabled="!store.canPatchRuntime(node.node_id)" @click="pushConfig">
         以当前参数下发改参
       </button>
-      <span class="wf-runtime__hint">仅未开始执行的节点可改参（engine.py:539-540）。</span>
+      <span class="wf-runtime__hint">
+        仅未开始执行的节点可改参（engine.py:539-540）。这里下发的是"节点参数"；SLA、超时、重试不在这条接口上——
+        它们要点「保存定义」，且只影响之后启动的实例（在途实例绑定它启动时那一版）。
+      </span>
     </div>
 
     <div class="wf-runtime__row">

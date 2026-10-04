@@ -526,6 +526,33 @@ class TestRuntimeFlexibility:
         with pytest.raises(WorkflowValidationError, match="不可改参"):
             await engine.update_node_config(detail["instance_id"], "a", {"seconds": 1})
 
+    async def test_改参按键合并_没进载荷的键保留旧值(self) -> None:
+        """界面上"清空那一格"等于这个键不再出现在载荷里，而这里是 `{**旧, **新}`：
+        旧值原地留着、HTTP 200、画布显示空——三件事凑在一起就是"看着改成功了"。
+        合并本身是有意的（改一个键不必回传整张图），所以这条钉住**事实**，
+        前端的提示文案据此写；哪天改成能表达删除，这条会红，那时该一起改文案。"""
+        seen: list[dict] = []
+
+        async def notify(payload: dict) -> None:
+            seen.append(payload)
+
+        engine = make_engine(WorkflowServices(notify=notify))
+        workflow_id = await make_definition(
+            engine,
+            [node("gate", "human_review", {}), node("alert", "notify", {"text": "原文案", "level": "info"})],
+            [edge("gate", "alert")],
+        )
+        detail = await engine.start(workflow_id, trace_id="trc_" + "4" * 16, payload={})
+        assert detail["status"] == "waiting"
+
+        patched = await engine.update_node_config(detail["instance_id"], "alert", {"level": "warning"})
+        assert patched["config"] == {"text": "原文案", "level": "warning"}, "改一个键不该把另一个键顶掉"
+
+        resumed = await engine.resume(detail["instance_id"], node_id="gate", decision={"choice": "approve"})
+        alert_run = next(row for row in resumed["nodes"] if row["node_id"] == "alert")
+        assert any("['level']" in note for note in alert_run["notes"]), "台账记的是这次发了哪些键，不是最终配置"
+        assert seen[-1] == {"level": "warning", "text": "原文案", "payload": {}}
+
     async def test_insert_node_requires_existing_anchor(self) -> None:
         engine = make_engine()
         workflow_id = await make_definition(engine, [node("a", "delay", {"seconds": 0})], [])

@@ -397,6 +397,24 @@ describe('stores/workflow 运行中操作', () => {
     expect(vi.mocked(client.instance).mock.calls.length).toBe(2)
   })
 
+  /**
+   * 界面上"清空那一格"等于这个键不再进载荷，而引擎是按键合并的：旧值原地留着、
+   * HTTP 200、画布显示空——三件事凑一起就是"看着改成功了"。
+   * 不说出来，值班员以为通知正文清掉了，它照旧发出去。
+   */
+  it('清空一格不会真的删掉旧值，页面必须说出来', async () => {
+    const store = await storeWithInstance([nodeRun('fetch_1', 'pending')])
+    expect(await store.patchRuntimeConfig('fetch_1', {})).toBe(true)
+    expect(store.error, '服务端回的是 {limit:50}，而这次没发 limit —— 旧值被合并保留了').toContain('limit')
+    expect(store.error).toContain('服务端仍是原值')
+  })
+
+  it('要改的键都发全时不多嘴', async () => {
+    const store = await storeWithInstance([nodeRun('fetch_1', 'pending')])
+    expect(await store.patchRuntimeConfig('fetch_1', { limit: 50 })).toBe(true)
+    expect(store.error).toBeNull()
+  })
+
   it('已执行的节点不可改参（engine.py:539）', async () => {
     const store = await storeWithInstance([nodeRun('fetch_1', 'succeeded')])
     expect(store.canPatchRuntime('fetch_1')).toBe(false)
