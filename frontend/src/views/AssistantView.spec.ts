@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssistantFrame, CapabilitiesDto } from '@/api/assistant'
 import { AssistantApiError, assistantApi, CHAT_LIMITS } from '@/api/assistant'
 import { readRepoFile } from '@/testing/repoSource'
-import { resetAssistantSession } from '@/composables/useAssistantSession'
+import { reloadAssistantSession, resetAssistantSession } from '@/composables/useAssistantSession'
 import AssistantView from '@/views/AssistantView.vue'
 
 vi.mock('@/api/assistant', async (importOriginal) => {
@@ -509,6 +509,30 @@ describe('换页再回来：对话要接得上（后端会话还在时限内）'
     const second = await renderView()
     expect(byTestid(second, 'session-id').text(), '换页回来该接上原来那段会话').toContain('as_live_1')
     expect(byTestid(second, 'frame-answer').text(), '原来那几帧还得在').toContain('红色预警')
+  })
+
+  /** F5 走的是同一条后端会话（30 分钟内），标签页还在，对话就该还在。 */
+  it('整页刷新之后也接得上：状态在浏览器里存了一份', async () => {
+    mockedChat.mockReturnValue(framesOf(thread))
+    const first = await renderView()
+    await sendMessage(first, '沟口那个村现在什么状态')
+    first.unmount()
+
+    reloadAssistantSession()
+    const second = await renderView()
+    expect(byTestid(second, 'session-id').text(), '刷新等于重新走一遍装载，该从浏览器存储接回来').toContain('as_live_1')
+    expect(byTestid(second, 'frame-answer').text()).toContain('红色预警')
+  })
+
+  it('存回浏览器的只留最近 60 帧', async () => {
+    const many: AssistantFrame[] = Array.from({ length: 70 }, (_unused, index) => ({ type: 'answer', text: `第 ${index} 句` }))
+    mockedChat.mockReturnValue(framesOf(many))
+    const wrapper = await renderView()
+    await sendMessage(wrapper, '念一遍')
+    await flushPromises()
+    const raw = window.sessionStorage.getItem('aegis.assistant.session.v1')
+    if (raw === null) throw new Error('没写进浏览器存储，刷新就接不上')
+    expect((JSON.parse(raw) as { frames: AssistantFrame[] }).frames).toHaveLength(60)
   })
 
   /** 「清空时间线」是显式动作：清这一屏的记录，但会话号归会话号，后端那 30 分钟还接得上。 */
