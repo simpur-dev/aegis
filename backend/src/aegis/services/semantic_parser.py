@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from aegis.domain.enums import HazardType, RiskLevel
@@ -569,7 +569,6 @@ class DisasterTextParser:
             hazard_type=hazard,
             rationale=retrieval.rationale + f"；同灾种佐证 {len(same_hazard)} 条",
             refs=(*retrieval.refs, *(note.source for note in same_hazard)),
-            used=bool(same_hazard),
         )
 
         # 定级优先级 = 冲突消解顺序：阈值命中 > 申报等级 > 检索典型等级 > LLM 建议。
@@ -604,6 +603,13 @@ class DisasterTextParser:
         else:
             confidence = 0.0
 
+        # 「这条腿被采纳」在四条腿上必须是同一个意思：它的等级进了结论。
+        # 原先检索腿标的是"有没有同灾种佐证"，LLM 腿压根没标过——于是页面上会出现
+        # "采纳 检索佐证 ｜ 等级=未给出等级"（真机 wfi_1bacfe566685 那张回执里就是这样），
+        # 而等级真的来自 LLM 建议时那条腿仍显示"未采纳"。读的人只能猜标签到底在说什么。
+        corroborated = replace(corroborated, used=decided_by == LEG_RETRIEVAL)
+        llm = replace(llm, used=decided_by == LEG_LLM)
+
         rule_finding = LegFinding(
             LEG_RULE,
             hazard_type=signal.hazard_type,
@@ -611,14 +617,21 @@ class DisasterTextParser:
             confidence=signal.confidence,
             rationale=signal.rationale,
             refs=tuple(hit.rule_id for hit in signal.hits),
-            used=signal.risk_level is not None,
+            used=decided_by == LEG_RULE,
         )
         declared_finding = LegFinding(
             LEG_RULE_DECLARED,
             hazard_type=signal.hazard_type,
             risk_level=signal.declared_level,
+            # 被采纳的那条腿要带着被采纳时的置信：原先这里永远是 0%，
+            # 于是页面上写着"采纳 申报等级 ｜ 等级=红色 ｜ 置信=0%"，读的人只能当它是坏数。
+            confidence=confidence if decided_by == LEG_RULE_DECLARED else 0.0,
             rationale="上报文本写明的颜色/等级（申报值）" if signal.declared_level is not None else "上报文本未写明等级",
             used=decided_by == LEG_RULE_DECLARED,
+        )
+        corroborated = replace(
+            corroborated,
+            confidence=confidence if decided_by == LEG_RETRIEVAL else corroborated.confidence,
         )
 
         return ParsedDisaster(

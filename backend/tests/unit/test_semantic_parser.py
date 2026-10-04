@@ -217,6 +217,35 @@ async def test_llm建议可以在两腿都空白时抬等级但必须核签() ->
 
 
 @pytest.mark.asyncio
+async def test_采纳标签只落在真的定级那条腿上() -> None:
+    """四条腿共用"采纳"这个词，就得共用同一个意思：这条腿的等级进了结论。
+
+    反面是真机看过的一张回执（wfi_1bacfe566685）：结论写着"三路均未产出等级"，
+    下面却标着"采纳 检索佐证 ｜ 等级=未给出等级"——因为检索腿过去标的是"有没有同灾种佐证"；
+    而等级真的来自 LLM 建议时，那条腿反倒永远显示"未采纳"（从没被标过）。
+    """
+    adopted = await DisasterTextParser(llm=FakeLlm({"hazard_type": "landslide", "risk_level": 2, "confidence": 0.9})).parse(
+        "540400 坡体出现持续变形，疑似滑动"
+    )
+    assert adopted.decided_by == LEG_LLM
+    assert {leg.leg for leg in adopted.legs if leg.used} == {LEG_LLM}, "等级来自 LLM 时，LLM 腿不能还写着未采纳"
+
+    by_rule = await DisasterTextParser().parse(HEAVY_RAIN_REPORT)
+    assert by_rule.decided_by == LEG_RULE
+    assert {leg.leg for leg in by_rule.legs if leg.used} == {LEG_RULE}
+
+    nothing = await DisasterTextParser(llm=FakeLlm(available=False)).parse("540121 坡面有裂缝")
+    assert nothing.decided_by == "none", nothing.decided_by
+    assert not any(leg.used for leg in nothing.legs), "没有任何等级被采纳时，四条腿都不该标「采纳」"
+
+    declared = await DisasterTextParser().parse("540200 发生泥石流，请求红色预警")
+    declared_leg = next(leg for leg in declared.legs if leg.leg == LEG_RULE_DECLARED)
+    assert declared_leg.used is True
+    assert declared_leg.confidence > 0.0, "标了「采纳」的腿不能显示置信 0%"
+    assert declared_leg.confidence == declared.confidence, "被采纳那条腿的置信就是结论的置信"
+
+
+@pytest.mark.asyncio
 async def test_解析结果可转为链路结论() -> None:
     parsed = await DisasterTextParser().parse(HEAVY_RAIN_REPORT)
     verdict = parsed.to_verdict()
