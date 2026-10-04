@@ -1,16 +1,22 @@
 <script setup lang="ts">
 import { message } from 'ant-design-vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import api from '@/api/client'
 import type { LatencyReport } from '@/api/types'
 import EChart from '@/components/EChart.vue'
 import type { ChartOption } from '@/components/echarts'
 import { latencyRows } from '@/views/metrics/rows'
+import { formatOperatingTime } from '@/utils/clock'
 import { formatMetricValue, toMillis } from '@/utils/metricUnits'
+
+/** 与其他页同一节奏：这页写着"数据来自运行时埋点"，不自己更新就成了摆旧账。 */
+const REFRESH_MS = 15_000
 
 const report = ref<LatencyReport | null>(null)
 const loading = ref(false)
+/** 这一屏数字是什么时候取的；没取到就还是 null，页面写"尚未取到数据"。 */
+const updatedAt = ref<string | null>(null)
 /** 取数失败的原因留在页面上：只弹一条三秒就消失的 toast，读数字的人会把"没读到"当成"没问题"。 */
 const loadError = ref<string | null>(null)
 
@@ -55,6 +61,7 @@ async function load(): Promise<void> {
   try {
     report.value = await api.latency()
     loadError.value = null
+    updatedAt.value = new Date().toISOString()
   } catch (error) {
     // ApiError 与"账本没声明单位"都要把原因写出来：吞成一句"读取指标失败"就等于
     // 让人无从判断是后端没起、还是出口形状对不上
@@ -65,13 +72,30 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load)
+let timer: ReturnType<typeof setInterval> | null = null
+
+onMounted(() => {
+  void load()
+  // 页签在后台就不打接口：指标页常开在大屏副屏上，没人看的时候不必一直问账本。
+  timer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return
+    void load()
+  }, REFRESH_MS)
+})
+
+onBeforeUnmount(() => {
+  if (timer !== null) clearInterval(timer)
+  timer = null
+})
 </script>
 
 <template>
   <div>
     <a-card size="small" title="考核指标实测（数据来自运行时埋点，非人工填写）" :loading="loading">
       <template #extra><a-button @click="load">重新读取</a-button></template>
+      <p class="metrics__stale" data-testid="metrics-updated-at" style="margin: 8px 0 0; color: #8c8c8c; font-size: 12px">
+        {{ updatedAt === null ? '尚未取到数据' : `更新于 ${formatOperatingTime(updatedAt)}（UTC+8，每 15 秒自动取一次）` }}
+      </p>
       <a-alert
         type="info"
         show-icon

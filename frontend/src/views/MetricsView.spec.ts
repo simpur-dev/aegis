@@ -194,3 +194,45 @@ describe('指标页模板取数', () => {
     expect(source).not.toMatch(/title: '(P50|P95|最大|阈值)\s*[（(]ms[)（]/)
   })
 })
+
+/**
+ * 指标页顶上的标题写着"数据来自运行时埋点，非人工填写"，可它原先只在挂载时取一次：
+ * 真机静置 45 秒，样本数一直停在 `ingest_end_to_end_seconds 49616`，而同一时刻
+ * `/readyz` 的 `telemetry_count` 已经是 50000 —— 页面上既没有"更新于"，也不会自己再取一次，
+ * 站着看这页的人无从判断自己读的是多久以前的实况。监测页与预警页的同款问题都修过，这页是漏下的那一张。
+ */
+describe('指标页要自己更新，也要说清是什么时候取的数', () => {
+  function mountView() {
+    mockedLatency.mockResolvedValue(report() as never)
+    return mount(MetricsView, { global: { stubs: STUBS } })
+  }
+
+  it('挂着这页就会每 15 秒自己再取一次；离开就停', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(mockedLatency).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(mockedLatency, '页面开着却不再取数，读的人看到的是旧账').toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(mockedLatency, '离开这页还继续打接口是白耗').toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('页面上写着这一屏数字是什么时候取的', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.text(), '没有时间戳就等于让人猜新旧').toContain('更新于')
+  })
+
+  it('取数失败时时间戳不许冒充新的：那句话得说这是上一次的数', async () => {
+    mockedLatency.mockRejectedValueOnce(new Error('503 upstream unavailable') as never)
+    mockedLatency.mockResolvedValue(report() as never)
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="metrics-error"]').text()).toContain('503')
+    // 第一次失败 → 一次数都没取到，此时不该出现"更新于"（有数可说才说时刻）
+    expect(wrapper.text()).not.toContain('更新于')
+  })
+})
