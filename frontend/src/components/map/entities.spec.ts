@@ -30,6 +30,7 @@ import {
   latestSamples,
   pointFromWkt,
   pointInBBox,
+  plottedCount,
   riskByRegion,
   riskColorCss,
   riskLabel,
@@ -48,6 +49,7 @@ import {
   filterLayersByViewport,
   EMPTY_LAYERS,
 } from './entities'
+import { readRepoFile } from '@/testing/repoSource'
 
 // ---------- 夹具：字段严格照后端 DTO，缺失就是缺失，不补不存在的列 ----------
 
@@ -677,5 +679,37 @@ describe('focusAllNote：定位按完该说什么', () => {
 
   it('全都定位上了就闭嘴（没话说时不编一句提示）', () => {
     expect(focusAllNote(5, 5)).toBe('')
+  })
+})
+
+/**
+ * "上图要素"这个数的唯一用处是让人核对"画面上看到的对不对得上"。
+ * 原先它是四层数据直接相加：图层全关掉它不动，默认关着的触达层却一直在数里。
+ */
+describe('plottedCount：只数开着的层', () => {
+  const layers = {
+    stations: Array.from({ length: 2 }),
+    warnings: Array.from({ length: 1 }),
+    reach: Array.from({ length: 3 }),
+    hazards: Array.from({ length: 4 }),
+  } as never
+
+  it('默认视图下触达层是关的，它那 3 条不算上图', () => {
+    expect(plottedCount(layers, DEFAULT_LAYER_VISIBILITY)).toBe(2 + 1 + 0 + 4)
+  })
+
+  it('四层的开关各自决定进不进数', () => {
+    expect(plottedCount(layers, { ...DEFAULT_LAYER_VISIBILITY, reach: true, stations: false, warnings: false, hazards: false })).toBe(3)
+    expect(plottedCount(layers, { ...DEFAULT_LAYER_VISIBILITY, stations: false })).toBe(1 + 0 + 4)
+  })
+
+  it('全关掉就是 0：画面上一个都不剩时不许还写着要素数', () => {
+    expect(plottedCount(layers, { stations: false, warnings: false, reach: false, hazards: false, clusters: false })).toBe(0)
+  })
+
+  it('一张图页用的是这个函数，不是又写一遍相加', () => {
+    const view = readRepoFile('frontend', 'src', 'views', 'MapView.vue')
+    expect(view).toContain('plottedCount(filterLayersByViewport(')
+    expect(view).not.toContain('counts.value.stations + counts.value.warnings')
   })
 })

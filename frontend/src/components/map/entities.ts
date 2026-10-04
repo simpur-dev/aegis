@@ -922,6 +922,23 @@ export function buildLayers(input: BuildLayersInput): MapLayers {
   }
 }
 
+/**
+ * 界面上"上图要素"这个数该数什么：**开关开着、且落在当前视野里**的那几层要素。
+ *
+ * 原先它是四层数据条数直接相加，既不看图层开关也不看视野：把图层全关掉、画面上一个
+ * 都不剩，那一行照样写着"上图要素 42"；`reach`（触达标记）默认还是关的，
+ * 却也一直在数里。这数字唯一的用处是让人核对"画面上看到的对不对得上"，
+ * 数错了比不数更坏。
+ */
+export function plottedCount(layers: Pick<MapLayers, 'stations' | 'warnings' | 'reach' | 'hazards'>, visibility: LayerVisibility): number {
+  return (
+    (visibility.stations ? layers.stations.length : 0) +
+    (visibility.warnings ? layers.warnings.length : 0) +
+    (visibility.reach ? layers.reach.length : 0) +
+    (visibility.hazards ? layers.hazards.length : 0)
+  )
+}
+
 export function layerCounts(layers: MapLayers): Record<LayerId, number> {
   return {
     stations: layers.stations.length,

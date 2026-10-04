@@ -25,8 +25,10 @@ import {
   DEFAULT_LAYER_VISIBILITY,
   detailOf,
   expandBBox,
+  filterLayersByViewport,
   focusAllNote,
   layerCounts,
+  plottedCount,
   TIBET_RECTANGLE,
   toUnlocatedItems,
 } from '@/components/map/entities'
@@ -83,7 +85,7 @@ const plan = computed(() => buildRenderPlan({ layers: layers.value, bbox: bbox.v
 const counts = computed(() => layerCounts(layers.value))
 const unlocated = computed(() => toUnlocatedItems(layers.value.unplaced))
 const detail = computed(() => detailOf(layers.value, selectedId.value))
-const plottedTotal = computed(() => counts.value.stations + counts.value.warnings + counts.value.reach + counts.value.hazards)
+const plottedTotal = computed(() => plottedCount(filterLayersByViewport({ bbox: bbox.value, layers: layers.value }), visibility.value))
 const regionOptions = computed(() =>
   [...new Set([...anchors.value.map((anchor) => anchor.code), ...readings.value.map((reading) => reading.region_code)])]
     .filter(Boolean)
