@@ -348,11 +348,31 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       }, '保存定义失败')
     }
 
+    /** 归档/取消归档改的是服务端那份定义的状态。画布上正开着同一条时把新状态带回来，
+     *  否则标题旁继续写"启用中"，而列表里它已经是收不进默认列表的那一版。
+     *  状态是服务端改的，不该记在值班员账上（不重打基线就会显示"有未保存改动"、
+     *  弹刷新拦截），但只在画布本来就干净时重打——否则等于把人家没存的改动一起抹掉。 */
+    function syncCurrentStatus(workflowId: string, status: string): void {
+      if (current.value === null || current.value.workflow_id !== workflowId) return
+      const wasDirty = isDirty.value
+      current.value = { ...current.value, status: status === 'archived' ? 'archived' : 'active' }
+      if (!wasDirty) markSaved()
+    }
+
     async function archiveDefinition(workflowId: string): Promise<boolean> {
       return runAction(async () => {
-        await client.archiveDefinition(workflowId)
+        const result = await client.archiveDefinition(workflowId)
+        syncCurrentStatus(workflowId, result.status)
         await loadDefinitions()
       }, '归档定义失败')
+    }
+
+    async function restoreDefinition(workflowId: string): Promise<boolean> {
+      return runAction(async () => {
+        const result = await client.restoreDefinition(workflowId)
+        syncCurrentStatus(workflowId, result.status)
+        await loadDefinitions()
+      }, '取消归档失败')
     }
 
     async function startInstance(payload: Record<string, JsonValue> = {}): Promise<boolean> {
@@ -546,6 +566,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       loadInstances,
       saveDefinition,
       archiveDefinition,
+      restoreDefinition,
       startInstance,
       focusInstance,
       refreshInstance,

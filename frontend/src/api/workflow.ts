@@ -185,7 +185,8 @@ export interface DefinitionWriteResult {
   version: number
 }
 
-export interface ArchiveResult {
+/** 归档与取消归档的回执：都是"这一版现在的状态"，不产生新版本。 */
+export interface DefinitionStatusResult {
   workflow_id: string
   status: string
 }
@@ -259,8 +260,15 @@ export function createWorkflowClient(instance: AxiosInstance) {
       }),
 
     archiveDefinition: (workflowId: string) =>
-      request<ArchiveResult>({
+      request<DefinitionStatusResult>({
         url: `${BASE}/definitions/${encodeURIComponent(workflowId)}/archive`,
+        method: 'POST',
+      }),
+
+    /** 归档的撤销。同名已有更新版本时后端回 400，理由里会指名该撤哪一版。 */
+    restoreDefinition: (workflowId: string) =>
+      request<DefinitionStatusResult>({
+        url: `${BASE}/definitions/${encodeURIComponent(workflowId)}/restore`,
         method: 'POST',
       }),
 

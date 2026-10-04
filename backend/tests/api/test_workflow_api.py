@@ -177,3 +177,71 @@ async def test_节点类型出口与后端注册表同源(container: PlatformCon
         names = {str(row["type"]) for row in body["items"]}
         assert {"hazard_identify", "risk_assess", "situation_simulate", "human_review", "degrade_to_rule"} <= names
         assert body["count"] == len(names) == 16, f"节点类型数变了（{len(names)}），前端镜像与文档都要跟着改"
+
+
+async def _copy_of_builtin(client: httpx.AsyncClient, tag: str) -> str:
+    """借一份内置定义的节点/连线建副本：省得在测试里重抄图，图一变就维护不住。"""
+    listed = (await client.get("/api/v1/workflow/definitions")).json()["items"]
+    target = next(row for row in listed if row["node_count"] > 1)
+    source = (await client.get(f"/api/v1/workflow/definitions/{target['workflow_id']}")).json()
+    created = await client.post(
+        "/api/v1/workflow/definitions",
+        json={
+            "name": f"归档可逆-{tag}-{source['workflow_id'][-6:]}",
+            "description": "",
+            "nodes": source["nodes"],
+            "edges": source["edges"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    return str(created.json()["workflow_id"])
+
+
+@pytest.mark.asyncio
+async def test_归档与取消归档是一对可逆动作(container: PlatformContainer) -> None:
+    """定义列表上这两个按钮是值班员唯一能"收走一套剧本"的入口。
+    此前归档一按生效、只有一行提示，且没有任何出口把它带回来——
+    误归档内置核签流程之后，本班次每条低置信度上报都开不出工单。"""
+    async with _client(container) as client:
+        workflow_id = await _copy_of_builtin(client, "往返")
+
+        archived = await client.post(f"/api/v1/workflow/definitions/{workflow_id}/archive")
+        assert archived.status_code == 200, archived.text
+        assert archived.json()["status"] == "archived"
+        assert (await client.get(f"/api/v1/workflow/definitions/{workflow_id}")).json()["status"] == "archived"
+
+        restored = await client.post(f"/api/v1/workflow/definitions/{workflow_id}/restore")
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["status"] == "active"
+        detail = (await client.get(f"/api/v1/workflow/definitions/{workflow_id}")).json()
+        assert detail["status"] == "active"
+        assert detail["version"] == 1, "撤销归档不该产生新版本：一撤就多一版，版本链就成了噪声"
+
+
+@pytest.mark.asyncio
+async def test_取消归档只认同名最新版并说清该撤哪一版(container: PlatformContainer) -> None:
+    """按名字取用剧本的路径（核签开单、按名启动）只看最新版。
+    把旧版签回启用中会显示"已恢复"而工单照样开不出——静默无效比报错危险，所以当场拒绝并指名。"""
+    async with _client(container) as client:
+        first = await _copy_of_builtin(client, "旧版")
+        revised = await client.post(f"/api/v1/workflow/definitions/{first}/revise", json={"description": "改一版"})
+        assert revised.status_code == 200, revised.text
+        second = str(revised.json()["workflow_id"])
+        await client.post(f"/api/v1/workflow/definitions/{second}/archive")
+
+        refused = await client.post(f"/api/v1/workflow/definitions/{first}/restore")
+        assert refused.status_code == 400, refused.text
+        assert "v2" in refused.json()["detail"], f"报错要指名该恢复哪一版：{refused.json()}"
+
+        restored = await client.post(f"/api/v1/workflow/definitions/{second}/restore")
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_取消归档遇到不存在的定义给404(container: PlatformContainer) -> None:
+    async with _client(container) as client:
+        response = await client.post("/api/v1/workflow/definitions/wf_000000000000/restore")
+        assert response.status_code == 404, response.text
+        # 404 而不是 400：前端按"这条不在了、去刷新列表"处理，不该把它说成参数错
+        assert "不存在" in response.json()["detail"]

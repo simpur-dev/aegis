@@ -128,6 +128,19 @@ describe('api/workflow 请求形状', () => {
     expect(seen[0]?.body).toBeUndefined()
   })
 
+  /**
+   * 取消归档是归档的撤销口。此前列表上只有"归档"一个方向，误收走的内置流程
+   * （低置信度上报要靠它开核签工单）在本班次里没有任何办法恢复。
+   */
+  it('取消归档走 POST /restore 并回读状态', async () => {
+    const { client, seen } = clientWith(() => ({ status: 200, data: { workflow_id: 'wf_1', status: 'active' } }))
+    const result = await client.restoreDefinition('wf_1')
+    expect(seen[0]?.url).toBe('/api/v1/workflow/definitions/wf_1/restore')
+    expect(seen[0]?.method).toBe('post')
+    expect(seen[0]?.body).toBeUndefined()
+    expect(result.status).toBe('active')
+  })
+
   it('启动实例用 POST /instances 并回传 trace_id', async () => {
     const { client, seen } = clientWith(() => ({
       status: 200,

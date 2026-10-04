@@ -63,6 +63,7 @@ function fakeClient(responses: Partial<Record<keyof WorkflowClient, unknown>> = 
     createDefinition: { workflow_id: 'wf_new', name: '链路', version: 1 },
     reviseDefinition: { workflow_id: 'wf_new', name: '链路', version: 2 },
     archiveDefinition: { workflow_id: 'wf_1', status: 'archived' },
+    restoreDefinition: { workflow_id: 'wf_1', status: 'active' },
     startInstance: detail(),
     instances: ok,
     instance: detail(),
@@ -519,5 +520,42 @@ describe('stores/workflow 未保存改动', () => {
     store.addNode(createNodeDef('data_fetch', 'fetch_1'))
     expect(await store.saveDefinition()).toBe(false)
     expect(store.isDirty).toBe(true)
+  })
+
+  /**
+   * 归档/取消归档改的是服务端那份定义的 status，画布上正开着同一条时要跟着改，
+   * 否则标题旁继续写"启用中"、列表里却已经是归档的那一版。
+   * 状态不是值班员改的，不能顺手打上"有未保存改动"（那会弹刷新拦截）。
+   */
+  it('归档把画布上那条的状态改过来，但不把它算成未保存改动', async () => {
+    const store = createWorkflowStore(fakeClient())()
+    expect(await store.openDefinition('wf_0123456789ab')).toBe(true)
+    expect(store.current?.status).toBe('active')
+
+    expect(await store.archiveDefinition('wf_0123456789ab')).toBe(true)
+    expect(store.current?.status).toBe('archived')
+    expect(store.isDirty, '状态是服务端改的，不该记在画布账上').toBe(false)
+
+    expect(await store.restoreDefinition('wf_0123456789ab')).toBe(true)
+    expect(store.current?.status).toBe('active')
+    expect(store.isDirty).toBe(false)
+  })
+
+  it('画布本来就没存过改动时，归档不能把这份脏抹掉', async () => {
+    const store = createWorkflowStore(fakeClient())()
+    expect(await store.openDefinition('wf_0123456789ab')).toBe(true)
+    store.patchSelected({ name: '改个名' })
+    expect(store.isDirty).toBe(true)
+
+    expect(await store.archiveDefinition('wf_0123456789ab')).toBe(true)
+    expect(store.current?.status, '状态照样要跟过来').toBe('archived')
+    expect(store.isDirty, '刚改的名字服务端还不知道，重打基线等于抹掉提醒').toBe(true)
+  })
+
+  it('归档别的定义时不动当前画布的状态', async () => {
+    const store = createWorkflowStore(fakeClient())()
+    expect(await store.openDefinition('wf_0123456789ab')).toBe(true)
+    expect(await store.archiveDefinition('wf_另一条')).toBe(true)
+    expect(store.current?.status).toBe('active')
   })
 })

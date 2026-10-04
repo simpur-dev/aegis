@@ -24,6 +24,7 @@ import {
 import { WORKFLOW_NODE_TYPES } from '@/components/workflow/nodeComponents'
 import { useWorkflowCanvas } from '@/components/workflow/useWorkflowCanvas'
 import { createWorkflowStore, useWorkflowStore } from '@/stores/workflow'
+import type { DefinitionSummary } from '@/api/workflow'
 import type { NodeProps } from '@vue-flow/core'
 import { MAX_ATTEMPTS, MAX_BACKOFF_MS, NODE_SPECS, type FlowNodeData, type NodeCategory, type NodeType } from '@/utils/graph'
 import { installUnsavedGuard } from '@/components/workflow/confirmDiscard'
@@ -553,5 +554,88 @@ describe('DefinitionInspector 打开前的未保存确认', () => {
     expect(confirm).not.toHaveBeenCalled()
     expect(opened).toHaveBeenCalledTimes(1)
     confirm.mockRestore()
+  })
+})
+
+/**
+ * 归档改的是服务端那份定义的状态，而且是"一按生效"的单向动作：
+ * 真机上把内置的「人工上报核签流程」归档后，本班次每条低置信度上报都开不出工单，
+ * 而列表上原先只有"打开 / 归档"两个按钮，没有任何回头路。
+ */
+describe('DefinitionInspector 归档与取消归档', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function twoRows(): DefinitionSummary[] {
+    return [
+      { workflow_id: 'wf_active', name: '启用中的链路', version: 1, status: 'active', description: '', node_count: 2, edge_count: 1 },
+      { workflow_id: 'wf_archived', name: '人工上报核签流程', version: 1, status: 'archived', description: '', node_count: 3, edge_count: 2 },
+    ]
+  }
+
+  it('按钮文案跟着这一行的状态走：归档态给的是「取消归档」', () => {
+    const store = createWorkflowStore({} as never)()
+    store.resetDefinition('空白')
+    store.definitions = twoRows()
+    const wrapper = mount(DefinitionInspector, { global: { stubs: { 'a-tag': true } } })
+    expect(wrapper.find('[data-testid="archive-wf_active"]').text()).toBe('归档')
+    expect(wrapper.find('[data-testid="archive-wf_archived"]').text()).toBe('取消归档')
+  })
+
+  it('点「归档」只弹确认，不立刻改服务端状态', async () => {
+    const store = createWorkflowStore({} as never)()
+    store.resetDefinition('空白')
+    store.definitions = twoRows()
+    const archived = vi.spyOn(store, 'archiveDefinition').mockResolvedValue(true)
+    const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue({ destroy: vi.fn(), update: vi.fn() })
+    const wrapper = mount(DefinitionInspector, { global: { stubs: { 'a-tag': true } } })
+    await wrapper.find('[data-testid="archive-wf_active"]').trigger('click')
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(archived).not.toHaveBeenCalled()
+    confirm.mockRestore()
+  })
+
+  it('确认之后才归档，且归档的是点的那一行', async () => {
+    const store = createWorkflowStore({} as never)()
+    store.resetDefinition('空白')
+    store.definitions = twoRows()
+    const archived = vi.spyOn(store, 'archiveDefinition').mockResolvedValue(true)
+    let onOk: (() => void) | undefined
+    const confirm = vi.spyOn(Modal, 'confirm').mockImplementation((options) => {
+      onOk = (options as { onOk?: () => void }).onOk
+      return { destroy: vi.fn(), update: vi.fn() }
+    })
+    const wrapper = mount(DefinitionInspector, { global: { stubs: { 'a-tag': true } } })
+    await wrapper.find('[data-testid="archive-wf_active"]').trigger('click')
+    expect(onOk, '确认框必须带"归档"这个动作').toBeTypeOf('function')
+    onOk?.()
+    expect(archived).toHaveBeenCalledTimes(1)
+    expect(archived.mock.calls[0]?.[0]).toBe('wf_active')
+    confirm.mockRestore()
+  })
+
+  it('「取消归档」是撤回动作，不再拦第二遍', async () => {
+    const store = createWorkflowStore({} as never)()
+    store.resetDefinition('空白')
+    store.definitions = twoRows()
+    const restored = vi.spyOn(store, 'restoreDefinition').mockResolvedValue(true)
+    const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue({ destroy: vi.fn(), update: vi.fn() })
+    const wrapper = mount(DefinitionInspector, { global: { stubs: { 'a-tag': true } } })
+    await wrapper.find('[data-testid="archive-wf_archived"]').trigger('click')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(restored).toHaveBeenCalledTimes(1)
+    expect(restored.mock.calls[0]?.[0]).toBe('wf_archived')
+    confirm.mockRestore()
+  })
+
+  it('撤销口在后端真实存在（前端写个没人认领的 URL 等于没写）', () => {
+    const api = readRepoFile('backend', 'src', 'aegis', 'api', 'workflow_api.py')
+    expect(api).toContain('"/definitions/{workflow_id}/restore"')
+    const client = readRepoFile('frontend', 'src', 'api', 'workflow.ts')
+    expect(client).toContain('/restore')
+    // 状态改回来要落在画布上：否则标题旁继续写"启用中"，而列表里它已经是归档的那一版
+    const store = readRepoFile('frontend', 'src', 'stores', 'workflow.ts')
+    expect(store).toContain('syncCurrentStatus')
   })
 })

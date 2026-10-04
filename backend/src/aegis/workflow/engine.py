@@ -260,6 +260,32 @@ class WorkflowEngine:
         archived.status = "archived"
         return await self._repository.save(archived)
 
+    async def restore(self, workflow_id: str) -> WorkflowDef:
+        """取消归档：与 `archive()` 对称的撤销动作，同样不产生新版本、不动历史。
+
+        只允许恢复"同名的最新版"。按名字取用剧本的路径（核签开单、`start_from_name`）
+        走的都是 `latest(name)`，把一份旧版本签回启用中会让人以为恢复好了、实际仍指向
+        那个归档的新版——与其静默无效，不如当场说清楚该撤哪一版。
+        """
+        from aegis.workflow.store import build_definition
+
+        base = self._repository.get(workflow_id)
+        if base is None:
+            raise WorkflowValidationError(f"工作流定义不存在: {workflow_id}")
+        latest = self._repository.latest(base.name)
+        if latest is not None and latest.version > base.version:
+            raise WorkflowValidationError(f"同名已有更新版本 v{latest.version}，要恢复的是那一版而不是 v{base.version}")
+        restored = build_definition(
+            name=base.name,
+            nodes=[node.model_dump() for node in base.nodes],
+            edges=[edge.model_dump() for edge in base.edges],
+            description=base.description,
+            workflow_id=base.workflow_id,
+            version=base.version,
+        )
+        restored.status = "active"
+        return await self._repository.save(restored)
+
     def latest_definition(self, name: str) -> WorkflowDef | None:
         return self._repository.latest(name)
 

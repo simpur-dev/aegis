@@ -193,6 +193,17 @@ def build_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"workflow_id": archived.workflow_id, "status": archived.status}
 
+    @router.post("/definitions/{workflow_id}/restore")
+    async def restore_definition(workflow_id: str, container: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
+        engine = engine_of(container)
+        if engine.definition_by_id(workflow_id) is None:
+            raise HTTPException(status_code=404, detail=f"工作流定义不存在: {workflow_id}")
+        try:
+            restored = await engine.restore(workflow_id)
+        except WorkflowValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"workflow_id": restored.workflow_id, "status": restored.status}
+
     @router.post("/instances")
     async def start_instance(payload: StartInput, container: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
         engine = engine_of(container)

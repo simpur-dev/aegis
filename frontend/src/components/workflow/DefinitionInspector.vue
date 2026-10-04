@@ -7,7 +7,9 @@
 import { computed } from 'vue'
 
 import { confirmDiscardUnsaved } from './confirmDiscard'
+import { confirmArchive } from './confirmArchive'
 
+import type { DefinitionSummary } from '@/api/workflow'
 import { useWorkflowStore } from '@/stores/workflow'
 import { definitionStatusLabel, edgeId, MAX_DEFINITION_NAME_CHARS, MAX_DESCRIPTION_CHARS, type EdgeDef } from '@/utils/graph'
 
@@ -20,6 +22,17 @@ function open(workflowId: string): void {
   }
   if (store.isDirty) confirmDiscardUnsaved('打开这份定义', proceed)
   else proceed()
+}
+
+/** 归档要确认（改了服务端状态、会停掉按名字取用的自动化）；取消归档是安全的反向动作，直接做。 */
+function toggleArchive(row: DefinitionSummary): void {
+  if (row.status === 'archived') {
+    void store.restoreDefinition(row.workflow_id)
+    return
+  }
+  confirmArchive(row.name, row.version, () => {
+    void store.archiveDefinition(row.workflow_id)
+  })
 }
 
 /** 边条件与上游节点输出的 branch 名比对（engine.py:344-350），故只能提示、不能替用户猜。 */
@@ -111,7 +124,16 @@ function onDescription(event: Event): void {
         <!-- 打开排在归档前面：这是一条能存不能开的链路修好后的样子，
              顺序也是提醒——先能拿回来编辑，再谈要不要收走它 -->
         <button type="button" class="wf-def__button" :data-testid="`open-${row.workflow_id}`" @click="open(row.workflow_id)">打开</button>
-        <button type="button" class="wf-def__button" @click="store.archiveDefinition(row.workflow_id)">归档</button>
+        <!-- 归档与取消归档是同一个开关的两面：一按就改了服务端状态的动作要先问一句，
+             而把它撤回的那一下不该再拦人 -->
+        <button
+          type="button"
+          class="wf-def__button"
+          :data-testid="`archive-${row.workflow_id}`"
+          @click="toggleArchive(row)"
+        >
+          {{ row.status === 'archived' ? '取消归档' : '归档' }}
+        </button>
       </li>
     </ul>
     <p v-if="store.definitions.length === 0" class="wf-def__empty">尚无已保存定义。</p>

@@ -86,6 +86,24 @@ async def test_核签流程被归档后_重新注册会把开单能力带回来(
 
 
 @pytest.mark.asyncio
+async def test_取消归档核签流程后工单恢复(platform: PlatformContainer) -> None:
+    """另一条恢复路：值班员不必重启服务。列表上的「取消归档」走 `engine.restore`，
+    恢复的是同名最新版，按名字取用的核签腿跟着立刻回来。"""
+    name = REPORT_REVIEW_TEMPLATE["name"]
+    active = platform.workflow.latest_definition(name)
+    assert active is not None
+    await platform.workflow.archive(active.workflow_id)
+
+    restored = await platform.workflow.restore(active.workflow_id)
+    assert restored.status == "active"
+
+    result = await platform.submit_report(note=DECLARED_ONLY, region_code="540200", reporter="村民")
+    review = result["review"]
+    assert review is not None, "取消归档后必须真的能开单，而不是只改回一个 status"
+    assert review["workflow_id"] == active.workflow_id
+
+
+@pytest.mark.asyncio
 async def test_阈值命中的上报不开核签单(platform: PlatformContainer) -> None:
     result = await platform.submit_report(note=HEAVY_RAIN, region_code="540121", reporter="巡护员")
     assert result["parse"]["decided_by"] == "rule"
