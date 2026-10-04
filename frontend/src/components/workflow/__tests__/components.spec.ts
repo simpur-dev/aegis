@@ -1,8 +1,10 @@
 import { mount, shallowMount } from '@vue/test-utils'
+import { Modal } from 'ant-design-vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h, isReactive, reactive } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import DefinitionInspector from '@/components/workflow/DefinitionInspector.vue'
 import NodeInspector from '@/components/workflow/NodeInspector.vue'
 import NodeChips from '@/components/workflow/NodeChips.vue'
 import NodeHuman from '@/components/workflow/NodeHuman.vue'
@@ -384,5 +386,68 @@ describe('画布粘合层 useWorkflowCanvas', () => {
     expect(view.value.nodes.filter((node) => node.selected).map((node) => node.id)).toEqual(['review_1'])
     store.select(null)
     expect(view.value.nodes.every((node) => !node.selected)).toBe(true)
+  })
+})
+
+/**
+ * 「打开」会整体覆盖画布，所以脏画布上必须先问一句。
+ *
+ * 真机上这一步是直接的：摆了五个节点没保存，点一下别的定义，五个就没了，
+ * 页面连一句"未保存"都不说。这里验的是接线：脏的时候走确认，不脏的时候直接打开。
+ */
+describe('DefinitionInspector 打开前的未保存确认', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('画布脏的时候点"打开"只弹确认，不覆盖画布', async () => {
+    const store = createWorkflowStore({} as never)()
+    store.resetDefinition('我的草稿')
+    store.addNode(createNodeDef('data_fetch', 'fetch_1'))
+    store.addNode(createNodeDef('notify', 'notify_1'))
+    expect(store.isDirty).toBe(true)
+    store.definitions = [{ workflow_id: 'wf_saved', name: '已存链路', version: 1, status: 'active', description: '', node_count: 2, edge_count: 1 }]
+    const opened = vi.spyOn(store, 'openDefinition').mockResolvedValue(true)
+    const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue({ destroy: vi.fn(), update: vi.fn() })
+    const wrapper = mount(DefinitionInspector, { global: { stubs: { 'a-tag': true } } })
+    await wrapper.find('[data-testid^="open-"]').trigger('click')
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(opened).not.toHaveBeenCalled()
+    expect(store.current?.nodes).toHaveLength(2)
+    confirm.mockRestore()
+  })
+
+  it('确认之后才真的覆盖画布', async () => {
+    const store = createWorkflowStore({} as never)()
+    store.resetDefinition('我的草稿')
+    store.addNode(createNodeDef('data_fetch', 'fetch_1'))
+    store.definitions = [{ workflow_id: 'wf_saved', name: '已存链路', version: 1, status: 'active', description: '', node_count: 2, edge_count: 1 }]
+    const opened = vi.spyOn(store, 'openDefinition').mockResolvedValue(true)
+    let onOk: (() => void) | undefined
+    const confirm = vi.spyOn(Modal, 'confirm').mockImplementation((options) => {
+      onOk = (options as { onOk?: () => void }).onOk
+      return { destroy: vi.fn(), update: vi.fn() }
+    })
+    const wrapper = mount(DefinitionInspector, { global: { stubs: { 'a-tag': true } } })
+    await wrapper.find('[data-testid^="open-"]').trigger('click')
+    expect(opened).not.toHaveBeenCalled()
+    expect(onOk, '确认框必须带"继续"这个动作').toBeTypeOf('function')
+    onOk?.()
+    expect(opened).toHaveBeenCalledTimes(1)
+    confirm.mockRestore()
+  })
+
+  it('画布干净时不拦路：直接打开', async () => {
+    const store = createWorkflowStore({} as never)()
+    store.resetDefinition('空白')
+    expect(store.isDirty).toBe(false)
+    store.definitions = [{ workflow_id: 'wf_saved', name: '已存链路', version: 1, status: 'active', description: '', node_count: 2, edge_count: 1 }]
+    const opened = vi.spyOn(store, 'openDefinition').mockResolvedValue(true)
+    const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue({ destroy: vi.fn(), update: vi.fn() })
+    const wrapper = mount(DefinitionInspector, { global: { stubs: { 'a-tag': true } } })
+    await wrapper.find('[data-testid^="open-"]').trigger('click')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(opened).toHaveBeenCalledTimes(1)
+    confirm.mockRestore()
   })
 })

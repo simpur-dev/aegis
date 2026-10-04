@@ -24,6 +24,7 @@ import NodeInspector from '@/components/workflow/NodeInspector.vue'
 import NodePalette from '@/components/workflow/NodePalette.vue'
 import RuntimePanel from '@/components/workflow/RuntimePanel.vue'
 import { WORKFLOW_NODE_TYPES } from '@/components/workflow/nodeComponents'
+import { confirmDiscardUnsaved } from '@/components/workflow/confirmDiscard'
 import { useWorkflowCanvas } from '@/components/workflow/useWorkflowCanvas'
 
 const store = useWorkflowStore()
@@ -46,8 +47,13 @@ async function save(): Promise<void> {
 }
 
 async function createDraft(): Promise<void> {
-  store.resetDefinition()
-  message.success('已新建空白画布')
+  const proceed = (): void => {
+    store.resetDefinition()
+    message.success('已新建空白画布')
+  }
+  // 有未保存改动时先确认：一按就清空、只弹一句 toast 的话，重画的成本全在值班员身上
+  if (store.isDirty) confirmDiscardUnsaved('新建画布', proceed)
+  else proceed()
 }
 
 onMounted(bootstrap)

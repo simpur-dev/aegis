@@ -1,14 +1,26 @@
 <script setup lang="ts">
 /**
  * 定义级编辑：名称/描述、连线条件、本地校验清单，以及服务端已存版本的摘要。
- * 服务端定义列表只回摘要（workflow_api.py:113-130），不含节点与连线，故不提供"拉回画布"。
+ * 服务端定义列表只回摘要（workflow_api.py:113-130），不含节点与连线，
+ * 所以"打开"要走单条定义的出口（GET /definitions/{id}）把全文取回画布。
  */
 import { computed } from 'vue'
+
+import { confirmDiscardUnsaved } from './confirmDiscard'
 
 import { useWorkflowStore } from '@/stores/workflow'
 import { definitionStatusLabel, edgeId, type EdgeDef } from '@/utils/graph'
 
 const store = useWorkflowStore()
+
+/** 打开一份已存定义：会整体覆盖画布，有未保存改动时先确认。 */
+function open(workflowId: string): void {
+  const proceed = (): void => {
+    void store.openDefinition(workflowId)
+  }
+  if (store.isDirty) confirmDiscardUnsaved('打开这份定义', proceed)
+  else proceed()
+}
 
 /** 边条件与上游节点输出的 branch 名比对（engine.py:344-350），故只能提示、不能替用户猜。 */
 const CONDITION_HINT = '留空表示无条件放行；填分支名（如 triggered / level_2）表示仅该分支命中时执行。'
@@ -98,7 +110,7 @@ function onDescription(event: Event): void {
         <span class="wf-def__muted">{{ definitionStatusLabel(row.status) }}</span>
         <!-- 打开排在归档前面：这是一条能存不能开的链路修好后的样子，
              顺序也是提醒——先能拿回来编辑，再谈要不要收走它 -->
-        <button type="button" class="wf-def__button" :data-testid="`open-${row.workflow_id}`" @click="store.openDefinition(row.workflow_id)">打开</button>
+        <button type="button" class="wf-def__button" :data-testid="`open-${row.workflow_id}`" @click="open(row.workflow_id)">打开</button>
         <button type="button" class="wf-def__button" @click="store.archiveDefinition(row.workflow_id)">归档</button>
       </li>
     </ul>

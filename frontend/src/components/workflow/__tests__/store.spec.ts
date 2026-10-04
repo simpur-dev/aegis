@@ -450,3 +450,63 @@ describe('stores/workflow 运行中操作', () => {
     expect(store.error).toContain('状态 succeeded 不可旁路')
   })
 })
+
+/**
+ * "有没有未保存改动"必须是个算得出来的事实。
+ *
+ * 真机上"新建画布"和"打开已存定义"都是直接覆盖画布：摆了五个节点还没保存，
+ * 一误触就全没了，页面只轻描淡写说一句"已新建空白画布"。要拦住这种丢法，
+ * 前提是 store 能回答"现在这份跟服务端一致吗"。
+ */
+describe('stores/workflow 未保存改动', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('空白画布不算未保存：它本来就什么都没有', () => {
+    const store = createWorkflowStore(fakeClient())()
+    store.resetDefinition('链路')
+    expect(store.isDirty).toBe(false)
+  })
+
+  it('加一个节点就算脏，保存之后回到干净', async () => {
+    const store = createWorkflowStore(fakeClient())()
+    store.resetDefinition('链路')
+    store.addNode(createNodeDef('data_fetch', 'fetch_1'))
+    expect(store.isDirty).toBe(true)
+    expect(await store.saveDefinition()).toBe(true)
+    expect(store.isDirty).toBe(false)
+    store.addNode(createNodeDef('notify', 'notify_1'))
+    expect(store.isDirty, '存完又改了，还得算脏').toBe(true)
+  })
+
+  it('拖动节点改坐标也算脏：摆好的位置同样是劳动', () => {
+    const store = createWorkflowStore(fakeClient())()
+    store.resetDefinition('链路')
+    store.addNode(createNodeDef('data_fetch', 'fetch_1'))
+    store.saveDefinition()
+    store.moveNode('fetch_1', { x: 900, y: 40 })
+    expect(store.isDirty).toBe(true)
+  })
+
+  it('打开已存定义与聚焦实例都把画布换成服务端内容，因而不算脏', async () => {
+    const store = createWorkflowStore(fakeClient())()
+    store.resetDefinition('链路')
+    expect(await store.openDefinition('wf_0123456789ab')).toBe(true)
+    expect(store.isDirty).toBe(false)
+    store.patchSelected({ name: '改个名' })
+    expect(store.isDirty).toBe(true)
+    expect(await store.focusInstance('wfi_0123456789ab')).toBe(true)
+    expect(store.isDirty, '聚焦实例载入的也是服务端那一份').toBe(false)
+  })
+
+  it('保存失败不算"已同步"：脏状态必须留着提醒', async () => {
+    const client = fakeClient()
+    vi.mocked(client.createDefinition).mockRejectedValueOnce(new Error('HTTP 500 存不下'))
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('链路')
+    store.addNode(createNodeDef('data_fetch', 'fetch_1'))
+    expect(await store.saveDefinition()).toBe(false)
+    expect(store.isDirty).toBe(true)
+  })
+})

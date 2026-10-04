@@ -66,7 +66,27 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     const loading = ref(false)
     const error = ref<string | null>(null)
     const polling = ref(false)
+    /**
+     * 上一次"画布内容与服务端一致"的快照。
+     *
+     * 有它才谈得上"未保存"：此前"新建画布"和"打开已存定义"都是直接覆盖画布，
+     * 真机上点了三五个节点还没保存，一误触就全没了，页面只轻描淡写说一句"已新建空白画布"。
+     * 坐标也算改动——分层布局摆好的位置同样是劳动。
+     */
+    const savedSnapshot = ref<string | null>(null)
     let timer: ReturnType<typeof setInterval> | null = null
+
+    function snapshotOf(def: WorkflowDef | null, pos: Record<string, Position>): string {
+      return JSON.stringify({ def, pos })
+    }
+
+    function markSaved(): void {
+      savedSnapshot.value = snapshotOf(current.value, positions.value)
+    }
+
+    const isDirty = computed<boolean>(
+      () => current.value !== null && snapshotOf(current.value, positions.value) !== savedSnapshot.value,
+    )
 
     const descriptionByType = computed<Record<string, string>>(() =>
       Object.fromEntries(nodeTypes.value.map((entry) => [entry.type, entry.description])),
@@ -161,6 +181,8 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       positions.value = {}
       selectedNodeId.value = null
       error.value = null
+      // 空白画布没有"未保存的改动"可言：它本来就什么都没有
+      markSaved()
     }
 
     function autoLayout(): void {
@@ -290,6 +312,8 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
         // 打开的是"定义"不是"实例"：上一张图的轮询必须停掉，否则定时器会继续
         // 改写 current，把刚打开的草稿覆盖成实例快照。
         stopPolling()
+        // 画布现在等于服务端那一份，没有未保存改动
+        markSaved()
         await Promise.all([loadDefinitions(), loadInstances()])
       }, '打开定义失败')
     }
@@ -319,6 +343,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
             ? await client.createDefinition({ name: def.name, description: def.description, nodes, edges: def.edges })
             : await client.reviseDefinition(def.workflow_id, { nodes, edges: def.edges, description: def.description })
         current.value = { ...def, workflow_id: result.workflow_id, name: result.name, version: result.version }
+        markSaved()
         await loadDefinitions()
       }, '保存定义失败')
     }
@@ -364,6 +389,8 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
         positions.value = Object.fromEntries(graph.nodes.map((node) => [node.id, node.position]))
         const awaiting = detail.nodes.find((node) => node.state === 'awaiting_human') ?? detail.nodes[0]
         selectedNodeId.value = awaiting?.node_id ?? null
+        // 聚焦实例载入的是服务端那一份定义 + 由它算出的坐标：同样不算未保存改动
+        markSaved()
         startPolling()
       }, '读取实例失败')
     }
@@ -479,6 +506,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       loading,
       error,
       polling,
+      isDirty,
       descriptionByType,
       selectedNode,
       validationErrors,
