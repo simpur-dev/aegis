@@ -60,11 +60,14 @@ let detachUnsavedGuard: (() => void) | null = null
 
 onMounted(() => {
   void bootstrap()
+  // 队列要自己长出新单子：值班员盯着这一页等工单时，页面不能一直是开页那一刻的快照
+  store.startQueuePolling()
   // 画布上写着"未保存"，就不能让 F5 一声不响把它清掉（真机：刷新后 3 个节点归零、0 次确认）
   detachUnsavedGuard = installUnsavedGuard(() => store.isDirty)
 })
 onUnmounted(() => {
   store.stopPolling()
+  store.stopQueuePolling()
   detachUnsavedGuard?.()
   detachUnsavedGuard = null
 })

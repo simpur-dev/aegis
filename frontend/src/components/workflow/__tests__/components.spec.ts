@@ -864,6 +864,27 @@ describe('RuntimePanel 等人签的工单要数得出来、找得到', () => {
     expect(wrapper.find('[data-testid="only-waiting"]').exists(), '勾选状态要看得见，不然人不知道列表为什么是空的').toBe(true)
     expect(wrapper.text()).toContain('这一列里没有等人签的实例了')
   })
+
+  it('队列标题下写着这一列是什么时候取的数', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    store.instances = [row('wfi_已完', 'succeeded')]
+    store.instancesUpdatedAt = '2026-10-04T19:20:00.000Z'
+    const wrapper = mount(RuntimePanel)
+    const stamp = wrapper.find('[data-testid="instances-updated-at"]').text()
+    expect(stamp).toContain('更新于')
+    expect(stamp, '只写时间不写节奏，人没法判断自己是不是在看一份不会动的账').toContain('15 秒')
+  })
+
+  it('一次都没取到时不许拿当前时间冒充"更新于"', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    store.instancesUpdatedAt = null
+    const wrapper = mount(RuntimePanel)
+    const stamp = wrapper.find('[data-testid="instances-updated-at"]').text()
+    expect(stamp).toBe('实例列表还没取到')
+    expect(stamp, '没取到数却写"更新于"，是凭空造出来的时间戳').not.toContain('更新于')
+  })
 })
 
 /**
@@ -876,6 +897,20 @@ describe('编排页顶栏「刷新实例」的接线', () => {
     const view = readRepoFile('frontend', 'src', 'views', 'WorkflowView.vue')
     expect(view).toMatch(/@click="store\.refreshAll"\s*>\s*刷新实例/)
     expect(view, '这颗按钮只拉详情，点下去张数不变，等于没这个按钮').not.toMatch(/@click="store\.refreshInstance"[^>]*>\s*刷新实例/)
+  })
+
+  /**
+   * 队列自查的接线：真机上页面开着 40 秒，接口从 6 条变 7 条而"服务端实例（6）"一动不动。
+   * 起表必须挂在挂载上、停表必须挂在卸载上——少后半条，切走页面还在打接口。
+   */
+  it('挂载起队列自查、卸载停表，两者都接的是 store 导出的方法', () => {
+    const view = readRepoFile('frontend', 'src', 'views', 'WorkflowView.vue')
+    expect(view).toMatch(/onMounted\(\(\) => \{[\s\S]*?store\.startQueuePolling\(\)/)
+    expect(view, '卸载不停表，切到别的页签也一直在打实例接口').toMatch(/onUnmounted\(\(\) => \{[\s\S]*?store\.stopQueuePolling\(\)/)
+    const store = readRepoFile('frontend', 'src', 'stores', 'workflow.ts')
+    expect(store).toMatch(/^\s+startQueuePolling,$/m)
+    expect(store).toMatch(/^\s+stopQueuePolling,$/m)
+    expect(store, '时间戳没人写就永远读不到差别').toMatch(/^\s+instancesUpdatedAt,$/m)
   })
 
   it('store 真的导出了 refreshAll：视图取用未导出的方法，运行时就是 undefined', () => {

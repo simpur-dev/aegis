@@ -52,6 +52,16 @@ import {
 } from '@/utils/graph'
 
 const POLL_INTERVAL_MS = 1_500
+/**
+ * 实例队列的自查间隔。
+ *
+ * 真机量到：页面开着不动，另一条路（人工上报、助手）开出新的核签工单，
+ * 40 秒里接口从 6 条变 7 条，而页面上的"服务端实例（6）"一个字没动——
+ * 页头还写着"事件流已连接"，信号到了这页却被丢掉。
+ * 原来唯一的定时器 `POLL_INTERVAL_MS` 只刷**当前盯着的那一条**，
+ * 而且一遇到不可变的实例就自己停掉：队列本身从来没人刷。
+ */
+const QUEUE_POLL_INTERVAL_MS = 15_000
 
 /** 客户端以参数注入：生产用默认实例，测试注入桩适配器，避免真实网络。 */
 export function createWorkflowStore(client: WorkflowClient = workflowApi) {
@@ -59,6 +69,8 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     const nodeTypes = ref<NodeTypeEntry[]>([])
     const definitions = ref<DefinitionSummary[]>([])
     const instances = ref<InstanceDetail[]>([])
+    /** 这一列实例是什么时候取到的。队列不会自己长出来之前，至少要说清它是一份快照。 */
+    const instancesUpdatedAt = ref<string | null>(null)
     const current = ref<WorkflowDef | null>(null)
     const positions = ref<Record<string, Position>>({})
     const selectedNodeId = ref<string | null>(null)
@@ -75,6 +87,9 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
      */
     const savedSnapshot = ref<string | null>(null)
     let timer: ReturnType<typeof setInterval> | null = null
+    let queueTimer: ReturnType<typeof setInterval> | null = null
+    /** 队列是整份覆盖的写手，多个来源（挂载、手动刷新、动作后对账、自查）会交错。 */
+    let listToken = 0
 
     /**
      * "用户此刻看的是哪一条"的序号：每切一次加一，任何异步回写动手之前先比对。
@@ -335,7 +350,12 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     }
 
     async function loadInstances(): Promise<void> {
-      instances.value = (await client.instances()).items
+      const token = ++listToken
+      const next = (await client.instances()).items
+      // 后发的那一趟赢：旧快照晚到会把数字往回带（7 条又变回 6 条）
+      if (token !== listToken) return
+      instances.value = next
+      instancesUpdatedAt.value = new Date().toISOString()
     }
 
     /**
@@ -513,6 +533,26 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       polling.value = false
     }
 
+    /**
+     * 队列自查：只要这一页开着就每隔 15 秒把实例列表对一遍。
+     *
+     * 与上面那条定时器的分工要说清：`startPolling` 刷的是"当前盯着的那一条"，
+     * 它会自己停；这条刷的是"还有没有新单子进来"，页面在就一直在。
+     * 页签在后台时不打接口（值班员切走了，回来会立刻刷到）。
+     */
+    function startQueuePolling(): void {
+      if (queueTimer !== null) return
+      queueTimer = setInterval(() => {
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+        void syncInstancesQuietly()
+      }, QUEUE_POLL_INTERVAL_MS)
+    }
+
+    function stopQueuePolling(): void {
+      if (queueTimer !== null) clearInterval(queueTimer)
+      queueTimer = null
+    }
+
     async function submitDecision(nodeId: string, choice: string, comment = '', by = ''): Promise<boolean> {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return false
@@ -609,6 +649,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       nodeTypes,
       definitions,
       instances,
+      instancesUpdatedAt,
       current,
       positions,
       selectedNodeId,
@@ -658,6 +699,8 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       refreshAll,
       startPolling,
       stopPolling,
+      startQueuePolling,
+      stopQueuePolling,
       submitDecision,
       patchRuntimeConfig,
       insertRuntimeNode,

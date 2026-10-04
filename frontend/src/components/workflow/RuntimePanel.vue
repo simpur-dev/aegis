@@ -6,12 +6,22 @@
 import { computed, ref } from 'vue'
 
 import { useWorkflowStore } from '@/stores/workflow'
+import { formatOperatingTime } from '@/utils/clock'
 import { INSTANCE_STATUS_LABELS, isInstanceStatus, type InstanceStatus } from '@/utils/graph'
 
 const store = useWorkflowStore()
 
 const abortReason = ref('')
 const onlyWaiting = ref(false)
+
+/**
+ * 这一列实例是什么时候取的数。一次都没取到时不拿当前时间冒充"更新于"。
+ */
+const listStamp = computed<string>(() =>
+  store.instancesUpdatedAt === null
+    ? '实例列表还没取到'
+    : `更新于 ${formatOperatingTime(store.instancesUpdatedAt)}（UTC+8，每 15 秒自己对一遍）`,
+)
 
 const statusLabel = computed<string>(() => {
   const status = store.instanceStatus
@@ -90,6 +100,7 @@ const listedInstances = computed(() => {
         只看这些
       </label>
     </h4>
+    <p class="wf-run__hint" data-testid="instances-updated-at">{{ listStamp }}</p>
     <!-- 勾了"只看这些"之后一张都没剩下时，必须说一句"签完了"：
          留一个空列表不解释，读的人会得出"没有工单功能"的结论（监测页同款坑） -->
     <p v-if="onlyWaiting && waitingRows.length === 0" class="wf-run__hint">这一列里没有等人签的实例了。</p>
