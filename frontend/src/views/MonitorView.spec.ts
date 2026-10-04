@@ -1,7 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import api from '@/api/client'
+import api, { type TelemetryQuery } from '@/api/client'
+import mapApi from '@/api/map'
 import type { TelemetryReading } from '@/api/types'
 import MonitorView from '@/views/MonitorView.vue'
 
@@ -10,7 +11,14 @@ vi.mock('@/api/client', async (importOriginal) => {
   return { default: { telemetry: vi.fn(), drill: vi.fn() }, ApiError: actual.ApiError }
 })
 
+// 区域下拉的底仓来自锚点清单：不 mock 掉，用例就会去发真 XHR
+vi.mock('@/api/map', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/map')>()
+  return { ...actual, default: { ...actual.default, regionAnchors: vi.fn() } }
+})
+
 const mockedTelemetry = vi.mocked(api.telemetry)
+const mockedAnchors = vi.mocked(mapApi.regionAnchors)
 
 const STUBS = {
   EChart: true,
@@ -50,6 +58,12 @@ function mountView() {
 
 beforeEach(() => {
   mockedTelemetry.mockReset().mockResolvedValue({ count: 1, items: [READING] })
+  mockedAnchors.mockReset().mockResolvedValue({
+    items: [
+      { code: '540121', name_zh: '拉萨市辖区', lon: 91.1, lat: 29.65 },
+      { code: '540700', name_zh: '那曲市', lon: 92.0, lat: 31.5 },
+    ],
+  } as never)
 })
 
 describe('监测页的实时性：标题写着"最新"，数据就不能冻在打开那一刻', () => {
@@ -173,10 +187,88 @@ describe('监测页的人工上报入口（B5）', () => {
   it('打开上报弹窗不影响监测读数与演练入口（同页共存，不是替换）', async () => {
     const wrapper = mountView()
     await flushPromises()
+    // 两条各管一件事：不筛的取样给下拉当底仓，带参数的那条才是页面在显示的内容
     expect(mockedTelemetry).toHaveBeenCalledWith({ limit: 2_000 })
+    expect(mockedTelemetry).toHaveBeenCalledWith({ limit: 2_000, metric: 'rain_10min' })
     await wrapper.find('[data-testid="open-report"]').trigger('click')
     await flushPromises()
     const labels = wrapper.findAll('.button').map((button) => button.text())
     expect(labels).toEqual(expect.arrayContaining(['刷新', '人工上报', '发起灾害演练（激增）', '发起背景演练（正常）']))
+  })
+})
+
+/**
+ * 筛选语义：区域与指标是**查询参数**，不是"最新 2000 条里的本地过滤器"。
+ *
+ * 真机量出来的问题：台账里 50,000 条读数，本地窗口只装 2,000 条，
+ * 而窗口里只出现过 3 个区域——其余区域的下拉项压根不存在，
+ * 页面表现就是"这个区域没有遥测"，可后端按区域单查能填满 2,000 条。
+ * 一张图页一直是发参数查的，两页同一个控件却是两种语义。
+ */
+describe('监测页的筛选是后端查询', () => {
+  function selectPair(wrapper: ReturnType<typeof mountView>) {
+    const [regionSelect, metricSelect] = wrapper.findAllComponents({ name: 'ASelect' })
+    if (!regionSelect || !metricSelect) throw new Error('两个下拉没渲染出来')
+    return [regionSelect, metricSelect] as const
+  }
+
+  it('选区域后发的是 region_code 查询参数', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const [regionSelect] = selectPair(wrapper)
+    mockedTelemetry.mockClear()
+    regionSelect.vm.$emit('update:value', '540221')
+    await flushPromises()
+    expect(mockedTelemetry).toHaveBeenCalledWith({ limit: 2_000, region_code: '540221', metric: 'rain_10min' })
+  })
+
+  it('换指标也发查询参数，不再靠本地挑', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const [, metricSelect] = selectPair(wrapper)
+    mockedTelemetry.mockClear()
+    metricSelect.vm.$emit('update:value', 'debris_level')
+    await flushPromises()
+    expect(mockedTelemetry).toHaveBeenCalledWith({ limit: 2_000, metric: 'debris_level' })
+  })
+
+  it('区域下拉列出锚点里的全部区域，不只是窗口里出现过的', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const options = wrapper.findAllComponents({ name: 'ASelectOption' }).map((option) => String(option.props('value')))
+    // 540700 在读数里从没出现过（READING 只有 540121），但它是在册区域：以前这种区域选不到
+    expect(options).toContain('540700')
+  })
+
+  /**
+   * 连点两个区域时，先发出的那个更慢回来是常态而不是意外。
+   * 没有序号守卫的话，慢回来的旧数据会盖掉新筛选的结果——
+   * 下拉显示 B 区域，表格里却是 A 区域的读数。
+   */
+  it('迟到的旧筛选响应不能盖掉新筛选的结果', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      mockedTelemetry.mockImplementation((query: TelemetryQuery = {}) => {
+        if (query.region_code === 'SLOW') {
+          return new Promise((resolve) => {
+            setTimeout(() => resolve({ count: 1, items: [{ ...READING, station_id: 'ST-慢区' }] }), 400)
+          })
+        }
+        return Promise.resolve({ count: 1, items: [{ ...READING, station_id: 'ST-快区' }] })
+      })
+      const wrapper = mountView()
+      await flushPromises()
+      const [regionSelect] = selectPair(wrapper)
+      regionSelect.vm.$emit('update:value', 'SLOW')
+      await flushPromises()
+      regionSelect.vm.$emit('update:value', 'FAST')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(800)
+      await flushPromises()
+      const rows = wrapper.findComponent({ name: 'ATable' }).props('dataSource') as TelemetryReading[]
+      expect(rows.map((row) => row.station_id)).toEqual(['ST-快区'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

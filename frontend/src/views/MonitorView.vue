@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { message } from 'ant-design-vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import api, { ApiError } from '@/api/client'
+import api, { ApiError, type TelemetryQuery } from '@/api/client'
 import type { TelemetryReading } from '@/api/types'
+import mapApi, { normalizeAnchors } from '@/api/map'
 import EChart from '@/components/EChart.vue'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import type { ChartOption } from '@/components/echarts'
@@ -11,6 +12,7 @@ import { formatOperatingTime, operatingClock } from '@/utils/clock'
 import { ingestLatencyLabel } from '@/utils/ingestLatency'
 
 const REFRESH_MS = 15_000
+const WINDOW_LIMIT = 2_000
 
 const readings = ref<TelemetryReading[]>([])
 const region = ref<string>('')
@@ -19,33 +21,39 @@ const loading = ref(false)
 const drilling = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
 /**
+ * 下拉可选项的底仓：区域来自烘焙好的区域锚点清单（那是全量区域），指标来自一次不带筛选的取样。
+ *
+ * 为什么不能从"当前这批读数"里推：见 `load()` 的注释——窗口只有最新 2000 条，
+ * 用它当清单等于"只列出窗口里恰好出现过的区域"，其余区域在页面上直接不存在。
+ */
+const catalog = ref<{ regions: string[]; metrics: string[] }>({ regions: [], metrics: [] })
+
+const regions = computed(() => sortedUnion(catalog.value.regions, readings.value.map((r) => r.region_code), [region.value]))
+const metrics = computed(() => sortedUnion(catalog.value.metrics, readings.value.map((r) => r.metric), [metric.value]))
+
+function sortedUnion(...groups: string[][]): string[] {
+  return [...new Set(groups.flat().filter((item) => item !== ''))].sort()
+}
+/**
  * 人工上报（批次 B5）：这条腿是"接入 ≤5min"的第四个真实入口，
  * 表单与回执都在 `components/reports/ReportForm.vue` 一处，监测页只负责开门。
  */
 const reportOpen = ref(false)
 
-const regions = computed(() => [...new Set(readings.value.map((r) => r.region_code))].sort())
-const metrics = computed(() => [...new Set(readings.value.map((r) => r.metric))].sort())
-
-const filtered = computed(() =>
-  readings.value.filter(
-    (r) => (!region.value || r.region_code === region.value) && r.metric === metric.value,
-  ),
-)
-
+/** 图表与表格用的就是 `readings`：筛选已经交给后端，这里不再本地二次过滤（见 `load()`）。 */
 const chartOption = computed<ChartOption>(() => ({
   title: { text: `${metric.value} 时序（${region.value || '全部区域'}）`, left: 'center', textStyle: { fontSize: 14 } },
   tooltip: { trigger: 'axis' },
   grid: { left: 56, right: 24, bottom: 48 },
-  xAxis: { type: 'category', data: filtered.value.map((r) => operatingClock(r.observed_at)) },
-  yAxis: { type: 'value', name: filtered.value[0]?.unit ?? '' },
+  xAxis: { type: 'category', data: readings.value.map((r) => operatingClock(r.observed_at)) },
+  yAxis: { type: 'value', name: readings.value[0]?.unit ?? '' },
   series: [
     {
       name: metric.value,
       type: 'line',
       smooth: true,
-      showSymbol: filtered.value.length < 60,
-      data: filtered.value.map((r) => (r.quality_flag === 'ok' ? r.value : null)),
+      showSymbol: readings.value.length < 60,
+      data: readings.value.map((r) => (r.quality_flag === 'ok' ? r.value : null)),
       connectNulls: false,
     },
   ],
@@ -61,15 +69,43 @@ const columns = [
   { title: '接入时延', key: 'latency' },
 ]
 
+/**
+ * 取数。区域与指标**都作为查询参数发给后端**（`/api/v1/telemetry` 收 `region_code`/`metric`，
+ * 一张图页一直是这么用的），不再"取最新 2000 条再本地挑"。
+ *
+ * 本地过滤的真机后果：台账里 50,000 条读数，窗口只装得下最新 2,000 条，
+ * 而窗口里只出现过 3 个区域（`540121/540221/540321`）——其余区域的下拉项根本不存在，
+ * 选不到也就看不到，页面表现成"这个区域没有遥测"。同一时刻后端按区域查能填满 2,000 条。
+ */
+let requestToken = 0
+
 async function load(): Promise<void> {
+  const token = ++requestToken
   loading.value = true
   try {
-    const data = await api.telemetry({ limit: 2_000 })
+    const query: TelemetryQuery = { limit: WINDOW_LIMIT }
+    if (region.value !== '') query.region_code = region.value
+    if (metric.value !== '') query.metric = metric.value
+    const data = await api.telemetry(query)
+    // 迟到的旧响应不许盖掉新筛选的结果：连点两个区域时，前一个更慢回来是常态而不是意外
+    if (token !== requestToken) return
     readings.value = data.items
   } catch (error) {
+    if (token !== requestToken) return
     message.error(error instanceof ApiError ? `读取遥测失败：${error.message}` : '读取遥测失败')
   } finally {
-    loading.value = false
+    if (token === requestToken) loading.value = false
+  }
+}
+
+/** 下拉底仓：锚点清单给全量区域，一次不筛的取样给指标名。任一失败都退回"至少还能用读数推"。 */
+async function loadCatalog(): Promise<void> {
+  const [anchors, sample] = await Promise.allSettled([mapApi.regionAnchors(), api.telemetry({ limit: WINDOW_LIMIT })])
+  const anchorList = anchors.status === 'fulfilled' ? normalizeAnchors(anchors.value) : []
+  const sampleList = sample.status === 'fulfilled' ? sample.value.items : []
+  catalog.value = {
+    regions: sortedUnion(anchorList.map((item) => item.code), sampleList.map((r) => r.region_code)),
+    metrics: sortedUnion(sampleList.map((r) => r.metric)),
   }
 }
 
@@ -97,7 +133,13 @@ function latencyOf(row: TelemetryReading): string {
   return ingestLatencyLabel(row)
 }
 
+// 筛选条件是查询参数而不是本地过滤器：改了就得重取，否则界面显示的仍是上一个区域的数。
+watch([region, metric], () => {
+  void load()
+})
+
 onMounted(() => {
+  void loadCatalog()
   void load()
   // 这是盯实时遥测的页面，只取一次数就等于把"最新读数"冻在打开那一刻：
   // 演练发完，表里还是旧数据，而页面标题写着"最新"。与态势总览同一口径——
@@ -142,7 +184,7 @@ onBeforeUnmount(() => {
         <a-card size="small" title="最新遥测明细" :loading="loading">
           <a-table
             :columns="columns"
-            :data-source="filtered"
+            :data-source="readings"
             :pagination="{ pageSize: 10 }"
             row-key="(r: TelemetryReading) => r.station_id + r.observed_at"
             size="small"
