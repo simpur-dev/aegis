@@ -38,10 +38,27 @@ function describeEntry(entry: unknown, labels: FieldLabels): string {
 }
 
 /**
+ * 界面上一行放得下的原因长度。
+ *
+ * 上游网关（反代、LB）出错时响应体常常是一整页 HTML，`detail` 是字符串就被原样带出去，
+ * 一条红色提示能撑到几千字。截断而不是猜它想说什么。
+ */
+export const MAX_REASON_CHARS = 200
+
+function clamp(text: string): string {
+  const flat = text.replace(/\s*\n\s*/g, ' ').trim()
+  return flat.length <= MAX_REASON_CHARS ? flat : `${flat.slice(0, MAX_REASON_CHARS)}…`
+}
+
+/**
  * 把响应的 detail 还原成一行中文界面能用的话；认不出形状时返回空串，
  * 由调用方回落到自己的兜底文案（这里不编造原因）。
  */
 export function describeValidationDetail(raw: unknown, labels: FieldLabels = {}): string {
+  return clamp(describeDetailShape(raw, labels))
+}
+
+function describeDetailShape(raw: unknown, labels: FieldLabels): string {
   if (typeof raw === 'string') return raw
   if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw)
   if (Array.isArray(raw)) {
@@ -52,10 +69,10 @@ export function describeValidationDetail(raw: unknown, labels: FieldLabels = {})
   }
   if (raw !== null && typeof raw === 'object') {
     const record = raw as Record<string, unknown>
-    if ('detail' in record) return describeValidationDetail(record.detail, labels)
+    if ('detail' in record) return describeDetailShape(record.detail, labels)
     if (typeof record.message === 'string') return record.message
     return Object.entries(record)
-      .map(([key, value]) => `${key}=${describeValidationDetail(value, labels)}`)
+      .map(([key, value]) => `${key}=${describeDetailShape(value, labels)}`)
       .join(' ')
   }
   return ''

@@ -80,7 +80,13 @@ async function dispatch<T>(instance: AxiosInstance, config: AxiosRequestConfig):
     return response.data
   } catch (error) {
     if (error instanceof AxiosError) {
-      throw new ReportApiError(error.response?.status ?? 0, error.message, error.response?.data)
+      const status = error.response?.status ?? 0
+      const detail = error.response?.data
+      // 同其余四份客户端：原因进 message，谁直接渲染 `error.message` 都不会拿到英文那句
+      if (detail === undefined) throw new ReportApiError(status, `上报接口调用失败（HTTP ${status}）：${error.message}`, undefined)
+      const reason = describeValidationDetail(detail, REPORT_FIELD_LABELS)
+      const prefix = `上报接口调用失败（HTTP ${status}）`
+      throw new ReportApiError(status, reason === '' ? `${prefix}：${error.message}` : `${prefix}：${reason}`, detail)
     }
     throw error
   }

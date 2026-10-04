@@ -70,7 +70,13 @@ async function dispatch<T>(instance: AxiosInstance, config: AxiosRequestConfig):
     return response.data
   } catch (error) {
     if (error instanceof AxiosError) {
-      throw new WorkflowApiError(error.response?.status ?? 0, error.message, error.response?.data)
+      const status = error.response?.status ?? 0
+      const detail = error.response?.data
+      // 原因在构造时就还原进 message：`detail` 里那份留给上层做分支判断，
+      // 但任何直接渲染 `error.message` 的地方都不该再拿到 axios 那句英文。
+      if (detail === undefined) throw new WorkflowApiError(status, `接口调用失败（HTTP ${status}）：${error.message}`, undefined)
+      const reason = describeDetail(detail)
+      throw new WorkflowApiError(status, reason === '' ? `接口调用失败（HTTP ${status}）：${error.message}` : `接口调用失败（HTTP ${status}）：${reason}`, detail)
     }
     throw error
   }

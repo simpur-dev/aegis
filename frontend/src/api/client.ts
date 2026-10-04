@@ -8,6 +8,7 @@ import type {
   TelemetryReading,
   WarningRecord,
 } from './types'
+import { describeValidationDetail, type FieldLabels } from '@/utils/validationDetail'
 
 export class ApiError extends Error {
   readonly status: number
@@ -39,6 +40,20 @@ export function requireLatencyUnits(report: LatencyReport): LatencyReport {
   return report
 }
 
+/**
+ * 通用客户端只发查询参数，这里给那一层的中文叫法。
+ *
+ * 表单页各有自己的客户端与标签（`api/reports.ts`、`api/workflow.ts`、`api/assistant.ts`）；
+ * 这一份服务的是八张页面的读接口，出错时界面先前直接打 axios 那句英文
+ * （`加载预警失败：Request failed with status code 422`），真机逐页巡检时八张页都在说这句。
+ */
+const QUERY_LABELS: FieldLabels = {
+  region_code: '区划代码',
+  station_id: '站点号',
+  metric: '指标',
+  limit: '条数上限',
+}
+
 async function dispatch<T>(
   instance: AxiosInstance,
   config: AxiosRequestConfig,
@@ -48,7 +63,13 @@ async function dispatch<T>(
     return response.data
   } catch (error) {
     if (error instanceof AxiosError) {
-      throw new ApiError(error.response?.status ?? 0, error.message, error.response?.data)
+      const status = error.response?.status ?? 0
+      const detail = error.response?.data
+      const prefix = `接口调用失败（HTTP ${status}）`
+      // 没有响应体（超时、连不上）时保留 axios 自己的话：那句里带的才是"请求没回来"这一事实
+      if (detail === undefined) throw new ApiError(status, `${prefix}：${error.message}`, undefined)
+      const reason = describeValidationDetail(detail, QUERY_LABELS)
+      throw new ApiError(status, reason === '' ? `${prefix}：${error.message}` : `${prefix}：${reason}`, detail)
     }
     throw error
   }

@@ -21,6 +21,15 @@
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios'
 
 import type { ChainSummary, TelemetryReading, WarningRecord } from './types'
+import { describeValidationDetail, type FieldLabels } from '@/utils/validationDetail'
+
+/** 一张图只发查询参数，这一层的字段叫法与通用客户端一致。 */
+const MAP_QUERY_LABELS: FieldLabels = {
+  region_code: '区划代码',
+  station_id: '站点号',
+  metric: '指标',
+  limit: '条数上限',
+}
 
 const http = axios.create({ baseURL: '/', timeout: 20_000 })
 
@@ -47,7 +56,14 @@ async function dispatch<T>(instance: AxiosInstance, config: AxiosRequestConfig):
     return response.data
   } catch (error) {
     if (error instanceof AxiosError) {
-      throw new MapApiError(error.response?.status ?? 0, error.message, error.response?.data)
+      const status = error.response?.status ?? 0
+      const detail = error.response?.data
+      // 与通用客户端、上报、助手、编排四份同一口径：界面不替人保留英文原话。
+      // 真机八张页扫下来只剩这一张还在说 "Request failed with status code 422"。
+      const prefix = `接口调用失败（HTTP ${status}）`
+      if (detail === undefined) throw new MapApiError(status, `${prefix}：${error.message}`, undefined)
+      const reason = describeValidationDetail(detail, MAP_QUERY_LABELS)
+      throw new MapApiError(status, reason === '' ? `${prefix}：${error.message}` : `${prefix}：${reason}`, detail)
     }
     throw error
   }

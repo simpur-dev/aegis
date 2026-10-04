@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { describeValidationDetail } from './validationDetail'
+import { describeValidationDetail, MAX_REASON_CHARS } from './validationDetail'
 
 const LABELS = { note: '险情描述', message: '对话内容' }
 
@@ -61,6 +61,18 @@ describe('describeValidationDetail', () => {
     expect(describeValidationDetail(null, LABELS)).toBe('')
     expect(describeValidationDetail([], LABELS)).toBe('')
     expect(describeValidationDetail([{}, {}], LABELS)).toBe('')
+  })
+
+  it('一行放不下的原因要截断：网关那类会把整页 HTML 塞进 detail', () => {
+    const page = `<html><head><title>502 Bad Gateway</title></head><body>${'网关诊断信息 '.repeat(80)}</body></html>`
+    const text = describeValidationDetail(page, LABELS)
+    expect(text.length).toBeLessThanOrEqual(MAX_REASON_CHARS + 1)
+    expect(text.endsWith('…')).toBe(true)
+    expect(text).not.toContain('</html>')
+  })
+
+  it('多行的原因折成一行（换行会被 CSS 拉成半屏）', () => {
+    expect(describeValidationDetail('第一行\n第二行', LABELS)).toBe('第一行 第二行')
   })
 
   it('任何形状都不许漏出 [object Object] 或 undefined', () => {

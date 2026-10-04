@@ -50,6 +50,34 @@ describe('api client', () => {
   })
 
   /**
+   * 八张页的读接口都走这份客户端，此前它们出错时界面直接打 axios 那句英文：
+   * 真机巡检时 `/warnings` 是"加载预警失败：Request failed with status code 422"、
+   * `/map` 是"数据读取失败：Request failed…"、`/metrics` 是"读不到账本：Request failed…"。
+   * 三张页三种前缀，后面挂的都是同一句工程师话。
+   */
+  it('422 的数组原因翻成一句中文界面话，字段名带查询参数标签', async () => {
+    const client = clientWith(() => ({
+      status: 422,
+      data: { detail: [{ loc: ['query', 'limit'], msg: 'Input should be greater than 0', type: 'greater_than' }] },
+    }))
+    const error = (await client.telemetry({ limit: 0 }).catch((e: unknown) => e)) as Error
+    expect(error.message).toBe('接口调用失败（HTTP 422）：条数上限（limit）：Input should be greater than 0')
+  })
+
+  it('字符串 detail（404 的业务事实）原样带出，不裹成 [object Object]', async () => {
+    const client = clientWith(() => ({ status: 404, data: { detail: '预警不存在' } }))
+    const error = (await client.warning('wrn_missing').catch((e: unknown) => e)) as Error
+    expect(error.message).toBe('接口调用失败（HTTP 404）：预警不存在')
+  })
+
+  it('认不出形状的响应体不编原因：留住 axios 那句话', async () => {
+    const client = clientWith(() => ({ status: 500, data: {} }))
+    const error = (await client.health().catch((e: unknown) => e)) as Error & { detail: unknown }
+    expect(error.message).toBe('接口调用失败（HTTP 500）：request failed')
+    expect(error.detail).toEqual({})
+  })
+
+  /**
    * 账本没声明单位就在边界上判成读失败。
    *
    * 放过去只有两种下游结果：渲染层抛错把整页打空，或者猜一个单位把 0.019 秒显示成
