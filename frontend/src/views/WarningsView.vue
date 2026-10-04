@@ -39,9 +39,19 @@ const columns = computed(() => [
   { title: '区域', key: 'regions' },
   { title: '通道', key: 'channels' },
   { title: reachTitle.value, key: 'reach' },
-  { title: '生成时间（UTC+8）', dataIndex: 'generated_at', key: 'generated_at' },
+  { title: '生成时间（UTC+8，最新在上）', dataIndex: 'generated_at', key: 'generated_at' },
   { title: '操作', key: 'action' },
 ])
+
+/**
+ * 接口按"最近 N 条、旧→新"给（后端 `BoundedCollection.latest()` 的口径），照原样摆进这张表
+ * 就是把刚发出去的预警压到最后一页。真机量过：29 条、每页 10 条，第 1 页是 00:22:40 → 01:09:11，
+ * 而刚发布那条（01:14:34）在第 3 页——这张页的名字就叫"预警发布与靶向触达"。
+ * 按时间倒序自己排，不依赖后端给的顺序。
+ */
+const orderedWarnings = computed<WarningRecord[]>(() =>
+  [...warnings.value].sort((a, b) => (a.generated_at < b.generated_at ? 1 : a.generated_at > b.generated_at ? -1 : 0)),
+)
 
 async function load(): Promise<void> {
   loading.value = true
@@ -123,7 +133,7 @@ onBeforeUnmount(() => {
           <span style="font-size: 12px; color: #8c8c8c">红色预警含北斗短报文兜底通道</span>
         </a-space>
       </template>
-      <a-table :columns="columns" :data-source="warnings" row-key="warning_id" :pagination="{ pageSize: 10 }" size="small">
+      <a-table :columns="columns" :data-source="orderedWarnings" row-key="warning_id" :pagination="{ pageSize: 10 }" size="small">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'hazard'">{{ HAZARD_LABELS[record.hazard_type as keyof typeof HAZARD_LABELS] }}</template>
           <template v-else-if="column.key === 'level'">

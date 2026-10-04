@@ -311,3 +311,41 @@ describe('点开另一条预警时，迟到的任务单元回查也不许盖上�
     expect(drawer).toContain('巡查stu_b1')
   })
 })
+
+/**
+ * 接口按"最近 N 条、旧→新"给（后端 `BoundedCollection.latest()` 的口径），照原样摆进这张表
+ * 就是把刚发出去的预警压到最后一页。真机量过：29 条、每页 10 条时，第 1 页是
+ * `00:22:40 → 01:09:11`，而刚发布那条（`01:14:34`）在第 3 页——这张页的名字叫
+ * "预警发布与靶向触达"，值班员发完红色预警回到这页，第一屏看不到自己刚发的那条。
+ * 这与总览"链路执行记录"那张表先前是同一件事（那边已按"最新在上"改过）。
+ */
+describe('刚发布的预警不许被压到最后一页', () => {
+  function threeWarnings() {
+    mockedWarnings.mockResolvedValue({
+      items: [
+        warning({ warning_id: 'wrn_old', title_zh: '最早那条', generated_at: '2026-10-03T10:00:00.000Z' }),
+        warning({ warning_id: 'wrn_mid', title_zh: '中间那条', generated_at: '2026-10-03T12:00:00.000Z' }),
+        warning({ warning_id: 'wrn_new', title_zh: '刚发那条', generated_at: '2026-10-03T14:00:00.000Z' }),
+      ],
+    } as never)
+  }
+
+  it('列表自己按时间倒序排，不依赖后端给的顺序', async () => {
+    threeWarnings()
+    const wrapper = mountView()
+    await flushPromises()
+    // 替身表格只渲染有 bodyCell 分支的那几列（标题列是纯 dataIndex，落到默认输出会被 bodyCell 吞掉），
+    // 所以按"生成时间"这一列对账：三条的 generated_at 各差两小时，顺序错一位就看得出。
+    const times = wrapper
+      .findAll('.tr')
+      .map((row) => row.find('[data-testid="cell-generated_at"]').text())
+    expect(times).toEqual(['2026-10-03 22:00:00', '2026-10-03 20:00:00', '2026-10-03 18:00:00'])
+  })
+
+  it('列头写明"最新在上"：读的人不用先猜这张表是怎么排的', async () => {
+    threeWarnings()
+    const wrapper = mountView()
+    await flushPromises()
+    expect(headerText(wrapper, '生成时间')).toContain('最新在上')
+  })
+})
