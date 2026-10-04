@@ -26,7 +26,7 @@ from aegis.bus import subjects
 from aegis.config import Settings, get_settings
 from aegis.container import PlatformContainer, create_container
 from aegis.domain.enums import HazardType
-from aegis.domain.messages import AgentMessage, TelemetryReading
+from aegis.domain.messages import AgentMessage, TelemetryReading, utc_now
 from aegis.errors import AegisError
 from aegis.knowledge.cases import HazardCase
 from aegis.observability import telemetry
@@ -613,7 +613,11 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
                         idle += _DISCONNECT_POLL_SECONDS
                         if idle >= _SSE_KEEPALIVE_SECONDS:
                             idle = 0.0
-                            yield ": keep-alive\n\n"
+                            # 心跳必须是**看得见的一帧**，不能是注释帧。
+                            # 真机把后端进程杀掉之后：/healthz 立刻不可达、取数一直失败，
+                            # 而页面上的 EventSource 仍然认为自己"已连接"——浏览器不知道上游断了，
+                            # 注释帧 JS 也永远看不到，于是那个徽标在最需要它说话的时候撒谎。
+                            yield f"data: {json.dumps({'type': 'heartbeat', 'ts': utc_now().isoformat()}, ensure_ascii=False)}\n\n"
                         continue
                     yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
             finally:

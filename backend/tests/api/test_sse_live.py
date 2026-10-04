@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 import time
 from collections.abc import AsyncIterator
@@ -107,6 +108,33 @@ class TestLiveServer:
         elapsed = time.perf_counter() - started
         assert first.startswith(":"), f"第一帧应是注释帧（不是事件），实际 {first!r}"
         assert elapsed < 2.0, f"第一帧等了 {elapsed:.2f}s：浏览器在这段时间里显示的是假的『重连中』"
+
+    async def test_空闲时的保活帧得是JS收得到的心跳而不是注释(self, live: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+        """注释帧（`: keep-alive`）浏览器根本不给 JS，于是这条流"看起来连着"没有任何证据。
+
+        真机后果：把后端进程杀掉之后，`/healthz` 立刻不可达、取数一直失败，
+        而页头的 SSE 徽标仍然写着"事件流已连接"——浏览器不知道上游死了。
+        心跳得是一帧真的事件，前端才有"多久没动静"这个判断的依据。
+        """
+        from aegis.api import app as app_module
+
+        monkeypatch.setattr(app_module, "_SSE_KEEPALIVE_SECONDS", 0.3)
+        frames: list[str] = []
+        async with live.stream("GET", "/api/v1/events/stream") as response:
+            assert response.status_code == 200
+            async with asyncio.timeout(10.0):
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    frames.append(line)
+                    if '"heartbeat"' in line:
+                        break
+        beat = next((row for row in frames if '"heartbeat"' in row), None)
+        assert beat is not None, f"等不到心跳帧，只读到 {frames[:6]}"
+        assert beat.startswith("data: "), f"心跳必须是 JS 收得到的一帧事件，实际 {beat!r}"
+        payload = json.loads(beat[len("data: ") :])
+        assert payload["type"] == "heartbeat"
+        assert isinstance(payload["ts"], str) and payload["ts"], "心跳要带时间，前端据此判断多久没动静"
 
     async def test_metrics_endpoint_serves_prometheus(self, live: httpx.AsyncClient) -> None:
         await live.post("/api/v1/drill/run", json={"scenario": "surge", "ticks": 1})

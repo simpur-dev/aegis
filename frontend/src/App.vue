@@ -9,7 +9,7 @@ const route = useRoute()
 const menuKey = computed(() => (route.name as string) ?? 'dashboard')
 
 const health = ref<{ status: string; version: string } | null>(null)
-const { events, connected } = useEventStream()
+const { events, connected, stalled } = useEventStream()
 
 let timer: number | undefined
 
@@ -28,6 +28,19 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
+})
+
+/**
+ * 事件流徽标的三条真话。
+ *
+ * 真机把后端进程杀掉之后量到：`/healthz` 立刻不可达、页面取数一直在失败，
+ * 可这个徽标仍然写着"事件流已连接"——浏览器不会因为上游进程死了而报错，那条流已经是僵尸。
+ * 所以后端都不在线时不许说连着；心跳静默（前端自己判死并重连）时把"没心跳"说出来。
+ */
+const streamLabel = computed<string>(() => {
+  if (health.value === null) return '事件流已中断（后端不可达）'
+  if (connected.value) return '事件流已连接'
+  return stalled.value ? '事件流没心跳，正在重连' : '事件流重连中'
 })
 </script>
 
@@ -70,8 +83,8 @@ onBeforeUnmount(() => {
           <a-tag :color="health ? 'green' : 'red'">
             {{ health ? `后端在线 v${health.version}` : '后端不可达' }}
           </a-tag>
-          <a-tag :color="connected ? 'blue' : 'orange'">
-            {{ connected ? '事件流已连接' : '事件流重连中' }}
+          <a-tag :color="connected && health ? 'blue' : 'red'" data-testid="stream-badge">
+            {{ streamLabel }}
           </a-tag>
           <a-badge :count="events.length" :overflow-count="99" title="最近事件" />
         </a-space>

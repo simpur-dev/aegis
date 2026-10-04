@@ -245,4 +245,66 @@ describe('useEventStream', () => {
     wrapper.unmount()
     vi.unstubAllGlobals()
   })
+
+  /**
+   * 真机杀后端进程量到的：`/healthz` 已经不可达，页头的 SSE 徽标还写"事件流已连接"——
+   * 浏览器不会因为上游死了而报错，而原先的保活是注释帧，JS 根本收不到，前端连
+   * "多久没动静"的依据都没有。现在后端发真心跳，前端据此判死并重连。
+   */
+  it('心跳帧只当"流还活着"的证据，不进时间线', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const wrapper = mount(Host)
+    const source = FakeEventSource.latest as unknown as FakeEventSource
+    source.onopen?.()
+    source.emit({ type: 'heartbeat', ts: '2026-10-04T15:00:00+00:00' })
+    await nextTick()
+    const vm = wrapper.vm as unknown as { events: unknown[]; connected: boolean }
+    expect(vm.events).toHaveLength(0)
+    expect(vm.connected).toBe(true)
+    wrapper.unmount()
+    vi.unstubAllGlobals()
+  })
+
+  it('心跳静默就判死并另起一条流，不再抱着僵尸流说"已连接"', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    try {
+      const wrapper = mount(Host)
+      const first = FakeEventSource.latest as unknown as FakeEventSource
+      first.onopen?.()
+      const vm = wrapper.vm as unknown as { connected: boolean; stalled: boolean }
+      expect(vm.connected).toBe(true)
+
+      vi.advanceTimersByTime(40_000)
+      expect(vm.stalled, '两刻多钟没心跳，这条流已经是僵尸').toBe(true)
+      expect(vm.connected).toBe(false)
+      expect(first.closed).toBe(true)
+      expect(FakeEventSource.latest).not.toBe(first)
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('一路有心跳就不判死（空转一小时也是连着）', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    try {
+      const wrapper = mount(Host)
+      const source = FakeEventSource.latest as unknown as FakeEventSource
+      source.onopen?.()
+      const vm = wrapper.vm as unknown as { connected: boolean; stalled: boolean }
+      for (let minute = 0; minute < 6; minute += 1) {
+        vi.advanceTimersByTime(15_000)
+        source.emit({ type: 'heartbeat', ts: 'tick' })
+      }
+      expect(vm.stalled).toBe(false)
+      expect(vm.connected).toBe(true)
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
 })
