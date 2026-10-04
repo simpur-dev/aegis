@@ -74,10 +74,22 @@ const chainsTitle = computed<string>(() => {
   return total !== null && total > CHAIN_WINDOW ? `${base}｜服务端共 ${total} 条` : base
 })
 
+/** 网格吃的是同一个 20 条窗口，标题就得和旁边的表说同一句实话。 */
+const gridTitle = computed<string>(() => {
+  const base = `风险区域网格（按最近 ${CHAIN_WINDOW} 条链路归集）`
+  const total = ready.value?.store?.chain_count ?? null
+  return total !== null && total > CHAIN_WINDOW ? `${base}｜服务端共 ${total} 条` : base
+})
+
 const regionGrid = computed(() => {
   const byRegion = new Map<string, ChainSummary>()
   for (const chain of chains.value) {
-    const region = chain.risk?.region_code ?? chain.task_units[0]?.slice(4, 10) ?? '未知区域'
+    /**
+     * 没研判出风险的链路只能说"未标注区域"。原先这里退到 `task_units[0].slice(4, 10)`，
+     * 于是 `stu_5401210abcd` 会在"风险区域网格"里摆出一个 `540121`——长得和真区划代码
+     * 一模一样，读的人无从知道它是从任务单元号上截出来的（用例钉住这一点）。
+     */
+    const region = chain.risk?.region_code ?? '未标注区域'
     const previous = byRegion.get(region)
     if (!previous || (chain.risk && previous.risk && chain.risk.risk_level < previous.risk.risk_level)) {
       byRegion.set(region, chain)
@@ -216,7 +228,7 @@ const agentColumns = [
 
     <a-row :gutter="12" style="margin-top: 12px">
       <a-col :span="10">
-        <a-card title="风险区域网格" size="small" :loading="loading">
+        <a-card :title="gridTitle" size="small" :loading="loading">
           <div class="grid">
             <div v-for="cell in regionGrid" :key="cell.region" class="cell" :style="{ borderColor: RISK_COLORS[cell.level] }">
               <div class="region">{{ cell.region }}</div>

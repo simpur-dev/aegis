@@ -366,3 +366,45 @@ describe('链路表的窗口口径', () => {
     wrapper.unmount()
   })
 })
+
+/**
+ * 两张来自同一窗口的视图要一起说实话，且网格不许把任务单元号的一段数字当成区划代码。
+ *
+ * 原代码：`chain.risk?.region_code ?? chain.task_units[0]?.slice(4, 10) ?? '未知区域'`——
+ * 一条没研判出风险的链路，区域是从 `stu_…` 上第 5 位起截 6 个字符得来的。
+ * `stu_5401210abcd` 会截出 `540121`：一个长得完全像真区划代码的数，摆进"风险区域网格"里，
+ * 读的人没有任何办法知道这是拼出来的。
+ */
+describe('风险区域网格不许拼出假的区划代码', () => {
+  it('没研判出风险的链路标成"未标注区域"，而不是从任务单元号里截一段', async () => {
+    responses()
+    mocked.events.mockResolvedValue({
+      items: [{ ...chainOf('trc_norisk'), risk: null, task_units: ['stu_5401210abcd'] }],
+    } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const regions = wrapper.findAll('.region').map((cell) => cell.text())
+    expect(regions, `网格里出现了拼出来的区划代码：${regions.join(',')}`).toEqual(['未标注区域'])
+    expect(wrapper.find('.cell').text()).toContain('无风险')
+    wrapper.unmount()
+  })
+
+  it('网格与链路表同吃一个窗口，标题就得同样说出窗口', async () => {
+    responses()
+    mocked.ready.mockResolvedValue({
+      agents_online: 5,
+      store: { warning_count: 113, task_count: 504, chain_count: 108, telemetry_count: 50_000 },
+    } as never)
+    mocked.events.mockResolvedValue({ items: [chainOf('trc_a')] } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const title =
+      wrapper
+        .findAllComponents({ name: 'ACard' })
+        .map((card) => String(card.props('title')))
+        .find((t) => t.startsWith('风险区域网格')) ?? ''
+    expect(title, '链路表已经写"最近 20 条"，紧挨着的网格不能什么都别说').toContain('最近 20 条')
+    expect(title).toContain('共 108 条')
+    wrapper.unmount()
+  })
+})
