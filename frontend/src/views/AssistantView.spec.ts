@@ -277,8 +277,7 @@ describe('对话：每一帧都留在时间线上', () => {
     expect(byTestid(wrapper, 'stream-error').text()).toContain('上报人名义「李」')
   })
 
-  it('区划代码合法时照常发出，带的是去掉空格后的那份', async () => {
-    mockedChat.mockReturnValue(framesOf([{ type: 'meta', session_id: 'sess_0001', llm_configured: true, actions: [] }]))
+  it('区划代码合法时照常发出，带的是去掉空格后的那份', async () => {    mockedChat.mockReturnValue(framesOf([{ type: 'meta', session_id: 'sess_0001', llm_configured: true, actions: [] }]))
     const wrapper = await renderView()
     await wrapper.find('[data-testid="field-region"]').setValue(' 540121 ')
     await wrapper.find('[data-testid="field-reporter"]').setValue(' 扎西 ')
@@ -418,5 +417,66 @@ describe('人工上报入口（B5）在助手页也够得着', () => {
     expect(form.exists()).toBe(true)
     expect(form.props('initialRegionCode')).toBe('540121')
     expect(form.props('initialReporter')).toBe('值班员')
+  })
+})
+
+/**
+ * Enter 是发消息那颗键。
+ *
+ * 真机量过的原样：在对话框里敲完"最近发布了哪些预警"按 Enter，
+ * 只是插了个换行——0 条请求、0 帧、页面上也没有任何一处说这里有"发送"这回事。
+ * 一个多行输入框里 Enter 什么都不做，而且不自带说明，就会让人以为自己那一下没生效。
+ */
+describe('对话框的 Enter / Shift+Enter', () => {
+  const keydown = (wrapper: Awaited<ReturnType<typeof renderView>>, shiftKey: boolean) =>
+    wrapper.find('[data-testid="field-message"]').trigger('keydown', { key: 'Enter', shiftKey })
+
+  it('Enter 直接发送这一条', async () => {
+    mockedChat.mockReturnValue(framesOf([{ type: 'meta', session_id: 'sess_0001', llm_configured: true, actions: [] }]))
+    const wrapper = await renderView()
+    await wrapper.find('[data-testid="field-message"]').setValue('查预警')
+    await keydown(wrapper, false)
+    await flushPromises()
+    expect(mockedChat.mock.calls[0]?.[0]).toMatchObject({ message: '查预警' })
+  })
+
+  it('Shift+Enter 只换行，不发', async () => {
+    const wrapper = await renderView()
+    await wrapper.find('[data-testid="field-message"]').setValue('查预警')
+    await keydown(wrapper, true)
+    await flushPromises()
+    expect(mockedChat).not.toHaveBeenCalled()
+  })
+
+  /** 上一轮还在流式时，键盘不能开出第二条对话（按钮那条路 antd 已经让点击落空了）。 */
+  it('流式进行中按 Enter 不并发第二条，并说清为什么', async () => {
+    let release: (() => void) | null = null
+    mockedChat.mockImplementation(() => (async function* () {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      yield { type: 'done', session_id: 'sess_0001', latency_ms: 1, rejected_count: 0 }
+    })())
+    const wrapper = await renderView()
+    await wrapper.find('[data-testid="field-message"]').setValue('第一条')
+    await keydown(wrapper, false)
+    await flushPromises()
+    expect(mockedChat).toHaveBeenCalledTimes(1)
+
+    await wrapper.find('[data-testid="field-message"]').setValue('第二条')
+    await keydown(wrapper, false)
+    await flushPromises()
+    expect(mockedChat).toHaveBeenCalledTimes(1)
+    expect(byTestid(wrapper, 'stream-error').text()).toContain('上一轮还在进行中')
+
+    // 赋值发生在 Promise 执行器里，TS 的流分析看不到，只能显式放宽
+    ;(release as (() => void) | null)?.()
+    await flushPromises()
+  })
+
+  it('约定写在字数条旁边，不靠人猜', async () => {
+    const wrapper = await renderView()
+    expect(byTestid(wrapper, 'char-count').text()).toContain('Enter 发送')
+    expect(byTestid(wrapper, 'char-count').text()).toContain('Shift+Enter 换行')
   })
 })

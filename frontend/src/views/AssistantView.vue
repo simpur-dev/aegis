@@ -132,6 +132,25 @@ async function send(): Promise<void> {
   }
 }
 
+/**
+ * Enter 发送、Shift+Enter 换行——多行输入框的通用约定。
+ *
+ * 先前这个框里按 Enter 只是插一个换行，页面没有任何快捷键说明：值班员打完一句
+ * "最近发布了哪些预警"按回车，屏幕上什么都没有（真机：0 条请求、0 帧），
+ * 而界面上没有一处提示说"要点发送"。现在按键有反馈、约定写在字数条旁边。
+ */
+function onMessageKeydown(event: KeyboardEvent): void {
+  if (event.shiftKey) return
+  event.preventDefault()
+  if (streaming.value) {
+    // 按钮在流式期间点不动（antd 的 loading 让它接不到点击），键盘这条路必须自己守住：
+    // 否则两轮回答会织进同一条时间线，会话号也说不清是哪一轮的。
+    streamError.value = '上一轮还在进行中，等它回来再发下一条（要先换行用 Shift+Enter）。'
+    return
+  }
+  void send()
+}
+
 async function confirmProposal(proposal: ProposalFrame): Promise<void> {
   decisions[proposal.action_id] = { kind: 'busy' }
   try {
@@ -266,9 +285,12 @@ onMounted(() => void loadCapabilities())
         :maxlength="CHAT_LIMITS.message.max"
         placeholder="如：最近发布了哪些预警 / 帮我上报 540121 沟道泥位抬升"
         data-testid="field-message"
+        @keydown="onMessageKeydown"
       />
       <!-- 计数自己渲染而不是用 antd 的 show-count：那一个的文本挂在 data-count 上，界面上看得见却测不着 -->
-      <div class="muted" data-testid="char-count">{{ draft.length }} / {{ CHAT_LIMITS.message.max }} 字</div>
+      <div class="muted" data-testid="char-count">
+        {{ draft.length }} / {{ CHAT_LIMITS.message.max }} 字 ｜ Enter 发送，Shift+Enter 换行
+      </div>
       <a-space style="margin-top: 8px">
         <a-button type="primary" :loading="streaming" data-testid="send" @click="send">发送</a-button>
         <a-button data-testid="clear" @click="frames = []">清空时间线</a-button>
