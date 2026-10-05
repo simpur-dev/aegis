@@ -30,8 +30,18 @@ import { useWorkflowCanvas } from '@/components/workflow/useWorkflowCanvas'
 import { CANVAS_DEFAULT_ZOOM } from '@/utils/graph'
 
 const store = useWorkflowStore()
-const { view, fitToGraph, onConnect, onNodeClick, onPaneClick, onNodeDragStart, onNodeDragStop, onDragOver, onDrop } =
-  useWorkflowCanvas(store)
+const {
+  view,
+  fitToGraph,
+  strokeScale,
+  onConnect,
+  onNodeClick,
+  onPaneClick,
+  onNodeDragStart,
+  onNodeDragStop,
+  onDragOver,
+  onDrop,
+} = useWorkflowCanvas(store)
 
 async function bootstrap(): Promise<void> {
   if (store.current === null) store.resetDefinition()
@@ -162,7 +172,7 @@ onUnmounted(() => {
     <div class="wf__body">
       <NodePalette class="wf__left" />
 
-      <div class="wf__canvas" @drop="onDrop" @dragover="onDragOver">
+      <div class="wf__canvas" :style="{ '--canvas-stroke-k': strokeScale }" @drop="onDrop" @dragover="onDragOver">
         <!-- 这里刻意不开 fit-view-on-init：它跑在"第一颗被测出尺寸的节点"上、且只跑一次，
              既会被手动拖入的第一颗节点吃掉（之后打开已存定义就不再 fit），又会按 maxZoom 把
              单颗节点放大到 2.0（真机量到可视区只剩 414×339 flow 单位，第二颗怎么放都出画布）。

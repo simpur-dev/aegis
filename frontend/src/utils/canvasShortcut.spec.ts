@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { CANVAS_DEFAULT_ZOOM, canvasShortcut } from './graph'
+import { CANVAS_DEFAULT_ZOOM, canvasShortcut, strokeCompensation } from './graph'
 
 /**
  * 画布快捷键的判定表。
@@ -35,5 +35,38 @@ describe('canvasShortcut', () => {
   it('默认缩放与画布初始档位同源（快捷键 0 要回到那一档）', () => {
     expect(CANVAS_DEFAULT_ZOOM).toBeGreaterThan(0.2)
     expect(CANVAS_DEFAULT_ZOOM).toBeLessThan(1)
+  })
+})
+
+/**
+ * 描边补偿：画布 zoom 作用在变换层上，1px 的连线与节点描边会跟着缩。
+ * 真机打开那份 111 节点的定义，fit 落在 0.318 ⇒ 描边只剩 0.32 设备像素。
+ */
+describe('strokeCompensation', () => {
+  it('zoom=1 不补，放大也不补（下限 1）', () => {
+    expect(strokeCompensation(1)).toBe(1)
+    expect(strokeCompensation(2)).toBe(1)
+  })
+
+  it('缩小才补：0.5 → 2 倍', () => {
+    expect(strokeCompensation(0.5)).toBe(2)
+  })
+
+  it('封顶 3 倍（再往上补只会让线糊成一团）', () => {
+    expect(strokeCompensation(0.318)).toBe(3)
+    expect(strokeCompensation(0.2)).toBe(3)
+  })
+
+  it('非法 zoom 按 1 处理，不炸出 NaN 把样式整个带坏', () => {
+    for (const bad of [Number.NaN, 0, -1, Number.POSITIVE_INFINITY]) {
+      expect(strokeCompensation(bad), `zoom=${bad}`).toBe(1)
+    }
+  })
+
+  it('真机那一档补满之后，1.5px 的线仍有 ≥1.4 设备像素（这就是封顶取 3 的依据）', () => {
+    const zoom = 0.318
+    expect(1.5 * strokeCompensation(zoom) * zoom).toBeGreaterThanOrEqual(1.4)
+    /* 对照：不补的话是 0.48 设备像素——细到基本看不见。 */
+    expect(1.5 * zoom).toBeLessThan(0.5)
   })
 })

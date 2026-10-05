@@ -100,7 +100,8 @@ function onDragStart(event: DragEvent, type: NodeType): void {
   cursor: grab;
 }
 .wf-palette__item:hover {
-  border-color: #1677ff;
+  /* 主色归一：#1677ff 是 antd 默认蓝，和全站移植的 #2563eb 并存。 */
+  border-color: #2563eb;
 }
 .wf-palette__type {
   color: #5a6072;

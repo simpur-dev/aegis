@@ -471,6 +471,18 @@ export const NODE_FOOTPRINT = { width: 208, height: 120 }
 /** 画布默认缩放。模板里的 `:default-viewport` 与快捷键 `0`（回到默认）共用这一个值。 */
 export const CANVAS_DEFAULT_ZOOM = 0.9
 
+/**
+ * 描边补偿系数：`1 / zoom`，夹在 `[1, 3]`。
+ *
+ * 画布的 zoom 作用在整个变换层上，1px 的连线与节点描边会跟着缩——真机打开那份 111 节点的定义，
+ * fit 落在 0.318，描边只剩 **0.32 设备像素**。封顶 3 也是量出来的：0.318 档补满仍有 1.43 设备像素，
+ * 再往上补只会让线糊成一团（参照 n8n `CanvasEdge.vue:212` 的同一条做法）。
+ */
+export function strokeCompensation(zoom: number): number {
+  if (!Number.isFinite(zoom) || zoom <= 0) return 1
+  return Math.min(3, Math.max(1, 1 / zoom))
+}
+
 /** 画布快捷键只管"看哪儿"这四件；其余按键一律不接（Tab 那套装焦点围栏在用）。 */
 export type CanvasShortcut = 'fit' | 'reset' | 'zoom-in' | 'zoom-out'
 

@@ -809,6 +809,69 @@ test.describe('画布节点不变量 @1440', () => {
   })
 
   /**
+   * 低 zoom 下描边还剩几个设备像素。
+   *
+   * 画布的 zoom 作用在整个变换层上，1px 的连线与节点描边会跟着缩。真机打开那份 111 节点的定义，
+   * fit 落在 zoom=0.318 —— 修之前连线（库里默认还是浅灰 #b1b1b7）只剩 **0.32 设备像素**，
+   * 基本看不见；而"看全局"恰恰就是要缩到那一档。修完按 `1/zoom`（封顶 3）补偿。
+   */
+  test('打开最大的那份定义：连线与节点描边仍有可辨粗细（不是 0.3 设备像素）', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/workflow')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(3_000)
+    await page.getByRole('tab', { name: /定义/ }).click()
+    await page.waitForTimeout(1_500)
+    const pick = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.wf-def__list-item')]
+      let best = 0
+      let bestCount = -1
+      rows.forEach((row, i) => {
+        const m = /(\d+)\s*节点/.exec(row.textContent ?? '')
+        const n = m ? Number(m[1]) : 0
+        if (n > bestCount) {
+          bestCount = n
+          best = i
+        }
+      })
+      return { best, bestCount }
+    })
+    expect(pick.bestCount, '定义列表里没有大定义——这条判据在空跑').toBeGreaterThan(30)
+    await page.locator('[data-testid^="open-"]').nth(pick.best).click()
+    const confirm = page.locator('.ant-modal-confirm .ant-btn-primary')
+    if (await confirm.isVisible().catch(() => false)) await confirm.click()
+    await page.waitForSelector('.vue-flow__edge-path', { timeout: 20_000 })
+    await page.waitForTimeout(2_500)
+    const m = await page.evaluate(() => {
+      const pane = document.querySelector('.vue-flow__transformationpane')
+      const t = pane ? getComputedStyle(pane).transform : ''
+      const zoom = t.startsWith('matrix') ? Number(t.slice(t.indexOf('(') + 1).split(',')[0]) : Number.NaN
+      const edge = document.querySelector('.vue-flow__edge-path') as SVGElement | null
+      const node = document.querySelector('.wf-node') as HTMLElement | null
+      const es = edge ? getComputedStyle(edge) : null
+      const ns = node ? getComputedStyle(node) : null
+      return {
+        zoom,
+        edges: document.querySelectorAll('.vue-flow__edge-path').length,
+        strokePx: Number.parseFloat(es?.strokeWidth ?? '0') * zoom,
+        stroke: es?.stroke ?? '',
+        borderPx: Number.parseFloat(ns?.borderTopWidth ?? '0') * zoom,
+        barPx: Number.parseFloat(ns?.borderLeftWidth ?? '0') * zoom,
+      }
+    })
+    console.log(`STROKE zoom=${m.zoom} edges=${m.edges} 线=${m.strokePx.toFixed(2)}设备px/${m.stroke} 描边=${m.borderPx.toFixed(2)} 类别条=${m.barPx.toFixed(2)}`)
+    expect(m.edges, '画布上一条连线都没有——判据在空跑').toBeGreaterThan(3)
+    expect(m.zoom, `这份定义的 fit 落在 ${m.zoom}，不在"看全局"那一档，前提变了`).toBeLessThan(0.6)
+    expect(m.strokePx, `连线只剩 ${m.strokePx.toFixed(2)} 设备像素，缩到看全局那档就看不见链路了`).toBeGreaterThanOrEqual(1.2)
+    expect(m.borderPx, `节点描边只剩 ${m.borderPx.toFixed(2)} 设备像素`).toBeGreaterThanOrEqual(0.8)
+    expect(m.barPx, `节点类别条只剩 ${m.barPx.toFixed(2)} 设备像素`).toBeGreaterThanOrEqual(2)
+    /* 颜色也要脱离库里那支浅灰：#94a3b8 = rgb(148,163,184) */
+    expect(m.stroke, `连线还是库里默认的 ${m.stroke}`).not.toBe('rgb(177, 177, 183)')
+    await page.screenshot({ path: 'test-results/ui-audit/canvas-lowzoom-stroke.png' })
+  })
+
+  /**
    * 画布快捷键：值班员一天里要反复"看全局 → 看这一片 → 回到默认"，
    * 这些动作原先只能靠右下角那几个 22px 的控件钮，鼠标得从画布中央跑过去。
    * 另一件必须钉住的是**不抢键**：右栏"中止理由"输入框里打 0 是打字符，不是缩放画布。

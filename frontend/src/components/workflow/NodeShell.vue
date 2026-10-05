@@ -52,8 +52,10 @@ const badge = computed(() => (props.state === null ? '未运行' : style.value.l
      全文看 title 提示与右侧检查器。 */
   width: 208px;
   padding: 8px 10px;
-  border: 1px solid #d9d9d9;
-  border-left: 3px solid var(--wf-accent, #8c8c8c);
+  /* 描边跟着 zoom 补偿（`--canvas-stroke-k` 由画布按 1/zoom 算，封顶 3）：
+     变换层缩放会把 1px 边框一起缩掉，0.318 档就只剩 0.32 设备像素。 */
+  border: calc(1px * var(--canvas-stroke-k, 1)) solid #d9d9d9;
+  border-left: calc(3px * var(--canvas-stroke-k, 1)) solid var(--wf-accent, #8c8c8c);
   border-radius: 6px;
   background: #fff;
   color: #262626;
@@ -62,8 +64,9 @@ const badge = computed(() => (props.state === null ? '未运行' : style.value.l
   box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
 }
 .wf-node.is-selected {
-  border-color: #1677ff;
-  box-shadow: 0 0 0 2px rgb(22 119 255 / 25%);
+  /* 原来是 antd 默认蓝 #1677ff，和我们移植的主色 #2563eb 并存＝同一屏两种蓝（两张皮）。 */
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 25%);
 }
 .wf-node.is-running {
   border-color: #13c2c2;

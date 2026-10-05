@@ -384,6 +384,18 @@ body .empty-hero__action:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* —— 画布连线：库里默认是 1px 的浅灰 #b1b1b7，而 zoom 作用在整个变换层上——
+     真机打开那份 111 节点的定义，fit 落在 zoom=0.318，1px 只剩 **0.32 设备像素**，
+     线基本看不见；而"看全局"恰恰要缩到那一档。所以按 `--canvas-stroke-k`（1/zoom，封顶 3）补偿，
+     并把颜色从"浅灰"提到 slate-400。参照 n8n `CanvasEdge.vue:212` 的同一条做法。 —— */
+.wf__canvas .vue-flow__edge-path {
+  stroke: #94a3b8;
+  stroke-width: calc(1.5px * var(--canvas-stroke-k, 1));
+}
+.wf__canvas .vue-flow__edge.selected .vue-flow__edge-path {
+  stroke: #2563eb;
+}
+
 /* —— 画布浮层：@vue-flow 的 minimap 默认只有一个 `background-color:#fff`，controls 只有 2px 投影，
      放进我们的圆角玻璃画布里就是两块生硬的白方块（真机截图里那块"空白矩形"就是它）。
      统一成卡片族同一套语言：半透白 + 主色细描边 + 12px 圆角 + 蓝雾投影。 —— */

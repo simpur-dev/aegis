@@ -14,6 +14,7 @@ import {
   defToGraph,
   freeDropPosition,
   nextNodeId,
+  strokeCompensation,
   type FlowBox,
   type GraphView,
   type NodeState,
@@ -54,7 +55,10 @@ export function overlayFlowBoxes(
 }
 
 export function useWorkflowCanvas(store: WorkflowStore) {
-  const { screenToFlowCoordinate, fitView, zoomIn, zoomOut, zoomTo } = useVueFlow()
+  const { screenToFlowCoordinate, fitView, zoomIn, zoomOut, zoomTo, viewport } = useVueFlow()
+
+  /** 描边补偿系数（数学在 `strokeCompensation`，那里有单测）。 */
+  const strokeScale = computed<number>(() => strokeCompensation(viewport.value.zoom))
 
   /**
    * 把整条链路收进视野，且只看不放大。
@@ -186,6 +190,7 @@ export function useWorkflowCanvas(store: WorkflowStore) {
   return {
     view,
     fitToGraph,
+    strokeScale,
     onConnect,
     onNodeClick,
     onPaneClick,

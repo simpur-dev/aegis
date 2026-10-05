@@ -164,8 +164,10 @@ const listedInstances = computed(() => {
   cursor: pointer;
 }
 .wf-run__button--primary {
-  border-color: #1677ff;
-  background: #1677ff;
+  /* 与全站主色 #2563eb 归一（原来是 antd 默认蓝 #1677ff，同一屏两种蓝）；
+     白字压 #2563eb 是 5.17:1，压 #1677ff 只有 4.6:1。 */
+  border-color: #2563eb;
+  background: #2563eb;
   color: #fff;
 }
 .wf-run__button--danger {
