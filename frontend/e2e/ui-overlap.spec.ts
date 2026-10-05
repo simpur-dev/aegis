@@ -95,6 +95,19 @@ const inspect = (contrastAllow: string) => {
     }
   }
 
+  /* 按钮里的字被挤成两行（"打/开"竖排）：量文本节点自己的行盒，
+     不用按钮高度判——带内边距的 flex 按钮会误报。 */
+  const folded: string[] = []
+  for (const btn of document.querySelectorAll('button')) {
+    if (!visible(btn)) continue
+    const node = [...btn.childNodes].find((n) => n.nodeType === 3 && (n.textContent ?? '').trim().length > 0)
+    if (!node) continue
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    const tops = new Set([...range.getClientRects()].map((rect) => Math.round(rect.top)))
+    if (tops.size > 1) folded.push(`"${(node.textContent ?? '').trim().slice(0, 10)}" 折成 ${tops.size} 行 | ${pathOf(btn)}`)
+  }
+
   /* 顶栏三组都被 overflow 管着：内容比列宽就"静默裁掉"，包围盒还在原处——
      重叠检查看不见它，所以单独量 scrollWidth 与 clientWidth 的差。 */
   const navClip: string[] = []
@@ -178,6 +191,8 @@ const inspect = (contrastAllow: string) => {
     beyondCount: beyond.length,
     clipped: clipped.slice(0, 8),
     clippedCount: clipped.length,
+    folded: folded.slice(0, 8),
+    foldedCount: folded.length,
     navClip,
     lowContrast: lowContrast.slice(0, 10),
     lowContrastCount: lowContrast.length,
@@ -196,10 +211,11 @@ for (const width of WIDTHS) {
         await page.waitForSelector('.page-hero', { timeout: 45_000 })
         await page.waitForTimeout(name === 'map' ? 12_000 : 2_500)
         const r = await page.evaluate(inspect, CONTRAST_ALLOW)
-        console.log(`UI ${name}@${width} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} centerOffset=${r.centerOffset}`)
+        console.log(`UI ${name}@${width} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} centerOffset=${r.centerOffset}`)
         expect(r.overlapCount, `${name}@${width} 重叠明细：\n${r.overlap.join('\n')}`).toBe(0)
         expect(r.beyondCount, `${name}@${width} 有内容出屏：\n${r.beyond.join('\n')}`).toBe(0)
         expect(r.clippedCount, `${name}@${width} 有文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
+        expect(r.foldedCount, `${name}@${width} 有按钮文字折行（"打/开"竖排）：\n${r.folded.join('\n')}`).toBe(0)
         expect(r.navClip, `${name}@${width} 顶栏把内容裁掉了（列宽不够）：\n${r.navClip.join('\n')}`).toHaveLength(0)
         expect(r.lowContrastCount, `${name}@${width} 有字对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
         if (r.centerOffset !== null) expect(r.centerOffset, `${name}@${width} 步进器偏离中线`).toBeLessThanOrEqual(1)

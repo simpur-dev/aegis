@@ -203,6 +203,21 @@ function onDescription(event: Event): void {
   align-items: center;
   font-size: 12px;
 }
+/* 名字那几段是可伸缩的，两颗按钮不能：原先名字一长就把"打开/归档"挤成两行
+   （1440 真机截图里就是"打/开"竖排），这里让文字自己折、按钮保持一行。
+   计数与状态那两段是词组，折在中间读起来像坏了，只允许名字折。 */
+.wf-def__list-item {
+  flex-wrap: wrap;
+}
+.wf-def__list-item > span {
+  min-width: 0;
+  white-space: nowrap;
+}
+.wf-def__list-item > span:first-child {
+  flex: 1 1 auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .wf-def__edge-endpoints {
   display: flex;
   gap: 4px;
@@ -214,11 +229,13 @@ function onDescription(event: Event): void {
   gap: 4px;
 }
 .wf-def__button {
+  flex: 0 0 auto;
   padding: 2px 8px;
   border: 1px solid #d9d9d9;
   border-radius: 4px;
   background: #fff;
   font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
 }
 .wf-def__button--danger {

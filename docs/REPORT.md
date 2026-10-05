@@ -484,7 +484,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 
 七页实拍（1440×900，构建产物）：`frontend/test-results/ui-benchmark/batch2-{dashboard,monitor,warnings,map,workflow,metrics,assistant}.png`（gitignored）。
 照实记：①助手页首卡曾与第二张卡撞名"对话"，真机截图发现后改名重出图；②地图片横幅下"降级运行·缩放 9"是
-既有的本机资产状态（PMTiles/地形探针均在），非本批回归；③编排页右栏"打开/归档"两字按钮折行是既有排版，未动。
+既有的本机资产状态（PMTiles/地形探针均在），非本批回归；③编排页右栏"打开/归档"两字按钮折行是既有排版，未动（第三批已修并进了门禁，见下一节最后一行）。
 
 ## UI 缺陷体检与第三批移植（2026-10-05，先调研再动手，判据全部来自包围盒与计算样式）
 
@@ -505,6 +505,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 | 状态胶囊被**静默裁切**（列宽不够时包围盒还在、字看不见——重叠检查看不到它） | 体检补第三条判据 `scrollWidth > clientWidth`；把收字阈值从 1240/1080 提到 1320/1140 | 四档 **navClip=0**（顶栏三组都没被裁） |
 | 落地页"可选子系统"长事实串（`dataset=内置预案模板…`）压到右邻一行：每一档每一页都量到 **2178px²** 互压，1100 档右缘 1120 出屏 | `LegStatusPanel.vue`：事实区 `flex-wrap` + `gap`，正文 `overflow-wrap: anywhere` | **overlap=0、beyond=0、clipped=0** |
 | 正文级灰字不达 AA：全站 **199 项** sub-4.5:1（workflow 64、assistant 17、map 9、dashboard/monitor/metrics 各 1–2） | ①`color:` 里 #8c8c8c/#999/#86909c/#bfbfbf/黑 45% 共 **27 处**统一 #5a6072（6.1:1）；②antd 分页"•••"1.83:1 → 四级选择器压过它的 `css-` 哈希类；③绿/橙/金标签与助手芯片 3.37:1 → #1d6b14/#8a4005；④选中步骤编号"白字压半透明白"3.49:1 → 实心白底深蓝号 | 七页 × 四档 **lowContrast=0**（底色按渐变首停 + 前景 alpha 合成，避免"白字压藏青"被误判成白底白字） |
+| 编排页右栏"打开/归档"两字按钮被挤成竖排（1440 真机截图里就是"打/开"两行） | `DefinitionInspector.vue`：按钮 `flex: 0 0 auto` + `white-space: nowrap`、行 `flex-wrap`，只让名字那段折（"7 节点 / 6 连线""启用中"是词组，折在中间读起来像坏了） | 体检补第五条判据（数按钮文本自己的行盒，不用按钮高度判，带内边距的 flex 按钮会误报）：修后七页 × 四档 **folded=0**；把该文件退回修前 → workflow@1440 **folded=16** 落红 |
 
 第三批移植（NexusMind 的打磨原子）：玻璃卡（半透白 + `blur(18px) saturate` + 内圈白描边 + `0 18px 44px`
 蓝雾 + 圆角 18）、卡头 ◆ 前缀与那道渐变细线、主按钮悬停微升 + 次级按钮主色雾、`tabular-nums`、
@@ -515,7 +516,7 @@ KPI 从白卡搬进**横幅内托盘**（对标 `.overview-stats`：黑 15% 底�
 
 | 门禁与规模 | 结果 |
 | --- | --- |
-| 新增常驻门禁 `frontend/e2e/ui-overlap.spec.ts`（7 页 × 4 档 = 28 项：重叠/出屏/文字被裁/顶栏静默裁切/对比度/居中偏差 ≤1px），跑构建产物 + 本机 chromium | **28 passed**（4.1m）；变异：把 1320 收字阈值改回 1100 → 七页 @1280 **全红**（明细即 `副标题 × 页码徽标`），还原后 hash 一致 |
+| 新增常驻门禁 `frontend/e2e/ui-overlap.spec.ts`（7 页 × 4 档 = 28 项：重叠/出屏/文字被裁/按钮文字折行/顶栏静默裁切/对比度/居中偏差 ≤1px），跑构建产物 + 本机 chromium | **28 passed**（3.1m）；两路变异各红各的：1320 收字阈值改回 1100 → 七页 @1280 全红（overlap=1）；`DefinitionInspector.vue` 退回修前 → workflow@1440 folded=16；还原后 hash 一致 |
 | 单测与构建 | 696 → **697 项全绿**（35 文件，新增智能体空表中文态；该项变异 testid 后恰好 1 红）、`vue-tsc` exit 0、`npm run build` ✓ 42.94s |
 | 改后实拍 | `frontend/test-results/ui-benchmark/b3-{七页}.png` 与 `b3-dashboard-1280.png`（gitignored） |
 
