@@ -7,6 +7,7 @@ import { fetchIntegrations } from '@/api/integrations'
 import type { TaskUnit, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
 import PageHero from '@/components/PageHero.vue'
+import FreshnessBar from '@/components/FreshnessBar.vue'
 import { formatOperatingTime } from '@/utils/clock'
 
 const REFRESH_MS = 15_000
@@ -28,6 +29,8 @@ const tasksError = ref<string | null>(null)
 const deliveryMode = ref<string | null>(null)
 /** 服务端一共多少条预警（`/readyz` 的台账数）；读不到就是 null，此时只报窗口不报总数。 */
 const storeTotal = ref<number | null>(null)
+/** 最近一次**成功**取数的时刻（UTC ISO）；null = 还没取到过。 */
+const fetchedAt = ref<string | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 /**
  * 第几次点开详情。抽屉里同时挂着"这条预警的正文"和"它的任务单元"，
@@ -38,6 +41,11 @@ let timer: ReturnType<typeof setInterval> | null = null
 let inspectSeq = 0
 
 const reachTitle = computed(() => (deliveryMode.value === 'mock' ? '触达（演练口径）' : '触达'))
+
+/** 新鲜度条左端：台账总数（读不到就说读不到）与自刷周期。 */
+const freshLabel = computed<string>(() =>
+  storeTotal.value === null ? '台账总数未读到 ｜ 每 15 秒自刷' : `台账 ${storeTotal.value} 条 ｜ 每 15 秒自刷`,
+)
 
 /**
  * 横幅那句状态语：红色是"要立刻动手"的那一档，不该让人滚进表里数出来。
@@ -90,6 +98,8 @@ async function load(): Promise<void> {
   try {
     const [data, legs] = await Promise.all([api.warnings({ limit: WARNING_LIST_LIMIT }), fetchIntegrations().catch(() => null)])
     warnings.value = data.items
+    // 取到数的那一刻才算"更新于"；失败路径不动它，让"多旧"继续长大（比假装新鲜诚实）
+    fetchedAt.value = new Date().toISOString()
     // 台账总数单独取一次，失败绝不把整次取数带红：窗口那句提示可以只报"最近 N 条"。
     try {
       const info = await api.ready()
@@ -172,6 +182,7 @@ onBeforeUnmount(() => {
     </PageHero>
 
     <a-card size="small" title="预警发布与靶向触达" :loading="loading">
+      <FreshnessBar :fetched-at="fetchedAt" :label="freshLabel" :interval-ms="REFRESH_MS" />
       <p v-if="windowNote" data-testid="window-note" style="margin: 0 0 6px; color: #5a6072; font-size: 12px">
         {{ windowNote }}
       </p>
