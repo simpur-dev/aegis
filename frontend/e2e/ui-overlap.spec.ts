@@ -161,6 +161,26 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     if (tops.size > 1) folded.push(`"${text}" 折成 ${tops.size} 行 | ${pathOf(el)}`)
   }
 
+  /* 顶栏三列互不侵入（按**容器**包围盒量，不按文本叶子）：
+     右列的胶囊是 nowrap 的，故障文案一长整列就长出 `1fr` 轨道、往左压进步进器。
+     文本叶子那套重叠检查在这一处抓不到（实测：容器级压 63×28px，叶子级报 0），
+     所以单独钉一条容器级的。 */
+  const navIntrude: string[] = []
+  {
+    const pairs: [string, string][] = [
+      ['.nav-brand', '.nav-center'],
+      ['.immersive-stepper', '.nav-status'],
+    ]
+    for (const [x, y] of pairs) {
+      const a = document.querySelector(x)?.getBoundingClientRect()
+      const b = document.querySelector(y)?.getBoundingClientRect()
+      if (!a || !b) continue
+      const ox = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+      const oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+      if (ox > 2 && oy > 2) navIntrude.push(`${x} 与 ${y} 压 ${Math.round(ox)}×${Math.round(oy)}px（${x} 右缘=${Math.round(a.right)}，${y} 左缘=${Math.round(b.left)}）`)
+    }
+  }
+
   /* 顶栏三组都被 overflow 管着：内容比列宽就"静默裁掉"，包围盒还在原处——
      重叠检查看不见它，所以单独量 scrollWidth 与 clientWidth 的差。 */
   const navClip: string[] = []
@@ -234,6 +254,26 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     if (got < need) lowContrast.push(`ratio=${got}<${need} "${(el.textContent ?? '').trim().slice(0, 16)}" ${cs.color} on rgb(${Math.round(bg.r)},${Math.round(bg.g)},${Math.round(bg.b)}) ${size}px/${cs.fontWeight} | ${pathOf(el)}`)
   }
 
+  /* 深色横幅里的按钮**不吃**上面那条"禁用态豁免"。豁免的理由是"浅底上灰一点=点不动"，
+     但 antd 的禁用样式是"浅底 + 25% 黑字"，搬进藏青横幅就成了暗底暗字——不是弱化，是读不到。
+     横幅里每个按钮（含禁用）都得过 4.5:1。 */
+  const heroLow: string[] = []
+  let heroBtnCount = 0
+  for (const el of leaves) {
+    if (!(el as HTMLElement).closest('.page-hero__actions')) continue
+    heroBtnCount += 1
+    const cs = getComputedStyle(el)
+    const fg = parse(cs.color)
+    if (!fg) continue
+    const bg = bgOf(el)
+    const eff = fg.a < 1 ? { r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a) } : fg
+    const got = ratio(eff, bg)
+    if (got < 4.5) {
+      const btn = (el as HTMLElement).closest('button')
+      heroLow.push(`hero ratio=${got}<4.5 "${(el.textContent ?? '').trim().slice(0, 16)}" ${cs.color} on rgb(${Math.round(bg.r)},${Math.round(bg.g)},${Math.round(bg.b)})${btn?.disabled ? ' [disabled]' : ''}`)
+    }
+  }
+
   /* 中文值班台上不该出现 antd 默认的英文空态（"No data" 这类）。
      这一整类缺陷此前是靠人一张张截图发现的（链路表、预警表、智能体表各修过一次），
      现在钉成判据：任何一档状态下，空态文案里没有纯英文句子就算中。 */
@@ -257,8 +297,12 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     folded: folded.slice(0, 8),
     foldedCount: folded.length,
     navClip,
+    navIntrude,
     lowContrast: lowContrast.slice(0, 10),
     lowContrastCount: lowContrast.length,
+    heroLow: heroLow.slice(0, 6),
+    heroLowCount: heroLow.length,
+    heroBtnCount,
     englishEmpty: englishEmpty.slice(0, 6),
     englishEmptyCount: englishEmpty.length,
     centerOffset: center ? Number(Math.abs(center.left + center.width / 2 - innerWidth / 2).toFixed(2)) : null,
@@ -286,14 +330,16 @@ for (const width of WIDTHS) {
           await page.waitForTimeout(2_000)
           r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
         }
-        console.log(`UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} centerOffset=${r.centerOffset}`)
+        console.log(`UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} heroBtn=${r.heroBtnCount} heroLow=${r.heroLowCount} centerOffset=${r.centerOffset}`)
         expect(r.leafCount, `${name}@${width} 页面一个文本节点都没看到——判据在空跑`).toBeGreaterThan(30)
         expect(r.overlapCount, `${name}@${width} 重叠明细：\n${r.overlap.join('\n')}`).toBe(0)
         expect(r.beyondCount, `${name}@${width} 有内容出屏：\n${r.beyond.join('\n')}`).toBe(0)
         expect(r.clippedCount, `${name}@${width} 有文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
         expect(r.foldedCount, `${name}@${width} 有按钮文字折行（"打/开"竖排）：\n${r.folded.join('\n')}`).toBe(0)
         expect(r.navClip, `${name}@${width} 顶栏把内容裁掉了（列宽不够）：\n${r.navClip.join('\n')}`).toHaveLength(0)
+        expect(r.navIntrude, `${name}@${width} 顶栏三列互相侵入：\n${r.navIntrude.join('\n')}`).toHaveLength(0)
         expect(r.lowContrastCount, `${name}@${width} 有字对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
+        expect(r.heroLowCount, `${name}@${width} 横幅里的按钮在深底上读不清：\n${r.heroLow.join('\n')}`).toBe(0)
         expect(r.englishEmptyCount, `${name}@${width} 出现纯英文空态文案：\n${r.englishEmpty.join('\n')}`).toBe(0)
         if (r.centerOffset !== null) expect(r.centerOffset, `${name}@${width} 步进器偏离中线`).toBeLessThanOrEqual(1)
       })
@@ -361,9 +407,22 @@ for (const width of [1440, 1100]) {
       test(`后端不可达时 ${name} 仍不重叠、不出屏、不裁字、对比度达标`, async ({ page }) => {
         await page.goto(path)
         await page.waitForSelector('.page-hero', { timeout: 45_000 })
-        await page.waitForTimeout(3_000)
+        /* 先等顶栏真翻成**最长那句**故障文案再量：故障态的胶囊比在线态长
+           （"后端不可达" + "事件流已中断"），只等 health 翻脸是不够的——SSE 那条先是
+           "事件流重连中"（短 65px），此时右列已经长出轨道、但还没长到压住步进器，
+           量到的就是"假绿"。变异实测：只等 /不可达/ 时这条判据抓不到右列侵入 78px。 */
+        await page
+          .waitForFunction(
+            () =>
+              /不可达/.test(document.querySelector('.nav-status')?.textContent ?? '') &&
+              /已中断/.test(document.querySelector('.nav-status')?.textContent ?? ''),
+            undefined,
+            { timeout: 25_000 },
+          )
+          .catch(() => {})
+        await page.waitForTimeout(1_000)
         const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
-        console.log(`FAULT ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} lowContrast=${r.lowContrastCount}`)
+        console.log(`FAULT ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} heroLow=${r.heroLowCount}`)
         await page.screenshot({ path: `test-results/ui-audit/fault-${name}-${width}.png` })
         expect(r.leafCount, `${name}@${width} 故障态只看到 ${r.leafCount} 个文本节点——判据在空跑`).toBeGreaterThanOrEqual(12)
         expect(r.overlapCount, `${name}@${width} 故障态重叠：\n${r.overlap.join('\n')}`).toBe(0)
@@ -371,6 +430,9 @@ for (const width of [1440, 1100]) {
         expect(r.clippedCount, `${name}@${width} 故障态文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
         expect(r.foldedCount, `${name}@${width} 故障态按钮折行：\n${r.folded.join('\n')}`).toBe(0)
         expect(r.lowContrastCount, `${name}@${width} 故障态对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
+        expect(r.heroLowCount, `${name}@${width} 故障态横幅按钮读不清：\n${r.heroLow.join('\n')}`).toBe(0)
+        expect(r.navClip, `${name}@${width} 故障态顶栏静默裁字：\n${r.navClip.join('\n')}`).toHaveLength(0)
+        expect(r.navIntrude, `${name}@${width} 故障态顶栏三列互相侵入：\n${r.navIntrude.join('\n')}`).toHaveLength(0)
         expect(r.englishEmptyCount, `${name}@${width} 故障态出现纯英文空态：\n${r.englishEmpty.join('\n')}`).toBe(0)
       })
     }
@@ -420,6 +482,24 @@ test.describe('画布节点不变量 @1440', () => {
     await page.waitForSelector('.page-hero', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(2_000)
+    /* 刚进页面时是"新建画布"那份空定义：① 画布上没有节点，小地图里什么都没有，不该挂着；
+       ② 横幅里"保存定义"此时是禁用态——antd 的禁用样式是"浅底 + 25% 黑字"，落在藏青横幅上
+       就是暗底暗字。全局对比度判据对 `.ant-btn[disabled]` 是豁免的（浅底上那是"点不动"的提示，
+       不算读不到），横幅里不能豁免，所以单独量一次，并钉住"这里真的有禁用按钮"。 */
+    await page.waitForTimeout(1_500)
+    const empty = await page.evaluate(() => ({
+      nodes: document.querySelectorAll('.wf-node').length,
+      minimap: !!document.querySelector('.vue-flow__minimap'),
+      disabled: document.querySelectorAll('.page-hero__actions button:disabled').length,
+    }))
+    const heroC = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
+    console.log(`CANVAS[empty] nodes=${empty.nodes} minimap=${empty.minimap} heroBtn=${heroC.heroBtnCount} heroDisabled=${empty.disabled} heroLow=${heroC.heroLowCount}`)
+    expect(empty.nodes, '这条要量的是"空画布"，但画布上已经有节点了').toBe(0)
+    expect(empty.minimap, '空画布上还挂着一个小地图（里面什么都没有，只是块白框）').toBe(false)
+    expect(empty.disabled, '横幅里没有禁用态按钮——这条判据在空跑（"保存定义"此时该是禁用的）').toBeGreaterThan(0)
+    expect(heroC.heroBtnCount, '横幅里一个按钮文本都没量到——判据在空跑').toBeGreaterThanOrEqual(2)
+    expect(heroC.heroLowCount, `横幅里的按钮在深底上读不清：\n${heroC.heroLow.join('\n')}`).toBe(0)
+
     /* 右栏是 pill 切换、默认停在"运行态"：要看定义列表得先切档 */
     await page.locator('[data-testid="rail-def"]').click()
     await page.waitForTimeout(800)
@@ -472,22 +552,103 @@ test.describe('画布节点不变量 @1440', () => {
         }
       }
       const zoom = Number(document.querySelector('.vue-flow__viewport')?.getAttribute('style')?.match(/zoom\(([\d.]+)\)/)?.[1] ?? 1)
-      return { count: nodes.length, zoom, overlap, spill }
+      /* 画布浮层（小地图 / 缩放控件）此前是判据死角：@vue-flow 默认只给 minimap 一个
+         `background-color:#fff`，落进我们的圆角玻璃画布就是一块生硬白方块（真机截图里那个
+         "空白矩形"）。判据：要么不出现，要么就得是卡片族的样子（圆角 + 描边或投影）且不出画布。 */
+      const canvasRect = document.querySelector('.wf__canvas')?.getBoundingClientRect()
+      const panel = (sel: string) => {
+        const el = document.querySelector(sel) as HTMLElement | null
+        if (!el) return null
+        const cs = getComputedStyle(el)
+        const r = el.getBoundingClientRect()
+        return {
+          radius: parseFloat(cs.borderTopLeftRadius) || 0,
+          border: parseFloat(cs.borderTopWidth) || 0,
+          shadow: cs.boxShadow !== 'none',
+          w: Math.round(r.width),
+          h: Math.round(r.height),
+          inside:
+            !!canvasRect &&
+            r.left >= canvasRect.left - 1 &&
+            r.top >= canvasRect.top - 1 &&
+            r.right <= canvasRect.right + 1 &&
+            r.bottom <= canvasRect.bottom + 1,
+        }
+      }
+      return {
+        count: nodes.length,
+        zoom,
+        overlap,
+        spill,
+        minimap: panel('.vue-flow__minimap'),
+        controls: panel('.vue-flow__controls'),
+      }
     })
 
     const check = async (phase: string) => {
       const r = await measure()
-      console.log(`CANVAS[${phase}] nodes=${r.count} overlap=${r.overlap.length} spill=${r.spill.length}`)
+      console.log(`CANVAS[${phase}] nodes=${r.count} overlap=${r.overlap.length} spill=${r.spill.length} minimap=${JSON.stringify(r.minimap)} controls=${JSON.stringify(r.controls)}`)
       await page.screenshot({ path: `test-results/ui-audit/canvas-${phase}.png` })
       expect(r.count, `${phase}：画布上没有节点——判据在空跑`).toBeGreaterThan(1)
       expect(r.overlap, `${phase} 节点卡互相压叠：\n${r.overlap.join('\n')}`).toHaveLength(0)
       expect(r.spill, `${phase} 节点标题出框：\n${r.spill.join('\n')}`).toHaveLength(0)
+      for (const [which, p] of [
+        ['小地图', r.minimap],
+        ['缩放控件', r.controls],
+      ] as const) {
+        expect(p, `${phase}：画布上有节点时${which}没渲染`).not.toBeNull()
+        if (!p) continue
+        expect(p.inside, `${phase}：${which}跑到画布外`).toBe(true)
+        expect(p.w, `${phase}：${which}宽 0`).toBeGreaterThan(0)
+        expect(p.h, `${phase}：${which}高 0`).toBeGreaterThan(0)
+        /* 圆角 + 描边/投影是"卡片族"的最低门槛：库里默认那版是 0 圆角 + 无边框的裸白块 */
+        expect(p.radius, `${phase}：${which}是直角裸块（圆角=${p.radius}）`).toBeGreaterThanOrEqual(8)
+        expect(p.border > 0 || p.shadow, `${phase}：${which}没有描边也没有投影，和画布糊成一片`).toBe(true)
+      }
     }
 
     await check('opened')
     await page.getByRole('button', { name: '自动布局' }).click()
     await page.waitForTimeout(1_800)
     await check('auto-layout')
+  })
+})
+
+/**
+ * 提示条（antd message）落点：库里默认 top:8px，而顶栏定高 68px——报错提示正好糊在顶栏上。
+ * 真机截图实测过一条 500 提示把步进器第 7 档和右侧状态胶囊整个盖住，而那两处是
+ * "我在哪一步 / 后端通不通"的唯一入口。重叠判据看不见它（`.ant-message` 在 skip 名单里，
+ * 弹层本来就该浮在正文上），所以单独钉一条"不许盖住顶栏"。
+ */
+test.describe('提示条落点 @1440', () => {
+  test('报错提示落在顶栏下方，不吃掉步进器与状态胶囊', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.route('**/api/**', (route) =>
+      route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"probe boom"}' }),
+    )
+    await page.goto('/workflow')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForTimeout(1_500)
+    await page.getByRole('button', { name: '刷新实例' }).click()
+    await page.waitForSelector('.ant-message-notice', { timeout: 15_000 })
+    const m = await page.evaluate(() => {
+      const box = document.querySelector('.ant-message')?.getBoundingClientRect()
+      const nav = document.querySelector('.navbar')?.getBoundingClientRect()
+      const notice = document.querySelector('.ant-message-notice')?.getBoundingClientRect()
+      return {
+        top: box ? Math.round(box.top) : null,
+        noticeTop: notice ? Math.round(notice.top) : null,
+        noticeText: (document.querySelector('.ant-message-notice')?.textContent ?? '').trim().slice(0, 40),
+        navBottom: nav ? Math.round(nav.bottom) : null,
+        navH: nav ? Math.round(nav.height) : null,
+      }
+    })
+    console.log(`TOAST top=${m.top} noticeTop=${m.noticeTop} navBottom=${m.navBottom} text="${m.noticeText}"`)
+    expect(m.noticeText, '提示条没出现——判据在空跑').not.toBe('')
+    expect(m.noticeTop, '顶栏高度没量到').not.toBeNull()
+    if (m.noticeTop !== null && m.navBottom !== null) {
+      expect(m.noticeTop, `提示条压在顶栏上（提示顶边=${m.noticeTop}，顶栏底边=${m.navBottom}）`).toBeGreaterThanOrEqual(m.navBottom)
+    }
   })
 })
 

@@ -81,10 +81,15 @@ const theme: ThemeConfig = {
  * 所以后端都不在线时不许说连着；心跳静默（前端自己判死并重连）时把"没心跳"说出来。
  */
 const streamLabel = computed<string>(() => {
-  if (health.value === null) return '事件流已中断（后端不可达）'
+  /* 括号里那句"（后端不可达）"删掉了：左边那颗胶囊此时就写着"后端不可达"，
+     两句话并排把顶栏右列撑到 374px，挤进中间步进器 78px（真机 @1440 量的）。
+     原因还在，挪到 title 里，hover 看得到。 */
+  if (health.value === null) return '事件流已中断'
   if (connected.value) return '事件流已连接'
   return stalled.value ? '事件流没心跳，正在重连' : '事件流重连中'
 })
+/** 胶囊窄起来会省略号，完整那句放 title 里。 */
+const streamHint = computed<string>(() => (health.value === null ? '事件流已中断：后端不可达' : streamLabel.value))
 </script>
 
 <template>
@@ -119,11 +124,11 @@ const streamLabel = computed<string>(() => {
         </div>
 
         <div class="nav-status">
-          <span class="status-pill">
+          <span class="status-pill" :title="health ? `后端在线 v${health.version}` : '后端不可达：取数与操作都会失败'">
             <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
             <span class="status-pill__text">{{ health ? `后端在线 v${health.version}` : '后端不可达' }}</span>
           </span>
-          <span class="status-pill" data-testid="stream-badge">
+          <span class="status-pill" data-testid="stream-badge" :title="streamHint">
             <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
             <span class="status-pill__text">{{ streamLabel }}</span>
           </span>
@@ -313,12 +318,18 @@ const streamLabel = computed<string>(() => {
   gap: 8px;
   justify-self: end;
   min-width: 0;
+  /* 右列此前会往左长出轨道之外（真机 @1440 故障态：内容 374px 撞进 295px 的列，
+     压住步进器第 7 档 78px）。胶囊是 nowrap 的，flex 项默认 min-width:auto，
+     于是整列的 min-content 比轨道还宽、`1fr` 也压不住——得让胶囊自己可缩。 */
+  max-width: 100%;
   overflow: hidden;
 }
 .status-pill {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  flex: 0 1 auto;
+  min-width: 0;
   padding: 6px 12px;
   border: 1px solid rgba(37, 99, 235, 0.12);
   border-radius: 999px;
@@ -328,7 +339,15 @@ const streamLabel = computed<string>(() => {
   font-weight: 600;
   white-space: nowrap;
 }
+/* 挤不下时省略号收尾（完整那句在 title 里），不许无声裁字、更不许顶开步进器 */
+.status-pill__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .status-dot {
+  flex: 0 0 auto;
   width: 6px;
   height: 6px;
   border-radius: 50%;

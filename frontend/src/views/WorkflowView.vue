@@ -162,9 +162,15 @@ onUnmounted(() => {
           @node-drag-stop="onNodeDragStop"
         >
           <Background pattern-color="#d9d9d9" :gap="16" />
-          <MiniMap />
+          <!-- 空画布上小地图里什么都没有，只会剩一块白框；没节点就不渲染 -->
+          <MiniMap v-if="view.nodes.length > 0" />
           <Controls />
         </VueFlow>
+        <p v-if="view.nodes.length === 0" class="wf__canvas-hint">
+          <span class="wf__canvas-hint-icon">◇</span>
+          <span class="wf__canvas-hint-title">画布还是空的</span>
+          <span class="wf__canvas-hint-desc">从左侧拖一个节点进来，或在「定义」档打开已存定义</span>
+        </p>
       </div>
 
       <aside class="wf__right">
@@ -316,6 +322,45 @@ onUnmounted(() => {
   min-height: 0;
   /* 网格项默认 min-width:auto：轨道写了 minmax(0,1fr) 也没用，画布仍按内容最小宽撑住 */
   min-width: 0;
+}
+
+/* 空画布的提示：图形 + 一句话 + 下一步去哪。pointer-events:none 是硬要求——
+   它压在画布正中，而正中正是"从左侧拖节点进来"的落点。 */
+.wf__canvas-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: min(360px, calc(100% - 48px));
+  margin: 0;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  text-align: center;
+}
+.wf__canvas-hint-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px dashed rgba(37, 99, 235, 0.4);
+  border-radius: 12px;
+  background: rgba(37, 99, 235, 0.06);
+  color: #2563eb;
+  font-size: 18px;
+}
+.wf__canvas-hint-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1d2129;
+}
+.wf__canvas-hint-desc {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #5a6072;
 }
 
 /*

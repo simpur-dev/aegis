@@ -273,3 +273,66 @@ body .empty-hero__action {
 body .empty-hero__action:hover {
   text-decoration: underline;
 }
+
+/* —— 深色横幅里的按钮：antd 的禁用态是"浅底深字"（primary 禁用 = rgba(0,0,0,.04) 底 +
+     rgba(0,0,0,.25) 字），搬进藏青横幅就成了暗底暗字——"保存定义"未保存可点时几乎读不出字。
+     三态都在深底上重定：描边与字用白，禁用留 55% 白 + 虚线（虚线=点不动，跟 pill-dashed 同一口径）。
+     选择器带 .page-hero 前缀，浅底页面里的按钮不受影响。 —— */
+.page-hero .ant-btn {
+  border-color: rgba(255, 255, 255, 0.34);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+}
+.page-hero .ant-btn:not(:disabled):hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
+}
+.page-hero .ant-btn-primary:not(:disabled) {
+  border-color: transparent;
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+}
+.page-hero .ant-btn-primary:not(:disabled):hover {
+  background: linear-gradient(135deg, #3b76f0 0%, #2563eb 100%);
+}
+.page-hero .ant-btn:disabled,
+.page-hero .ant-btn.ant-btn-disabled {
+  border-color: rgba(255, 255, 255, 0.32);
+  border-style: dashed;
+  color: rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* —— 画布浮层：@vue-flow 的 minimap 默认只有一个 `background-color:#fff`，controls 只有 2px 投影，
+     放进我们的圆角玻璃画布里就是两块生硬的白方块（真机截图里那块"空白矩形"就是它）。
+     统一成卡片族同一套语言：半透白 + 主色细描边 + 12px 圆角 + 蓝雾投影。 —— */
+.wf__canvas .vue-flow__minimap {
+  overflow: hidden;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 10px 24px rgba(13, 30, 66, 0.1);
+}
+.wf__canvas .vue-flow__controls {
+  overflow: hidden;
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 10px 24px rgba(13, 30, 66, 0.1);
+}
+.wf__canvas .vue-flow__controls-button {
+  width: 22px;
+  height: 22px;
+  padding: 6px;
+  border-bottom: 1px solid rgba(37, 99, 235, 0.12);
+  background: transparent;
+  color: #334155;
+  fill: currentColor;
+}
+.wf__canvas .vue-flow__controls-button:hover {
+  background: rgba(37, 99, 235, 0.1);
+}
+.wf__canvas .vue-flow__controls-button:last-child {
+  border-bottom: none;
+}
