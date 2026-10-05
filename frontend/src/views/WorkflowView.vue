@@ -15,7 +15,7 @@ import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { message } from 'ant-design-vue'
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 
 import { useWorkflowStore } from '@/stores/workflow'
 
@@ -58,6 +58,16 @@ async function createDraft(): Promise<void> {
 
 let detachUnsavedGuard: (() => void) | null = null
 
+/**
+ * 画布上方的待办条：值班员打开这一页，第一眼要看到"有没有单在等我"。
+ *
+ * 真机量过（1440×900）：等人签的队列在右栏第三块，落在首屏之外
+ * （queueVisibleWithoutScroll=false），而总览页一个"待签/核签"字样都没有——
+ * 工单在等，人却不知道要滚到哪儿去找。顺序与 RuntimePanel 的列表同一口径（新到旧），
+ * 「打开第一张」打开的就是列表首行那张。
+ */
+const waitingTickets = computed(() => [...store.instances].reverse().filter((row) => row.status === 'waiting'))
+
 onMounted(() => {
   void bootstrap()
   // 队列要自己长出新单子：值班员盯着这一页等工单时，页面不能一直是开页那一刻的快照
@@ -86,6 +96,11 @@ onUnmounted(() => {
       <a-button size="small" @click="store.refreshAll">刷新实例</a-button>
       <span v-if="store.polling" class="wf__polling">实例状态轮询中</span>
     </header>
+
+    <p v-if="waitingTickets.length > 0" class="wf__todos" data-testid="waiting-banner">
+      <span>有 {{ waitingTickets.length }} 张工单在等人签。</span>
+      <a-button size="small" type="primary" @click="store.openFirstWaiting">打开第一张</a-button>
+    </p>
 
     <p v-if="store.error !== null" class="wf__error">{{ store.error }}</p>
     <p v-else-if="store.validationErrors.length > 0" class="wf__warn">
@@ -172,6 +187,17 @@ onUnmounted(() => {
 .wf__warn {
   background: #fffbe6;
   color: #874d00;
+}
+.wf__todos {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 4px;
+  background: #f9f0ff;
+  color: #531dab;
+  font-size: 13px;
 }
 .wf__body {
   display: grid;

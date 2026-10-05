@@ -485,7 +485,20 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       }, '读取实例失败')
     }
 
-    async function refreshInstance(): Promise<void> {
+    /**
+   * 打开队列里最上面那张等人签的工单。
+   *
+   * 队列的显示顺序是"新到旧、等人签优先"（RuntimePanel 的 listedInstances）：
+   * 这里必须按同一顺序取第一张，否则顶栏待办条说"打开第一张"、列表首行却是另一张。
+   * 打开后 `focusInstance` 会自动选中待签节点，决策面板随之就位。
+   */
+  async function openFirstWaiting(): Promise<boolean> {
+    const first = [...instances.value].reverse().find((row) => row.status === 'waiting')
+    if (first === undefined) return false
+    return focusInstance(first.instance_id)
+  }
+
+  async function refreshInstance(): Promise<void> {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return
       const wasMutable = instanceMutable.value
@@ -695,6 +708,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       restoreDefinition,
       startInstance,
       focusInstance,
+      openFirstWaiting,
       refreshInstance,
       refreshAll,
       startPolling,

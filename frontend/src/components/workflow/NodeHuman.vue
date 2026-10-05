@@ -3,7 +3,7 @@
 import type { NodeProps } from '@vue-flow/core'
 import { computed } from 'vue'
 
-import type { FlowNodeData, JsonValue } from '@/utils/graph'
+import { decisionText, type FlowNodeData, type JsonValue } from '@/utils/graph'
 
 import NodeShell from './NodeShell.vue'
 import { useNodeCard } from './useNodeCard'
@@ -27,7 +27,8 @@ const options = computed<string[]>(() => {
 <template>
   <NodeShell v-bind="card">
     <p class="wf-human__prompt">{{ prompt }}</p>
-    <p class="wf-human__options">候选决策：{{ options.join(' / ') }}</p>
+    <!-- 卡片窄，只给中文；按钮上带原值后缀的原因见 utils/graph 的 decisionLabel -->
+    <p class="wf-human__options">候选决策：{{ options.map(decisionText).join(' / ') }}</p>
   </NodeShell>
 </template>
 

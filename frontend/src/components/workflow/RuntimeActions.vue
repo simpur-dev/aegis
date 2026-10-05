@@ -7,7 +7,7 @@ import { message } from 'ant-design-vue'
 import { computed, ref } from 'vue'
 
 import { useWorkflowStore } from '@/stores/workflow'
-import { MAX_CHOICE_CHARS, MAX_DECISION_COMMENT_CHARS, MAX_SIGNER_CHARS, nextAvailableId, stateStyle, type NodeDef, type NodeType } from '@/utils/graph'
+import { MAX_CHOICE_CHARS, MAX_DECISION_COMMENT_CHARS, MAX_SIGNER_CHARS, decisionLabel, nextAvailableId, stateStyle, type NodeDef, type NodeType } from '@/utils/graph'
 
 import { createNodeDef, NODE_META, PALETTE_GROUPS } from './registry'
 
@@ -47,22 +47,6 @@ const signed = computed(() => {
     note: note === '' ? '（无批注）' : note,
   }
 })
-
-/**
- * 决策按钮的中文标签：候选值由定义里的 options 决定（templates.py:309 是 approve/adjust/reject），
- * 不在表里的原样显示。此前只翻译 approve/reject，adjust 直接露出英文裸值，
- * 而按钮按数组顺序排——中间那颗恰好永远是没人看得懂的 `adjust`。
- */
-const DECISION_LABELS: Record<string, string> = {
-  approve: '核签通过',
-  adjust: '核签更正',
-  reject: '核签退回',
-}
-
-function optionLabel(option: string): string {
-  const label = DECISION_LABELS[option]
-  return label === undefined ? option : `${label}（${option}）`
-}
 
 function submit(choice: string): void {
   void store.submitDecision(props.node.node_id, choice, comment.value, signer.value)
@@ -111,41 +95,12 @@ async function insertAfter(): Promise<void> {
     <!-- 签过的决策必须看得见：接口的 output.decision 里有选项、签字人与批注，
          而此前页面上一个字都不显示——节点卡还是那句提问，面板还是"等待人工决策" -->
     <p v-if="signed !== null" class="wf-runtime__signed" data-testid="decision-trace">
-      已签：{{ optionLabel(signed.choice) }} ｜ 签字人 {{ signed.who }} ｜ 批注 {{ signed.note }}
+      已签：{{ decisionLabel(signed.choice) }} ｜ 签字人 {{ signed.who }} ｜ 批注 {{ signed.note }}
     </p>
 
-    <div class="wf-runtime__row">
-      <button type="button" class="wf-runtime__button" :disabled="!store.canPatchRuntime(node.node_id)" @click="pushConfig">
-        以当前参数下发改参
-      </button>
-      <span class="wf-runtime__hint">
-        仅未开始执行的节点可改参（engine.py:539-540）。这里下发的是"节点参数"；SLA、超时、重试不在这条接口上——
-        它们要点「保存定义」，且只影响之后启动的实例（在途实例绑定它启动时那一版）。
-      </span>
-    </div>
-
-    <div class="wf-runtime__row">
-      <input v-model="reason" class="wf-runtime__input" type="text" placeholder="旁路理由（可选）" maxlength="128" />
-      <button type="button" class="wf-runtime__button" :disabled="!store.canBypassNode(node.node_id)" @click="bypass">
-        绕过该节点
-      </button>
-    </div>
-    <span class="wf-runtime__hint">仅待执行/等待中的节点可旁路，已成功的不可（engine.py:582-583）。</span>
-
-    <div class="wf-runtime__row">
-      <select v-model="insertType" class="wf-runtime__input">
-        <optgroup v-for="group in PALETTE_GROUPS" :key="group.category" :label="group.label">
-          <option v-for="type in group.types" :key="type" :value="type">{{ NODE_META[type].label }}</option>
-        </optgroup>
-      </select>
-      <button type="button" class="wf-runtime__button" :disabled="!store.instanceMutable" @click="insertAfter">
-        在此节点后插入
-      </button>
-    </div>
-    <span class="wf-runtime__hint">
-      插入会重接本节点原出边；引擎不会在插入瞬间驱动新节点（engine.py:547-569），故仅在实例未终态时开放。
-    </span>
-
+    <!-- 签字的控件排最前：值班员在这一页的任务就是签单，改参/旁路/插入是少数人才用的。
+         真机量过：决策按钮排在三道控件与长说明之后，落在 1440×900 首屏之外（y≈976），
+         打开第一张单后还得在右栏里滚一段才够得着「核签通过」。 -->
     <div class="wf-runtime__row">
       <input
         v-model="signer"
@@ -168,7 +123,7 @@ async function insertAfter(): Promise<void> {
         :disabled="!store.canDecideNode(node.node_id)"
         @click="submit(option)"
       >
-        {{ optionLabel(option) }}
+        {{ decisionLabel(option) }}
       </button>
     </div>
     <div v-else class="wf-runtime__row">
@@ -182,7 +137,39 @@ async function insertAfter(): Promise<void> {
         提交决策
       </button>
     </div>
-    <span class="wf-runtime__hint">仅"待人工核签"状态的节点可提交决策（engine.py:515-516）。</span>
+    <span class="wf-runtime__hint">仅"待人工核签"状态的节点可提交决策。</span>
+
+    <div class="wf-runtime__row">
+      <button type="button" class="wf-runtime__button" :disabled="!store.canPatchRuntime(node.node_id)" @click="pushConfig">
+        以当前参数下发改参
+      </button>
+      <span class="wf-runtime__hint">
+        仅未开始执行的节点可改参。这里下发的是"节点参数"；SLA、超时、重试不在这条接口上——
+        它们要点「保存定义」，且只影响之后启动的实例（在途实例绑定它启动时那一版）。
+      </span>
+    </div>
+
+    <div class="wf-runtime__row">
+      <input v-model="reason" class="wf-runtime__input" type="text" placeholder="旁路理由（可选）" maxlength="128" />
+      <button type="button" class="wf-runtime__button" :disabled="!store.canBypassNode(node.node_id)" @click="bypass">
+        绕过该节点
+      </button>
+    </div>
+    <span class="wf-runtime__hint">仅待执行/等待中的节点可旁路，已成功的不可。</span>
+
+    <div class="wf-runtime__row">
+      <select v-model="insertType" class="wf-runtime__input">
+        <optgroup v-for="group in PALETTE_GROUPS" :key="group.category" :label="group.label">
+          <option v-for="type in group.types" :key="type" :value="type">{{ NODE_META[type].label }}</option>
+        </optgroup>
+      </select>
+      <button type="button" class="wf-runtime__button" :disabled="!store.instanceMutable" @click="insertAfter">
+        在此节点后插入
+      </button>
+    </div>
+    <span class="wf-runtime__hint">
+      插入会重接本节点原出边；引擎不会在插入瞬间驱动新节点，故仅在实例未终态时开放。
+    </span>
   </section>
 </template>
 

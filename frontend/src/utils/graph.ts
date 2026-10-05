@@ -205,6 +205,30 @@ export function isInstanceStatus(raw: string): raw is InstanceStatus {
   return raw in INSTANCE_STATUS_LABELS
 }
 
+/**
+ * 人工核签的决策值 → 值班员读的中文。
+ *
+ * 候选值由定义里的 options 决定（templates.py:309 是 approve/adjust/reject），
+ * 按钮与节点卡共用这一份映射：此前按钮只翻译 approve/reject，中间那颗永远是没人
+ * 看得懂的 `adjust`；节点卡更直接把枚举裸值摆出来（"候选决策：approve / adjust / reject"）。
+ */
+export const DECISION_LABELS: Record<string, string> = {
+  approve: '核签通过',
+  adjust: '核签更正',
+  reject: '核签退回',
+}
+
+/** 按钮与留痕用：中文 + 原值后缀，命令与回执里的枚举对得上。表外的值原样显示。 */
+export function decisionLabel(value: string): string {
+  const label = DECISION_LABELS[value]
+  return label === undefined ? value : `${label}（${value}）`
+}
+
+/** 节点卡这类窄位置用：只给中文。表外的值原样显示。 */
+export function decisionText(value: string): string {
+  return DECISION_LABELS[value] ?? value
+}
+
 /** WorkflowDef.status 取值（model.py:94）。 */
 export const DEFINITION_STATUS_LABELS: Record<'active' | 'archived', string> = {
   active: '启用中',

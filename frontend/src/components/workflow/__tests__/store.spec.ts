@@ -566,6 +566,37 @@ describe('stores/workflow 实例列表与「等人签」计数对账', () => {
     expect(store.instances.filter((row) => row.status === 'waiting'), '按钮点下去张数还不变，就等于这个按钮没用').toHaveLength(0)
   })
 
+  /**
+   * 顶栏待办条说"打开第一张"，打开的必须是列表首行那张。
+   * 列表顺序是"新到旧、等人签优先"，故第一张 = 最新的一张等人签工单。
+   */
+  it('待办条打开的是列表首行那张：新到旧里最新的一个等签', async () => {
+    const client = fakeClient({ instance: detail('waiting', [nodeRun('review_1', 'awaiting_human')]) })
+    vi.mocked(client.instances).mockResolvedValue({
+      count: 3,
+      items: [
+        { ...detail('waiting', [nodeRun('review_1', 'awaiting_human')]), instance_id: 'wfi_old_waiting' },
+        { ...detail('succeeded', []), instance_id: 'wfi_done' },
+        { ...detail('waiting', [nodeRun('review_1', 'awaiting_human')]), instance_id: 'wfi_new_waiting' },
+      ],
+    })
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.loadInstances()
+    expect(await store.openFirstWaiting()).toBe(true)
+    expect(vi.mocked(client.instance), '打开的和列表首行不是同一张，待办条就是在说假话').toHaveBeenLastCalledWith('wfi_new_waiting')
+  })
+
+  it('没有人在等签时待办条无事可做，不去打扰接口', async () => {
+    const client = fakeClient({})
+    vi.mocked(client.instances).mockResolvedValue(rows(0))
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+    await store.loadInstances()
+    expect(await store.openFirstWaiting()).toBe(false)
+    expect(vi.mocked(client.instance).mock.calls.length).toBe(0)
+  })
+
   it('轮询发现这条进了终态才重拉列表，还挂在人工这步时不多打一次接口', async () => {
     vi.useFakeTimers()
     const client = fakeClient({ instance: detail('waiting', [nodeRun('review_1', 'awaiting_human')]) })

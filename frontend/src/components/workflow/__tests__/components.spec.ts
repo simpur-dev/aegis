@@ -190,7 +190,8 @@ describe('类别卡片组件（16 类 → 4 个组件）', () => {
   it('human 卡片露出提示语与候选决策值', () => {
     const wrapper = mount(NodeHuman, { global: HANDLE_STUB, props: nodeProps(cardData('human_review')) })
     expect(wrapper.text()).toContain('请值班指挥员确认')
-    expect(wrapper.text()).toContain('approve / reject')
+    expect(wrapper.text(), '卡片摆裸枚举值，值班员读不懂「adjust」是哪颗按钮').toContain('核签通过 / 核签退回')
+    expect(wrapper.text()).not.toContain('approve')
   })
 
   it('human 卡片缺省值与 nodes.py handler 一致', () => {
@@ -198,7 +199,7 @@ describe('类别卡片组件（16 类 → 4 个组件）', () => {
     data.def.config = {}
     const wrapper = mount(NodeHuman, { global: HANDLE_STUB, props: nodeProps(data) })
     expect(wrapper.text()).toContain('请值班指挥员确认')
-    expect(wrapper.text()).toContain('approve / reject')
+    expect(wrapper.text()).toContain('核签通过 / 核签退回')
   })
 
   it('configPreview 只取前两项并折叠复杂结构', () => {
@@ -384,6 +385,49 @@ describe('检查器与运行中操作', () => {
     const text = wrapper.text()
     expect(text).toContain('SLA、超时、重试不在这条接口上')
     expect(text).toContain('只影响之后启动的实例')
+  })
+
+  /**
+   * 值班员界面不夹源码行号：`engine.py:539-540` 这类括号对改代码的人有用，
+   * 对签字的人只是噪音（真机 1440×900 走查在运行态面板上量到四处）。
+   * 限制说明保留原话，引用回到注释与文档里查。
+   */
+  it('运行态面板的说明是给人读的，不夹源码行号', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const fetch = createNodeDef('data_fetch', 'fetch_1')
+    store.addNode(fetch)
+    store.select('fetch_1')
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456789ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'running',
+      error: null,
+      nodes: [{ node_id: 'fetch_1', type: 'data_fetch', state: 'pending', attempts: 0, schedule_latency_ms: null, duration_ms: null, output: {}, error: null, notes: [] }],
+    }
+    const wrapper = mount(RuntimeActions, { props: { node: fetch } })
+    const text = wrapper.text()
+    expect(text).not.toContain('engine.py')
+    expect(text).toContain('仅未开始执行的节点可改参')
+    expect(text).toContain('仅待执行/等待中的节点可旁路')
+    expect(text).toContain('引擎不会在插入瞬间驱动新节点')
+    expect(text).toContain('可提交决策')
+  })
+
+  /**
+   * 签字的控件必须排在改参/旁路/插入之前：真机量过，决策按钮排在三道控件与长说明之后，
+   * 落在 1440×900 首屏之外（y≈976），打开第一张单后还得滚一段才够得着「核签通过」。
+   * mount 级用例只能证明按钮"存在"，够不够得着要靠这条顺序门禁 + 真机探针。
+   */
+  it('决策控件排在改参/旁路/插入之前', () => {
+    const source = readRepoFile('frontend', 'src', 'components', 'workflow', 'RuntimeActions.vue')
+    const decisions = source.indexOf('wf-runtime__decisions')
+    const patch = source.indexOf('以当前参数下发改参')
+    expect(decisions).toBeGreaterThan(-1)
+    expect(patch).toBeGreaterThan(-1)
+    expect(decisions, '核签按钮应排在改参控件的前面').toBeLessThan(patch)
   })
 
   /**
@@ -925,5 +969,24 @@ describe('编排页顶栏「刷新实例」的接线', () => {
       expect(start, `${action} 的实现找不到`).toBeGreaterThan(-1)
       expect(source.slice(start, start + 1_200), `${action} 之后要把实例列表重拉一遍`).toContain('syncInstancesQuietly()')
     }
+  })
+})
+
+/**
+ * 值班员在流程页的第一眼：等签队列在右栏第三块、1440×900 首屏之外
+ * （真机量到 queueVisibleWithoutScroll=false）。画布上方摆一条待办条，
+ * 点它打开列表首行那张——打开后 focusInstance 自动选中待签节点，决策面板随之就位。
+ */
+describe('编排页画布上方的待办条', () => {
+  it('只在这一页真有等签工单时摆出，动作接 store.openFirstWaiting', () => {
+    const view = readRepoFile('frontend', 'src', 'views', 'WorkflowView.vue')
+    expect(view, '待办条必须挂在等人签数量上，不能常驻占着画布上方').toMatch(/v-if="waitingTickets\.length > 0"/)
+    expect(view).toMatch(/data-testid="waiting-banner"/)
+    expect(view).toMatch(/@click="store\.openFirstWaiting"\s*>\s*打开第一张/)
+  })
+
+  it('store 真的导出了 openFirstWaiting：模板取用未导出的方法，运行时就是 undefined', () => {
+    const store = readRepoFile('frontend', 'src', 'stores', 'workflow.ts')
+    expect(store).toMatch(/^\s+openFirstWaiting,$/m)
   })
 })

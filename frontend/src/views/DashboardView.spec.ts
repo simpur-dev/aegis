@@ -13,6 +13,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import api from '@/api/client'
+import { workflowApi } from '@/api/workflow'
 import DashboardView from '@/views/DashboardView.vue'
 
 vi.mock('@/api/client', async (importOriginal) => {
@@ -28,6 +29,12 @@ vi.mock('@/api/client', async (importOriginal) => {
     },
   }
 })
+
+vi.mock('@/api/workflow', () => ({
+  workflowApi: { instances: vi.fn() },
+}))
+
+const mockedInstances = vi.mocked(workflowApi.instances)
 
 vi.mock('@/composables/useEventStream', async () => {
   const { ref } = await import('vue')
@@ -90,11 +97,13 @@ const STUBS = {
   'a-alert': { name: 'AAlert', props: ['message', 'type', 'showIcon'], template: '<div class="alert">{{ message }}</div>' },
   'a-timeline': { name: 'ATimeline', template: '<div class="tl"><slot /></div>' },
   'a-timeline-item': { name: 'ATimelineItem', props: ['color'], template: '<div class="tl-item"><slot /></div>' },
+  'router-link': { name: 'RouterLink', props: ['to'], template: '<a class="router-link" :data-to="to"><slot /></a>' },
 }
 
 beforeEach(() => {
   vi.stubGlobal('message', { error: vi.fn(), success: vi.fn() })
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
+  mockedInstances.mockResolvedValue({ count: 0, items: [] } as never)
 })
 
 afterEach(() => {
@@ -405,6 +414,54 @@ describe('风险区域网格不许拼出假的区划代码', () => {
         .find((t) => t.startsWith('风险区域网格')) ?? ''
     expect(title, '链路表已经写"最近 20 条"，紧挨着的网格不能什么都别说').toContain('最近 20 条')
     expect(title).toContain('共 108 条')
+    wrapper.unmount()
+  })
+})
+
+/**
+ * 值班员上班第一眼看的是"有没有单在等我"。
+ *
+ * 真机量过：这台进程 2 张工单等着签，落地页上"待签/等人签/核签/工单"
+ * 字样 0 次——工单在等，页面不吭声；人要自己想到去流程页、再把右栏滚到底。
+ * 这里钉住两件事：有单时报数并给入口；没人等签时不摆"0 张"的假动作。
+ */
+describe('总览把等人签的工单顶到第一屏', () => {
+  function ticket(id: string, status: string) {
+    return { instance_id: id, status }
+  }
+
+  it('有单在等时点名叫人处理，并给出去流程页的入口', async () => {
+    responses()
+    mockedInstances.mockResolvedValue({
+      count: 3,
+      items: [ticket('wfi_a', 'waiting'), ticket('wfi_b', 'waiting'), ticket('wfi_c', 'succeeded')],
+    } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const banner = wrapper.find('[data-testid="dashboard-todos"]')
+    expect(banner.exists(), '"有工单在等人签"必须出现在页面上').toBe(true)
+    expect(banner.text()).toContain('2 张工单在等人签')
+    expect(banner.find('.router-link').attributes('data-to'), '入口要通向流程页').toBe('/workflow')
+    wrapper.unmount()
+  })
+
+  it('没人等签时不摆待办条，也不给"0 张"的假动作', async () => {
+    responses()
+    mockedInstances.mockResolvedValue({ count: 1, items: [ticket('wfi_a', 'succeeded')] } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dashboard-todos"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('工单数取不到时什么都不说，不拿 0 冒充"没有单在等"', async () => {
+    responses()
+    mockedInstances.mockRejectedValue(new Error('503'))
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dashboard-todos"]').exists()).toBe(false)
+    // 取数失败本身有页面级告警兜底，这里只确认没有把"未知"画成"没有"
+    expect(wrapper.find('[data-testid="dashboard-error"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })

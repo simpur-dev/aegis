@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import api from '@/api/client'
 import type { AgentInfo, ChainSummary, LatencyReport, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
+import { workflowApi } from '@/api/workflow'
 import LegStatusPanel from '@/components/system/LegStatusPanel.vue'
 import { useEventStream } from '@/composables/useEventStream'
 import { formatOperatingTime } from '@/utils/clock'
@@ -22,6 +23,11 @@ const loading = ref(false)
 /** 这页的数字是什么时候取的。没有它，"预警 3 条"到底是"只有 3 条"还是"页面 20 分钟没动"就无从判断。 */
 const updatedAt = ref<string | null>(null)
 const refreshError = ref<string | null>(null)
+/**
+ * 等人签的工单数。`null` = 还没取到：这条是值班员上班第一眼要看的东西，
+ * 取不到就什么都不摆，不拿 0 冒充"没有单在等"。
+ */
+const pendingSign = ref<number | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 let eventTimer: ReturnType<typeof setTimeout> | null = null
 /**
@@ -108,16 +114,20 @@ async function refresh(): Promise<void> {
   loading.value = true
   const seq = ++chainsSeq
   try {
-    const [readyInfo, agentInfo, warningList, eventList, latencyReport] = await Promise.all([
+    const [readyInfo, agentInfo, warningList, eventList, latencyReport, instanceList] = await Promise.all([
       api.ready(),
       api.agents(),
       api.warnings({ limit: 50 }),
       api.events(CHAIN_WINDOW),
       api.latency(),
+      // 总览要报"有几张工单在等人签"：真机量过，这台进程 2 张工单等着签，
+      // 而落地页上"待签/等人签/核签/工单"字样 0 次——工单在等，页面不吭声。
+      workflowApi.instances(),
     ])
     ready.value = { agents_online: readyInfo.agents_online, store: readyInfo.store }
     agents.value = agentInfo.items
     warnings.value = warningList.items
+    pendingSign.value = instanceList.items.filter((row) => row.status === 'waiting').length
     // 这趟在路上时补数可能已经把新链路补进来了：更旧的快照迟到就丢掉。
     if (seq === chainsSeq) chains.value = eventList.items
     latency.value = latencyReport
@@ -209,6 +219,11 @@ const agentColumns = [
         {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
       </span>
       <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
+    </div>
+    <!-- 值班员的任务入口：有单在等就顶到第一屏，和流程页的待办条同一句话、同一个数 -->
+    <div v-if="pendingSign !== null && pendingSign > 0" class="dash-todos" data-testid="dashboard-todos">
+      <span>有 {{ pendingSign }} 张工单在等人签。</span>
+      <router-link class="dash-todos__link" to="/workflow">去处理</router-link>
     </div>
     <a-alert
       v-if="refreshError"
@@ -317,6 +332,22 @@ const agentColumns = [
 }
 .dash-error {
   margin-bottom: 12px;
+}
+.dash-todos {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: #f9f0ff;
+  color: #531dab;
+  font-size: 13px;
+}
+.dash-todos__link {
+  font-weight: 600;
+  color: #531dab;
+  text-decoration: underline;
 }
 .grid {
   display: grid;
