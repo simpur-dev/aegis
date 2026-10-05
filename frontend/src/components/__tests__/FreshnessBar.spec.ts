@@ -46,6 +46,13 @@ describe('FreshnessBar', () => {
     expect(wrapper.text()).toContain('8 秒前')
   })
 
+  it('窄栏用 stacked：两端改成竖排，谁都不许被省略号截掉', () => {
+    const wrapper = mount(FreshnessBar, { props: { fetchedAt: iso(4_000), label: '服务端实例（8） ｜ 每 15 秒自己对一遍', stacked: true } })
+    expect(wrapper.classes()).toContain('is-stacked')
+    const flat = mount(FreshnessBar, { props: { fetchedAt: iso(4_000) } })
+    expect(flat.classes()).not.toContain('is-stacked')
+  })
+
   it('后端给了个不像时间的字符串：按"没取到"处理，不显示 NaN', () => {
     const wrapper = mount(FreshnessBar, { props: { fetchedAt: '昨天下午' } })
     expect(wrapper.text()).toContain('尚未取到数据')

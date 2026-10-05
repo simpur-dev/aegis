@@ -17,8 +17,10 @@ const props = withDefaults(
     /** 左端那句口径（"最近 100 条 ｜ 台账 6 条"这类）。 */
     label?: string
     intervalMs?: number
+    /** 窄栏里改竖排：横排时两端都会被省略号截掉（真机在编排页右栏量到"每 1…"）。 */
+    stacked?: boolean
   }>(),
-  { label: '本页数据', intervalMs: 15_000 },
+  { label: '本页数据', intervalMs: 15_000, stacked: false },
 )
 
 const now = ref(Date.now())
@@ -43,7 +45,7 @@ const rightLabel = computed<string>(() => {
 </script>
 
 <template>
-  <p class="fresh" :class="{ 'is-stale': stale }" data-testid="freshness">
+  <p class="fresh" :class="{ 'is-stale': stale, 'is-stacked': stacked }" data-testid="freshness">
     <span class="fresh__side fresh__left">{{ label }}</span>
     <span class="fresh__rule" aria-hidden="true"></span>
     <span class="fresh__side fresh__right">{{ rightLabel }}</span>
@@ -77,6 +79,23 @@ const rightLabel = computed<string>(() => {
 }
 .fresh.is-stale {
   color: #8a4005;
+}
+/* 竖排：窄栏里横排必然截掉一端（编排页右栏 ~316px，两端加起来 330+）。
+   宁可多占一行，也不把"每 15 秒自刷"或"多久之前"省略号吃掉。 */
+.fresh.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.fresh.is-stacked .fresh__side {
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+}
+.fresh.is-stacked .fresh__rule {
+  order: 3;
+  flex: 0 0 auto;
+  width: 100%;
 }
 .fresh.is-stale .fresh__rule {
   background: linear-gradient(90deg, rgba(245, 158, 11, 0.35), rgba(245, 158, 11, 0.1));

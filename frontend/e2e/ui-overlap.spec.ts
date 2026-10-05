@@ -746,23 +746,164 @@ test.describe('新鲜度条 @1440', () => {
         const bar = document.querySelector('[data-testid="freshness"]')
         const left = bar?.querySelector('.fresh__left')?.getBoundingClientRect()
         const right = bar?.querySelector('.fresh__right')?.getBoundingClientRect()
+        /* 两端各自有没有被省略号截掉：编排页右栏 ~316px，横排时"每 15 秒…"会被切成"每 1…" */
+        const cut = ['.fresh__left', '.fresh__right']
+          .map((sel) => {
+            const el = bar?.querySelector(sel) as HTMLElement | null
+            return el && el.scrollWidth > el.clientWidth + 1 ? `${sel} 需要 ${el.scrollWidth}px 只有 ${el.clientWidth}px` : ''
+          })
+          .filter((s) => s !== '')
         return {
           left: (bar?.querySelector('.fresh__left')?.textContent ?? '').trim(),
           right: (bar?.querySelector('.fresh__right')?.textContent ?? '').trim(),
+          cut,
+          stacked: bar ? bar.classList.contains('is-stacked') : false,
           gap: left && right ? Math.round(right.left - left.right) : null,
           ruleH: Math.round(bar?.querySelector('.fresh__rule')?.getBoundingClientRect().height ?? -1),
         }
       })
-      console.log(`FRESH ${name} left="${m.left}" right="${m.right}" gap=${m.gap} ruleH=${m.ruleH}`)
+      console.log(`FRESH ${name} left="${m.left}" right="${m.right}" gap=${m.gap} ruleH=${m.ruleH} stacked=${m.stacked} cut=${JSON.stringify(m.cut)}`)
       await page.screenshot({ path: `test-results/ui-audit/freshness-${name}.png`, clip: { x: 0, y: 190, width: 1440, height: 140 } })
       expect(m.left, `${name}：左端口径是空的`).not.toBe('')
       expect(m.right, `${name}：右端没报新鲜度——判据在空跑`).not.toBe('')
       expect(m.right, `${name}：右端要同时报"取数时刻"和"多久之前"，实测：${m.right}`).toMatch(/取数 .*｜ .*(秒前|分前|比预期周期慢)|尚未取到数据/)
-      expect(m.gap, `${name}：两端间隙没量到`).not.toBeNull()
-      if (m.gap !== null) expect(m.gap, `${name}：两端重叠（间隙=${m.gap}px）`).toBeGreaterThan(0)
+      expect(m.cut, `${name}：有一端被省略号截掉了（这条说的就是"数据多新"，截掉就等于没说）：\n${m.cut.join('\n')}`).toHaveLength(0)
+      if (m.stacked) {
+        expect(m.gap, `${name}：竖排时两端不该并排`).toBeLessThan(0)
+      } else if (m.gap !== null) {
+        expect(m.gap, `${name}：两端重叠（间隙=${m.gap}px）`).toBeGreaterThan(0)
+      }
       expect(m.ruleH, `${name}：中间那道线没画出来`).toBeGreaterThanOrEqual(1)
     })
   }
+})
+
+/**
+ * 竖向运行时间线（RunTimeline）：24px 的轴 + knockout 圆点 + 未开始一档用 dashed。
+ * 这条判据盯的是"轴不能塌、点与线要在同一竖轴上、dashed 档不许被画成实心"——
+ * 三样都是肉眼容易滑过去、截图又只在窄栏里看得出问题的东西。
+ */
+test.describe('运行时间线 @1440', () => {
+  test('选中实例后：轴宽 24、点线同轴、dashed 档保持虚线', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/workflow')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(2_500)
+    const picks = page.locator('.wf-run__pick')
+    expect(await picks.count(), '运行态里没有可选实例——判据在空跑').toBeGreaterThan(0)
+    /* 第一段用真数据：几何（轴宽、点线同轴、最后一行不画线）与"名字回定义里取"。 */
+    await picks.first().click()
+    await page.waitForSelector('[data-testid="run-timeline"] .wf-tl__step', { timeout: 20_000 })
+    await page.waitForTimeout(900)
+    const real = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.wf-tl__step')]
+      return {
+        rows: rows.length,
+        axisW: rows.map((r) => Math.round((r.querySelector('.wf-tl__axis') as HTMLElement).getBoundingClientRect().width)),
+        lines: document.querySelectorAll('.wf-tl__line').length,
+        named: [...document.querySelectorAll('.wf-tl__name')].map((el) => ({
+          name: (el.textContent ?? '').trim(),
+          id: el.getAttribute('title') ?? '',
+        })),
+      }
+    })
+    console.log(`TIMELINE-real rows=${real.rows} axis=${JSON.stringify(real.axisW)} lines=${real.lines} named=${JSON.stringify(real.named.slice(0, 2))}`)
+    expect(real.rows, '时间线一行都没有').toBeGreaterThan(0)
+    expect(new Set(real.axisW).size, `轴宽不统一：${JSON.stringify(real.axisW)}`).toBe(1)
+    expect(real.axisW[0], '轴列宽必须是 24px（连接线要靠它定位）').toBe(24)
+    expect(real.lines, '最后一行不该再画一截悬空的轴').toBe(real.rows - 1)
+    expect(real.named.some((row) => row.name !== '' && row.name !== row.id), '节点名一律退回 ID——没回定义里取名字').toBe(true)
+    /* 第二段灌一份实例详情：本机种子数据里的实例都跑完了（真机试过，前六条一条"未开始"的行都没有），
+       那样 dashed 那一档根本没被验到。五种状态各一行，四档底色与错误行都能确定性地量。
+       走 route 而不是真启动一条实例——启动会往台账里落真数据（探针消耗现场这条坑记在台账里）。 */
+    const node = (id: string, state: string, extra: Record<string, unknown> = {}) => ({
+      node_id: id,
+      type: 'api_call',
+      state,
+      attempts: 1,
+      schedule_latency_ms: null,
+      duration_ms: null,
+      output: {},
+      error: null,
+      notes: [],
+      ...extra,
+    })
+    await page.route(/\/api\/v1\/workflow\/instances\/[^/]+$/, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          instance_id: 'wfi_probe_timeline',
+          workflow_id: 'wf_probe',
+          workflow_version: 1,
+          trace_id: 'trc_probe',
+          status: 'running',
+          error: null,
+          nodes: [
+            node('gate', 'succeeded', { duration_ms: 1_250 }),
+            node('notify_ok', 'failed', { error: '上游 502：网关无响应', attempts: 3 }),
+            node('review', 'awaiting_human'),
+            node('archive', 'pending'),
+            node('report', 'ready'),
+          ],
+        }),
+      }),
+    )
+    await picks.first().click()
+    await page.waitForSelector('[data-testid="run-timeline"] .wf-tl__step', { timeout: 20_000 })
+    const sawTodo = await page.locator('.wf-tl__step.is-todo').count()
+    await page.waitForTimeout(900)
+    const m = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.wf-tl__step')]
+      const axisW = rows.map((r) => Math.round((r.querySelector('.wf-tl__axis') as HTMLElement).getBoundingClientRect().width))
+      const offAxis: string[] = []
+      for (const r of rows) {
+        const dot = r.querySelector('.wf-tl__dot')?.getBoundingClientRect()
+        const line = r.querySelector('.wf-tl__line')?.getBoundingClientRect()
+        if (!dot || !line) continue
+        const dotCx = dot.left + dot.width / 2
+        const lineCx = line.left + line.width / 2
+        if (Math.abs(dotCx - lineCx) > 1) offAxis.push(`第 ${rows.indexOf(r) + 1} 行点与线偏心 ${Math.round(dotCx - lineCx)}px`)
+        if (dot.width < 8) offAxis.push(`第 ${rows.indexOf(r) + 1} 行圆点只有 ${Math.round(dot.width)}px`)
+      }
+      const dashed: string[] = []
+      for (const r of rows) {
+        const cs = getComputedStyle(r)
+        const todo = r.classList.contains('is-todo')
+        if (todo && cs.borderTopStyle !== 'dashed') dashed.push(`第 ${rows.indexOf(r) + 1} 行是待办档却画成 ${cs.borderTopStyle}`)
+        if (!todo && cs.borderTopStyle === 'dashed') dashed.push(`第 ${rows.indexOf(r) + 1} 行不是待办档却用了虚线`)
+      }
+      return {
+        rows: rows.length,
+        axisW,
+        offAxis,
+        dashed,
+        tones: rows.map((r) => [...r.classList].find((c) => c.startsWith('is-')) ?? 'none'),
+        errLines: document.querySelectorAll('.wf-tl__err').length,
+        metaLines: document.querySelectorAll('.wf-tl__meta').length,
+        lines: document.querySelectorAll('.wf-tl__line').length,
+        named: [...document.querySelectorAll('.wf-tl__step')].map((r) => {
+          const el = r.querySelector('.wf-tl__name') as HTMLElement | null
+          return { name: (el?.textContent ?? '').trim(), id: el?.getAttribute('title') ?? '' }
+        }),
+      }
+    })
+    console.log(`TIMELINE rows=${m.rows} axis=${JSON.stringify(m.axisW)} lines=${m.lines} named=${JSON.stringify(m.named.slice(0, 2))} offAxis=${m.offAxis.length} dashed=${m.dashed.length} todoRows=${sawTodo}`)
+    await page.screenshot({ path: 'test-results/ui-audit/run-timeline.png', clip: { x: 1040, y: 190, width: 400, height: 700 } })
+    expect(m.rows, '时间线一行都没有').toBeGreaterThan(0)
+    expect(new Set(m.axisW).size, `轴宽不统一：${JSON.stringify(m.axisW)}`).toBe(1)
+    expect(m.axisW[0], '轴列宽必须是 24px（连接线要靠它定位）').toBe(24)
+    expect(m.offAxis, m.offAxis.join('\n')).toHaveLength(0)
+    expect(m.dashed, m.dashed.join('\n')).toHaveLength(0)
+    expect(m.lines, '最后一行不该再画一截悬空的轴').toBe(m.rows - 1)
+    /* 空判防护：这一段灌的是"还有一步没走"的详情，dashed 那一档必须真被验到 */
+    expect(sawTodo, '前六条实例都没有"未开始"的一行——dashed 那档没被验到').toBeGreaterThan(0)
+    /* 灌进去的五种状态要各归各的档：succeeded→done、failed→bad、awaiting_human→active、pending/ready→todo */
+    expect(m.tones, `五行的底色档不对：${JSON.stringify(m.tones)}`).toEqual(['is-done', 'is-bad', 'is-active', 'is-todo', 'is-todo'])
+    expect(m.errLines, '失败那一行的原因没渲染出来').toBe(1)
+    expect(m.metaLines, '耗时/重试那行小字没渲染出来').toBe(2)
+  })
 })
 
 /**

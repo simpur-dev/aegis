@@ -9,10 +9,18 @@ import { useWorkflowStore } from '@/stores/workflow'
 import FreshnessBar from '@/components/FreshnessBar.vue'
 import { INSTANCE_STATUS_LABELS, isInstanceStatus, type InstanceStatus } from '@/utils/graph'
 
+import RunTimeline from './RunTimeline.vue'
+
 const store = useWorkflowStore()
 
 const abortReason = ref('')
 const onlyWaiting = ref(false)
+
+/** 实例载荷里只有 node_id，名字得回自己手上这份定义取；取不到就退回 ID（不猜名字）。 */
+const nodeNames = computed<Record<string, string>>(() =>
+  Object.fromEntries((store.current?.nodes ?? []).map((node) => [node.node_id, node.name])),
+)
+const timelineRuns = computed(() => store.instance?.nodes ?? [])
 
 const statusLabel = computed<string>(() => {
   const status = store.instanceStatus
@@ -95,6 +103,7 @@ const listedInstances = computed(() => {
       :fetched-at="store.instancesUpdatedAt"
       :label="`服务端实例（${store.instances.length}） ｜ 每 15 秒自己对一遍`"
       :interval-ms="15_000"
+      stacked
     />
     <!-- 勾了"只看这些"之后一张都没剩下时，必须说一句"签完了"：
          留一个空列表不解释，读的人会得出"没有工单功能"的结论（监测页同款坑） -->
@@ -114,6 +123,8 @@ const listedInstances = computed(() => {
       </li>
     </ul>
     <p v-if="store.instances.length === 0" class="wf-run__hint">尚无实例。</p>
+    <h4 class="wf-run__subtitle">执行步骤</h4>
+    <RunTimeline :runs="timelineRuns" :names="nodeNames" />
   </section>
 </template>
 
