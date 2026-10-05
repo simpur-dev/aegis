@@ -31,7 +31,7 @@ const badge = computed(() => (props.state === null ? '未运行' : style.value.l
   >
     <Handle type="target" :position="Position.Left" />
     <div class="wf-node__head">
-      <span class="wf-node__title">{{ label }}</span>
+      <span class="wf-node__title" :title="label">{{ label }}</span>
       <span class="wf-node__badge">{{ badge }}</span>
     </div>
     <div class="wf-node__type">{{ nodeType }}</div>
@@ -47,7 +47,10 @@ const badge = computed(() => (props.state === null ? '未运行' : style.value.l
 
 <style scoped>
 .wf-node {
-  min-width: 188px;
+  /* 宽度钉死：卡片原先只有 min-width，标题一长就把盒子往右撑，
+     真机在一份 11 节点的定义上量到相邻两颗压叠 20×37px。长标题改省略号，
+     全文看 title 提示与右侧检查器。 */
+  width: 208px;
   padding: 8px 10px;
   border: 1px solid #d9d9d9;
   border-left: 3px solid var(--wf-accent, #8c8c8c);
@@ -82,6 +85,10 @@ const badge = computed(() => (props.state === null ? '未运行' : style.value.l
   gap: 8px;
 }
 .wf-node__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
   font-size: 13px;
 }

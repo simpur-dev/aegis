@@ -384,6 +384,87 @@ test.describe('空数据态不变量 @1440', () => {
 })
 
 /**
+ * 画布是体检的死角：`skip()` 整块跳过了 `.vue-flow`（里面有 canvas 与大量绝对定位），
+ * 于是节点卡互相压叠、节点标题出框这些"真机上最扎眼"的问题没有任何判据。
+ * 这里单独量两件事：①节点卡之间不重叠；②节点标题不被挤出自己的卡。
+ * 打开的是一份有 7 个节点的已存定义（不是空画布），并处理"未保存改动"的确认弹窗。
+ */
+test.describe('画布节点不变量 @1440', () => {
+  test('打开有节点的定义：节点卡不互相压叠、标题不出框', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/workflow')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(2_000)
+    /* 挑"节点最多的那份定义"来量：第一行那份只有 2 个节点，压不出布局问题 */
+    const idx = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.wf-def__list-item')]
+      let best = 0
+      let bestCount = -1
+      rows.forEach((row, i) => {
+        const m = /(\d+)\s*节点/.exec(row.textContent ?? '')
+        const n = m ? Number(m[1]) : 0
+        if (n > bestCount) {
+          bestCount = n
+          best = i
+        }
+      })
+      return { best, bestCount }
+    })
+    expect(idx.bestCount, '服务端定义列表里没有带节点的定义——判据在空跑').toBeGreaterThan(1)
+    await page.locator('[data-testid^="open-"]').nth(idx.best).click()
+    const confirm = page.locator('.ant-modal-confirm .ant-btn-primary')
+    if (await confirm.isVisible().catch(() => false)) await confirm.click()
+    await page.waitForSelector('.wf-node', { timeout: 20_000 })
+    await page.waitForTimeout(2_500)
+    const measure = () => page.evaluate(() => {
+      const nodes = [...document.querySelectorAll('.wf-node')]
+      const rect = (el: Element) => el.getBoundingClientRect()
+      const overlap: string[] = []
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = rect(nodes[i])
+          const b = rect(nodes[j])
+          const ox = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+          const oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+          if (ox > 4 && oy > 4) {
+            overlap.push(`${(nodes[i].querySelector('.wf-node__title')?.textContent ?? '').trim()} × ${(nodes[j].querySelector('.wf-node__title')?.textContent ?? '').trim()} 压叠 ${Math.round(ox)}×${Math.round(oy)}`)
+          }
+        }
+      }
+      const spill: string[] = []
+      for (const n of nodes) {
+        const title = n.querySelector('.wf-node__title')
+        if (!title) continue
+        const tr = rect(title)
+        const nr = rect(n)
+        /* 只判"画到框外"。scrollWidth > clientWidth 不算缺陷——那是省略号在起作用，
+           第一版把这条也判成出框，等于把修好的东西报成 bug */
+        if (tr.right > nr.right + 1 || tr.left < nr.left - 1 || tr.bottom > nr.bottom + 1) {
+          spill.push(`"${(title.textContent ?? '').trim().slice(0, 18)}" 画到框外（右缘差=${Math.round(tr.right - nr.right)} 左缘差=${Math.round(tr.left - nr.left)}）`)
+        }
+      }
+      const zoom = Number(document.querySelector('.vue-flow__viewport')?.getAttribute('style')?.match(/zoom\(([\d.]+)\)/)?.[1] ?? 1)
+      return { count: nodes.length, zoom, overlap, spill }
+    })
+
+    const check = async (phase: string) => {
+      const r = await measure()
+      console.log(`CANVAS[${phase}] nodes=${r.count} overlap=${r.overlap.length} spill=${r.spill.length}`)
+      await page.screenshot({ path: `test-results/ui-audit/canvas-${phase}.png` })
+      expect(r.count, `${phase}：画布上没有节点——判据在空跑`).toBeGreaterThan(1)
+      expect(r.overlap, `${phase} 节点卡互相压叠：\n${r.overlap.join('\n')}`).toHaveLength(0)
+      expect(r.spill, `${phase} 节点标题出框：\n${r.spill.join('\n')}`).toHaveLength(0)
+    }
+
+    await check('opened')
+    await page.getByRole('button', { name: '自动布局' }).click()
+    await page.waitForTimeout(1_800)
+    await check('auto-layout')
+  })
+})
+
+/**
  * 键盘焦点态：第四批补的 `:focus-visible` 焦点环只有样式、没有证据。
  * 这里按 Tab 走一遍，要求每落一次焦点：①焦点元素确实有可见指示
  * （box-shadow 或 outline，不是靠颜色）；②它没被滚动容器裁到看不见。
