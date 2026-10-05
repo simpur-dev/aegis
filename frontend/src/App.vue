@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
+import zhCN from 'ant-design-vue/es/locale/zh_CN'
 
 import api from '@/api/client'
 import { useEventStream } from '@/composables/useEventStream'
@@ -87,7 +88,10 @@ const streamLabel = computed<string>(() => {
 </script>
 
 <template>
-  <a-config-provider :theme="theme">
+  <!-- locale 走中文：体检判据在故障态量出监测台账、地图清单、指标表三处
+       antd 默认英文空态 "No data"（此前是一张张截图发现再逐页补 emptyText）。
+       逐页补只能盖住写过的表，语言包一次盖住整类。 -->
+  <a-config-provider :theme="theme" :locale="zhCN">
     <div class="app-shell">
       <nav class="navbar">
         <div class="nav-brand">

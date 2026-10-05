@@ -222,6 +222,13 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     if (got < need) lowContrast.push(`ratio=${got}<${need} "${(el.textContent ?? '').trim().slice(0, 16)}" ${cs.color} on rgb(${Math.round(bg.r)},${Math.round(bg.g)},${Math.round(bg.b)}) ${size}px/${cs.fontWeight} | ${pathOf(el)}`)
   }
 
+  /* 中文值班台上不该出现 antd 默认的英文空态（"No data" 这类）。
+     这一整类缺陷此前是靠人一张张截图发现的（链路表、预警表、智能体表各修过一次），
+     现在钉成判据：任何一档状态下，空态文案里没有纯英文句子就算中。 */
+  const englishEmpty = [...document.querySelectorAll('.ant-empty-description, .ant-table-placeholder, .ant-empty-normal')]
+    .map((el) => (el.textContent ?? '').trim())
+    .filter((t) => t.length > 0 && !/[\u4e00-\u9fa5]/.test(t))
+
   const center = document.querySelector('.nav-center')?.getBoundingClientRect()
   return {
     url: location.pathname,
@@ -240,6 +247,8 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     navClip,
     lowContrast: lowContrast.slice(0, 10),
     lowContrastCount: lowContrast.length,
+    englishEmpty: englishEmpty.slice(0, 6),
+    englishEmptyCount: englishEmpty.length,
     centerOffset: center ? Number(Math.abs(center.left + center.width / 2 - innerWidth / 2).toFixed(2)) : null,
   }
 }
@@ -273,6 +282,7 @@ for (const width of WIDTHS) {
         expect(r.foldedCount, `${name}@${width} 有按钮文字折行（"打/开"竖排）：\n${r.folded.join('\n')}`).toBe(0)
         expect(r.navClip, `${name}@${width} 顶栏把内容裁掉了（列宽不够）：\n${r.navClip.join('\n')}`).toHaveLength(0)
         expect(r.lowContrastCount, `${name}@${width} 有字对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
+        expect(r.englishEmptyCount, `${name}@${width} 出现纯英文空态文案：\n${r.englishEmpty.join('\n')}`).toBe(0)
         if (r.centerOffset !== null) expect(r.centerOffset, `${name}@${width} 步进器偏离中线`).toBeLessThanOrEqual(1)
       })
     }
@@ -349,6 +359,7 @@ for (const width of [1440, 1100]) {
         expect(r.clippedCount, `${name}@${width} 故障态文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
         expect(r.foldedCount, `${name}@${width} 故障态按钮折行：\n${r.folded.join('\n')}`).toBe(0)
         expect(r.lowContrastCount, `${name}@${width} 故障态对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
+        expect(r.englishEmptyCount, `${name}@${width} 故障态出现纯英文空态：\n${r.englishEmpty.join('\n')}`).toBe(0)
       })
     }
   })
@@ -379,6 +390,7 @@ test.describe('空数据态不变量 @1440', () => {
       expect(r.clippedCount, `${name} 空态文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
       expect(r.foldedCount, `${name} 空态按钮折行：\n${r.folded.join('\n')}`).toBe(0)
       expect(r.lowContrastCount, `${name} 空态对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
+      expect(r.englishEmptyCount, `${name} 空态出现纯英文文案：\n${r.englishEmpty.join('\n')}`).toBe(0)
     })
   }
 })
