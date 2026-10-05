@@ -35,7 +35,8 @@ const CONTRAST_ALLOW = [
   '.cesium-widget-credits',
 ].join(',')
 
-const inspect = (contrastAllow: string) => {
+const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: boolean }) => {
+  const { contrastAllow, scope, inOverlay } = opts
   const pathOf = (el: Element) => {
     const parts: string[] = []
     let cur: Element | null = el
@@ -48,7 +49,11 @@ const inspect = (contrastAllow: string) => {
     }
     return parts.join('>')
   }
-  const skip = (el: Element) => !!(el as HTMLElement).closest('.map-frame,.vue-flow,.cesium-viewer,.ant-modal,.ant-drawer,.ant-message,.ant-notification,canvas')
+  /* 弹层本身也要被体检：跑在抽屉/弹窗内部时不能把 .ant-modal/.ant-drawer 一起跳过 */
+  const skipSel = inOverlay
+    ? '.map-frame,.vue-flow,.cesium-viewer,.ant-message,.ant-notification,canvas'
+    : '.map-frame,.vue-flow,.cesium-viewer,.ant-modal,.ant-drawer,.ant-message,.ant-notification,canvas'
+  const skip = (el: Element) => !!(el as HTMLElement).closest(skipSel)
   /* 真正"被画到屏幕上"的那块矩形：外壳改成"正文自己滚"之后，滚出滚动视口的节点
      包围盒仍在文档坐标里躺着，会和页脚之类的东西几何相交却没真的叠上去。
      逐层裁到最近的可滚动祖先的可视区，完全在外面就判 null（不参与重叠/出屏判定）。 */
@@ -79,7 +84,7 @@ const inspect = (contrastAllow: string) => {
     const r = el.getBoundingClientRect()
     return r.width > 1 && r.height > 1
   }
-  const leaves = [...document.querySelectorAll('body *')].filter(
+  const leaves = [...document.querySelectorAll(scope ? `${scope} *` : 'body *')].filter(
     (el) => el.children.length === 0 && !skip(el) && visible(el) && (el.textContent ?? '').trim().length > 0,
   )
 
@@ -212,6 +217,9 @@ const inspect = (contrastAllow: string) => {
   return {
     url: location.pathname,
     vw: innerWidth,
+    /* 体检自身也得可证伪：判据跑在几个节点上要说得出数，
+       否则"选择器写错了 → 一个都没看 → 全绿"这种空跑没人发现。 */
+    leafCount: leaves.length,
     overlap: overlap.slice(0, 8),
     overlapCount: overlap.length,
     beyond: beyond.slice(0, 8),
@@ -237,8 +245,9 @@ for (const width of WIDTHS) {
         await page.goto(path)
         await page.waitForSelector('.page-hero', { timeout: 45_000 })
         await page.waitForTimeout(name === 'map' ? 12_000 : 2_500)
-        const r = await page.evaluate(inspect, CONTRAST_ALLOW)
-        console.log(`UI ${name}@${width} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} centerOffset=${r.centerOffset}`)
+        const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
+        console.log(`UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} centerOffset=${r.centerOffset}`)
+        expect(r.leafCount, `${name}@${width} 页面一个文本节点都没看到——判据在空跑`).toBeGreaterThan(30)
         expect(r.overlapCount, `${name}@${width} 重叠明细：\n${r.overlap.join('\n')}`).toBe(0)
         expect(r.beyondCount, `${name}@${width} 有内容出屏：\n${r.beyond.join('\n')}`).toBe(0)
         expect(r.clippedCount, `${name}@${width} 有文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
@@ -246,6 +255,45 @@ for (const width of WIDTHS) {
         expect(r.navClip, `${name}@${width} 顶栏把内容裁掉了（列宽不够）：\n${r.navClip.join('\n')}`).toHaveLength(0)
         expect(r.lowContrastCount, `${name}@${width} 有字对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
         if (r.centerOffset !== null) expect(r.centerOffset, `${name}@${width} 步进器偏离中线`).toBeLessThanOrEqual(1)
+      })
+    }
+  })
+}
+
+/**
+ * 弹层内的同一套判据。此前 `skip()` 把 .ant-modal/.ant-drawer 整块跳过——
+ * 也就是说抽屉/弹窗里的排版从来没有机器证据，而值班员恰恰是在这些地方做决定的。
+ * `minLeaves` 按各弹层实际有的文本节点定（placeholder 是伪元素、不算节点），
+ * 作用只有一个：选择器写错导致一个都没看时，不许悄悄全绿。
+ */
+const OVERLAYS: Array<{ name: string; path: string; trigger: string; scope: string; minLeaves: number }> = [
+  { name: 'monitor-report', path: '/monitor', trigger: '[data-testid="open-report"]', scope: '.ant-modal-content', minLeaves: 8 },
+  { name: 'assistant-report', path: '/assistant', trigger: '[data-testid="open-report"]', scope: '.ant-modal-content', minLeaves: 8 },
+  { name: 'warnings-detail', path: '/warnings', trigger: 'role=button[name="详情"]', scope: '.ant-drawer-content', minLeaves: 40 },
+]
+
+for (const width of [1440, 1280]) {
+  test.describe(`弹层内不变量 @${width}`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 })
+    })
+    for (const c of OVERLAYS) {
+      test(`${c.name}：弹层内无重叠、不出屏、无裁字、按钮不折行、对比度达标`, async ({ page }) => {
+        await page.goto(c.path)
+        await page.waitForSelector('.page-hero', { timeout: 45_000 })
+        await page.waitForTimeout(2_500)
+        await page.locator(c.trigger).first().click()
+        await page.waitForSelector(c.scope, { timeout: 15_000 })
+        await page.waitForTimeout(1_200)
+        const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW, scope: c.scope, inOverlay: true })
+        console.log(`OVERLAY ${c.name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} lowContrast=${r.lowContrastCount}`)
+        await page.screenshot({ path: `test-results/ui-audit/overlay-${c.name}-${width}.png` })
+        expect(r.leafCount, `${c.name}@${width} 弹层里只看到 ${r.leafCount} 个文本节点（应 ≥${c.minLeaves}）——判据在空跑`).toBeGreaterThanOrEqual(c.minLeaves)
+        expect(r.overlapCount, `${c.name}@${width} 弹层内重叠：\n${r.overlap.join('\n')}`).toBe(0)
+        expect(r.beyondCount, `${c.name}@${width} 弹层内出屏：\n${r.beyond.join('\n')}`).toBe(0)
+        expect(r.clippedCount, `${c.name}@${width} 弹层内文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
+        expect(r.foldedCount, `${c.name}@${width} 弹层内按钮折行：\n${r.folded.join('\n')}`).toBe(0)
+        expect(r.lowContrastCount, `${c.name}@${width} 弹层内对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
       })
     }
   })

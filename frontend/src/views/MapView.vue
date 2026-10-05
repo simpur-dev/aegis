@@ -266,7 +266,7 @@ watch(visibility, (value) => {
 
 <template>
   <div>
-    <PageHero title="应急一张图" badge="离线三维" caption="底图、地形与矢量瓦片由本进程自托管，弱网与断网下仍可用。" />
+    <PageHero icon="图" title="应急一张图" badge="离线三维" caption="底图、地形与矢量瓦片由本进程自托管，弱网与断网下仍可用。" />
     <a-card size="small" title="一张图 · 自托管离线三维（Cesium + quantized-mesh + PMTiles）">
       <template #extra>
         <a-space wrap>

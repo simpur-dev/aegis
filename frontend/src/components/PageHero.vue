@@ -3,13 +3,16 @@ defineProps<{
   title: string
   badge?: string
   caption?: string
+  /** 单字形图标（NexusMind 用 emoji 占这个位置，这里用汉字：离线、无版权、且中文台不违和） */
+  icon?: string
 }>()
 </script>
 
 <template>
-  <section class="page-hero">
+  <section class="page-hero" :class="{ 'page-hero--icon': !!icon }">
     <div class="page-hero__header">
-      <span class="page-hero__deco" aria-hidden="true">◆</span>
+      <span v-if="icon" class="page-hero__icon" aria-hidden="true">{{ icon }}</span>
+      <span v-else class="page-hero__deco" aria-hidden="true">◆</span>
       <h2 class="page-hero__title">{{ title }}</h2>
       <span v-if="badge" class="page-hero__badge">{{ badge }}</span>
       <div class="page-hero__actions">
@@ -65,6 +68,24 @@ defineProps<{
 .page-hero__deco {
   font-size: 12px;
   color: #5aa2ff;
+}
+/* 图标芯片（对标 .tool-icon-wrapper：34px / 圆角 12 / 渐变底 + 同色雾投影） */
+.page-hero__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.32), inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+}
+.page-hero--icon .page-hero__caption {
+  /* 有芯片时标题从 44px 起，说明文字跟着对齐，不然左边缘两条线不齐 */
+  margin-left: 44px;
 }
 .page-hero__title {
   margin: 0;

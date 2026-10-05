@@ -98,7 +98,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
-    <PageHero title="考核指标" badge="实测" caption="数据来自运行时埋点，非人工填写。">
+    <PageHero icon="标" title="考核指标" badge="实测" caption="数据来自运行时埋点，非人工填写。">
       <template #actions>
         <a-button @click="load">重新读取</a-button>
       </template>
@@ -147,7 +147,11 @@ onBeforeUnmount(() => {
           <ul class="tip-list">
             <li>时延类指标以 P95 判定</li>
             <li>协同成功率取事务台账（request→response）</li>
-            <li>预警准确率需 5 灾种历史案例回放数据集方可测得，当前显式标注为未测，不以估算充数</li>
+            <li>
+              预警准确率需 5 灾种历史案例回放数据集方可测得
+              <span class="pill-dashed">未测得</span>
+              · 不以估算充数
+            </li>
           </ul>
         </template>
       </a-alert>
@@ -230,6 +234,20 @@ onBeforeUnmount(() => {
   left: 0;
   color: #2563eb;
   font-weight: 700;
+}
+/* "没量过"要一眼看出来（对标 NexusMind 的 dashed pending 胶囊）：
+   透明底 + 虚线边，和实心色标签区分开——实心在界面上意味着"这是个测出来的状态" */
+.pill-dashed {
+  display: inline-block;
+  margin: 0 2px;
+  padding: 1px 8px;
+  border: 1px dashed #b8bec9;
+  border-radius: 999px;
+  background: transparent;
+  color: #5a6072;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 /* 指标大数字的等宽托盘样式（.hero-stat）在 styles/theme.css，与态势页共用一份。 */
 /* 取数失败的原因要看得见：只有 toast 的话，三秒后页面就只剩一排看着正常的数字 */

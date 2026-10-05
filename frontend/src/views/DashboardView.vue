@@ -215,7 +215,7 @@ const agentColumns = [
 
 <template>
   <div>
-    <PageHero title="态势总览" badge="实时" caption="值班员的第一屏：KPI、风险网格、链路执行记录与实时事件流。">
+    <PageHero icon="势" title="态势总览" badge="实时" caption="值班员的第一屏：KPI、风险网格、链路执行记录与实时事件流。">
       <template #actions>
         <span data-testid="dashboard-updated">
           {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}

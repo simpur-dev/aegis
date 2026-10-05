@@ -221,7 +221,7 @@ onMounted(() => void loadCapabilities())
 
 <template>
   <div class="assistant">
-    <PageHero title="语义交互" badge="对话" caption="对话 → 白名单动作 → 人工确认。">
+    <PageHero icon="语" title="语义交互" badge="对话" caption="对话 → 白名单动作 → 人工确认。">
       <template #actions>
         <a-tag v-if="capabilitiesError" color="red" data-testid="caps-state">读不到能力面</a-tag>
         <a-tag v-else-if="capabilities && !llmConfigured" color="orange" data-testid="caps-state">语义服务未配置</a-tag>

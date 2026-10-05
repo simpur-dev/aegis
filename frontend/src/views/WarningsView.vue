@@ -153,7 +153,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
-    <PageHero title="预警发布" badge="靶向触达" caption="红色预警含北斗短报文兜底通道。">
+    <PageHero icon="警" title="预警发布" badge="靶向触达" caption="红色预警含北斗短报文兜底通道。">
       <template #actions>
         <a-button @click="load">刷新</a-button>
       </template>

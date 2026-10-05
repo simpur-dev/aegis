@@ -83,6 +83,7 @@ describe('UI 基座', () => {
       const text = readRepoFile('frontend', 'src', 'views', name)
       expect(text, `${name} 没接 PageHero`).toContain("import PageHero from '@/components/PageHero.vue'")
       expect(text, `${name} 模板里没用 PageHero`).toMatch(/<PageHero[\s>]/)
+      expect(text, `${name} 的横幅没给单字形图标`).toMatch(/<PageHero[^>]*icon="[^"]+"/s)
     }
   })
 })
