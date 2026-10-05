@@ -835,6 +835,35 @@ export function filterLayersByViewport(input: ViewportFilterInput): MapLayers {
   }
 }
 
+/**
+ * 风险等级筛选（面板上那排芯片的唯一判据）。
+ *
+ * `levels` 为空表示不过滤。**没有风险评级的要素在任何筛选下都保留**：
+ * 它们不是"低风险"，而是"这个维度不适用"（多数站点就没有评级），
+ * 一筛就把站点整层藏掉，值班员会以为现场没人上报。
+ */
+export function filterLayersByRisk(layers: MapLayers, levels: RiskLevel[]): MapLayers {
+  if (levels.length === 0) return layers
+  const kept = (risk: RiskLevel | null): boolean => risk === null || levels.includes(risk)
+  return {
+    stations: layers.stations.filter((feature) => kept(feature.riskLevel)),
+    warnings: layers.warnings.filter((feature) => kept(feature.riskLevel)),
+    reach: layers.reach.filter((feature) => kept(feature.riskLevel)),
+    hazards: layers.hazards.filter((feature) => kept(feature.riskLevel)),
+    unplaced: layers.unplaced,
+    rejected: layers.rejected,
+  }
+}
+
+/** 各风险等级下"图上真画得出来的"要素数（芯片上的计数，也是图例的量化部分）。 */
+export function riskLevelCounts(layers: MapLayers): Record<RiskLevel, number> {
+  const counts: Record<RiskLevel, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  for (const feature of [...layers.stations, ...layers.warnings, ...layers.reach, ...layers.hazards]) {
+    if (feature.riskLevel !== null) counts[feature.riskLevel] += 1
+  }
+  return counts
+}
+
 // ---------- 聚合 ----------
 
 export interface PointCluster {

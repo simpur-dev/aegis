@@ -1180,3 +1180,55 @@ test.describe('键盘焦点态 @1440', () => {
     expect(brandRings, '70 次 Tab 里一处主色焦点环都没有——`:focus-visible` 那条规则可能整块失效了').toBeGreaterThan(0)
   })
 })
+
+/**
+ * 风险等级芯片（兼图例）@1440。
+ * 一排按钮同时干两件事：不点也是"每级什么色"的图例，点下去是"只看这一级"的筛选。
+ * 最贵的两种退化是**图例说谎**（芯片色与图上色不是同一份）与**点了没反应**，两样都在这条里量。
+ */
+test.describe('风险芯片兼图例 @1440', () => {
+  test('五枚芯片取自 RISK_COLORS，点下去按下态与"筛后 / 全量"都跟着变', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/map')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(12_000)
+    const chips = page.locator('.risk-chip')
+    expect(await chips.count(), '一张图上一个风险芯片都没有——判据在空跑').toBe(5)
+    const seen = await page.evaluate(() =>
+      [...document.querySelectorAll('.risk-chip')].map((el) => ({
+        chip: (el.getAttribute('style') ?? '').match(/--chip:\s*([^;]+)/)?.[1]?.trim() ?? '',
+        line: (el.getAttribute('style') ?? '').match(/--chip-line:\s*([^;]+)/)?.[1]?.trim() ?? '',
+        label: el.querySelector('.risk-chip__label')?.textContent?.trim() ?? '',
+        pressed: el.getAttribute('aria-pressed'),
+      })),
+    )
+    /** 与 `src/api/types.ts:33-39` 的 `RISK_COLORS` 对齐——图上画的就是这一份。 */
+    const LEGEND = ['#cf1322', '#fa8c16', '#fadb14', '#1677ff', '#8c8c8c']
+    expect(seen.map((entry) => entry.chip), '芯片颜色与 RISK_COLORS 不一致（图例说谎）').toEqual(LEGEND)
+    for (const entry of seen) {
+      expect(entry.line, `芯片"${entry.label}"未选中时没有该级描边——不点就当不了图例`).toMatch(/^rgba\(/)
+      expect(entry.pressed, '未筛选时不该有芯片是按下态').toBe('false')
+    }
+    await chips.first().click()
+    await page.waitForTimeout(700)
+    const after = await page.evaluate(() => ({
+      pressed: [...document.querySelectorAll('.risk-chip')].map((el) => el.getAttribute('aria-pressed')),
+      counts: [...document.querySelectorAll('.row .count')].map((el) => (el.textContent ?? '').trim()),
+      note: document.body.innerText.includes('已按风险等级筛选'),
+    }))
+    console.log(`RISKCHIP after-click pressed=${JSON.stringify(after.pressed)} counts=${JSON.stringify(after.counts)} note=${after.note}`)
+    expect(after.pressed[0], '点第一枚没变成按下态——筛选没接上').toBe('true')
+    expect(after.note, '筛选生效却没有"数字为什么变小"的说明').toBe(true)
+    expect(after.counts.filter((text) => text.includes('/')).length, '图层计数没写成"筛后 / 全量"').toBeGreaterThan(0)
+    await page.screenshot({ path: 'test-results/ui-audit/map-risk-chips.png' })
+    await chips.first().click()
+    await page.waitForTimeout(700)
+    const back = await page.evaluate(() => ({
+      pressed: [...document.querySelectorAll('.risk-chip')].map((el) => el.getAttribute('aria-pressed')),
+      slash: [...document.querySelectorAll('.row .count')].some((el) => (el.textContent ?? '').includes('/')),
+    }))
+    expect(back.pressed.every((value) => value === 'false'), '再点一次没退回未筛选').toBe(true)
+    expect(back.slash, '退回未筛选之后计数还带着斜杠').toBe(false)
+  })
+})

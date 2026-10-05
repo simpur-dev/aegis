@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { RegionAnchorDto, StationDto } from '@/api/map'
-import type { ChainSummary, DeliveryAttempt, TelemetryReading, WarningRecord } from '@/api/types'
+import type { ChainSummary, DeliveryAttempt, RiskLevel, TelemetryReading, WarningRecord } from '@/api/types'
 import {
   buildHazardZoneLayer,
   buildLayers,
@@ -35,6 +35,7 @@ import {
   riskColorCss,
   riskLabel,
   riskLegend,
+  riskLevelCounts,
   shouldCluster,
   stationLngLat,
   summarizeReach,
@@ -46,6 +47,7 @@ import {
   worstRisk,
   zoomForCameraHeight,
   DEFAULT_LAYER_VISIBILITY,
+  filterLayersByRisk,
   filterLayersByViewport,
   EMPTY_LAYERS,
 } from './entities'
@@ -529,6 +531,75 @@ describe('视野过滤', () => {
     expect(expanded.south).toBe(-90)
     expect(expanded.north).toBe(90)
     expect(expanded.west).toBeLessThan(0)
+  })
+})
+
+// ---------- 风险等级筛选（面板那排芯片的唯一判据）----------
+
+describe('风险等级筛选', () => {
+  const LEVELS: RiskLevel[] = [1, 2, 3, 4, 5]
+  /**
+   * 夹具构成（数字都据此钉死）：
+   * - 一条 540121 的链路风险=1 ⇒ 该区域的**站点也继承**这个等级（`entities.ts:545` 走的是同一份 risk）；
+   * - 三条预警：1 条等级 1、2 条等级 3；
+   * - 触达层要有 `deliveries` 才生成（`buildReachLayer` 里 `attempts===0` 直接 continue），它的 `riskLevel` 恒为 null。
+   */
+  const mixed = buildLayers({
+    readings: [reading('S1', '540121')],
+    stations: [],
+    warnings: [
+      warning({ warning_id: 'w1', risk_level: 1, region_codes: ['540121'], deliveries: [delivery('app', 'delivered', 20)] }),
+      warning({ warning_id: 'w2', risk_level: 3, region_codes: ['540221'] }),
+      warning({ warning_id: 'w3', risk_level: 3, region_codes: ['540121'] }),
+    ],
+    chains: [chain('540121', 1, 'evt_000000000001')],
+    anchors: ANCHORS,
+    hazardZones: null,
+  })
+
+  it('夹具本身站得住：三条预警两种等级，且触达层有要素（否则下面几条在空跑）', () => {
+    expect(mixed.warnings).toHaveLength(3)
+    expect(mixed.reach.length, '触达层是"没有风险评级"的那一层，必须有要素才验得到').toBeGreaterThan(0)
+    expect(mixed.stations.map((feature) => feature.riskLevel), '站点应当继承区域风险').toEqual([1])
+  })
+
+  it('空选择＝不过滤：原对象直接返回，不白跑一遍 filter', () => {
+    expect(filterLayersByRisk(mixed, [])).toBe(mixed)
+  })
+
+  it('只留红色时一条黄色都不剩', () => {
+    const only = filterLayersByRisk(mixed, [1])
+    expect(only.warnings.map((feature) => feature.riskLevel)).toEqual([1])
+  })
+
+  it('多选是并集，且点的顺序不影响结果', () => {
+    const a = filterLayersByRisk(mixed, [1, 3]).warnings.map((feature) => feature.id)
+    const b = filterLayersByRisk(mixed, [3, 1]).warnings.map((feature) => feature.id)
+    expect(a).toEqual(b)
+    expect(a).toHaveLength(3)
+  })
+
+  it('没评级的要素任何筛选下都保留（触达标记不是"低风险"，是这个维度不适用）', () => {
+    for (const level of LEVELS) {
+      expect(filterLayersByRisk(mixed, [level]).reach, `只留等级 ${level} 时触达层被整层藏掉了`).toEqual(mixed.reach)
+    }
+  })
+
+  it('芯片计数只数有评级的：站点 1 + 预警 3 = 等级 1 两条、等级 3 两条', () => {
+    const counts = riskLevelCounts(mixed)
+    expect(counts[1]).toBe(2)
+    expect(counts[3]).toBe(2)
+    expect(counts[2]).toBe(0)
+    expect(counts[4]).toBe(0)
+    expect(counts[5]).toBe(0)
+    const graded = [...mixed.stations, ...mixed.warnings, ...mixed.reach, ...mixed.hazards].filter(
+      (feature) => feature.riskLevel !== null,
+    )
+    expect(LEVELS.reduce((sum, level) => sum + counts[level], 0)).toBe(graded.length)
+    for (const level of LEVELS) {
+      const direct = graded.filter((feature) => feature.riskLevel === level).length
+      expect(counts[level], `等级 ${level} 的计数与逐条重数不一致`).toBe(direct)
+    }
   })
 })
 

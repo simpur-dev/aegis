@@ -18,6 +18,7 @@ import type {
   UnlocatedItem,
   UnlocatedReason,
 } from '@/components/map/entities'
+import type { RiskLevel } from '@/api/types'
 import { hazardLabel, groupUnlocatedByReason, riskLabel, riskLegend, UNLOCATED_LABELS } from '@/components/map/entities'
 import type { NetworkStatus } from '@/components/map/offline'
 import { NETWORK_LABELS, NETWORK_TAG_COLORS } from '@/components/map/offline'
@@ -37,10 +38,17 @@ const props = defineProps<{
   loading: boolean
   /** 三维场景起不来的原因（null 表示正常）；此时面板仍然可用。 */
   sceneError: string | null
+  /** 风险等级筛选（空数组＝不过滤）。 */
+  riskFilter: RiskLevel[]
+  /** 各等级的要素数——芯片上的数字，也是图例的量化部分。 */
+  riskCounts: Record<RiskLevel, number>
+  /** 未筛选时的图层计数：筛选生效后行里要显示"筛后 / 全量"，不然数字看着像凭空少了。 */
+  countsTotal: Record<LayerId, number>
 }>()
 
 const emit = defineEmits<{
   (event: 'toggle', layer: PlanLayer, visible: boolean): void
+  (event: 'toggleRisk', level: RiskLevel): void
   (event: 'select', featureId: string): void
   (event: 'refresh'): void
 }>()
@@ -63,6 +71,29 @@ const layerRows = computed(() =>
     count: props.counts[layer],
   })),
 )
+
+/** 筛选生效时把全量一起说出来：数字变小要能说清是"筛掉了"，不是"数据没了"。 */
+function countText(layer: LayerId): string {
+  const shown = props.counts[layer]
+  return props.riskFilter.length === 0 ? String(shown) : `${shown} / ${props.countsTotal[layer]}`
+}
+
+/**
+ * 芯片的三段颜色都由 `riskLegend()` 那一个色值算出来（同一份 `RISK_COLORS`，不另立第二套调色板）。
+ *
+ * 用 JS 拼 rgba 而不是 CSS `color-mix()`：自定义属性会原样收下不认识的函数，
+ * 那时整条 `border` 声明会在计算值阶段失效——不如在这儿算干净，任何浏览器都是同一个结果。
+ */
+function chipStyle(hex: string): Record<string, string> {
+  const rgb = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex)?.slice(1)
+  const [r, g, b] = (rgb ?? ['148', '163', '184']).map((pair) => Number.parseInt(pair, 16))
+  return {
+    '--chip': hex,
+    '--chip-line': `rgba(${r}, ${g}, ${b}, 0.35)`,
+    '--chip-wash': `rgba(${r}, ${g}, ${b}, 0.14)`,
+    '--chip-halo': `rgba(${r}, ${g}, ${b}, 0.18)`,
+  }
+}
 
 const station = computed(() => (props.detail?.kind === 'station' ? props.detail : null))
 const warning = computed(() => (props.detail?.kind === 'warning' ? props.detail : null))
@@ -114,7 +145,7 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
             @update:checked="(value: boolean) => onToggle(entry.layer, value)"
           />
           <span class="label">{{ entry.label }}</span>
-          <span class="count">{{ entry.count }}</span>
+          <span class="count">{{ countText(entry.layer) }}</span>
         </div>
         <div class="row">
           <a-switch
@@ -127,13 +158,29 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
         </div>
       </a-space>
       <a-divider style="margin: 8px 0" />
-      <div class="legend">
-        <span v-for="entry in legend" :key="entry.level" class="legend-item">
-          <i :style="{ background: entry.colorCss }" />
-          {{ entry.label }}
-        </span>
-        <span class="legend-item"><i style="background: #bfbfbf" /> 等级未知</span>
+      <!-- 风险等级：一排芯片兼图例。颜色直接取 riskLegend()（与图上配色同一个 `RISK_COLORS`），
+           未选中也保留该级 35% 描边 ⇒ 不点也能当图例读；点下去才是筛选。 -->
+      <div class="risk-chips" role="group" aria-label="按风险等级筛选（颜色即图上配色）">
+        <button
+          v-for="entry in legend"
+          :key="entry.level"
+          type="button"
+          class="risk-chip"
+          :class="{ 'is-on': props.riskFilter.includes(entry.level) }"
+          :aria-pressed="props.riskFilter.includes(entry.level)"
+          :style="chipStyle(entry.colorCss)"
+          :title="`${entry.label}：${props.riskCounts[entry.level]} 个要素${props.riskFilter.includes(entry.level) ? '（再点一下取消）' : '（点一下只看这一级）'}`"
+          @click="emit('toggleRisk', entry.level)"
+        >
+          <span class="risk-chip__dot" />
+          <span class="risk-chip__label">{{ entry.label }}</span>
+          <span class="risk-chip__count">{{ props.riskCounts[entry.level] }}</span>
+        </button>
       </div>
+      <p v-if="props.riskFilter.length > 0" class="note">
+        已按风险等级筛选，上面图层里的数字是筛后的（括弧内为全量）；没有评级的要素不受影响。
+      </p>
+      <span class="legend-item legend-item--static"><i style="background: #bfbfbf" /> 等级未知（不参与筛选）</span>
     </a-card>
 
     <a-card size="small" title="要素详情（点击图上要素）" class="mt">
@@ -266,10 +313,51 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
 .tip {
   margin-top: 8px;
 }
-.legend {
+.risk-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 12px;
+  gap: 6px;
+}
+/* 一排芯片兼图例：未选中也保留该级 35% 描边（`--chip-line` 由 riskLegend() 那一个色值算出来），
+   选中才上底色。文字固定 #334155——把语义色当 12px 字用会掉到 AA 以下。 */
+.risk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 1px solid var(--chip-line);
+  border-radius: 999px;
+  background: transparent;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+.risk-chip:hover {
+  background: rgba(59, 130, 246, 0.06);
+}
+.risk-chip.is-on {
+  border-color: var(--chip);
+  background: var(--chip-wash);
+}
+.risk-chip:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.risk-chip__dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--chip);
+  box-shadow: 0 0 0 2px var(--chip-halo);
+}
+.risk-chip__count {
+  font-variant-numeric: tabular-nums;
+  color: #5a6072;
 }
 .legend-item {
   display: inline-flex;
@@ -283,6 +371,9 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
   height: 10px;
   border-radius: 2px;
   display: inline-block;
+}
+.legend-item--static {
+  margin-top: 6px;
 }
 .sample {
   font-size: 12px;

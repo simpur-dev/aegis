@@ -16,7 +16,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 
 import mapApi, { isMissingResource, MAP_ASSET_PATHS, normalizeAnchors } from '@/api/map'
 import type { RegionAnchorDto, StationDto } from '@/api/map'
-import type { ChainSummary, TelemetryReading, WarningRecord } from '@/api/types'
+import type { ChainSummary, RiskLevel, TelemetryReading, WarningRecord } from '@/api/types'
 import type { BBox, LayerVisibility, MapLayers, PlanLayer } from '@/components/map/entities'
 import PageHero from '@/components/PageHero.vue'
 import {
@@ -26,10 +26,12 @@ import {
   DEFAULT_LAYER_VISIBILITY,
   detailOf,
   expandBBox,
+  filterLayersByRisk,
   filterLayersByViewport,
   focusAllNote,
   layerCounts,
   plottedCount,
+  riskLevelCounts,
   TIBET_RECTANGLE,
   toUnlocatedItems,
 } from '@/components/map/entities'
@@ -84,11 +86,22 @@ const layers = computed<MapLayers>(() =>
   }),
 )
 
-const plan = computed(() => buildRenderPlan({ layers: layers.value, bbox: bbox.value, zoom: zoom.value }))
-const counts = computed(() => layerCounts(layers.value))
+/**
+ * 风险等级筛选（面板那排芯片）。空数组＝不过滤。
+ * 只在这一个地方落地：`viewLayers` 是唯一被送去渲染与计数的图层集，`layers` 保持全量给图例读数用。
+ */
+const riskFilter = ref<RiskLevel[]>([])
+const viewLayers = computed(() => filterLayersByRisk(layers.value, riskFilter.value))
+
+/** 面板里的图层计数是**筛后**的，全量另给一份用于"2 / 6"这种写法。 */
+const plan = computed(() => buildRenderPlan({ layers: viewLayers.value, bbox: bbox.value, zoom: zoom.value }))
+const counts = computed(() => layerCounts(viewLayers.value))
+const countsTotal = computed(() => layerCounts(layers.value))
+/** 芯片上的数字始终按未筛的全量数——筛选不该让图例自己变小。 */
+const riskCounts = computed(() => riskLevelCounts(layers.value))
 const unlocated = computed(() => toUnlocatedItems(layers.value.unplaced))
 const detail = computed(() => detailOf(layers.value, selectedId.value))
-const plottedTotal = computed(() => plottedCount(filterLayersByViewport({ bbox: bbox.value, layers: layers.value }), visibility.value))
+const plottedTotal = computed(() => plottedCount(filterLayersByViewport({ bbox: bbox.value, layers: viewLayers.value }), visibility.value))
 const regionOptions = computed(() =>
   [...new Set([...anchors.value.map((anchor) => anchor.code), ...readings.value.map((reading) => reading.region_code)])]
     .filter(Boolean)
@@ -199,6 +212,14 @@ async function initScene(): Promise<void> {
 function onToggle(layer: PlanLayer, visible: boolean): void {
   visibility.value = { ...visibility.value, [layer]: visible }
   scene.value?.setLayerVisible(layer as LayerName, visible)
+}
+
+/** 芯片是"多选并集"：再点一次取消该级；顺序按等级排，避免点法不同导致 title 里数字跳动。 */
+function onToggleRisk(level: RiskLevel): void {
+  const next = riskFilter.value.includes(level)
+    ? riskFilter.value.filter((item) => item !== level)
+    : [...riskFilter.value, level]
+  riskFilter.value = next.sort((a, b) => a - b)
 }
 
 function selectFeature(id: string): void {
@@ -324,7 +345,11 @@ watch(visibility, (value) => {
           :zoom="zoom"
           :loading="loading"
           :scene-error="sceneError"
+          :risk-filter="riskFilter"
+          :risk-counts="riskCounts"
+          :counts-total="countsTotal"
           @toggle="onToggle"
+          @toggle-risk="onToggleRisk"
           @select="selectFeature"
           @refresh="load"
         />
