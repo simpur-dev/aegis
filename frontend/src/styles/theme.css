@@ -1,0 +1,65 @@
+/*
+ * AEGIS 视觉基座（对标 NexusMind）：浅底白卡、细描边、轻投影、渐变点缀。
+ * 令牌级改动（主色/圆角/字体/布局底色）在 App.vue 的 ConfigProvider 里，
+ * 这里只放令牌覆盖不到的整型规则。选择器统一加 `body` 前缀：antd 的样式
+ * 是运行时 cssinjs 注入的，后注入且同权重时会压过静态 CSS，前缀用来稳住权重。
+ */
+
+/* —— 页面基座 —— */
+body {
+  margin: 0;
+  background: #f2f4f8;
+  color: #0a0a0c;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* —— 渐变滚动条 —— */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: linear-gradient(180deg, #a7f9ff, #887dff);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #887dff, #ff68d6);
+}
+
+/* —— 卡片：细描边 + 轻投影（16px 圆角走 borderRadiusLG 令牌）—— */
+body .ant-card {
+  border-color: #e6e8ef;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+/* —— 表头柔和底色 —— */
+body .ant-table-thead > tr > th {
+  background: #f7f9fc;
+}
+body .ant-table-thead > tr > th::before {
+  background-color: transparent;
+}
+
+/* —— 标签胶囊化 —— */
+body .ant-tag {
+  border-radius: 999px;
+  padding-inline: 10px;
+}
+
+/* —— 主按钮：渐变蓝 + 轻投影 —— */
+body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled) {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.22);
+}
+body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+}
+body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):active {
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
+}

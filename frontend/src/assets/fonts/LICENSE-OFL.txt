@@ -1,0 +1,9 @@
+本目录下的 woff2 字体文件均取自 Google Fonts，按 SIL Open Font License 1.1 (OFL-1.1) 分发：
+
+- space-grotesk-latin-*.woff2   Space Grotesk, Copyright 2018 The Space Grotesk Project Authors (https://github.com/floriankarsten/space-grotesk)
+- jetbrains-mono-latin-*.woff2  JetBrains Mono, Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+
+OFL-1.1 全文见 https://openfontlicense.org/open-font-license-official-text/
+
+要点：允许自由使用、修改、再分发（含随软件捆绑分发）；不得单独售卖字体文件本身；
+修改后的字体如再分发需沿用 OFL 且不得使用原保留字体名（Reserved Font Name）。
