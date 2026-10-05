@@ -5,6 +5,9 @@ defineProps<{
   caption?: string
   /** 单字形图标（NexusMind 用 emoji 占这个位置，这里用汉字：离线、无版权、且中文台不违和） */
   icon?: string
+  /** 一眼看得出的当下状态（对标 .global-status-card 那句带圆点的状态语）。
+   *  只写"现在怎么样了"，不复述标题；tone 由数据决定，不许拿它当装饰。 */
+  status?: { tone: 'ok' | 'warn' | 'bad' | 'idle'; text: string }
 }>()
 </script>
 
@@ -15,6 +18,10 @@ defineProps<{
       <span v-else class="page-hero__deco" aria-hidden="true">◆</span>
       <h2 class="page-hero__title">{{ title }}</h2>
       <span v-if="badge" class="page-hero__badge">{{ badge }}</span>
+      <span v-if="status" class="page-hero__status" :class="`is-${status.tone}`" :title="status.text">
+        <span class="page-hero__status-dot" aria-hidden="true"></span>
+        {{ status.text }}
+      </span>
       <div class="page-hero__actions">
         <slot name="actions" />
       </div>
@@ -106,6 +113,40 @@ defineProps<{
   border-radius: 4px;
   letter-spacing: 0.1em;
   animation: page-hero-pulse 2s ease-in-out infinite;
+}
+/* 状态语：字用近白（藏青底上 11:1），圆点按 tone 上色。可缩不可撑——它和右侧动作钮
+   同处一行，挤不下时省略号收尾（完整那句在 title 里），不许把按钮推出横幅。 */
+.page-hero__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.86);
+}
+.page-hero__status-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+}
+.page-hero__status.is-ok .page-hero__status-dot {
+  background: #34d399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+}
+.page-hero__status.is-warn .page-hero__status-dot {
+  background: #fbbf24;
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.45);
+}
+.page-hero__status.is-bad .page-hero__status-dot {
+  background: #f87171;
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.45);
 }
 @keyframes page-hero-pulse {
   0%, 100% { opacity: 1; }

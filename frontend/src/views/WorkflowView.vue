@@ -70,6 +70,17 @@ let detachUnsavedGuard: (() => void) | null = null
 const waitingTickets = computed(() => [...store.instances].reverse().filter((row) => row.status === 'waiting'))
 
 /**
+ * 横幅上那句状态语只说一件事：这版画布跟服务端一致吗。
+ * "离开页面会丢工作"是这一页最贵的失误（未保存守卫就是为它装的），所以把它提到第一眼的位置。
+ */
+const heroStatus = computed(() => {
+  if (store.isDirty) return { tone: 'warn' as const, text: '画布有未保存的改动，离开前要点「保存定义」' }
+  const n = view.value.nodes.length
+  if (n === 0) return { tone: 'idle' as const, text: '空白画布，还没放节点' }
+  return { tone: 'ok' as const, text: `画布 ${n} 个节点，无未保存改动` }
+})
+
+/**
  * 右栏三块面板改成 pill 切换（对标 NexusMind `.tab-pill`）：三块叠着放时
  * 运行态（签工单那块）永远在最下面，值班员每次进来都要滚到底。
  * 默认停在"运行态"，并把上一次选的档记住；待签张数直接挂在 pill 上，
@@ -115,7 +126,7 @@ onUnmounted(() => {
 
 <template>
   <div class="wf">
-    <PageHero icon="程"
+    <PageHero icon="程" :status="heroStatus"
       :title="store.current?.name ?? '工作流编排'"
       :badge="`v${store.current?.version ?? 1}`"
       caption="白盒编排：拖拽画布 → 本地校验 → 保存定义；等签工单与实例状态在右侧栏。"

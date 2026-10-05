@@ -39,6 +39,18 @@ let inspectSeq = 0
 
 const reachTitle = computed(() => (deliveryMode.value === 'mock' ? '触达（演练口径）' : '触达'))
 
+/**
+ * 横幅那句状态语：红色是"要立刻动手"的那一档，不该让人滚进表里数出来。
+ * 取不到台账时不说"没有预警"——那两句在界面上长得一样，含义相反。
+ */
+const heroStatus = computed(() => {
+  if (storeTotal.value === null) return { tone: 'idle' as const, text: '还没取到预警台账' }
+  const red = warnings.value.filter((w) => Number(w.risk_level) === 1).length
+  if (red > 0) return { tone: 'bad' as const, text: `窗口内红色预警 ${red} 条（共 ${warnings.value.length} 条）` }
+  if (warnings.value.length === 0) return { tone: 'idle' as const, text: `台账共 ${storeTotal.value} 条，窗口内没有预警` }
+  return { tone: 'ok' as const, text: `窗口内 ${warnings.value.length} 条，无红色` }
+})
+
 const columns = computed(() => [
   { title: '预警标题', dataIndex: 'title_zh', key: 'title_zh' },
   { title: '灾种', key: 'hazard' },
@@ -153,7 +165,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
-    <PageHero icon="警" title="预警发布" badge="靶向触达" caption="红色预警含北斗短报文兜底通道。">
+    <PageHero icon="警" :status="heroStatus" title="预警发布" badge="靶向触达" caption="红色预警含北斗短报文兜底通道。">
       <template #actions>
         <a-button @click="load">刷新</a-button>
       </template>

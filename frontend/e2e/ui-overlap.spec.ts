@@ -653,6 +653,50 @@ test.describe('提示条落点 @1440', () => {
 })
 
 /**
+ * 横幅状态位（PageHero 的 `status`）：那句"现在怎么样了"是深色横幅最贵的一行字，
+ * 圆点必须真的按 tone 变色（不是所有档都画同一个灰点），文字必须读得清。
+ * 目前只有编排页与预警页给了 status——断言按页来，别拿"每页都得有"当判据。
+ */
+test.describe('横幅状态位 @1440', () => {
+  for (const [name, path] of [
+    ['workflow', '/workflow'],
+    ['warnings', '/warnings'],
+  ] as const) {
+    test(`${name} 的状态语有彩色圆点且字读得清`, async ({ page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.goto(path)
+      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForTimeout(3_000)
+      const m = await page.evaluate(() => {
+        const el = document.querySelector('.page-hero__status')
+        const dot = el?.querySelector('.page-hero__status-dot') as HTMLElement | null
+        const cs = el ? getComputedStyle(el) : null
+        const r = dot?.getBoundingClientRect()
+        return {
+          text: (el?.textContent ?? '').trim(),
+          cls: el ? [...el.classList].filter((c) => c.startsWith('is-')).join(',') : '',
+          dotBg: dot ? getComputedStyle(dot).backgroundColor : '',
+          dotW: r ? Math.round(r.width) : 0,
+          dotH: r ? Math.round(r.height) : 0,
+          fontSize: cs ? parseFloat(cs.fontSize) : 0,
+        }
+      })
+      console.log(`HEROSTATUS ${name} cls=${m.cls} dot=${m.dotBg} ${m.dotW}x${m.dotH} text="${m.text}"`)
+      expect(m.text, `${name}：横幅没有状态语——这条判据在空跑`).not.toBe('')
+      expect(m.cls, `${name}：状态语没带 tone 类（is-ok/is-warn/is-bad/is-idle）`).not.toBe('')
+      expect(m.dotW, `${name}：圆点宽 0`).toBeGreaterThanOrEqual(6)
+      expect(m.dotH, `${name}：圆点高 0`).toBeGreaterThanOrEqual(6)
+      /* tone 类要真的落到颜色上：除 idle 外，圆点不许还是那个 50% 白的默认底 */
+      if (!m.cls.includes('is-idle')) {
+        expect(m.dotBg, `${name}：${m.cls} 的圆点还是默认灰（tone 类没起作用）`).not.toBe('rgba(255, 255, 255, 0.5)')
+        expect(m.dotBg).not.toBe('rgb(255, 255, 255)')
+      }
+      expect(m.fontSize, `${name}：状态语字号`).toBeGreaterThanOrEqual(12)
+    })
+  }
+})
+
+/**
  * 键盘焦点态：第四批补的 `:focus-visible` 焦点环只有样式、没有证据。
  * 这里按 Tab 走一遍，要求每落一次焦点：①焦点元素确实有可见指示
  * （box-shadow 或 outline，不是靠颜色）；②它没被滚动容器裁到看不见。
