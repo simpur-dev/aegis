@@ -6,9 +6,9 @@ import api from '@/api/client'
 import type { LatencyReport } from '@/api/types'
 import EChart from '@/components/EChart.vue'
 import PageHero from '@/components/PageHero.vue'
+import FreshnessBar from '@/components/FreshnessBar.vue'
 import type { ChartOption } from '@/components/echarts'
 import { latencyRows } from '@/views/metrics/rows'
-import { formatOperatingTime } from '@/utils/clock'
 import { formatMetricValue, toMillis } from '@/utils/metricUnits'
 
 /** 与其他页同一节奏：这页写着"数据来自运行时埋点"，不自己更新就成了摆旧账。 */
@@ -156,9 +156,11 @@ onBeforeUnmount(() => {
     </PageHero>
 
     <a-card size="small" title="考核指标实测" :loading="loading">
-      <p class="metrics__stale" data-testid="metrics-updated-at" style="margin: 8px 0 0; color: #5a6072; font-size: 12px">
-        {{ updatedAt === null ? '尚未取到数据' : `更新于 ${formatOperatingTime(updatedAt)}（UTC+8，每 15 秒自动取一次）` }}
-      </p>
+      <FreshnessBar
+        :fetched-at="updatedAt"
+        :label="`本页 ${Object.keys(report?.violations ?? {}).length} 项越限 ｜ 每 ${Math.round(REFRESH_MS / 1000)} 秒自动取一次`"
+        :interval-ms="REFRESH_MS"
+      />
       <a-alert type="info" show-icon message="口径说明">
         <!-- 三条口径挤在一句里读要回头重读；按 NexusMind 的"使用提示"列表拆开，一条一句 -->
         <template #description>

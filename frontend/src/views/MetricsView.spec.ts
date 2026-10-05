@@ -220,10 +220,13 @@ describe('指标页要自己更新，也要说清是什么时候取的数', () =
     vi.useRealTimers()
   })
 
-  it('页面上写着这一屏数字是什么时候取的', async () => {
+  it('页面上写着这一屏数字是什么时候取的、多久之前', async () => {
     const wrapper = mountView()
     await flushPromises()
-    expect(wrapper.text(), '没有时间戳就等于让人猜新旧').toContain('更新于')
+    const bar = wrapper.find('[data-testid="freshness"]')
+    expect(bar.exists(), '新鲜度条不见了就等于让人猜新旧').toBe(true)
+    expect(bar.text(), '只报时刻不报"多久之前"，页面挂两小时也看不出来').toContain('取数')
+    expect(bar.text()).toMatch(/秒前|分前|比预期周期慢/)
   })
 
   it('取数失败时时间戳不许冒充新的：那句话得说这是上一次的数', async () => {
@@ -232,7 +235,9 @@ describe('指标页要自己更新，也要说清是什么时候取的数', () =
     const wrapper = mountView()
     await flushPromises()
     expect(wrapper.find('[data-testid="metrics-error"]').text()).toContain('503')
-    // 第一次失败 → 一次数都没取到，此时不该出现"更新于"（有数可说才说时刻）
-    expect(wrapper.text()).not.toContain('更新于')
+    // 第一次失败 → 一次数都没取到，此时只能报"没取到"，不许报时刻（有数可说才说时刻）
+    const bar = wrapper.find('[data-testid="freshness"]')
+    expect(bar.text()).toContain('尚未取到数据')
+    expect(bar.text(), '没取到数却写"取数 …"，是凭空造出来的时间戳').not.toContain('取数')
   })
 })

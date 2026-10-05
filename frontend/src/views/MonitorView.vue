@@ -7,6 +7,7 @@ import type { TelemetryReading } from '@/api/types'
 import mapApi, { normalizeAnchors } from '@/api/map'
 import EChart from '@/components/EChart.vue'
 import PageHero from '@/components/PageHero.vue'
+import FreshnessBar from '@/components/FreshnessBar.vue'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import type { ChartOption } from '@/components/echarts'
 import { formatOperatingTime, operatingClock } from '@/utils/clock'
@@ -19,6 +20,8 @@ const readings = ref<TelemetryReading[]>([])
 const region = ref<string>('')
 const metric = ref<string>('rain_10min')
 const loading = ref(false)
+/** 最近一次**成功**取遥测的时刻（UTC ISO）；null = 还没取到过。 */
+const fetchedAt = ref<string | null>(null)
 const drilling = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
 /**
@@ -100,6 +103,8 @@ async function load(): Promise<void> {
     // 迟到的旧响应不许盖掉新筛选的结果：连点两个区域时，前一个更慢回来是常态而不是意外
     if (token !== requestToken) return
     readings.value = data.items
+    // 只有真取到数那一刻才算"更新于"；失败路径不动它，让"多旧"继续长大
+    fetchedAt.value = new Date().toISOString()
   } catch (error) {
     if (token !== requestToken) return
     message.error(error instanceof ApiError ? `读取遥测失败：${error.message}` : '读取遥测失败')
@@ -204,6 +209,12 @@ onBeforeUnmount(() => {
         </a-select>
         <a-button @click="load">刷新</a-button>
       </a-space>
+      <FreshnessBar
+        :fetched-at="fetchedAt"
+        :label="`窗口 最近 ${WINDOW_LIMIT} 条 ｜ 每 ${Math.round(REFRESH_MS / 1000)} 秒自刷`"
+        :interval-ms="REFRESH_MS"
+        style="margin-top: 10px"
+      />
     </a-card>
 
     <a-row :gutter="12" style="margin-top: 12px">

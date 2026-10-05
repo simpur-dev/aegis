@@ -731,31 +731,38 @@ test.describe('横幅状态位 @1440', () => {
  * 右端必须真的报出"多久之前"——只写绝对时间戳的话，页面挂两小时也看不出来。
  */
 test.describe('新鲜度条 @1440', () => {
-  test('预警台账说得出"几点取的"与"多久之前"，且两端不重叠', async ({ page }) => {
-    await page.setViewportSize({ width: 1440, height: 900 })
-    await page.goto('/warnings')
-    await page.waitForSelector('[data-testid="freshness"]', { timeout: 45_000 })
-    await page.waitForTimeout(3_000)
-    const m = await page.evaluate(() => {
-      const bar = document.querySelector('[data-testid="freshness"]')
-      const left = bar?.querySelector('.fresh__left')?.getBoundingClientRect()
-      const right = bar?.querySelector('.fresh__right')?.getBoundingClientRect()
-      return {
-        left: (bar?.querySelector('.fresh__left')?.textContent ?? '').trim(),
-        right: (bar?.querySelector('.fresh__right')?.textContent ?? '').trim(),
-        gap: left && right ? Math.round(right.left - left.right) : null,
-        ruleH: Math.round(bar?.querySelector('.fresh__rule')?.getBoundingClientRect().height ?? -1),
-      }
+  for (const [name, path] of [
+    ['warnings', '/warnings'],
+    ['monitor', '/monitor'],
+    ['metrics', '/metrics'],
+    ['workflow', '/workflow'],
+  ] as const) {
+    test(`${name} 说得出"几点取的"与"多久之前"，两端不重叠`, async ({ page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.goto(path)
+      await page.waitForSelector('[data-testid="freshness"]', { timeout: 45_000 })
+      await page.waitForTimeout(3_000)
+      const m = await page.evaluate(() => {
+        const bar = document.querySelector('[data-testid="freshness"]')
+        const left = bar?.querySelector('.fresh__left')?.getBoundingClientRect()
+        const right = bar?.querySelector('.fresh__right')?.getBoundingClientRect()
+        return {
+          left: (bar?.querySelector('.fresh__left')?.textContent ?? '').trim(),
+          right: (bar?.querySelector('.fresh__right')?.textContent ?? '').trim(),
+          gap: left && right ? Math.round(right.left - left.right) : null,
+          ruleH: Math.round(bar?.querySelector('.fresh__rule')?.getBoundingClientRect().height ?? -1),
+        }
+      })
+      console.log(`FRESH ${name} left="${m.left}" right="${m.right}" gap=${m.gap} ruleH=${m.ruleH}`)
+      await page.screenshot({ path: `test-results/ui-audit/freshness-${name}.png`, clip: { x: 0, y: 190, width: 1440, height: 140 } })
+      expect(m.left, `${name}：左端口径是空的`).not.toBe('')
+      expect(m.right, `${name}：右端没报新鲜度——判据在空跑`).not.toBe('')
+      expect(m.right, `${name}：右端要同时报"取数时刻"和"多久之前"，实测：${m.right}`).toMatch(/取数 .*｜ .*(秒前|分前|比预期周期慢)|尚未取到数据/)
+      expect(m.gap, `${name}：两端间隙没量到`).not.toBeNull()
+      if (m.gap !== null) expect(m.gap, `${name}：两端重叠（间隙=${m.gap}px）`).toBeGreaterThan(0)
+      expect(m.ruleH, `${name}：中间那道线没画出来`).toBeGreaterThanOrEqual(1)
     })
-    console.log(`FRESH left="${m.left}" right="${m.right}" gap=${m.gap} ruleH=${m.ruleH}`)
-    await page.screenshot({ path: 'test-results/ui-audit/freshness-warnings.png', clip: { x: 0, y: 190, width: 1440, height: 140 } })
-    expect(m.left, '左端口径是空的').not.toBe('')
-    expect(m.right, '右端没报新鲜度——判据在空跑').not.toBe('')
-    expect(m.right, `右端要同时报"取数时刻"和"多久之前"，实测：${m.right}`).toMatch(/取数 .*｜ .*(秒前|分前|比预期周期慢)|尚未取到数据/)
-    expect(m.gap, '两端压在一起了').not.toBeNull()
-    if (m.gap !== null) expect(m.gap, `两端重叠（间隙=${m.gap}px）`).toBeGreaterThan(0)
-    expect(m.ruleH, '中间那道线没画出来').toBeGreaterThanOrEqual(1)
-  })
+  }
 })
 
 /**

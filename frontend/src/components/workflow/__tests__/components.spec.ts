@@ -909,25 +909,27 @@ describe('RuntimePanel 等人签的工单要数得出来、找得到', () => {
     expect(wrapper.text()).toContain('这一列里没有等人签的实例了')
   })
 
-  it('队列标题下写着这一列是什么时候取的数', () => {
+  it('队列标题下写着这一列是什么时候取的数、多久之前', () => {
     const store = useWorkflowStore()
     store.resetDefinition('链路')
     store.instances = [row('wfi_已完', 'succeeded')]
     store.instancesUpdatedAt = '2026-10-04T19:20:00.000Z'
     const wrapper = mount(RuntimePanel)
-    const stamp = wrapper.find('[data-testid="instances-updated-at"]').text()
-    expect(stamp).toContain('更新于')
-    expect(stamp, '只写时间不写节奏，人没法判断自己是不是在看一份不会动的账').toContain('15 秒')
+    const stamp = wrapper.find('[data-testid="freshness"]')
+    expect(stamp.exists(), '新鲜度条不见了').toBe(true)
+    expect(stamp.text()).toContain('取数')
+    expect(stamp.text(), '只写时间不写节奏，人没法判断自己是不是在看一份不会动的账').toContain('15 秒')
+    expect(stamp.text()).toMatch(/秒前|分前|比预期周期慢/)
   })
 
-  it('一次都没取到时不许拿当前时间冒充"更新于"', () => {
+  it('一次都没取到时不许拿当前时间冒充"取数"', () => {
     const store = useWorkflowStore()
     store.resetDefinition('链路')
     store.instancesUpdatedAt = null
     const wrapper = mount(RuntimePanel)
-    const stamp = wrapper.find('[data-testid="instances-updated-at"]').text()
-    expect(stamp).toBe('实例列表还没取到')
-    expect(stamp, '没取到数却写"更新于"，是凭空造出来的时间戳').not.toContain('更新于')
+    const stamp = wrapper.find('[data-testid="freshness"]').text()
+    expect(stamp).toContain('尚未取到数据')
+    expect(stamp, '没取到数却写"取数 …"，是凭空造出来的时间戳').not.toContain('取数')
   })
 })
 
