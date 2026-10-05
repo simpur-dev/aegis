@@ -1288,3 +1288,76 @@ test.describe('风险芯片兼图例 @1440', () => {
     expect(back.slash, '退回未筛选之后计数还带着斜杠').toBe(false)
   })
 })
+
+/**
+ * 悬停态体检 @1440。
+ *
+ * 此前 89 项判据全程不悬停，而我们移植的 NexusMind 习语有一半是 hover 习语：
+ * 行悬停上主色雾、pill `translateY(-1px)` 微升、卡片抬投影、芯片与按钮描边变色。
+ * **改底色就可能改对比度，改位移就可能压到邻居**——这两类缺陷一直没被看过。
+ * 基线（不悬停）那四项在常驻判据里已经是 0，所以这里任何命中都只能是悬停造成的。
+ */
+const HOVER_TARGETS = [
+  '.flow-step',
+  '.page-hero button',
+  '.ant-list-item',
+  '.wf-rail__pill',
+  '.wf-def__list-item',
+  '.wf-run__pick',
+  '.wf-palette__item',
+  '.risk-chip',
+  '.sys-term__chip',
+  '.ant-card-hoverable',
+]
+
+test.describe('悬停态体检 @1440', () => {
+  test('逐页悬停顶栏步骤/横幅按钮/行与芯片：对比度、压叠、裁切、折行都不许变坏', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const problems: string[] = []
+    let hovered = 0
+    for (const [name, path] of PAGES) {
+      await page.goto(path)
+      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForLoadState('networkidle').catch(() => {})
+      await page.waitForTimeout(2_500)
+      /* 每页最多悬停 6 个：七页 × 6 次全页体检已经要一分多钟，再多就没人愿意跑这条门禁了。 */
+      let budget = 6
+      for (const selector of HOVER_TARGETS) {
+        if (budget <= 0) break
+        const locator = page.locator(selector)
+        const found = Math.min(await locator.count(), 2)
+        for (let index = 0; index < found && budget > 0; index += 1) {
+          const target = locator.nth(index)
+          if (!(await target.isVisible().catch(() => false))) continue
+          budget -= 1
+          await target.hover({ timeout: 3_000 }).catch(() => {})
+          await page.waitForTimeout(150)
+          const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
+          hovered += 1
+          const groups: Array<[string, string[]]> = [
+            ['对比度', r.lowContrast],
+            ['压叠', r.overlap],
+            ['裁切', r.clipped],
+            ['折行', r.folded],
+          ]
+          for (const [label, lines] of groups) {
+            for (const line of lines) problems.push(`${name} 悬停 ${selector} 第${index + 1}个 → ${label}：${line}`)
+          }
+          await page.mouse.move(0, 0)
+          await page.waitForTimeout(60)
+        }
+      }
+    }
+    console.log(`HOVER targets=${hovered} problems=${problems.length}`)
+    expect(hovered, '一个可悬停元素都没找到——判据在空跑').toBeGreaterThanOrEqual(20)
+    expect(problems, `悬停态问题：\n${problems.slice(0, 14).join('\n')}`).toHaveLength(0)
+    /* 留一张悬停态的图：判据说"读得清"，图要能自己看出来——主按钮悬停是变深+抬起，
+       不是变浅（变浅正是这条判据第一次跑就抓到的缺陷）。 */
+    await page.goto('/monitor')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForTimeout(2_500)
+    await page.locator('.page-hero .ant-btn-primary').last().hover()
+    await page.waitForTimeout(250)
+    await page.screenshot({ path: 'test-results/ui-audit/hover-primary.png' })
+  })
+})

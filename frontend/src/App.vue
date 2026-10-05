@@ -57,6 +57,11 @@ onBeforeUnmount(() => {
 const theme: ThemeConfig = {
   token: {
     colorPrimary: '#2563EB',
+    /* antd 默认把 hover 派生成**更浅**的蓝（实测 #3b82f6），白字压上去只有 3.68:1——
+       主按钮上的字是 14px/400，要 4.5:1。悬停态是常驻判据新加的一档（悬停态体检）抓到的，
+       所以这里显式让 hover/active 都往深走：#1d4ed8 白字 6.3:1、#1e40af 更深一档。 */
+    colorPrimaryHover: '#1D4ED8',
+    colorPrimaryActive: '#1E40AF',
     colorInfo: '#2563EB',
     colorLink: '#2563EB',
     colorBgLayout: '#F2F4F8',

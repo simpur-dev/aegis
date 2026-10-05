@@ -196,12 +196,16 @@ body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled) {
   box-shadow: 0 6px 16px rgba(37, 99, 235, 0.22);
 }
 body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  /* 悬停往**深**走。原先是往浅走（#3b82f6），白字压上去只有 3.68:1——
+     主按钮的字是 14px/400，要 4.5:1；常驻判据不悬停，所以这条一直没人看见
+     （新加的"悬停态体检"抓的正是这类）。抬起 1px 与更深的投影已经足够表达"悬停"，
+     不需要靠变亮。 */
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
   box-shadow: 0 8px 22px rgba(37, 99, 235, 0.28);
   transform: translateY(-1px);
 }
 body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):active {
-  background: linear-gradient(135deg, #1d4ed8, #1e40af);
+  background: linear-gradient(135deg, #1e40af, #1e3a8a);
   transform: translateY(0);
 }
 /* 次级按钮：白底细描边，悬停给一层主色雾（NexusMind .action-btn.secondary） */
@@ -369,7 +373,8 @@ body .empty-hero__action:hover {
   background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
 }
 .page-hero .ant-btn-primary:not(:disabled):hover {
-  background: linear-gradient(135deg, #3b76f0 0%, #2563eb 100%);
+  /* 悬停往深走，和 App.vue 的 colorPrimaryHover 同向：浅一档白字就掉到 4.5 以下。 */
+  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
 }
 .page-hero .ant-btn:disabled,
 .page-hero .ant-btn.ant-btn-disabled {
