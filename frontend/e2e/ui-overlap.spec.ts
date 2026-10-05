@@ -272,7 +272,7 @@ const OVERLAYS: Array<{ name: string; path: string; trigger: string; scope: stri
   { name: 'warnings-detail', path: '/warnings', trigger: 'role=button[name="详情"]', scope: '.ant-drawer-content', minLeaves: 40 },
 ]
 
-for (const width of [1440, 1280]) {
+for (const width of [1440, 1280, 1100]) {
   test.describe(`弹层内不变量 @${width}`, () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize({ width, height: 900 })
