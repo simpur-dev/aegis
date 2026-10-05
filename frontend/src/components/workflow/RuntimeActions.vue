@@ -196,7 +196,7 @@ async function insertAfter(): Promise<void> {
 .wf-runtime__error,
 .wf-runtime__notes {
   margin: 0;
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 11px;
 }
 .wf-runtime__signed {
@@ -236,11 +236,11 @@ async function insertAfter(): Promise<void> {
   cursor: pointer;
 }
 .wf-runtime__button:disabled {
-  color: #bfbfbf;
+  color: #5a6072;
   cursor: not-allowed;
 }
 .wf-runtime__hint {
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 11px;
 }
 </style>

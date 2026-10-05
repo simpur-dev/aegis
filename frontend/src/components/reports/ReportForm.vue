@@ -277,7 +277,7 @@ function reset(): void {
   margin-bottom: 8px;
 }
 .report-note__count {
-  color: rgba(0, 0, 0, 0.45);
+  color: #5a6072;
   font-size: 12px;
   margin: 2px 0 0;
 }

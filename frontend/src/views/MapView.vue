@@ -358,7 +358,7 @@ watch(visibility, (value) => {
   pointer-events: none;
 }
 .map-placeholder .hint {
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 12px;
   line-height: 1.7;
 }
@@ -368,7 +368,7 @@ watch(visibility, (value) => {
   gap: 6px;
   padding: 6px 10px;
   font-size: 12px;
-  color: #8c8c8c;
+  color: #5a6072;
   border-top: 1px solid #f0f0f0;
   background: #fff;
 }
@@ -377,6 +377,6 @@ watch(visibility, (value) => {
 }
 .muted {
   font-size: 12px;
-  color: #8c8c8c;
+  color: #5a6072;
 }
 </style>

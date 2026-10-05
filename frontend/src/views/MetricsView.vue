@@ -96,10 +96,31 @@ onBeforeUnmount(() => {
       <template #actions>
         <a-button @click="load">重新读取</a-button>
       </template>
+      <template #stats>
+        <div class="hero-stat">
+          <a-statistic title="协同事务总数" :value="report === null ? '—' : report.collaboration.transactions" />
+        </div>
+        <div class="hero-stat">
+          <a-statistic
+            title="协同成功率"
+            :value="report?.collaboration.success_rate == null ? '—' : (report.collaboration.success_rate * 100).toFixed(1)"
+            :suffix="report?.collaboration.success_rate == null ? '' : '%'"
+            :value-style="{ color: report?.collaboration.pass ? '#4ade80' : '#f87171' }"
+          />
+        </div>
+        <div class="hero-stat">
+          <!-- 没读到账本就是「—」：0 项越限是一条会让人安心的假消息，只有量出来的 0 才能这么写 -->
+          <a-statistic
+            title="越限项数"
+            :value="report === null ? '—' : Object.keys(report.violations).length"
+            :value-style="{ color: report === null ? 'rgba(255,255,255,0.65)' : Object.keys(report.violations).length ? '#f87171' : '#4ade80' }"
+          />
+        </div>
+      </template>
     </PageHero>
 
     <a-card size="small" title="考核指标实测" :loading="loading">
-      <p class="metrics__stale" data-testid="metrics-updated-at" style="margin: 8px 0 0; color: #8c8c8c; font-size: 12px">
+      <p class="metrics__stale" data-testid="metrics-updated-at" style="margin: 8px 0 0; color: #5a6072; font-size: 12px">
         {{ updatedAt === null ? '尚未取到数据' : `更新于 ${formatOperatingTime(updatedAt)}（UTC+8，每 15 秒自动取一次）` }}
       </p>
       <a-alert
@@ -111,27 +132,6 @@ onBeforeUnmount(() => {
       <p v-if="loadError !== null" class="metrics__error" data-testid="metrics-error">
         本页当前读不到账本：{{ loadError }}{{ report === null ? '' : '（下面显示的是上一次成功取到的数字，不是现场实况）' }}
       </p>
-      <a-row :gutter="12" style="margin-top: 12px">
-        <a-col :span="8">
-          <a-statistic title="协同事务总数" :value="report === null ? '—' : report.collaboration.transactions" />
-        </a-col>
-        <a-col :span="8">
-          <a-statistic
-            title="协同成功率"
-            :value="report?.collaboration.success_rate == null ? '—' : (report.collaboration.success_rate * 100).toFixed(1)"
-            :suffix="report?.collaboration.success_rate == null ? '' : '%'"
-            :value-style="{ color: report?.collaboration.pass ? '#3f8600' : '#cf1322' }"
-          />
-        </a-col>
-        <a-col :span="8">
-          <!-- 没读到账本就是「—」：0 项越限是一条会让人安心的假消息，只有量出来的 0 才能这么写 -->
-          <a-statistic
-            title="越限项数"
-            :value="report === null ? '—' : Object.keys(report.violations).length"
-            :value-style="{ color: report === null ? '#8c8c8c' : Object.keys(report.violations).length ? '#cf1322' : '#3f8600' }"
-          />
-        </a-col>
-      </a-row>
     </a-card>
 
     <a-card size="small" title="时延分布" style="margin-top: 12px">
@@ -173,11 +173,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* 指标大字走等宽，和态势页同一套（对标 NexusMind 的 .stat-num）。 */
-:deep(.ant-statistic-content) {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 700;
-}
+/* 指标大数字的等宽托盘样式（.hero-stat）在 styles/theme.css，与态势页共用一份。 */
 /* 取数失败的原因要看得见：只有 toast 的话，三秒后页面就只剩一排看着正常的数字 */
 .metrics__error {
   margin: 10px 0 0;

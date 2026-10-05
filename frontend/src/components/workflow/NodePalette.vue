@@ -81,7 +81,7 @@ function onDragStart(event: DragEvent, type: NodeType): void {
 }
 .wf-palette__group-title {
   margin: 6px 0 2px;
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 12px;
   font-weight: 500;
 }
@@ -103,13 +103,13 @@ function onDragStart(event: DragEvent, type: NodeType): void {
   border-color: #1677ff;
 }
 .wf-palette__type {
-  color: #bfbfbf;
+  color: #5a6072;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
 }
 .wf-palette__tip {
   margin: auto 0 0;
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 11px;
 }
 </style>

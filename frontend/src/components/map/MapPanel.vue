@@ -257,7 +257,7 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
 }
 .note {
   font-size: 12px;
-  color: #8c8c8c;
+  color: #5a6072;
   line-height: 1.6;
 }
 .tip {

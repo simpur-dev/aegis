@@ -175,7 +175,7 @@ function onDescription(event: Event): void {
   display: flex;
   gap: 8px;
   margin: 0;
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 11px;
 }
 .wf-def__edges,
@@ -230,7 +230,7 @@ function onDescription(event: Event): void {
 .wf-def__ok,
 .wf-def__muted {
   margin: 0;
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 11px;
 }
 .wf-def__ok {

@@ -117,11 +117,11 @@ const streamLabel = computed<string>(() => {
         <div class="nav-status">
           <span class="status-pill">
             <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
-            <span>{{ health ? `后端在线 v${health.version}` : '后端不可达' }}</span>
+            <span class="status-pill__text">{{ health ? `后端在线 v${health.version}` : '后端不可达' }}</span>
           </span>
           <span class="status-pill" data-testid="stream-badge">
             <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
-            <span>{{ streamLabel }}</span>
+            <span class="status-pill__text">{{ streamLabel }}</span>
           </span>
           <span class="status-pill" title="最近事件">
             <span class="events-count">{{ events.length }}</span>
@@ -155,9 +155,12 @@ const streamLabel = computed<string>(() => {
   position: sticky;
   top: 0;
   z-index: 100;
-  display: flex;
+  /* 三列网格：左右两列都是 1fr 等宽，因此中间列恒等于屏幕中线；
+     窄屏时先压缩/隐藏两侧内容，而不是像绝对居中那样让三组文字互相压住。 */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
+  gap: 16px;
   height: 68px;
   padding: 0 24px;
   background:
@@ -172,6 +175,8 @@ const streamLabel = computed<string>(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+  justify-self: start;
+  min-width: 0;
 }
 .brand-link {
   display: inline-flex;
@@ -202,17 +207,17 @@ const streamLabel = computed<string>(() => {
   padding-left: 10px;
   border-left: 1px solid rgba(78, 89, 105, 0.18);
   font-size: 11px;
-  color: #86909c;
+  color: #5a6072;
+  white-space: nowrap;
 }
 
 /* —— 中间：页码徽标 + 沉浸式胶囊步进器 —— */
 .nav-center {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 14px;
+  justify-self: center;
+  min-width: 0;
 }
 .page-badge {
   padding: 5px 12px;
@@ -244,7 +249,7 @@ const streamLabel = computed<string>(() => {
   gap: 7px;
   padding: 6px 12px 6px 8px;
   border-radius: 999px;
-  color: #86909c;
+  color: #5a6072;
   text-decoration: none;
   white-space: nowrap;
   transition: all 0.24s ease;
@@ -265,7 +270,7 @@ const streamLabel = computed<string>(() => {
   height: 22px;
   border-radius: 50%;
   background: rgba(242, 243, 245, 0.9);
-  color: #86909c;
+  color: #5a6072;
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   font-weight: 800;
@@ -285,9 +290,11 @@ const streamLabel = computed<string>(() => {
   color: #fff;
 }
 .flow-step.active .flow-step-node {
-  background: rgba(255, 255, 255, 0.22);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32);
-  color: #fff;
+  /* 原先是"白 22% 蒙在渐变蓝上 + 白字"，真机量到 11px 编号只有 3.49:1；
+     换成实心白底 + 深蓝编号，选中的立体感靠投影而不是透明度维持。 */
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(13, 30, 66, 0.22);
+  color: #1d4ed8;
 }
 
 /* —— 右侧：状态胶囊 —— */
@@ -295,6 +302,9 @@ const streamLabel = computed<string>(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  justify-self: end;
+  min-width: 0;
+  overflow: hidden;
 }
 .status-pill {
   display: inline-flex;
@@ -352,17 +362,34 @@ const streamLabel = computed<string>(() => {
   background: transparent;
   text-align: center;
   font-size: 12px;
-  color: #8c8c8c;
+  color: #5a6072;
 }
 
-/* 窄屏回退：绝对居中让位给三段式弹性排布，避免与左右两组相撞 */
-@media (max-width: 1400px) {
+/* 窄屏逐层收：先收副题，再收步进器文字（编号点与顺序仍在），最后收状态文字。
+   三档都是"少显示一点"，不是"互相压上去"也不是"把状态胶囊裁掉半颗"——
+   真机量到的顶栏重叠与静默裁切就是这么来的（1440 全量、1320 起收文字标签）。 */
+@media (max-width: 1360px) {
+  .brand-sub {
+    display: none;
+  }
+}
+@media (max-width: 1320px) {
+  .flow-step-label {
+    display: none;
+  }
+  .flow-step {
+    padding: 6px 8px;
+  }
   .nav-center {
-    position: static;
-    transform: none;
-    flex: 1;
-    justify-content: center;
-    min-width: 0;
+    gap: 10px;
+  }
+}
+@media (max-width: 1140px) {
+  .status-pill__text {
+    display: none;
+  }
+  .status-pill {
+    padding: 6px 8px;
   }
 }
 </style>

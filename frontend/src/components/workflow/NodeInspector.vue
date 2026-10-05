@@ -181,7 +181,7 @@ function onConfig(next: Record<string, JsonValue>): void {
 }
 .wf-inspector__empty {
   margin: 12px;
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 12px;
 }
 .wf-inspector__head {
@@ -195,7 +195,7 @@ function onConfig(next: Record<string, JsonValue>): void {
   font-size: 14px;
 }
 .wf-inspector__id {
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 11px;
 }
 .wf-inspector__desc {
@@ -223,7 +223,7 @@ function onConfig(next: Record<string, JsonValue>): void {
 }
 .wf-inspector__hint {
   margin: 0;
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 11px;
 }
 .wf-inspector__config {

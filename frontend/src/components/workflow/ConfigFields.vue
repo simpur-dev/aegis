@@ -133,7 +133,7 @@ function onNumber(field: ConfigField, event: Event): void {
 }
 .wf-fields__empty {
   margin: 0;
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 12px;
 }
 </style>

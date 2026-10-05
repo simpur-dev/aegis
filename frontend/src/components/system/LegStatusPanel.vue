@@ -111,21 +111,29 @@ onBeforeUnmount(() => {
 }
 .leg-main {
   min-width: 0;
+  /* 长事实串（如 dataset=内置预案模板…）原先一路顶出卡片、压到右邻那一行上：
+     这里给它断行的余地，事实区自己换行。 */
+  overflow-wrap: anywhere;
 }
 .leg-name {
   font-weight: 600;
 }
 .leg-detail {
-  color: rgba(0, 0, 0, 0.45);
+  color: rgba(0, 0, 0, 0.65);
   font-size: 12px;
+}
+.leg-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  overflow-wrap: anywhere;
 }
 .leg-facts span {
-  color: rgba(0, 0, 0, 0.55);
+  color: rgba(0, 0, 0, 0.65);
   font-size: 12px;
-  margin-right: 8px;
 }
 .leg-empty {
-  color: rgba(0, 0, 0, 0.45);
+  color: rgba(0, 0, 0, 0.65);
   font-size: 12px;
   padding: 8px 0;
 }

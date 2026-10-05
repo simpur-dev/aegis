@@ -17,11 +17,14 @@ defineProps<{
       </div>
     </div>
     <p v-if="caption" class="page-hero__caption">{{ caption }}</p>
+    <div v-if="$slots.stats" class="page-hero__stats">
+      <slot name="stats" />
+    </div>
   </section>
 </template>
 
-<!-- 深色横幅移植自 NexusMind IncidentWorkspaceView 的 .global-status-card：
-     藏青渐变 + 两团辉光 + 等宽字徽标，颜色换成 aegis 的科技蓝。 -->
+<!-- 深色横幅移植自 NexusMind：藏青渐变 + 两团辉光 + 等宽字徽标（.global-status-card），
+     数字托盘是它的 .overview-stats（黑 15% 底板 + 白色等宽大数 + 小字大写标签）。 -->
 <style scoped>
 .page-hero {
   position: relative;
@@ -73,7 +76,7 @@ defineProps<{
 }
 .page-hero__badge {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   color: #7cb3ff;
   background: rgba(37, 99, 235, 0.18);
@@ -101,6 +104,17 @@ defineProps<{
   z-index: 1;
   margin: 8px 0 0 22px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.72);
+}
+.page-hero__stats {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  margin-top: 12px;
+  padding: 10px 6px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.15);
 }
 </style>

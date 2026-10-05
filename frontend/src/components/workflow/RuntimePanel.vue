@@ -164,7 +164,7 @@ const listedInstances = computed(() => {
 .wf-run__button:disabled {
   border-color: #f0f0f0;
   background: #f5f5f5;
-  color: #bfbfbf;
+  color: #5a6072;
   cursor: not-allowed;
 }
 .wf-run__input {
@@ -186,12 +186,12 @@ const listedInstances = computed(() => {
   color: #13c2c2;
 }
 .wf-run__paused {
-  color: #8c8c8c;
+  color: #5a6072;
 }
 .wf-run__hint,
 .wf-run__trace {
   margin: 0;
-  color: #8c8c8c;
+  color: #5a6072;
   font-size: 11px;
 }
 .wf-run__awaiting {

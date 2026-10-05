@@ -370,7 +370,7 @@ onMounted(() => void loadCapabilities())
 
 <style scoped>
 .muted {
-  color: rgba(0, 0, 0, 0.45);
+  color: #5a6072;
   font-size: 12px;
 }
 .caps {
@@ -384,7 +384,7 @@ onMounted(() => void loadCapabilities())
   border: 1px solid #b7eb8f;
   border-radius: 4px;
   background: #f6ffed;
-  color: #389e0d;
+  color: #1d6b14;
   font-size: 12px;
   cursor: pointer;
 }
@@ -414,7 +414,7 @@ onMounted(() => void loadCapabilities())
   font-size: 13px;
 }
 .frame .kind {
-  color: rgba(0, 0, 0, 0.45);
+  color: #5a6072;
   font-family: 'Consolas', monospace;
   min-width: 76px;
 }

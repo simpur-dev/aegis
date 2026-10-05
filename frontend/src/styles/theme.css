@@ -8,11 +8,17 @@
 /* —— 页面基座 —— */
 body {
   margin: 0;
-  background: #f2f4f8;
+  background:
+    radial-gradient(circle at 12% -8%, rgba(37, 99, 235, 0.06), transparent 34%),
+    #f2f4f8;
   color: #0a0a0c;
   font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+/* 原生控件（勾选/单选）跟着主色走，不留浏览器默认蓝 */
+body {
+  accent-color: #2563eb;
 }
 
 /* —— 渐变滚动条 —— */
@@ -31,18 +37,61 @@ body {
   background: linear-gradient(180deg, #887dff, #ff68d6);
 }
 
-/* —— 卡片：细描边 + 轻投影（16px 圆角走 borderRadiusLG 令牌）—— */
+/* —— 卡片：玻璃拟态面板（对标 NexusMind .left-panel/.right-panel 那套）——
+     半透白 + saturate 模糊 + 内圈白描边 + 一层大半径蓝雾投影，圆角 18px。 */
 body .ant-card {
-  border-color: #e6e8ef;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(18px) saturate(1.12);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 18px 44px rgba(37, 99, 235, 0.07);
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+}
+body .ant-card-hoverable:hover {
+  transform: translateY(-2px);
+  border-color: rgba(37, 99, 235, 0.28);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+    0 14px 28px rgba(37, 99, 235, 0.1);
 }
 
-/* —— 表头柔和底色 —— */
+/* —— 卡头：◆ 前缀 + 标题下那道渐变细线（NexusMind panel-header 的签名）—— */
+body .ant-card-head {
+  position: relative;
+  border-bottom: 1px solid rgba(37, 99, 235, 0.1);
+}
+body .ant-card-head::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(to right, rgba(37, 99, 235, 0.25) 0%, rgba(125, 170, 200, 0.18) 45%, transparent 100%);
+  pointer-events: none;
+}
+body .ant-card-head-title::before {
+  content: '◆';
+  margin-right: 8px;
+  font-size: 0.72em;
+  color: #2563eb;
+}
+
+/* —— 表头柔和底色 + 数字列等宽对齐 —— */
 body .ant-table-thead > tr > th {
-  background: #f7f9fc;
+  background: rgba(247, 249, 252, 0.9);
 }
 body .ant-table-thead > tr > th::before {
   background-color: transparent;
+}
+body .ant-table td {
+  font-variant-numeric: tabular-nums;
+}
+body .ant-statistic-content {
+  font-variant-numeric: tabular-nums;
 }
 
 /* —— 标签胶囊化 —— */
@@ -50,8 +99,26 @@ body .ant-tag {
   border-radius: 999px;
   padding-inline: 10px;
 }
+/* antd 预设的"浅底深字"里绿/橙/金三档字色只有 3.0–3.4:1（真机量的 "ok" 标签 3.37），
+   压深一档到 AA 之上；实心色标签（风险等级）走内联白字，不受这里影响。 */
+body .ant-tag-green,
+body .ant-tag-success {
+  color: #1d6b14;
+}
+body .ant-tag-orange,
+body .ant-tag-gold,
+body .ant-tag-warning {
+  color: #8a4005;
+}
 
-/* —— 主按钮：渐变蓝 + 轻投影 —— */
+/* 分页里那个"•••"与前后箭头是跳页入口，antd 给的是 25% 黑（真机 1.83:1），提到正文灰。
+   选择器要压过 antd 运行时注入的那条：它带 css- 哈希类（四级 class），所以这里也得到四级。 */
+body .ant-pagination .ant-pagination-item-link,
+body .ant-pagination .ant-pagination-item-link .ant-pagination-item-container .ant-pagination-item-ellipsis {
+  color: #5a6072;
+}
+
+/* —— 主按钮：渐变蓝 + 轻投影；悬停提亮而不是换色（NexusMind 的 filter 手法）—— */
 body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled) {
   background: linear-gradient(135deg, #2563eb, #1d4ed8);
   border-color: transparent;
@@ -59,7 +126,114 @@ body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled) {
 }
 body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover {
   background: linear-gradient(135deg, #3b82f6, #2563eb);
+  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.28);
+  transform: translateY(-1px);
 }
 body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):active {
   background: linear-gradient(135deg, #1d4ed8, #1e40af);
+  transform: translateY(0);
+}
+/* 次级按钮：白底细描边，悬停给一层主色雾（NexusMind .action-btn.secondary） */
+body .ant-btn-default:not(:disabled):hover {
+  background: rgba(37, 99, 235, 0.06);
+  border-color: rgba(37, 99, 235, 0.4);
+  color: #1d4ed8;
+}
+
+/* —— 焦点环：NexusMind 全站没有 :focus-visible，这条是补它缺的那一课 —— */
+body :focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 0 4px rgba(37, 99, 235, 0.45);
+  border-radius: 8px;
+}
+body .ant-input:focus-visible,
+body .ant-select-focused .ant-select-selector,
+body .ant-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+}
+
+/* —— 横幅内的 KPI 托盘条目（PageHero 的 stats 槽，对标 .overview-stats）——
+     大数在上、小标签在下；数字等宽 + tabular-nums；条目之间一条白 15% 竖线。 */
+body .hero-stat {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  padding: 0 8px;
+}
+body .hero-stat + .hero-stat {
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
+}
+body .hero-stat .ant-statistic {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+}
+body .hero-stat .ant-statistic-title {
+  margin: 2px 0 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.65);
+}
+body .hero-stat .ant-statistic-content {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.1;
+  color: #fff;
+}
+body .hero-stat .ant-statistic-content-suffix {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* —— 空态：图形 + 一句话 + 一个出口（对标 NexusMind .empty-hero）——
+     antd 的 a-empty 只给一张灰图和一行字，值班员看完不知道下一步去哪。 */
+body .empty-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid rgba(37, 99, 235, 0.1);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.06), rgba(99, 102, 241, 0.04));
+  text-align: left;
+}
+body .empty-hero__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  color: #fff;
+  font-size: 20px;
+}
+body .empty-hero__title {
+  margin-bottom: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1d2129;
+}
+body .empty-hero__desc {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4e5969;
+}
+body .empty-hero__action {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2563eb;
+}
+body .empty-hero__action:hover {
+  text-decoration: underline;
 }

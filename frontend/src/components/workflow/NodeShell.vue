@@ -94,7 +94,7 @@ const badge = computed(() => (props.state === null ? '未运行' : style.value.l
   white-space: nowrap;
 }
 .wf-node__type {
-  color: #8c8c8c;
+  color: #5a6072;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .wf-node__meta {
@@ -104,6 +104,6 @@ const badge = computed(() => (props.state === null ? '未运行' : style.value.l
   margin-top: 6px;
   padding-top: 4px;
   border-top: 1px dashed #f0f0f0;
-  color: #8c8c8c;
+  color: #5a6072;
 }
 </style>

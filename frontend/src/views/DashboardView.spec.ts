@@ -333,6 +333,24 @@ describe('空表要说人话也要说下一步', () => {
 })
 
 /**
+ * 智能体表也在第一屏（1280 真机截图里那句英文 "No data" 就是它落的）：
+ * 一个都没注册上来时，中文值班台得说清"为什么是空的"和"去哪儿让它不空"。
+ */
+describe('智能体空表也要说人话', () => {
+  it('没有智能体注册时给出中文说明与下一步入口', async () => {
+    responses()
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const empty = wrapper.find('[data-testid="agents-empty"]')
+    expect(empty.exists(), '智能体空表不能只剩 antd 默认的英文 "No data"').toBe(true)
+    expect(empty.text()).toContain('还没有智能体注册上来')
+    expect(empty.find('.router-link').exists(), '空态要给一个下一步入口').toBe(true)
+    expect(wrapper.text()).not.toContain('No data')
+    wrapper.unmount()
+  })
+})
+
+/**
  * 这张表取的是最近 20 条链路。真机把这台进程演练到 108 条之后量到：卡片只说
  * "最新在上"，看不出 88 条在表外——`/readyz` 的 chain_count 才是总数。
  */

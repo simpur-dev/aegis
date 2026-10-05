@@ -222,6 +222,11 @@ const agentColumns = [
         </span>
         <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
       </template>
+      <template #stats>
+        <div v-for="kpi in kpis" :key="kpi.label" class="hero-stat">
+          <a-statistic :title="kpi.label" :value="kpi.value" :suffix="kpi.suffix" />
+        </div>
+      </template>
     </PageHero>
     <!-- 值班员的任务入口：有单在等就顶到第一屏，和流程页的待办条同一句话、同一个数 -->
     <div v-if="pendingSign !== null && pendingSign > 0" class="dash-todos" data-testid="dashboard-todos">
@@ -237,14 +242,6 @@ const agentColumns = [
       class="dash-error"
     />
     <a-row :gutter="12">
-      <a-col v-for="kpi in kpis" :key="kpi.label" :span="6">
-        <a-card size="small">
-          <a-statistic :title="kpi.label" :value="kpi.value" :suffix="kpi.suffix" />
-        </a-card>
-      </a-col>
-    </a-row>
-
-    <a-row :gutter="12" style="margin-top: 12px">
       <a-col :span="10">
         <a-card :title="gridTitle" size="small" :loading="loading">
           <div class="grid">
@@ -265,7 +262,14 @@ const agentColumns = [
             <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：这一张正是"最近做了什么"，
                  第一屏留一句英文，等于既没说"还没有跑过链路"，也没说去哪儿跑一条。 -->
             <template #emptyText>
-              <div data-testid="chains-empty">还没有链路执行记录。在监测页发起一次演练（激增/背景任一），五段链路就会跑起来并出现在这里。</div>
+              <div class="empty-hero" data-testid="chains-empty">
+                <span class="empty-hero__icon" aria-hidden="true">◇</span>
+                <div>
+                  <div class="empty-hero__title">还没有链路执行记录</div>
+                  <div class="empty-hero__desc">在监测页发起一次演练（激增/背景任一），五段链路就会跑起来并出现在这里。</div>
+                  <router-link class="empty-hero__action" to="/monitor">去监测页发起演练 →</router-link>
+                </div>
+              </div>
             </template>
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'result'">
@@ -289,6 +293,18 @@ const agentColumns = [
       <a-col :span="14">
         <a-card title="智能体在线状态（经总线契约注册）" size="small">
           <a-table :columns="agentColumns" :data-source="agents" :pagination="false" row-key="agent_id" size="small">
+            <!-- 中文值班台的第一屏不能落一句英文 "No data"（与链路表、预警表同一口径）：
+                 空表要说清"为什么是空的"与"去哪儿让它不空"。 -->
+            <template #emptyText>
+              <div class="empty-hero" data-testid="agents-empty">
+                <span class="empty-hero__icon" aria-hidden="true">◇</span>
+                <div>
+                  <div class="empty-hero__title">还没有智能体注册上来</div>
+                  <div class="empty-hero__desc">智能体经总线契约注册；后端起来后它们会逐个出现在这里，跑一次演练即可看到它们接活。</div>
+                  <router-link class="empty-hero__action" to="/monitor">去监测页发起演练 →</router-link>
+                </div>
+              </div>
+            </template>
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'healthy'">
                 <a-tag :color="record.healthy ? 'green' : 'red'">{{ record.healthy ? '在线' : '失联' }}</a-tag>
@@ -322,11 +338,7 @@ const agentColumns = [
 </template>
 
 <style scoped>
-/* KPI 大字走等宽，和 NexusMind 的 .stat-num 一个路数：数字定宽，栏目对得齐。 */
-:deep(.ant-statistic-content) {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 700;
-}
+/* KPI 托盘（.hero-stat）与空态（.empty-hero）的样式在 styles/theme.css：两页共用一份。 */
 .dash-error {
   margin-bottom: 12px;
 }

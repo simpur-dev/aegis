@@ -32,7 +32,7 @@ defineProps<{ chips: ConfigChip[] }>()
   text-overflow: ellipsis;
 }
 .wf-chips__label {
-  color: #8c8c8c;
+  color: #5a6072;
 }
 .wf-chips__value {
   color: #434343;
