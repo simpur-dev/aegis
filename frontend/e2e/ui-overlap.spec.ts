@@ -586,20 +586,28 @@ test.describe('画布节点不变量 @1440', () => {
     await page.waitForSelector('.page-hero', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(2_000)
-    /* 刚进页面时是"新建画布"那份空定义：① 画布上没有节点，小地图里什么都没有，不该挂着；
+    /* 刚进页面时是"新建画布"那份空定义：① 画布上没有节点，小地图里什么都没有，不许把它画出来
+       （但它得**挂在 DOM 里**——落点让位要量它的真实尺寸当禁落区，见下面那条拖拽用例）；
        ② 横幅里"保存定义"此时是禁用态——antd 的禁用样式是"浅底 + 25% 黑字"，落在藏青横幅上
        就是暗底暗字。全局对比度判据对 `.ant-btn[disabled]` 是豁免的（浅底上那是"点不动"的提示，
        不算读不到），横幅里不能豁免，所以单独量一次，并钉住"这里真的有禁用按钮"。 */
     await page.waitForTimeout(1_500)
     const empty = await page.evaluate(() => ({
       nodes: document.querySelectorAll('.wf-node').length,
-      minimap: !!document.querySelector('.vue-flow__minimap'),
+      minimap: (() => {
+        const el = document.querySelector('.vue-flow__minimap')
+        if (!el) return false
+        const s = getComputedStyle(el)
+        return s.visibility !== 'hidden' && s.display !== 'none' && el.getBoundingClientRect().width > 0
+      })(),
+      minimapMounted: !!document.querySelector('.vue-flow__minimap'),
       disabled: document.querySelectorAll('.page-hero__actions button:disabled').length,
     }))
     const heroC = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
-    console.log(`CANVAS[empty] nodes=${empty.nodes} minimap=${empty.minimap} heroBtn=${heroC.heroBtnCount} heroDisabled=${empty.disabled} heroLow=${heroC.heroLowCount}`)
+    console.log(`CANVAS[empty] nodes=${empty.nodes} minimap=${empty.minimap} mounted=${empty.minimapMounted} heroBtn=${heroC.heroBtnCount} heroDisabled=${empty.disabled} heroLow=${heroC.heroLowCount}`)
     expect(empty.nodes, '这条要量的是"空画布"，但画布上已经有节点了').toBe(0)
-    expect(empty.minimap, '空画布上还挂着一个小地图（里面什么都没有，只是块白框）').toBe(false)
+    expect(empty.minimap, '空画布上还画着一个小地图（里面什么都没有，只是块白框）').toBe(false)
+    expect(empty.minimapMounted, '空画布上小地图整个不在 DOM 里——落点让位就拿不到它的尺寸，第一颗节点会被它盖住').toBe(true)
     expect(empty.disabled, '横幅里没有禁用态按钮——这条判据在空跑（"保存定义"此时该是禁用的）').toBeGreaterThan(0)
     expect(heroC.heroBtnCount, '横幅里一个按钮文本都没量到——判据在空跑').toBeGreaterThanOrEqual(2)
     expect(heroC.heroLowCount, `横幅里的按钮在深底上读不清：\n${heroC.heroLow.join('\n')}`).toBe(0)
@@ -715,6 +723,89 @@ test.describe('画布节点不变量 @1440', () => {
     await page.getByRole('button', { name: '自动布局' }).click()
     await page.waitForTimeout(1_800)
     await check('auto-layout')
+  })
+
+  /**
+   * 拖拽落点：第一颗贴着画布右下角落，第二颗几乎压在它上面，第三颗落在别处。
+   * 真机量到四类"看不见"，各自变异验过一条判据：
+   * - 压叠：第二张压住第一张 **389×234px**（落点原样取光标位置，而节点卡有 208px 宽）。
+   * - 出画布：只躲压叠不躲可视区时落到 y=704..957（画布下沿 880）、x 到 1128（画布右 1068）。
+   * - 被浮层盖住：收进框内后又压在小地图那块不透明卡片下（实测 171×102px）。
+   * - **空画布上的第一颗**：那一刻小地图还没挂载 ⇒ 禁落区为空，节点落好后立刻被刚挂载的
+   *   小地图盖住（实测 171×114px）——所以小地图改成"空画布不画但仍在 DOM 里"。
+   * 根因还有 init-fit：空画布时它不跑，第一颗节点落下才 fit 且不带参数，zoom 被顶到 maxZoom=2，
+   * 可视区只剩 414×339 flow 单位（不到两个节点宽）——所以先钉 zoom，再钉症状。
+   */
+  test('连拖三颗节点：不压叠、不出画布、不被浮层盖住、画布不被 fit 放大', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/workflow')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(3_000)
+    const items = page.locator('.wf-palette__item')
+    expect(await items.count(), '节点面板一个都没有——判据在空跑').toBeGreaterThan(3)
+    const canvas = page.locator('.wf__canvas')
+    const frame = (await canvas.boundingBox()) as { width: number; height: number }
+    /* 第一颗就贴着右下角落：那一刻小地图还是"空画布不画"的状态，
+       禁落区必须量得到它的尺寸，否则节点落好之后立刻被刚挂载的小地图盖住。 */
+    await items.nth(0).dragTo(canvas, { targetPosition: { x: frame.width - 40, y: frame.height - 20 } })
+    await page.waitForTimeout(700)
+    await items.nth(1).dragTo(canvas, { targetPosition: { x: frame.width - 28, y: frame.height - 6 } })
+    await page.waitForTimeout(700)
+    await items.nth(2).dragTo(canvas, { targetPosition: { x: 220, y: 200 } })
+    await page.waitForTimeout(900)
+    const m = await page.evaluate(() => {
+      const nodes = [...document.querySelectorAll('.wf-node')]
+      const rect = (el: Element) => el.getBoundingClientRect()
+      const frame = document.querySelector('.wf__canvas')?.getBoundingClientRect()
+      const overlap: string[] = []
+      for (let i = 0; i < nodes.length; i += 1) {
+        for (let j = i + 1; j < nodes.length; j += 1) {
+          const a = rect(nodes[i])
+          const b = rect(nodes[j])
+          const ox = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+          const oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+          if (ox > 4 && oy > 4) {
+            overlap.push(`${(nodes[i].querySelector('.wf-node__title')?.textContent ?? '').trim()} × ${(nodes[j].querySelector('.wf-node__title')?.textContent ?? '').trim()} 压 ${Math.round(ox)}×${Math.round(oy)}px`)
+          }
+        }
+      }
+      const outside = nodes
+        .map((n, i) => {
+          const r = rect(n)
+          if (!frame) return ''
+          const bad = r.left < frame.left - 1 || r.top < frame.top - 1 || r.right > frame.right + 1 || r.bottom > frame.bottom + 1
+          return bad ? `第 ${i + 1} 张出画布（${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.right)},${Math.round(r.bottom)} vs 画布 ${Math.round(frame.left)},${Math.round(frame.top)},${Math.round(frame.right)},${Math.round(frame.bottom)}）` : ''
+        })
+        .filter((s) => s !== '')
+      const titles = nodes.map((n) => (n.querySelector('.wf-node__title')?.textContent ?? '').trim())
+      /* 小地图/缩放控件是画布上的不透明浮层：节点被它们盖住＝看不见，和出画布同一类缺陷。 */
+      const overlays = [...document.querySelectorAll('.vue-flow__minimap, .vue-flow__controls')].map(rect)
+      const covered: string[] = []
+      for (const n of nodes) {
+        const r = rect(n)
+        for (const o of overlays) {
+          const ox = Math.min(r.right, o.right) - Math.max(r.left, o.left)
+          const oy = Math.min(r.bottom, o.bottom) - Math.max(r.top, o.top)
+          if (ox > 4 && oy > 4) {
+            covered.push(`${(n.querySelector('.wf-node__title')?.textContent ?? '').trim()} 被浮层盖住 ${Math.round(ox)}×${Math.round(oy)}px`)
+          }
+        }
+      }
+      const pane = document.querySelector('.vue-flow__transformationpane')
+      const t = pane ? getComputedStyle(pane).transform : ''
+      const zoom = t.startsWith('matrix') ? Number(t.slice(t.indexOf('(') + 1).split(',')[0]) : Number.NaN
+      return { count: nodes.length, overlap, outside, covered, titles, zoom }
+    })
+    console.log(`DROPCOLLIDE nodes=${m.count} titles=${JSON.stringify(m.titles)} overlap=${m.overlap.length} outside=${m.outside.length} covered=${JSON.stringify(m.covered)} zoom=${m.zoom}`)
+    await page.screenshot({ path: 'test-results/ui-audit/canvas-drop.png' })
+    expect(m.count, '三次拖拽后画布上应当有三张节点卡（拖拽没生效＝判据在空跑）').toBe(3)
+    /* 先钉 zoom：init-fit 一旦被顶到 maxZoom，可视区就只有两个节点宽，
+       后面"出画布/被盖住"都是它的下游症状——报根因比报症状有用。 */
+    expect(m.zoom, `拖完三张之后画布 zoom=${m.zoom}，fit 把画布放大了`).toBeLessThanOrEqual(1.001)
+    expect(m.overlap, `拖拽落点压叠：\n${m.overlap.join('\n')}`).toHaveLength(0)
+    expect(m.outside, `让位把节点推出了画布：\n${m.outside.join('\n')}`).toHaveLength(0)
+    expect(m.covered, `落点被画布浮层盖住：\n${m.covered.join('\n')}`).toHaveLength(0)
   })
 })
 

@@ -389,6 +389,11 @@ body .empty-hero__action:hover {
   background: rgba(255, 255, 255, 0.86);
   box-shadow: 0 10px 24px rgba(13, 30, 66, 0.1);
 }
+/* 空画布上这块"什么都没有的白框"不画出来，但要留在 DOM 里——落点让位得量它的真实尺寸当禁落区，
+   否则第一颗贴着右下角落的节点会在落好之后被刚挂载的小地图盖住（`visibility:hidden` 仍占布局）。 */
+.wf__canvas .vue-flow__minimap.is-ghost {
+  visibility: hidden;
+}
 .wf__canvas .vue-flow__controls {
   overflow: hidden;
   border: 1px solid rgba(37, 99, 235, 0.14);

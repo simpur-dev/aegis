@@ -465,6 +465,90 @@ export function nextNodeId(def: WorkflowDef, type: string): string {
   )
 }
 
+/** 节点卡的实际尺寸（`.wf-node` 宽度钉死 208px，高度按最长的摘要条估）。 */
+export const NODE_FOOTPRINT = { width: 208, height: 120 }
+
+/** 画布可视区在 flow 坐标系里的矩形（flow 单位与 zoom 无关：卡片宽恒为 208 flow 单位）。 */
+export interface FlowBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * 落点让位：拖节点进画布时，卡片既要落在可视区里，又不许压住已有节点和不透明浮层。
+ *
+ * 真机量过三处缺陷：
+ * - 往画布同一处连拖两个节点，第二张压住第一张 **389×234px**——落点原样取光标位置，
+ *   而节点卡有 208px 宽。宁可远一点，也不许叠着（叠着之后要一颗颗拖开，比多走几步贵）。
+ * - 只躲压叠不躲可视区时，第二张落到屏幕 y=704..957，而画布下沿是 880——不压叠但整张垂到
+ *   画布外面，看不见等同于没建。所以让位方向必须在可视框里挑。
+ * - 收进框内之后又压在小地图那块不透明卡片下（变异复测 171×102px）——"落下去没反应"的错觉。
+ */
+export function freeDropPosition(
+  taken: Position[],
+  wanted: Position,
+  gap = 24,
+  bounds: FlowBox | null = null,
+  avoid: FlowBox[] = [],
+): Position {
+  const stepX = NODE_FOOTPRINT.width + gap
+  const stepY = NODE_FOOTPRINT.height + gap
+  const collides = (p: Position): boolean =>
+    taken.some((n) => Math.abs(n.x - p.x) < stepX && Math.abs(n.y - p.y) < stepY)
+  /* 卡片以落点为左上角，光标停在画布下沿时卡片会整张伸到框外，所以先把落点收进框内。 */
+  const inside = (p: Position): Position => {
+    if (bounds === null) return { x: p.x, y: p.y }
+    const max = {
+      x: bounds.x + Math.max(0, bounds.width - NODE_FOOTPRINT.width),
+      y: bounds.y + Math.max(0, bounds.height - NODE_FOOTPRINT.height),
+    }
+    return { x: Math.min(Math.max(p.x, bounds.x), max.x), y: Math.min(Math.max(p.y, bounds.y), max.y) }
+  }
+  const fits = (p: Position): boolean =>
+    bounds === null || (inside(p).x === p.x && inside(p).y === p.y)
+  const covered = (p: Position): boolean =>
+    avoid.some(
+      (b) =>
+        p.x < b.x + b.width &&
+        p.x + NODE_FOOTPRINT.width > b.x &&
+        p.y < b.y + b.height &&
+        p.y + NODE_FOOTPRINT.height > b.y,
+    )
+  /* start 已被 inside 收进框内，只有"让位之后"才可能出框。 */
+  const start = inside(wanted)
+  if (!collides(start) && !covered(start)) return start
+  /* 让位方向要挑"往右下"优先：真机第一版按 -ring 先试，结果把第二张推到画布左边外面
+     （屏幕 x=9 而画布左边缘是 240），不压叠但看不见了——同样是要修的缺陷。 */
+  const offsets: { dx: number; dy: number }[] = []
+  for (let ring = 1; ring <= 8; ring += 1) {
+    for (let dx = -ring; dx <= ring; dx += 1) {
+      for (let dy = -ring; dy <= ring; dy += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue
+        offsets.push({ dx, dy })
+      }
+    }
+  }
+  const score = (o: { dx: number; dy: number }): number =>
+    (o.dx < 0 ? 100 : 0) + (o.dy < 0 ? 100 : 0) + Math.max(Math.abs(o.dx), Math.abs(o.dy))
+  offsets.sort((a, b) => score(a) - score(b))
+  const around = (o: { dx: number; dy: number }): Position => ({
+    x: start.x + o.dx * stepX,
+    y: start.y + o.dy * stepY,
+  })
+  const candidates = offsets.map(around)
+  const ideal = candidates.find((p) => !collides(p) && fits(p) && !covered(p))
+  if (ideal !== undefined) return ideal
+  /* 视口很小（例如被 init-fit 顶到 maxZoom）时框内可能真没空位，取舍按"看得见"优先：
+     先要框内且不压叠（被浮层盖住还能平移画布找回来），再退一步只保不压叠。 */
+  const visible = candidates.find((p) => !collides(p) && fits(p))
+  if (visible !== undefined) return visible
+  const crowded = candidates.find((p) => !collides(p))
+  if (crowded !== undefined) return crowded
+  return inside({ x: start.x + stepX * 9, y: start.y })
+}
+
 /** 节点补丁：retry 允许只给单个字段（其余沿用原值），node_id 不在可改集合内。 */
 export type NodePatch = Omit<Partial<NodeDef>, 'retry' | 'node_id'> & { retry?: Partial<RetryPolicy> }
 

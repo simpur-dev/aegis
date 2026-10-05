@@ -29,7 +29,7 @@ import { confirmDiscardUnsaved, installUnsavedGuard } from '@/components/workflo
 import { useWorkflowCanvas } from '@/components/workflow/useWorkflowCanvas'
 
 const store = useWorkflowStore()
-const { view, onConnect, onNodeClick, onPaneClick, onNodeDragStart, onNodeDragStop, onDragOver, onDrop } =
+const { view, fitToGraph, onConnect, onNodeClick, onPaneClick, onNodeDragStart, onNodeDragStop, onDragOver, onDrop } =
   useWorkflowCanvas(store)
 
 async function bootstrap(): Promise<void> {
@@ -55,6 +55,12 @@ async function createDraft(): Promise<void> {
   // 有未保存改动时先确认：一按就清空、只弹一句 toast 的话，重画的成本全在值班员身上
   if (store.isDirty) confirmDiscardUnsaved('新建画布', proceed)
   else proceed()
+}
+
+/** 重排之后把整条链路收进视野——不然重排完节点跑到视口外，看上去像链路被删了。 */
+function autoLayoutAndFit(): void {
+  store.autoLayout()
+  void fitToGraph()
 }
 
 let detachUnsavedGuard: (() => void) | null = null
@@ -136,7 +142,7 @@ onUnmounted(() => {
           保存定义
         </a-button>
         <a-button size="small" @click="createDraft">新建画布</a-button>
-        <a-button size="small" @click="store.autoLayout()">自动布局</a-button>
+        <a-button size="small" @click="autoLayoutAndFit">自动布局</a-button>
         <a-button size="small" @click="store.refreshAll">刷新实例</a-button>
         <span v-if="store.polling" class="wf__polling">实例状态轮询中</span>
       </template>
@@ -156,6 +162,10 @@ onUnmounted(() => {
       <NodePalette class="wf__left" />
 
       <div class="wf__canvas" @drop="onDrop" @dragover="onDragOver">
+        <!-- 这里刻意不开 fit-view-on-init：它跑在"第一颗被测出尺寸的节点"上、且只跑一次，
+             既会被手动拖入的第一颗节点吃掉（之后打开已存定义就不再 fit），又会按 maxZoom 把
+             单颗节点放大到 2.0（真机量到可视区只剩 414×339 flow 单位，第二颗怎么放都出画布）。
+             收拢视野改由 fitToGraph 显式做（见 useWorkflowCanvas），只在换定义时跑、且不许放大。 -->
         <VueFlow
           :nodes="view.nodes"
           :edges="view.edges"
@@ -165,7 +175,6 @@ onUnmounted(() => {
           :min-zoom="0.2"
           :max-zoom="2"
           :default-viewport="{ x: 40, y: 40, zoom: 0.9 }"
-          fit-view-on-init
           @connect="onConnect"
           @node-click="onNodeClick"
           @pane-click="onPaneClick"
@@ -173,8 +182,10 @@ onUnmounted(() => {
           @node-drag-stop="onNodeDragStop"
         >
           <Background pattern-color="#d9d9d9" :gap="16" />
-          <!-- 空画布上小地图里什么都没有，只会剩一块白框；没节点就不渲染 -->
-          <MiniMap v-if="view.nodes.length > 0" />
+          <!-- 空画布上不画小地图（里面什么都没有，只是块白框），但**得挂着**：
+               落点让位要把它的真实尺寸当禁落区——第一颗节点贴着右下角落时它还没挂载，
+               于是禁落区为空，节点落好后立刻被它盖住（真机量到 171×114px）。 -->
+          <MiniMap :class="{ 'is-ghost': view.nodes.length === 0 }" />
           <Controls />
         </VueFlow>
         <p v-if="view.nodes.length === 0" class="wf__canvas-hint">
