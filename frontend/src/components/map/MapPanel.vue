@@ -202,7 +202,10 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
           {{ group.label }} × {{ group.count }}
         </span>
       </div>
-      <a-list v-else size="small" :data-source="props.unlocated">
+      <!-- 上面那句"全部要素均已落到图上"已经说完了，这里再挂一个空列表就会叠出第二句
+           antd 默认的"暂无数据"（真机 @1440 空数据档量到：同一块卡里两句并存，互相打脸）。
+           所以列表只在真有内容时渲染。 -->
+      <a-list v-else-if="props.unlocated.length > 0" size="small" :data-source="props.unlocated">
         <template #renderItem="{ item }">
           <a-list-item>
             <a-space direction="vertical" size="0" style="width: 100%">

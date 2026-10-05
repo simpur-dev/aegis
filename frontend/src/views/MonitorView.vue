@@ -235,6 +235,18 @@ onBeforeUnmount(() => {
             :scroll="{ x: 'max-content' }"
             @change="onTableChange"
           >
+            <template #emptyText>
+              <!-- 空态不能只说"暂无数据"：这一页的读数要么来自演练、要么来自真实上报，
+                   值班员站在这儿想知道的是"那我做什么才会有数"。 -->
+              <div class="empty-hero">
+                <span class="empty-hero__icon" aria-hidden="true">◇</span>
+                <p class="empty-hero__title">这个筛选下没有遥测读数</p>
+                <p class="empty-hero__desc">
+                  换区域或指标看看；也可以直接发起一次演练，链路跑起来就会往这里写读数。
+                </p>
+                <a class="empty-hero__action" href="#" @click.prevent="drill('surge')">发起一次激增演练 →</a>
+              </div>
+            </template>
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'value'">
                 {{ record.value }} {{ record.unit }}

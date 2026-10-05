@@ -8,6 +8,7 @@ import type { TaskUnit, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
 import PageHero from '@/components/PageHero.vue'
 import FreshnessBar from '@/components/FreshnessBar.vue'
+import { attachFocusTrap, type FocusTrapHandle } from '@/composables/useFocusTrap'
 import { formatOperatingTime } from '@/utils/clock'
 
 const REFRESH_MS = 15_000
@@ -170,7 +171,24 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (timer !== null) clearInterval(timer)
   timer = null
+  drawerTrap?.detach()
+  drawerTrap = null
 })
+
+/**
+ * 抽屉的键盘焦点围栏。真机量过：打开详情抽屉后按 Tab，两次之内焦点就溜到 body，
+ * 接着开始走顶栏链接——人在抽屉里、键盘在页面外，Esc 也关不掉（按键监听在抽屉上）。
+ * antd-vue 的 Modal 自带焦点锁，Drawer 没有，这一层自己补。
+ */
+let drawerTrap: FocusTrapHandle | null = null
+function onDrawerVisible(visible: boolean): void {
+  drawerTrap?.detach()
+  drawerTrap = null
+  if (!visible) return
+  drawerTrap = attachFocusTrap(document.querySelector('.ant-drawer-content-wrapper'), () => {
+    open.value = false
+  })
+}
 </script>
 
 <template>
@@ -234,7 +252,7 @@ onBeforeUnmount(() => {
       </a-table>
     </a-card>
 
-    <a-drawer v-model:open="open" :width="720" title="预警详情与处置任务">
+    <a-drawer v-model:open="open" :width="720" title="预警详情与处置任务" @after-visible-change="onDrawerVisible">
       <template v-if="current">
         <a-descriptions :column="1" bordered size="small">
           <!-- 助手页的「解释一条预警」要 wrn_ 编号，此前整个界面没有一处显示它，

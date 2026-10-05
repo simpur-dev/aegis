@@ -27,6 +27,8 @@ const WIDTHS = [1440, 1280, 1200, 1100, 1000, 900]
 
 /** 对比度豁免：这些位置的字按 antd/交互语义本就该是"非正文"色，不是内容读不到。 */
 const CONTRAST_ALLOW = [
+  /* 禁用态为什么豁免：浅底上灰字＝"点不动"的提示（WCAG 1.4.11 也把"非活动组件"排除在外）。
+     但**深色横幅里不成立**——那边是暗底暗字，所以 `.page-hero__actions` 另走 heroLow 一条，不豁免。 */
   '.ant-btn[disabled]',
   '.ant-btn-loading',
   '.ant-select-selection-placeholder',
@@ -413,6 +415,50 @@ for (const width of [1440, 1280, 1100, 1000]) {
 }
 
 /**
+ * 弹层里的键盘焦点：此前"焦点态"那一项只走正文（Tab 七页），弹层打开后焦点去哪儿没人管。
+ * 键盘用户开一个抽屉，若 Tab 会溜到背后的表格上，就再也回不到弹层里（也关不掉）。
+ * 判两条：Tab 十二次焦点始终在弹层内；Esc 能关掉。
+ */
+test.describe('弹层焦点不外泄 @1440', () => {
+  for (const c of OVERLAYS) {
+    test(`${c.name}：Tab 十二步焦点不逃出弹层，Esc 关得掉`, async ({ page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.goto(c.path)
+      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForLoadState('networkidle').catch(() => {})
+      await page.waitForTimeout(2_500)
+      await page.locator(c.trigger).first().click()
+      await page.waitForSelector(c.scope, { timeout: 15_000 })
+      await page.waitForTimeout(1_200)
+      let inside = 0
+      const escapes: string[] = []
+      for (let i = 0; i < 12; i += 1) {
+        await page.keyboard.press('Tab')
+        const a = await page.evaluate(() => {
+          const el = document.activeElement as HTMLElement | null
+          if (!el || el === document.body) return { inOverlay: false, what: 'body' }
+          return {
+            /* 判"有没有跑到页面背后去"，不是"是否严格在 content 里"：rc-dialog 的焦点锁
+               会在 .ant-modal-wrap 里放哨兵节点，落到哨兵上不算逃出去。 */
+            inOverlay: !!el.closest('.ant-modal, .ant-modal-wrap, .ant-drawer'),
+            what: `${el.tagName.toLowerCase()}.${String(el.className ?? '').split(/\s+/)[0]}`,
+          }
+        })
+        if (a.inOverlay) inside += 1
+        else escapes.push(`第 ${i + 1} 次 Tab 落在弹层外：${a.what}`)
+      }
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(700)
+      const stillOpen = await page.locator(c.scope).first().isVisible().catch(() => false)
+      console.log(`FOCUSTRAP ${c.name} inside=${inside}/12 escapes=${escapes.length} stillOpen=${stillOpen}`)
+      expect(inside, `${c.name}：弹层里一次都没落到焦点——判据在空跑`).toBeGreaterThan(0)
+      expect(escapes, `${c.name}：焦点逃出弹层\n${escapes.join('\n')}`).toHaveLength(0)
+      expect(stillOpen, `${c.name}：Esc 关不掉，键盘用户出不去`).toBe(false)
+    })
+  }
+})
+
+/**
  * 故障态与空数据态过同一套判据。这两档恰恰是文案最长的时候（错误横幅、"取不到"的说明），
  * 而此前 54 项全在"后端正常 + 有数据"下跑——降级画面没人看过一眼。
  * 判据不放宽：重叠/出屏/裁字/折行/对比度一律为 0；只把 leafCount 下限降到 12
@@ -471,24 +517,53 @@ ${r.navTruncated.join('\n')}`).toHaveLength(0)
 test.describe('空数据态不变量 @1440', () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
-    await page.route('**/api/v1/warnings*', (route) => route.fulfill({ json: { items: [], total: 0 } }))
-    await page.route('**/api/v1/events*', (route) => route.fulfill({ json: { items: [] } }))
+    await page.route('**/api/v1/warnings*', (route) => route.fulfill({ json: { items: [], total: 0, count: 0 } }))
+    await page.route('**/api/v1/events*', (route) => route.fulfill({ json: { items: [], count: 0 } }))
+    await page.route('**/api/v1/telemetry*', (route) => route.fulfill({ json: { items: [], count: 0 } }))
+    await page.route('**/api/v1/agents*', (route) => route.fulfill({ json: { items: [], count: 0 } }))
+    await page.route('**/api/v1/collaboration*', (route) => route.fulfill({ json: { items: [], count: 0 } }))
+    await page.route('**/api/v1/stations*', (route) => route.fulfill({ json: { items: [], count: 0 } }))
   })
-  for (const [name, path] of [['warnings', '/warnings'], ['dashboard', '/dashboard']] as const) {
+  for (const [name, path] of [
+    ['warnings', '/warnings'],
+    ['dashboard', '/dashboard'],
+    ['monitor', '/monitor'],
+    ['map', '/map'],
+  ] as const) {
     test(`没有数据时 ${name} 的空态排版达标`, async ({ page }) => {
       await page.goto(path)
       await page.waitForSelector('.page-hero', { timeout: 45_000 })
       await page.waitForTimeout(2_500)
       const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
-      const emptyText = await page.evaluate(() => {
+      const empty = await page.evaluate(() => {
         /* 只认 .empty-hero：上一版写了 '.empty-hero, .ant-empty'，于是态势页其实是
            匹配到了风险网格那块 a-empty 才过的——空态判据不能认"页面上随便哪块空态" */
-        const el = document.querySelector('.empty-hero')
-        return el ? (el.textContent ?? '').trim().slice(0, 40) : null
+        const heroes = [...document.querySelectorAll('.empty-hero')].map((el) => ({
+          text: (el.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 30),
+          action: !!el.querySelector('.empty-hero__action'),
+        }))
+        /* antd 那句默认的"暂无数据"不算空态：它只说"这里没有东西"，
+           不说为什么没有、下一步去哪。地图页真机就量到过它和"全部要素均已落到图上"叠在一起。 */
+        const bare = [...document.querySelectorAll('.ant-empty-description')].filter(
+          (el) => (el.textContent ?? '').trim() === '暂无数据',
+        ).length
+        /* 自己写了说明的那类空态（地图的"未选中要素"）也算空态，只是它不需要"下一步去哪"——
+           它是选择提示，不是"数据缺席"。 */
+        const custom = [...document.querySelectorAll('.ant-empty')].filter((el) => {
+          const d = (el.querySelector('.ant-empty-description')?.textContent ?? '').trim()
+          return d !== '' && d !== '暂无数据'
+        }).length
+        return { heroes, bare, custom }
       })
-      console.log(`EMPTY ${name} leaves=${r.leafCount} overlap=${r.overlapCount} clipped=${r.clippedCount} folded=${r.foldedCount} lowContrast=${r.lowContrastCount} empty=${JSON.stringify(emptyText)}`)
+      console.log(
+        `EMPTY ${name} leaves=${r.leafCount} overlap=${r.overlapCount} clipped=${r.clippedCount} folded=${r.foldedCount} lowContrast=${r.lowContrastCount} heroes=${empty.heroes.length} withAction=${empty.heroes.filter((h) => h.action).length} bare=${empty.bare} custom=${empty.custom}`,
+      )
       await page.screenshot({ path: `test-results/ui-audit/empty-${name}.png` })
-      expect(emptyText, `${name} 空态没渲染出来——这项目判据就没了对象`).not.toBeNull()
+      expect(empty.heroes.length + empty.bare + empty.custom, `${name} 一个空态都没渲染出来——这项目判据就没了对象`).toBeGreaterThan(0)
+      expect(empty.bare, `${name} 还有 ${empty.bare} 处 antd 默认"暂无数据"（不说为什么没有、也不说下一步去哪）`).toBe(0)
+      if (empty.heroes.length > 0) {
+        expect(empty.heroes.some((h) => h.action), `${name} 的空态没有"下一步去哪"那个出口`).toBe(true)
+      }
       expect(r.overlapCount, `${name} 空态重叠：\n${r.overlap.join('\n')}`).toBe(0)
       expect(r.clippedCount, `${name} 空态文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
       expect(r.foldedCount, `${name} 空态按钮折行：\n${r.folded.join('\n')}`).toBe(0)
