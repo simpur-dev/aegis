@@ -280,10 +280,17 @@ onMounted(() => void loadCapabilities())
         >
           {{ spec.title }}{{ spec.requires_confirmation ? '（需确认）' : '' }}{{ spec.available ? '' : `：缺 ${spec.missing.join('、')}` }}
         </button>
-        <div class="muted" data-testid="caps-ttl">
-          会话保留 {{ Math.round(capabilities.session_ttl_seconds / 60) }} 分钟 ｜ 单会话最多 {{ capabilities.max_pending_actions }} 个待确认动作 ｜
-          解析腿 {{ capabilities.semantic_parser ? '在位' : '缺席' }}
-        </div>
+        <!-- 三条口径挤一行要回头重读；与指标页同一套 → 列表，
+             解析腿"缺席"用虚线胶囊——实心色标签在界面上意味着"这是量出来的状态" -->
+        <ul class="tip-list" data-testid="caps-ttl">
+          <li>会话保留 {{ Math.round(capabilities.session_ttl_seconds / 60) }} 分钟</li>
+          <li>单会话最多 {{ capabilities.max_pending_actions }} 个待确认动作</li>
+          <li>
+            解析腿
+            <span v-if="!capabilities.semantic_parser" class="pill-dashed">缺席</span>
+            <span v-else>在位</span>
+          </li>
+        </ul>
       </div>
     </a-card>
 

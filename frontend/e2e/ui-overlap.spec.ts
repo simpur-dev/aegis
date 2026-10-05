@@ -58,25 +58,34 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
      包围盒仍在文档坐标里躺着，会和页脚之类的东西几何相交却没真的叠上去。
      逐层裁到最近的可滚动祖先的可视区，完全在外面就判 null（不参与重叠/出屏判定）。 */
   type Rect = { left: number; top: number; right: number; bottom: number }
+  const clip = (box: Rect, a: Rect): Rect | null => {
+    const next = {
+      left: Math.max(box.left, a.left),
+      top: Math.max(box.top, a.top),
+      right: Math.min(box.right, a.right),
+      bottom: Math.min(box.bottom, a.bottom),
+    }
+    return next.right - next.left <= 0 || next.bottom - next.top <= 0 ? null : next
+  }
+  const viewportBox = (): Rect => ({ left: 0, top: 0, right: innerWidth, bottom: innerHeight })
   const paintedRect = (el: Element): Rect | null => {
     const r0 = el.getBoundingClientRect()
     let box: Rect = { left: r0.left, top: r0.top, right: r0.right, bottom: r0.bottom }
-    let anc = el.parentElement
+    /* fixed 元素不受滚动容器裁切（它相对视口定位）。上一版没区分这一点，
+       于是把"盖住顶栏的一条 fixed 错误条"判成没重叠——变异实验里暴露的。 */
+    let anc: Element | null = el.parentElement
     while (anc) {
       const cs = getComputedStyle(anc)
+      if (cs.position === 'fixed') break
       if (/auto|scroll|hidden|clip/.test(`${cs.overflowX} ${cs.overflowY}`)) {
         const a = anc.getBoundingClientRect()
-        box = {
-          left: Math.max(box.left, a.left),
-          top: Math.max(box.top, a.top),
-          right: Math.min(box.right, a.right),
-          bottom: Math.min(box.bottom, a.bottom),
-        }
-        if (box.right - box.left <= 0 || box.bottom - box.top <= 0) return null
+        const next = clip(box, { left: a.left, top: a.top, right: a.right, bottom: a.bottom })
+        if (!next) return null
+        box = next
       }
       anc = anc.parentElement
     }
-    return box
+    return clip(box, viewportBox())
   }
   const visible = (el: Element) => {
     const cs = getComputedStyle(el)
@@ -244,11 +253,18 @@ for (const width of WIDTHS) {
       test(`七页之一 ${name}：无重叠、不出屏、无裁字、顶栏不静默裁切、对比度达标、步进器居中`, async ({ page }) => {
         await page.goto(path)
         await page.waitForSelector('.page-hero', { timeout: 45_000 })
-        /* 先等网络静再量：整批跑（54 项）时后端被前面几页拖慢，只 sleep 固定时长会量到
-           "数据还没落地"的半成品页面，leafCount 下限会误报成空跑（隔离跑不复现、整批跑偶发）。 */
-        await page.waitForLoadState('networkidle')
+        /* 先等网络静 + 再"量到内容够了才继续"：整批跑（71 项）时前面的地图项要吃十几秒 GPU，
+           监测页的台账表会晚于固定 sleep 才落地，leafCount 下限就被误触发
+           （隔离跑全绿、整批偶发红，量的都是同一个页面）。这不是页面缺陷，是探针的等待方式。
+           重试到 12 秒还起不来，那就当真有问题处理。 */
+        await page.waitForLoadState('networkidle').catch(() => {})
         await page.waitForTimeout(name === 'map' ? 12_000 : 2_500)
-        const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
+        let r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
+        for (let attempt = 0; attempt < 6 && r.leafCount <= 30; attempt++) {
+          console.log(`RETRY ${name}@${width} leafCount=${r.leafCount} 还没落地，等 2s 再量`)
+          await page.waitForTimeout(2_000)
+          r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
+        }
         console.log(`UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} centerOffset=${r.centerOffset}`)
         expect(r.leafCount, `${name}@${width} 页面一个文本节点都没看到——判据在空跑`).toBeGreaterThan(30)
         expect(r.overlapCount, `${name}@${width} 重叠明细：\n${r.overlap.join('\n')}`).toBe(0)
@@ -276,8 +292,7 @@ const OVERLAYS: Array<{ name: string; path: string; trigger: string; scope: stri
 ]
 
 for (const width of [1440, 1280, 1100, 1000]) {
-  test.describe(`弹层内不变量 @${width}`, () => {
-    test.beforeEach(async ({ page }) => {
+  test.describe(`弹层内不变量 @${width}`, () => {    test.beforeEach(async ({ page }) => {
       await page.setViewportSize({ width, height: 900 })
     })
     for (const c of OVERLAYS) {
@@ -302,3 +317,115 @@ for (const width of [1440, 1280, 1100, 1000]) {
     }
   })
 }
+
+/**
+ * 故障态与空数据态过同一套判据。这两档恰恰是文案最长的时候（错误横幅、"取不到"的说明），
+ * 而此前 54 项全在"后端正常 + 有数据"下跑——降级画面没人看过一眼。
+ * 判据不放宽：重叠/出屏/裁字/折行/对比度一律为 0；只把 leafCount 下限降到 12
+ * （降级页本就少几块内容，但仍必须有顶栏 + 横幅 + 那句"为什么是空的"）。
+ */
+const killBackend = async (page: import('@playwright/test').Page) => {
+  await page.route('**/readyz', (route) => route.abort())
+  await page.route('**/api/**', (route) => route.abort())
+}
+
+for (const width of [1440, 1100]) {
+  test.describe(`故障态不变量 @${width}`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 })
+      await killBackend(page)
+    })
+    for (const [name, path] of PAGES) {
+      test(`后端不可达时 ${name} 仍不重叠、不出屏、不裁字、对比度达标`, async ({ page }) => {
+        await page.goto(path)
+        await page.waitForSelector('.page-hero', { timeout: 45_000 })
+        await page.waitForTimeout(3_000)
+        const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
+        console.log(`FAULT ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} lowContrast=${r.lowContrastCount}`)
+        await page.screenshot({ path: `test-results/ui-audit/fault-${name}-${width}.png` })
+        expect(r.leafCount, `${name}@${width} 故障态只看到 ${r.leafCount} 个文本节点——判据在空跑`).toBeGreaterThanOrEqual(12)
+        expect(r.overlapCount, `${name}@${width} 故障态重叠：\n${r.overlap.join('\n')}`).toBe(0)
+        expect(r.beyondCount, `${name}@${width} 故障态出屏：\n${r.beyond.join('\n')}`).toBe(0)
+        expect(r.clippedCount, `${name}@${width} 故障态文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
+        expect(r.foldedCount, `${name}@${width} 故障态按钮折行：\n${r.folded.join('\n')}`).toBe(0)
+        expect(r.lowContrastCount, `${name}@${width} 故障态对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
+      })
+    }
+  })
+}
+
+test.describe('空数据态不变量 @1440', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.route('**/api/v1/warnings*', (route) => route.fulfill({ json: { items: [], total: 0 } }))
+    await page.route('**/api/v1/events*', (route) => route.fulfill({ json: { items: [] } }))
+  })
+  for (const [name, path] of [['warnings', '/warnings'], ['dashboard', '/dashboard']] as const) {
+    test(`没有数据时 ${name} 的空态排版达标`, async ({ page }) => {
+      await page.goto(path)
+      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForTimeout(2_500)
+      const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
+      const emptyText = await page.evaluate(() => {
+        /* 只认 .empty-hero：上一版写了 '.empty-hero, .ant-empty'，于是态势页其实是
+           匹配到了风险网格那块 a-empty 才过的——空态判据不能认"页面上随便哪块空态" */
+        const el = document.querySelector('.empty-hero')
+        return el ? (el.textContent ?? '').trim().slice(0, 40) : null
+      })
+      console.log(`EMPTY ${name} leaves=${r.leafCount} overlap=${r.overlapCount} clipped=${r.clippedCount} folded=${r.foldedCount} lowContrast=${r.lowContrastCount} empty=${JSON.stringify(emptyText)}`)
+      await page.screenshot({ path: `test-results/ui-audit/empty-${name}.png` })
+      expect(emptyText, `${name} 空态没渲染出来——这项目判据就没了对象`).not.toBeNull()
+      expect(r.overlapCount, `${name} 空态重叠：\n${r.overlap.join('\n')}`).toBe(0)
+      expect(r.clippedCount, `${name} 空态文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
+      expect(r.foldedCount, `${name} 空态按钮折行：\n${r.folded.join('\n')}`).toBe(0)
+      expect(r.lowContrastCount, `${name} 空态对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
+    })
+  }
+})
+
+/**
+ * 键盘焦点态：第四批补的 `:focus-visible` 焦点环只有样式、没有证据。
+ * 这里按 Tab 走一遍，要求每落一次焦点：①焦点元素确实有可见指示
+ * （box-shadow 或 outline，不是靠颜色）；②它没被滚动容器裁到看不见。
+ *
+ * 变异量出来的口径：把我们的 `body :focus-visible` 规则改名后，"有可见指示"这条**不会红**——
+ * antd 自己给按钮/输入框也画了焦点框。所以这条判据守的是"用户看得见焦点"这件事，
+ * 不是"我们的规则生效"；后者另用 brandRing（至少一处焦点环用主色蓝）钉住。
+ */
+test.describe('键盘焦点态 @1440', () => {
+  test('Tab 走七页：每个焦点都有可见指示且不被裁到看不见', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const problems: string[] = []
+    let brandRings = 0
+    for (const [, path] of PAGES) {
+      await page.goto(path)
+      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForTimeout(2_000)
+      for (let i = 0; i < 10; i++) {
+        await page.keyboard.press('Tab')
+        const info = await page.evaluate(() => {
+          const el = document.activeElement as HTMLElement | null
+          if (!el || el === document.body) return null
+          const cs = getComputedStyle(el)
+          const r = el.getBoundingClientRect()
+          return {
+            tag: el.tagName.toLowerCase(),
+            cls: (typeof el.className === 'string' ? el.className : '').trim().split(/\s+/).slice(0, 2).join('.'),
+            text: (el.textContent ?? '').trim().slice(0, 14),
+            ring: cs.boxShadow !== 'none' || parseFloat(cs.outlineWidth) > 0,
+            brand: cs.boxShadow.includes('37, 99, 235'),
+            inView: r.top >= -1 && r.left >= -1 && r.bottom <= innerHeight + 1 && r.right <= innerWidth + 1,
+            zero: r.width < 2 || r.height < 2,
+          }
+        })
+        if (!info || info.zero) continue
+        if (info.brand) brandRings++
+        if (!info.ring) problems.push(`${path} 第${i + 1}次 Tab：<${info.tag}.${info.cls}> "${info.text}" 没有可见焦点指示`)
+        if (!info.inView) problems.push(`${path} 第${i + 1}次 Tab：<${info.tag}.${info.cls}> "${info.text}" 焦点落在视口外`)
+      }
+    }
+    console.log(`FOCUS problems=${problems.length} brandRings=${brandRings}`)
+    expect(problems, `键盘焦点态问题：\n${problems.slice(0, 12).join('\n')}`).toHaveLength(0)
+    expect(brandRings, '70 次 Tab 里一处主色焦点环都没有——`:focus-visible` 那条规则可能整块失效了').toBeGreaterThan(0)
+  })
+})

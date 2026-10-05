@@ -194,6 +194,40 @@ body .hero-stat .ant-statistic-content-suffix {
   color: rgba(255, 255, 255, 0.65);
 }
 
+/* "使用提示"式列表与 dashed 状态胶囊（对标 NexusMind .tip-list / .pill--pending）：
+   指标页与助手页共用，所以放基座而不是页面里。→ 当项目符号，中文行读起来不用回头重读。 */
+body .tip-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+body .tip-list li {
+  position: relative;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+body .tip-list li::before {
+  content: '→';
+  position: absolute;
+  left: 0;
+  color: #2563eb;
+  font-weight: 700;
+}
+/* "没量过 / 不在这台机器上"用虚线胶囊：实心色标签在界面上意味着"这是测出来的状态" */
+body .pill-dashed {
+  display: inline-block;
+  margin: 0 2px;
+  padding: 1px 8px;
+  border: 1px dashed #b8bec9;
+  border-radius: 999px;
+  background: transparent;
+  color: #5a6072;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
 /* —— 空态：图形 + 一句话 + 一个出口（对标 NexusMind .empty-hero）——
      antd 的 a-empty 只给一张灰图和一行字，值班员看完不知道下一步去哪。 */
 body .empty-hero {

@@ -235,39 +235,7 @@ onBeforeUnmount(() => {
   transform-origin: 22px 22px;
   transition: stroke-dashoffset 0.6s ease-out;
 }
-/* "使用提示"式列表（NexusMind 用 → 当项目符号）：一条一句，读的人不用回头重读 */
-.tip-list {
-  margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
-}
-.tip-list li {
-  position: relative;
-  padding-left: 16px;
-  font-size: 12px;
-  line-height: 1.8;
-}
-.tip-list li::before {
-  content: '→';
-  position: absolute;
-  left: 0;
-  color: #2563eb;
-  font-weight: 700;
-}
-/* "没量过"要一眼看出来（对标 NexusMind 的 dashed pending 胶囊）：
-   透明底 + 虚线边，和实心色标签区分开——实心在界面上意味着"这是个测出来的状态" */
-.pill-dashed {
-  display: inline-block;
-  margin: 0 2px;
-  padding: 1px 8px;
-  border: 1px dashed #b8bec9;
-  border-radius: 999px;
-  background: transparent;
-  color: #5a6072;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
+/* .tip-list 与 .pill-dashed 在 styles/theme.css（助手页共用一份） */
 /* 指标大数字的等宽托盘样式（.hero-stat）在 styles/theme.css，与态势页共用一份。 */
 /* 取数失败的原因要看得见：只有 toast 的话，三秒后页面就只剩一排看着正常的数字 */
 .metrics__error {
