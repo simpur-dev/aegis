@@ -21,7 +21,10 @@ body {
   accent-color: #2563eb;
 }
 
-/* —— 渐变滚动条 —— */
+/* —— 渐变滚动条 ——
+   色相走 NexusMind **蓝系那一支**（Home.vue:741-773 的 #93c5fd→#60a5fa）。
+   早先这版抄的是它另一支（紫青 #a7f9ff→#887dff→#ff68d6），而我们的口径是"只移植蓝系"，
+   所以这是一处真走偏；uiTheme.spec.ts 里补了一条源码门禁盯着，别再漂回去。 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -30,11 +33,18 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
   border-radius: 999px;
-  background: linear-gradient(180deg, #a7f9ff, #887dff);
+  background: linear-gradient(180deg, #93c5fd, #60a5fa) padding-box;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #887dff, #ff68d6);
+  background: linear-gradient(180deg, #60a5fa, #3b82f6) padding-box;
+}
+/* Firefox 不认 ::-webkit-scrollbar-* */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #93c5fd transparent;
 }
 
 /* —— 卡片：玻璃拟态面板（对标 NexusMind .left-panel/.right-panel 那套）——
@@ -94,21 +104,82 @@ body .ant-statistic-content {
   font-variant-numeric: tabular-nums;
 }
 
-/* —— 标签胶囊化 —— */
+/* —— 标签胶囊化 ——
+   移植 NexusMind `.badge` 三件套（Step1GraphBuild.vue:630-662）：**底色雾 12% + 一圈同色 1px 描边 +
+   压深的字**，10px/600 大写；我们内容是中文，字号留 11px（10px 中文低于可读线），不做 uppercase。 */
 body .ant-tag {
   border-radius: 999px;
-  padding-inline: 10px;
+  padding: 1px 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+body .ant-tag-green,
+body .ant-tag-success {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+body .ant-tag-orange,
+body .ant-tag-gold,
+body .ant-tag-warning {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.2);
+}
+body .ant-tag-blue,
+body .ant-tag-processing {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+body .ant-tag-red,
+body .ant-tag-error {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.2);
 }
 /* antd 预设的"浅底深字"里绿/橙/金三档字色只有 3.0–3.4:1（真机量的 "ok" 标签 3.37），
    压深一档到 AA 之上；实心色标签（风险等级）走内联白字，不受这里影响。 */
 body .ant-tag-green,
 body .ant-tag-success {
-  color: #1d6b14;
+  color: #166534;
 }
 body .ant-tag-orange,
 body .ant-tag-gold,
 body .ant-tag-warning {
   color: #8a4005;
+}
+body .ant-tag-red,
+body .ant-tag-error {
+  color: #b91c1c;
+}
+/* 上面那套"雾底 + 压深字"只在**浅底**成立。横幅是藏青的，12% 的橙雾叠上去底色只有 rgb(41,57,56)，
+   再压 `#8a4005` 就是暗底暗字（真机量的 "语义服务未配置" ratio=1.63）。
+   深色底上反过来：**底色压深、字提亮**，语义靠色相而不是靠深浅。 */
+.page-hero .ant-tag {
+  border-width: 1px;
+  border-style: solid;
+}
+.page-hero .ant-tag-green,
+.page-hero .ant-tag-success {
+  background: rgba(34, 197, 94, 0.16);
+  border-color: rgba(110, 231, 183, 0.45);
+  color: #6ee7b7;
+}
+.page-hero .ant-tag-orange,
+.page-hero .ant-tag-gold,
+.page-hero .ant-tag-warning {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fbbf24;
+}
+.page-hero .ant-tag-red,
+.page-hero .ant-tag-error {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(252, 165, 165, 0.45);
+  color: #fca5a5;
+}
+.page-hero .ant-tag-blue,
+.page-hero .ant-tag-processing {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(147, 197, 253, 0.45);
+  color: #93c5fd;
 }
 
 /* 分页里那个"•••"与前后箭头是跳页入口，antd 给的是 25% 黑（真机 1.83:1），提到正文灰。
@@ -283,6 +354,10 @@ body .empty-hero__action:hover {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
   box-shadow: none;
+  /* 横幅里的动作钮是这一页的主入口，antd small 只有 24px 高，在值班台上偏小。
+     NexusMind 给主操作的是 46px 全宽钮（Step1GraphBuild.vue:988-1003）；深底横幅里放 46 会压过标题，
+     取 36px——比 small 高一档，又不至于把横幅头部撑变形。 */
+  min-height: 36px;
 }
 .page-hero .ant-btn:not(:disabled):hover {
   border-color: rgba(255, 255, 255, 0.6);

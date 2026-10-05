@@ -90,6 +90,14 @@ const streamLabel = computed<string>(() => {
 })
 /** 胶囊窄起来会省略号，完整那句放 title 里。 */
 const streamHint = computed<string>(() => (health.value === null ? '事件流已中断：后端不可达' : streamLabel.value))
+/** 单胶囊里三句话各自的全称（版本号从可见文案挪到这里）。 */
+const statusTitle = computed<string>(() =>
+  [
+    health.value ? `后端在线 v${health.value.version}` : '后端不可达：取数与操作都会失败',
+    streamHint.value,
+    `最近事件 ${events.value.length} 条`,
+  ].join(' ｜ '),
+)
 </script>
 
 <template>
@@ -123,16 +131,21 @@ const streamHint = computed<string>(() => (health.value === null ? '事件流已
           </div>
         </div>
 
-        <div class="nav-status">
-          <span class="status-pill" :title="health ? `后端在线 v${health.version}` : '后端不可达：取数与操作都会失败'">
+        <!-- 右列是**一枚**胶囊里装三条真话（对标 NexusMind Process.vue:2176-2187 的单胶囊 .nav-status：
+             min-width 180 / padding 8px 12px / 999 圆角 / 白 56% 底 / #4E5969 12px）。
+             此前是三枚独立胶囊，@1440 就装不下：在线文案 316px、故障文案 374px，都大于 295px 的列宽，
+             只能靠省略号截断（真机截图里 "后端在线 v0…" / "事件流已…"）。合成一枚后 273px / 285px，两档都放得下。
+             版本号挪进 title（现场支持要的是 hover 能看到，不是永远占 51px）。 -->
+        <div class="nav-status" :title="statusTitle">
+          <span class="status-fact">
             <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
-            <span class="status-pill__text">{{ health ? `后端在线 v${health.version}` : '后端不可达' }}</span>
+            <span class="status-pill__text">{{ health ? '后端在线' : '后端不可达' }}</span>
           </span>
-          <span class="status-pill" data-testid="stream-badge" :title="streamHint">
+          <span class="status-fact" data-testid="stream-badge">
             <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
             <span class="status-pill__text">{{ streamLabel }}</span>
           </span>
-          <span class="status-pill" title="最近事件">
+          <span class="status-fact" data-testid="events-badge" title="最近事件条数">
             <span class="events-count">{{ events.length }}</span>
             <span>事件</span>
           </span>
@@ -311,35 +324,41 @@ const streamHint = computed<string>(() => (health.value === null ? '事件流已
   color: #1d4ed8;
 }
 
-/* —— 右侧：状态胶囊 —— */
+/* —— 右侧：状态胶囊（一枚，里面三条真话）—— */
 .nav-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
   justify-self: end;
-  min-width: 0;
-  /* 右列此前会往左长出轨道之外（真机 @1440 故障态：内容 374px 撞进 295px 的列，
-     压住步进器第 7 档 78px）。胶囊是 nowrap 的，flex 项默认 min-width:auto，
-     于是整列的 min-content 比轨道还宽、`1fr` 也压不住——得让胶囊自己可缩。 */
+  /* NexusMind 的 .nav-status 原值：min-width 180 / padding 8px 12px / 999 圆角 /
+     白 56% 底 / 1px 主色 12% 描边 / #4E5969 12px（Process.vue:2176-2187） */
+  min-width: 180px;
   max-width: 100%;
-  overflow: hidden;
-}
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex: 0 1 auto;
-  min-width: 0;
-  padding: 6px 12px;
+  gap: 10px;
+  padding: 8px 12px;
   border: 1px solid rgba(37, 99, 235, 0.12);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.56);
   color: #4e5969;
   font-size: 12px;
   font-weight: 600;
+  overflow: hidden;
+}
+.status-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
 }
-/* 挤不下时省略号收尾（完整那句在 title 里），不许无声裁字、更不许顶开步进器 */
+/* 三条之间各有一道发丝分隔线（NexusMind .console-divider 那道线的做法） */
+.status-fact + .status-fact {
+  flex: 0 1 auto;
+  padding-left: 10px;
+  border-left: 1px solid rgba(37, 99, 235, 0.14);
+}
+/* 挤不下时省略号收尾（全称在 title 里），不许无声裁字、更不许顶开步进器 */
 .status-pill__text {
   min-width: 0;
   overflow: hidden;
@@ -418,8 +437,15 @@ const streamHint = computed<string>(() => (health.value === null ? '事件流已
   .status-pill__text {
     display: none;
   }
-  .status-pill {
-    padding: 6px 8px;
+  /* 文字收了，分隔线与它的留白也得跟着收——不然三个点之间空荡荡，看着像坏了 */
+  .status-fact + .status-fact {
+    padding-left: 0;
+    border-left: none;
+  }
+  .nav-status {
+    gap: 7px;
+    min-width: 0;
+    padding: 8px 10px;
   }
 }
 </style>

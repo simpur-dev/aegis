@@ -274,6 +274,27 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     }
   }
 
+  /* 顶栏状态文字被省略号截断＝那条真话少了一半。上面两条都看不见它：
+     navClip 判的是容器 scrollWidth>clientWidth，而子项自己缩了、容器没超；
+     clipped 判据对"带 text-overflow:ellipsis"是放过的（那是有意的）。
+     ≥1280 档顶栏有位置，出现省略号就是缺陷；更窄的档是有意收字，不判。 */
+  const navTruncated: string[] = []
+  if (innerWidth >= 1280) {
+    for (const el of [...document.querySelectorAll('.nav-status .status-pill__text')]) {
+      if (el.scrollWidth > el.clientWidth + 1) {
+        navTruncated.push(`"${(el.textContent ?? '').trim()}" 需要 ${el.scrollWidth}px 只有 ${el.clientWidth}px`)
+      }
+    }
+  }
+
+  /* 横幅里的动作钮是这一页的主入口。antd 的 small 只有 24px 高，在值班台上偏小
+     （NexusMind 给主操作的是 46px 全宽钮）；判据取 ≥34px，钉住"别再退回 small"。 */
+  const heroShortBtns: string[] = []
+  for (const btn of [...document.querySelectorAll('.page-hero__actions .ant-btn')]) {
+    const r = (btn as HTMLElement).getBoundingClientRect()
+    if (r.height > 0 && r.height < 34) heroShortBtns.push(`"${(btn.textContent ?? '').trim().slice(0, 10)}" 高=${Math.round(r.height)}px`)
+  }
+
   /* 中文值班台上不该出现 antd 默认的英文空态（"No data" 这类）。
      这一整类缺陷此前是靠人一张张截图发现的（链路表、预警表、智能体表各修过一次），
      现在钉成判据：任何一档状态下，空态文案里没有纯英文句子就算中。 */
@@ -298,11 +319,13 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     foldedCount: folded.length,
     navClip,
     navIntrude,
+    navTruncated,
     lowContrast: lowContrast.slice(0, 10),
     lowContrastCount: lowContrast.length,
     heroLow: heroLow.slice(0, 6),
     heroLowCount: heroLow.length,
     heroBtnCount,
+    heroShortBtns,
     englishEmpty: englishEmpty.slice(0, 6),
     englishEmptyCount: englishEmpty.length,
     centerOffset: center ? Number(Math.abs(center.left + center.width / 2 - innerWidth / 2).toFixed(2)) : null,
@@ -330,16 +353,19 @@ for (const width of WIDTHS) {
           await page.waitForTimeout(2_000)
           r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
         }
-        console.log(`UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} heroBtn=${r.heroBtnCount} heroLow=${r.heroLowCount} centerOffset=${r.centerOffset}`)
+        console.log(`UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} navIntrude=${r.navIntrude.length} navTrunc=${r.navTruncated.length} lowContrast=${r.lowContrastCount} heroBtn=${r.heroBtnCount} heroLow=${r.heroLowCount} heroShort=${r.heroShortBtns.length} centerOffset=${r.centerOffset}`)
         expect(r.leafCount, `${name}@${width} 页面一个文本节点都没看到——判据在空跑`).toBeGreaterThan(30)
         expect(r.overlapCount, `${name}@${width} 重叠明细：\n${r.overlap.join('\n')}`).toBe(0)
         expect(r.beyondCount, `${name}@${width} 有内容出屏：\n${r.beyond.join('\n')}`).toBe(0)
         expect(r.clippedCount, `${name}@${width} 有文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
         expect(r.foldedCount, `${name}@${width} 有按钮文字折行（"打/开"竖排）：\n${r.folded.join('\n')}`).toBe(0)
         expect(r.navClip, `${name}@${width} 顶栏把内容裁掉了（列宽不够）：\n${r.navClip.join('\n')}`).toHaveLength(0)
+        expect(r.navTruncated, `${name}@${width} 顶栏状态文字被省略号截断：
+${r.navTruncated.join('\n')}`).toHaveLength(0)
         expect(r.navIntrude, `${name}@${width} 顶栏三列互相侵入：\n${r.navIntrude.join('\n')}`).toHaveLength(0)
         expect(r.lowContrastCount, `${name}@${width} 有字对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
         expect(r.heroLowCount, `${name}@${width} 横幅里的按钮在深底上读不清：\n${r.heroLow.join('\n')}`).toBe(0)
+        expect(r.heroShortBtns, `${name}@${width} 横幅主入口按钮太矮（<34px）：\n${r.heroShortBtns.join('\n')}`).toHaveLength(0)
         expect(r.englishEmptyCount, `${name}@${width} 出现纯英文空态文案：\n${r.englishEmpty.join('\n')}`).toBe(0)
         if (r.centerOffset !== null) expect(r.centerOffset, `${name}@${width} 步进器偏离中线`).toBeLessThanOrEqual(1)
       })
@@ -422,7 +448,7 @@ for (const width of [1440, 1100]) {
           .catch(() => {})
         await page.waitForTimeout(1_000)
         const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
-        console.log(`FAULT ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} heroLow=${r.heroLowCount}`)
+        console.log(`FAULT ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} navIntrude=${r.navIntrude.length} navTrunc=${r.navTruncated.length} lowContrast=${r.lowContrastCount} heroLow=${r.heroLowCount}`)
         await page.screenshot({ path: `test-results/ui-audit/fault-${name}-${width}.png` })
         expect(r.leafCount, `${name}@${width} 故障态只看到 ${r.leafCount} 个文本节点——判据在空跑`).toBeGreaterThanOrEqual(12)
         expect(r.overlapCount, `${name}@${width} 故障态重叠：\n${r.overlap.join('\n')}`).toBe(0)
@@ -432,7 +458,10 @@ for (const width of [1440, 1100]) {
         expect(r.lowContrastCount, `${name}@${width} 故障态对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
         expect(r.heroLowCount, `${name}@${width} 故障态横幅按钮读不清：\n${r.heroLow.join('\n')}`).toBe(0)
         expect(r.navClip, `${name}@${width} 故障态顶栏静默裁字：\n${r.navClip.join('\n')}`).toHaveLength(0)
+        expect(r.navTruncated, `${name}@${width} 故障态顶栏状态文字被截断：
+${r.navTruncated.join('\n')}`).toHaveLength(0)
         expect(r.navIntrude, `${name}@${width} 故障态顶栏三列互相侵入：\n${r.navIntrude.join('\n')}`).toHaveLength(0)
+        expect(r.heroShortBtns, `${name}@${width} 故障态横幅主入口按钮太矮：\n${r.heroShortBtns.join('\n')}`).toHaveLength(0)
         expect(r.englishEmptyCount, `${name}@${width} 故障态出现纯英文空态：\n${r.englishEmpty.join('\n')}`).toBe(0)
       })
     }

@@ -5,7 +5,8 @@
  * 1) 字体自托管——“弱网离线可用”是部署形态 P0，外链字体 CDN 在离线环境会掉字；
  * 2) 样式入口——fonts.css / theme.css 不进 main.ts，整套改造等于没做；
  * 3) 顶部导航覆盖——新增页面路由却不进顶栏，值班员就点不到那一页；
- * 4) 逐页深色横幅——漏挂的页在七页动线里一眼是"另一个系统"。
+ * 4) 逐页深色横幅——漏挂的页在七页动线里一眼是"另一个系统"；
+ * 5) 调色板只走蓝系——NexusMind 内部并存五支调色板，漂回紫青那一支肉眼在截图里不容易发现。
  * 观感（渐变、间距、层级）靠真机截图，不在这份源码门禁里硬编码像素。
  */
 
@@ -85,5 +86,33 @@ describe('UI 基座', () => {
       expect(text, `${name} 模板里没用 PageHero`).toMatch(/<PageHero[\s>]/)
       expect(text, `${name} 的横幅没给单字形图标`).toMatch(/<PageHero[^>]*icon="[^"]+"/s)
     }
+  })
+
+  it('调色板只走蓝系：滚动条不许漂回 NexusMind 的紫青那一支，标签是"雾底 + 同色描边"三件套', () => {
+    // 注释里会提到被禁的色值（说明为什么禁），判据只看真的生效声明
+    const css = readRepoFile('frontend', 'src', 'styles', 'theme.css').replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const banned of ['#a7f9ff', '#887dff', '#ff68d6', '#6366f1', '#818cf8', '#a855f7']) {
+      expect(css.toLowerCase(), `theme.css 里出现了非蓝系的 ${banned}`).not.toContain(banned)
+    }
+    expect(css, '滚动条没走蓝系（NexusMind Home.vue 的 #93c5fd→#60a5fa）').toMatch(
+      /linear-gradient\(180deg, #93c5fd, #60a5fa\)/,
+    )
+    // NexusMind `.badge` 的三件套：12% 雾底 + 同色 1px 描边 + 压深的字（Step1GraphBuild.vue:630-662）
+    for (const [hue, rgb] of [
+      ['green', '34, 197, 94'],
+      ['orange', '245, 158, 11'],
+      ['blue', '59, 130, 246'],
+      ['red', '239, 68, 68'],
+    ] as const) {
+      expect(css, `标签 .ant-tag-${hue} 没上雾底`).toMatch(
+        new RegExp(`\\.ant-tag-${hue}[\\s\\S]{0,200}background: rgba\\(${rgb}, 0\\.12\\)`),
+      )
+      expect(css, `标签 .ant-tag-${hue} 没上同色描边`).toMatch(
+        new RegExp(`\\.ant-tag-${hue}[\\s\\S]{0,200}border-color: rgba\\(${rgb}, 0\\.2\\)`),
+      )
+    }
+    expect(css, '横幅里的动作钮还是 antd small 的 24px 高').toMatch(/\.page-hero \.ant-btn\s*\{[\s\S]{0,400}min-height: 36px/)
+    // 浅底那套"雾底 + 压深字"搬到藏青横幅上会变成暗底暗字（真机量的 1.63:1）——深底必须反过来提亮字
+    expect(css, '深色横幅里的标签没有单独的深底配色').toMatch(/\.page-hero \.ant-tag-orange[\s\S]{0,200}color: #fbbf24/)
   })
 })
