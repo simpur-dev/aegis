@@ -907,6 +907,68 @@ test.describe('运行时间线 @1440', () => {
 })
 
 /**
+ * 系统输出浮层（SystemTerminal）：收起态是一枚芯片，展开态是一块深色面板。
+ * 第一版按 NexusMind 那样 `position:fixed` 挂在右下角，门禁当场量出它压住分页控件
+ * （"10 条/页" × "系统输出" 418px²，六档全中）——改成走文档流之后这条判据守着不再回退：
+ * 展开的面板不许与分页相交、深色底上的每一行字都要过对比度、芯片本身要够点。
+ */
+test.describe('系统输出浮层 @1440', () => {
+  test('展开后：面板在视口内、不压分页、深底文字读得清', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/monitor')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(2_500)
+    const chip = await page.evaluate(() => {
+      const el = document.querySelector('.sys-term__chip')?.getBoundingClientRect()
+      return { h: el ? Math.round(el.height) : 0, w: el ? Math.round(el.width) : 0 }
+    })
+    console.log(`SYSTERM chip=${chip.w}×${chip.h}`)
+    expect(chip.h, '收起态的芯片太矮，点不准').toBeGreaterThanOrEqual(28)
+    await page.locator('[data-testid="sys-term-toggle"]').click()
+    await page.waitForSelector('.sys-term__body', { timeout: 15_000 })
+    await page.waitForTimeout(800)
+    /* 它是走文档流的最后一块，不在首屏里是正常的——先滚到它，再判"能不能整个看到"
+       （判的是没被某个 overflow:hidden 的祖先裁掉，不是"必须浮在屏幕上"）。 */
+    await page
+      .locator('.sys-term__body')
+      .evaluate((el) => el.scrollIntoView({ block: 'end', inline: 'nearest' }))
+      .catch(() => {})
+    await page.waitForTimeout(400)
+    const geo = await page.evaluate(() => {
+      const b = document.querySelector('.sys-term__body')?.getBoundingClientRect()
+      const pag = document.querySelector('.ant-pagination')?.getBoundingClientRect()
+      const rows = document.querySelectorAll('.sys-term__row').length
+      const empty = document.querySelector('.sys-term__empty') ? 1 : 0
+      return {
+        h: b ? Math.round(b.height) : -1,
+        bottom: b ? Math.round(b.bottom) : -1,
+        right: b ? Math.round(b.right) : -1,
+        iw: window.innerWidth,
+        top: b ? Math.round(b.top) : -1,
+        ih: window.innerHeight,
+        scrollY: Math.round(window.scrollY),
+        bodyH: document.body.scrollHeight,
+        inView: !!b && b.bottom <= window.innerHeight + 1 && b.right <= window.innerWidth + 1,
+        hitsPager: !!b && !!pag && Math.min(b.right, pag.right) - Math.max(b.left, pag.left) > 4 && Math.min(b.bottom, pag.bottom) - Math.max(b.top, pag.top) > 4,
+        rows,
+        empty,
+      }
+    })
+    const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW, scope: '.sys-term' })
+    console.log(`SYSTERM-open h=${geo.h} top=${geo.top} bottom=${geo.bottom} ih=${geo.ih} right=${geo.right} iw=${geo.iw} scrollY=${geo.scrollY} bodyH=${geo.bodyH} inView=${geo.inView} hitsPager=${geo.hitsPager} rows=${geo.rows} empty=${geo.empty} leaves=${r.leafCount} overlap=${r.overlapCount} low=${r.lowContrastCount}`)
+    await page.screenshot({ path: 'test-results/ui-audit/sys-term-open.png', clip: { x: 640, y: 500, width: 800, height: 400 } })
+    expect(geo.h, '展开态没高度').toBeGreaterThan(60)
+    expect(geo.inView, '面板跑出视口了').toBe(true)
+    expect(geo.hitsPager, '面板压住分页控件了（第一版 fixed 就是这么翻车的）').toBe(false)
+    expect(geo.rows + geo.empty, '面板里既没有日志行也没有空态说明').toBeGreaterThan(0)
+    expect(r.leafCount, '面板里一个文本节点都没量到——判据在空跑').toBeGreaterThan(2)
+    expect(r.overlapCount, `面板内部重叠：\n${r.overlap.join('\n')}`).toBe(0)
+    expect(r.lowContrastCount, `深色面板上的字读不清：\n${r.lowContrast.join('\n')}`).toBe(0)
+  })
+})
+
+/**
  * 键盘焦点态：第四批补的 `:focus-visible` 焦点环只有样式、没有证据。
  * 这里按 Tab 走一遍，要求每落一次焦点：①焦点元素确实有可见指示
  * （box-shadow 或 outline，不是靠颜色）；②它没被滚动容器裁到看不见。

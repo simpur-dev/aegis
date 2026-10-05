@@ -7,6 +7,7 @@ import type { TelemetryReading } from '@/api/types'
 import mapApi, { normalizeAnchors } from '@/api/map'
 import EChart from '@/components/EChart.vue'
 import PageHero from '@/components/PageHero.vue'
+import SystemTerminal from '@/components/SystemTerminal.vue'
 import FreshnessBar from '@/components/FreshnessBar.vue'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import type { ChartOption } from '@/components/echarts'
@@ -256,5 +257,7 @@ onBeforeUnmount(() => {
     <a-modal v-model:open="reportOpen" title="人工上报（群防群治 / 巡查）" :footer="null" width="720px" data-testid="report-modal">
       <ReportForm :initial-region-code="region" />
     </a-modal>
+
+    <SystemTerminal />
   </div>
 </template>

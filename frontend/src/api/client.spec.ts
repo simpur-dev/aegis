@@ -247,6 +247,39 @@ describe('useEventStream', () => {
   })
 
   /**
+   * 全应用只该有一条流：顶栏徽标是一份，页面里再要实时事件是第二份——浏览器对同一来源
+   * 的并发连接有限（HTTP/1.1 是 6 条），多开一条就在挤占取数请求的位置。
+   */
+  it('两个使用者共用一条流；最后一个卸载才关，之后再挂是全新一条', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const first = mount(Host)
+    const second = mount(Host)
+    const source = FakeEventSource.latest as unknown as FakeEventSource
+
+    source.emit({ subject: 'platform.alert', trace_id: 't1', payload: { warning_id: 'w1' }, ts: 'now' })
+    await nextTick()
+    const a = first.vm as unknown as { events: unknown[] }
+    const b = second.vm as unknown as { events: unknown[] }
+    expect(a.events).toHaveLength(1)
+    expect(b.events).toHaveLength(1)
+
+    first.unmount()
+    expect(source.closed, '还有一个使用者在，不该关流').toBe(false)
+    source.emit({ subject: 'platform.alert', trace_id: 't2', payload: { warning_id: 'w2' }, ts: 'now' })
+    await nextTick()
+    expect(b.events).toHaveLength(2)
+
+    second.unmount()
+    expect(source.closed, '最后一个使用者走了还不关流，就是漏了一条长连接').toBe(true)
+
+    const third = mount(Host)
+    expect(FakeEventSource.latest, '重新挂载应当另起一条流').not.toBe(source)
+    expect((third.vm as unknown as { events: unknown[] }).events, '新一条流不许带着上一条的历史').toHaveLength(0)
+    third.unmount()
+    vi.unstubAllGlobals()
+  })
+
+  /**
    * 真机杀后端进程量到的：`/healthz` 已经不可达，页头的 SSE 徽标还写"事件流已连接"——
    * 浏览器不会因为上游死了而报错，而原先的保活是注释帧，JS 根本收不到，前端连
    * "多久没动静"的依据都没有。现在后端发真心跳，前端据此判死并重连。

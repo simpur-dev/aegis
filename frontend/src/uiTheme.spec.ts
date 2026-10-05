@@ -115,4 +115,18 @@ describe('UI 基座', () => {
     // 浅底那套"雾底 + 压深字"搬到藏青横幅上会变成暗底暗字（真机量的 1.63:1）——深底必须反过来提亮字
     expect(css, '深色横幅里的标签没有单独的深底配色').toMatch(/\.page-hero \.ant-tag-orange[\s\S]{0,200}color: #fbbf24/)
   })
+
+  /**
+   * 深色面板上的字色：`#64748b` 压在 `rgba(15,23,42,.85)` 上只有 3.74:1（自己算过一遍才知道），
+   * 而真机门禁那条判据在"还没有事件"时量不到日志行（面板里没有 `.sys-term__row`），
+   * 所以这一条只能在源码里钉：深色底上的次要文字一律用 #94a3b8 及以上。
+   */
+  it('系统输出面板的字色都在深底上过 AA：不许出现 #64748b 这类中灰', () => {
+    const vue = readRepoFile('frontend', 'src', 'components', 'SystemTerminal.vue').replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const banned of ['#64748b', '#475569', '#334155', '#1e293b']) {
+      expect(vue.toLowerCase(), `深底面板上用了 ${banned} 当文字色（3.7:1 一档）`).not.toContain(`color: ${banned}`)
+    }
+    expect(vue, '面板次要文字没提到 #94a3b8').toMatch(/color: #94a3b8/)
+    expect(vue, '面板主文字没提到 #cbd5e1').toMatch(/color: #cbd5e1/)
+  })
 })
