@@ -18,6 +18,7 @@ import mapApi, { isMissingResource, MAP_ASSET_PATHS, normalizeAnchors } from '@/
 import type { RegionAnchorDto, StationDto } from '@/api/map'
 import type { ChainSummary, TelemetryReading, WarningRecord } from '@/api/types'
 import type { BBox, LayerVisibility, MapLayers, PlanLayer } from '@/components/map/entities'
+import PageHero from '@/components/PageHero.vue'
 import {
   bboxOfPoints,
   buildLayers,
@@ -265,6 +266,7 @@ watch(visibility, (value) => {
 
 <template>
   <div>
+    <PageHero title="应急一张图" badge="离线三维" caption="底图、地形与矢量瓦片由本进程自托管，弱网与断网下仍可用。" />
     <a-card size="small" title="一张图 · 自托管离线三维（Cesium + quantized-mesh + PMTiles）">
       <template #extra>
         <a-space wrap>

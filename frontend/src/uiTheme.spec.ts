@@ -1,10 +1,11 @@
 /**
- * UI 基座契约（对标 NexusMind 改版，批次一）。
+ * UI 基座契约（对标 NexusMind 改版，批次一、二）。
  *
- * 钉住三件会静默回归、肉眼又难以及时发现的东西：
+ * 钉住四件会静默回归、肉眼又难以及时发现的东西：
  * 1) 字体自托管——“弱网离线可用”是部署形态 P0，外链字体 CDN 在离线环境会掉字；
  * 2) 样式入口——fonts.css / theme.css 不进 main.ts，整套改造等于没做；
- * 3) 顶部导航覆盖——新增页面路由却不进顶栏，值班员就点不到那一页。
+ * 3) 顶部导航覆盖——新增页面路由却不进顶栏，值班员就点不到那一页；
+ * 4) 逐页深色横幅——漏挂的页在七页动线里一眼是"另一个系统"。
  * 观感（渐变、间距、层级）靠真机截图，不在这份源码门禁里硬编码像素。
  */
 
@@ -70,5 +71,18 @@ describe('UI 基座', () => {
     expect(routePaths.length).toBeGreaterThanOrEqual(7)
     const navTargets = [...appVue().matchAll(/to:\s*'\/([a-z]+)'/g)].map((match) => `/${match[1]}`)
     expect(new Set(navTargets)).toEqual(new Set(routePaths))
+  })
+
+  it('每个页面都挂 PageHero 深色横幅：新增页面漏挂，就掉出同一套观感', () => {
+    const routerText = readRepoFile('frontend', 'src', 'router.ts')
+    const names = [...routerText.matchAll(/path:\s*'\/([a-z]+)'/g)].map(
+      (match) => `${(match[1] as string)[0]!.toUpperCase()}${(match[1] as string).slice(1)}View.vue`,
+    )
+    expect(names.length).toBeGreaterThanOrEqual(7)
+    for (const name of names) {
+      const text = readRepoFile('frontend', 'src', 'views', name)
+      expect(text, `${name} 没接 PageHero`).toContain("import PageHero from '@/components/PageHero.vue'")
+      expect(text, `${name} 模板里没用 PageHero`).toMatch(/<PageHero[\s>]/)
+    }
   })
 })

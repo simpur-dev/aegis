@@ -17,6 +17,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import type { ActionSpecDto, AssistantFrame, CapabilitiesDto, ConfirmResultDto, ProposalFrame } from '@/api/assistant'
 import { assistantApi, CHAT_LIMITS, isAssistantDisabled, isAssistantUnavailable, preflightChat } from '@/api/assistant'
+import PageHero from '@/components/PageHero.vue'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import { useAssistantSession } from '@/composables/useAssistantSession'
 
@@ -220,17 +221,17 @@ onMounted(() => void loadCapabilities())
 
 <template>
   <div class="assistant">
-    <a-card size="small" title="语义交互（对话 → 白名单动作 → 人工确认）">
-      <template #extra>
-        <a-space size="small">
-          <a-tag v-if="capabilitiesError" color="red" data-testid="caps-state">读不到能力面</a-tag>
-          <a-tag v-else-if="capabilities && !llmConfigured" color="orange" data-testid="caps-state">语义服务未配置</a-tag>
-          <a-tag v-else-if="capabilities" color="green" data-testid="caps-state">能力面已读取</a-tag>
-          <a-button size="small" :loading="capabilitiesLoading" data-testid="caps-refresh" @click="loadCapabilities">重读能力面</a-button>
-          <a-button size="small" data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
-        </a-space>
+    <PageHero title="语义交互" badge="对话" caption="对话 → 白名单动作 → 人工确认。">
+      <template #actions>
+        <a-tag v-if="capabilitiesError" color="red" data-testid="caps-state">读不到能力面</a-tag>
+        <a-tag v-else-if="capabilities && !llmConfigured" color="orange" data-testid="caps-state">语义服务未配置</a-tag>
+        <a-tag v-else-if="capabilities" color="green" data-testid="caps-state">能力面已读取</a-tag>
+        <a-button size="small" :loading="capabilitiesLoading" data-testid="caps-refresh" @click="loadCapabilities">重读能力面</a-button>
+        <a-button size="small" data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
       </template>
+    </PageHero>
 
+    <a-card size="small" title="能力面与可用动作">
       <a-alert
         v-if="capabilitiesError && capabilitiesKind === 'unavailable'"
         type="error"

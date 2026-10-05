@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import api from '@/api/client'
 import type { LatencyReport } from '@/api/types'
 import EChart from '@/components/EChart.vue'
+import PageHero from '@/components/PageHero.vue'
 import type { ChartOption } from '@/components/echarts'
 import { latencyRows } from '@/views/metrics/rows'
 import { formatOperatingTime } from '@/utils/clock'
@@ -91,8 +92,13 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
-    <a-card size="small" title="考核指标实测（数据来自运行时埋点，非人工填写）" :loading="loading">
-      <template #extra><a-button @click="load">重新读取</a-button></template>
+    <PageHero title="考核指标" badge="实测" caption="数据来自运行时埋点，非人工填写。">
+      <template #actions>
+        <a-button @click="load">重新读取</a-button>
+      </template>
+    </PageHero>
+
+    <a-card size="small" title="考核指标实测" :loading="loading">
       <p class="metrics__stale" data-testid="metrics-updated-at" style="margin: 8px 0 0; color: #8c8c8c; font-size: 12px">
         {{ updatedAt === null ? '尚未取到数据' : `更新于 ${formatOperatingTime(updatedAt)}（UTC+8，每 15 秒自动取一次）` }}
       </p>
@@ -167,6 +173,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 指标大字走等宽，和态势页同一套（对标 NexusMind 的 .stat-num）。 */
+:deep(.ant-statistic-content) {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+}
 /* 取数失败的原因要看得见：只有 toast 的话，三秒后页面就只剩一排看着正常的数字 */
 .metrics__error {
   margin: 10px 0 0;

@@ -6,6 +6,7 @@ import api from '@/api/client'
 import type { AgentInfo, ChainSummary, LatencyReport, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
 import { workflowApi } from '@/api/workflow'
+import PageHero from '@/components/PageHero.vue'
 import LegStatusPanel from '@/components/system/LegStatusPanel.vue'
 import { useEventStream } from '@/composables/useEventStream'
 import { formatOperatingTime } from '@/utils/clock'
@@ -214,12 +215,14 @@ const agentColumns = [
 
 <template>
   <div>
-    <div class="dash-bar" data-testid="dashboard-bar">
-      <span class="dash-stamp" data-testid="dashboard-updated">
-        {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
-      </span>
-      <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
-    </div>
+    <PageHero title="态势总览" badge="实时" caption="值班员的第一屏：KPI、风险网格、链路执行记录与实时事件流。">
+      <template #actions>
+        <span data-testid="dashboard-updated">
+          {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
+        </span>
+        <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
+      </template>
+    </PageHero>
     <!-- 值班员的任务入口：有单在等就顶到第一屏，和流程页的待办条同一句话、同一个数 -->
     <div v-if="pendingSign !== null && pendingSign > 0" class="dash-todos" data-testid="dashboard-todos">
       <span>有 {{ pendingSign }} 张工单在等人签。</span>
@@ -319,16 +322,10 @@ const agentColumns = [
 </template>
 
 <style scoped>
-.dash-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-.dash-stamp {
-  color: rgba(0, 0, 0, 0.55);
-  font-size: 12px;
+/* KPI 大字走等宽，和 NexusMind 的 .stat-num 一个路数：数字定宽，栏目对得齐。 */
+:deep(.ant-statistic-content) {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
 }
 .dash-error {
   margin-bottom: 12px;

@@ -6,6 +6,7 @@ import api, { ApiError } from '@/api/client'
 import { fetchIntegrations } from '@/api/integrations'
 import type { TaskUnit, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
+import PageHero from '@/components/PageHero.vue'
 import { formatOperatingTime } from '@/utils/clock'
 
 const REFRESH_MS = 15_000
@@ -152,13 +153,13 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
-    <a-card size="small" title="预警发布与靶向触达" :loading="loading">
-      <template #extra>
-        <a-space>
-          <a-button @click="load">刷新</a-button>
-          <span style="font-size: 12px; color: #8c8c8c">红色预警含北斗短报文兜底通道</span>
-        </a-space>
+    <PageHero title="预警发布" badge="靶向触达" caption="红色预警含北斗短报文兜底通道。">
+      <template #actions>
+        <a-button @click="load">刷新</a-button>
       </template>
+    </PageHero>
+
+    <a-card size="small" title="预警发布与靶向触达" :loading="loading">
       <p v-if="windowNote" data-testid="window-note" style="margin: 0 0 6px; color: #8c8c8c; font-size: 12px">
         {{ windowNote }}
       </p>

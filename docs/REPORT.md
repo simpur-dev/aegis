@@ -468,6 +468,24 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 照实记：本批只动外壳与全局样式（`App.vue`、`main.ts`、`styles/`、字体资产），页面内部结构留给第二批；
 七页改后截图（1440×900）与前批同档构建产物里出，观感结论以图为准、数值结论以上表为准。
 
+## UI 逐页横幅实测（2026-10-05，Playwright 驱动 4175 构建产物，对标 NexusMind 第二批）
+
+第二批按"越像越好"把 NexusMind 的深色横幅落到七页内部：对标物是真实代码
+`IncidentWorkspaceView.vue` 的 `.global-status-card`（1345–1474 行）；七页共用新组件 `PageHero.vue`，
+页级动作按钮整体搬进横幅、`data-testid` 原样保留，值班动线的既有探针零改动继续跑。
+
+| 取证项 | 怎么量的 | 结果 |
+| --- | --- | --- |
+| 横幅与 NexusMind 同值（非"看起来像"） | 1440×900 真机读 `.page-hero` computedStyle 与包围盒 | background `linear-gradient(145deg, rgb(13,43,62), rgb(15,61,82), rgb(13,74,98))`；radius `16px`；shadow `rgba(15,60,82,0.35) 0 8px 30px + rgba(37,99,235,0.15) 0 0 0 1px`；标题 14px/700/白；横幅顶 88 vs 顶栏底 68（20px 间隙） |
+| 页级动作真的搬到位（不是复制一份） | 真机对每页断言控件在 `.page-hero` DOM 之内 | monitor `open-report`/`drill-surge`、warnings 刷新、workflow 保存定义、metrics 重新读取、assistant `caps-refresh`/`open-report` 全部命中；态势页横幅内点刷新 → **/readyz 请求 +1**、时间戳 12:33:54→12:33:55（网络级证据） |
+| KPI/指标大字与 NexusMind `.stat-num` 同路数 | 读 `.ant-statistic-content` computedStyle | `"JetBrains Mono", monospace` + weight `700`（态势页与指标页两处 `:deep` 生效） |
+| 会静默回归的第 4 件事进源码门禁 | `uiTheme.spec.ts` 第 6 项：从 `router.ts` 推导 `XxxView.vue`，逐页对账 import＋模板使用 PageHero | 695 → **696 项全绿**（35 文件）、`vue-tsc` exit 0、`npm run build` **✓ built in 21.71s**；两路变异各红 1 项（删 MapView import／删其模板使用），还原后 hash 一致、无 `.mutbak` 残留 |
+| 预警页用例随 UI 变位收窄选择器 | 变异：把收窄过的 `[data-testid="cell-action"] .button` 改回惰性的 `.button` | 恰好 1 项红（横幅里的刷新按钮现在渲染在表格之前，点到它抽屉不开）；还原后 19 passed |
+
+七页实拍（1440×900，构建产物）：`frontend/test-results/ui-benchmark/batch2-{dashboard,monitor,warnings,map,workflow,metrics,assistant}.png`（gitignored）。
+照实记：①助手页首卡曾与第二张卡撞名"对话"，真机截图发现后改名重出图；②地图片横幅下"降级运行·缩放 9"是
+既有的本机资产状态（PMTiles/地形探针均在），非本批回归；③编排页右栏"打开/归档"两字按钮折行是既有排版，未动。
+
 ## 还没测到的（诚实清单）
 
 1. **部署形态的并发曲线**：真总线 + 真库那一档已在 2026-10-02 量过（见上文"部署形态复测"，

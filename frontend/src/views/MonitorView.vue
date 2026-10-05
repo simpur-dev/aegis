@@ -6,6 +6,7 @@ import api, { ApiError, type TelemetryQuery } from '@/api/client'
 import type { TelemetryReading } from '@/api/types'
 import mapApi, { normalizeAnchors } from '@/api/map'
 import EChart from '@/components/EChart.vue'
+import PageHero from '@/components/PageHero.vue'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import type { ChartOption } from '@/components/echarts'
 import { formatOperatingTime, operatingClock } from '@/utils/clock'
@@ -184,6 +185,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
+    <PageHero title="监测与演练" badge="实时接入" caption="实时遥测与劣化缺口；演练一键触发五段链路。">
+      <template #actions>
+        <a-button data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
+        <a-button type="primary" :loading="drilling" :disabled="drilling" data-testid="drill-surge" @click="drill('surge')">发起灾害演练（激增）</a-button>
+        <a-button :loading="drilling" :disabled="drilling" data-testid="drill-normal" @click="drill('normal')">发起背景演练（正常）</a-button>
+      </template>
+    </PageHero>
+
     <a-card size="small" title="数据接入与监测">
       <a-space wrap>
         <a-select v-model:value="region" style="width: 180px" placeholder="区域">
@@ -194,9 +203,6 @@ onBeforeUnmount(() => {
           <a-select-option v-for="name in metrics" :key="name" :value="name">{{ name }}</a-select-option>
         </a-select>
         <a-button @click="load">刷新</a-button>
-        <a-button data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
-        <a-button type="primary" :loading="drilling" :disabled="drilling" data-testid="drill-surge" @click="drill('surge')">发起灾害演练（激增）</a-button>
-        <a-button :loading="drilling" :disabled="drilling" data-testid="drill-normal" @click="drill('normal')">发起背景演练（正常）</a-button>
       </a-space>
     </a-card>
 

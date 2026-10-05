@@ -19,6 +19,7 @@ import { computed, onMounted, onUnmounted } from 'vue'
 
 import { useWorkflowStore } from '@/stores/workflow'
 
+import PageHero from '@/components/PageHero.vue'
 import DefinitionInspector from '@/components/workflow/DefinitionInspector.vue'
 import NodeInspector from '@/components/workflow/NodeInspector.vue'
 import NodePalette from '@/components/workflow/NodePalette.vue'
@@ -85,17 +86,21 @@ onUnmounted(() => {
 
 <template>
   <div class="wf">
-    <header class="wf__bar">
-      <h2 class="wf__name">{{ store.current?.name ?? '工作流编排' }}</h2>
-      <span class="wf__version">v{{ store.current?.version ?? 1 }}</span>
-      <a-button type="primary" size="small" :loading="store.loading" :disabled="!store.canSave" @click="save">
-        保存定义
-      </a-button>
-      <a-button size="small" @click="createDraft">新建画布</a-button>
-      <a-button size="small" @click="store.autoLayout()">自动布局</a-button>
-      <a-button size="small" @click="store.refreshAll">刷新实例</a-button>
-      <span v-if="store.polling" class="wf__polling">实例状态轮询中</span>
-    </header>
+    <PageHero
+      :title="store.current?.name ?? '工作流编排'"
+      :badge="`v${store.current?.version ?? 1}`"
+      caption="白盒编排：拖拽画布 → 本地校验 → 保存定义；等签工单与实例状态在右侧栏。"
+    >
+      <template #actions>
+        <a-button type="primary" size="small" :loading="store.loading" :disabled="!store.canSave" @click="save">
+          保存定义
+        </a-button>
+        <a-button size="small" @click="createDraft">新建画布</a-button>
+        <a-button size="small" @click="store.autoLayout()">自动布局</a-button>
+        <a-button size="small" @click="store.refreshAll">刷新实例</a-button>
+        <span v-if="store.polling" class="wf__polling">实例状态轮询中</span>
+      </template>
+    </PageHero>
 
     <p v-if="waitingTickets.length > 0" class="wf__todos" data-testid="waiting-banner">
       <span>有 {{ waitingTickets.length }} 张工单在等人签。</span>
@@ -150,27 +155,8 @@ onUnmounted(() => {
   height: 100%;
   min-height: 0;
 }
-.wf__bar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 12px;
-  border: 1px solid #f0f0f0;
-  border-radius: 6px;
-  background: #fff;
-}
-.wf__name {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-.wf__version {
-  color: #8c8c8c;
-  font-size: 12px;
-}
 .wf__polling {
-  margin-left: auto;
-  color: #13c2c2;
+  color: #5eead4;
   font-size: 12px;
 }
 .wf__error,
