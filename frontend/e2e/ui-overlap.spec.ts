@@ -807,6 +807,62 @@ test.describe('画布节点不变量 @1440', () => {
     expect(m.outside, `让位把节点推出了画布：\n${m.outside.join('\n')}`).toHaveLength(0)
     expect(m.covered, `落点被画布浮层盖住：\n${m.covered.join('\n')}`).toHaveLength(0)
   })
+
+  /**
+   * 画布快捷键：值班员一天里要反复"看全局 → 看这一片 → 回到默认"，
+   * 这些动作原先只能靠右下角那几个 22px 的控件钮，鼠标得从画布中央跑过去。
+   * 另一件必须钉住的是**不抢键**：右栏"中止理由"输入框里打 0 是打字符，不是缩放画布。
+   */
+  test('画布快捷键 1 / 0 / + / - 生效，且在输入框里不抢键', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/workflow')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(3_000)
+    const canvas = page.locator('.wf__canvas')
+    const items = page.locator('.wf-palette__item')
+    await items.nth(0).dragTo(canvas, { targetPosition: { x: 300, y: 240 } })
+    await page.waitForTimeout(800)
+    const zoom = (): Promise<number> =>
+      page.evaluate(() => {
+        const pane = document.querySelector('.vue-flow__transformationpane')
+        const t = pane ? getComputedStyle(pane).transform : ''
+        return t.startsWith('matrix') ? Number(t.slice(t.indexOf('(') + 1).split(',')[0]) : Number.NaN
+      })
+    await canvas.click({ position: { x: 40, y: 40 } })
+    const start = await zoom()
+    /* 先按 - 把缩放推离默认档，再按 0 才看得出"回到默认"真的发生了。 */
+    await page.keyboard.press('-')
+    await page.waitForTimeout(500)
+    const afterMinus = await zoom()
+    await page.keyboard.press('0')
+    await page.waitForTimeout(500)
+    const afterZero = await zoom()
+    await page.keyboard.press('+')
+    await page.waitForTimeout(500)
+    const afterPlus = await zoom()
+    await page.keyboard.press('1')
+    await page.waitForTimeout(1_200)
+    const afterFit = await zoom()
+    console.log(`SHORTCUT start=${start} minus=${afterMinus} zero=${afterZero} plus=${afterPlus} fit=${afterFit}`)
+    expect(start, `起始 zoom=${start} 不是默认那档——夹具站不住`).toBeCloseTo(0.9, 2)
+    expect(afterMinus, `按 - 之后 zoom=${afterMinus}，没缩小`).toBeLessThan(start)
+    expect(afterZero, `按 0 之后 zoom=${afterZero}，没回到默认 0.9`).toBeCloseTo(0.9, 2)
+    expect(afterPlus, `按 + 之后 zoom=${afterPlus}，没放大`).toBeGreaterThan(afterZero)
+    expect(afterFit, `按 1 收拢之后 zoom=${afterFit}，fit 把画布放大了`).toBeLessThanOrEqual(1.001)
+    /* 输入框里打字不许动画布 */
+    const reason = page.getByPlaceholder('中止理由（可选）')
+    await expect(reason, '右栏没有"中止理由"输入框——这条判据在空跑').toHaveCount(1)
+    await reason.click()
+    await page.keyboard.press('0')
+    await page.waitForTimeout(500)
+    const typed = await reason.inputValue()
+    const zoomAfterTyping = await zoom()
+    console.log(`SHORTCUT typing value=${JSON.stringify(typed)} zoom=${zoomAfterTyping}`)
+    expect(typed, '按下去的 0 没进输入框——按键被画布抢走了').toBe('0')
+    expect(zoomAfterTyping, `在输入框里按 0 之后 zoom=${zoomAfterTyping}，画布被缩放了`).toBeCloseTo(afterFit, 3)
+    await page.screenshot({ path: 'test-results/ui-audit/canvas-shortcuts.png' })
+  })
 })
 
 /**

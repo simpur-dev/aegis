@@ -5,10 +5,12 @@
  * 视图 → 模型只有下面这几个显式事件处理器，任何时刻都能从 store 重建画布。
  */
 import { useVueFlow, type Connection, type NodeDragEvent, type NodeMouseEvent } from '@vue-flow/core'
-import { computed, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 
 import type { WorkflowStore } from '@/stores/workflow'
 import {
+  CANVAS_DEFAULT_ZOOM,
+  canvasShortcut,
   defToGraph,
   freeDropPosition,
   nextNodeId,
@@ -52,7 +54,7 @@ export function overlayFlowBoxes(
 }
 
 export function useWorkflowCanvas(store: WorkflowStore) {
-  const { screenToFlowCoordinate, fitView } = useVueFlow()
+  const { screenToFlowCoordinate, fitView, zoomIn, zoomOut, zoomTo } = useVueFlow()
 
   /**
    * 把整条链路收进视野，且只看不放大。
@@ -63,12 +65,52 @@ export function useWorkflowCanvas(store: WorkflowStore) {
    * 第二颗节点怎么放都出画布（真机量到 414×339 flow 单位）。
    */
   async function fitToGraph(): Promise<void> {
+    /* 标签页在背后时 Vue Flow 量不出容器尺寸（退回 500×500），按那份假尺寸收拢一次
+       等于把节点推到看不见的地方——先记账，等切回可见再补做。 */
+    if (document.hidden) {
+      pendingFit = true
+      return
+    }
     for (let attempt = 0; attempt < 12; attempt += 1) {
       /* 节点尺寸要等渲染完才测得出，fitView 在没有可 fit 的节点时返回 false。 */
       if (await fitView({ padding: 0.2, maxZoom: 1 })) return
       await new Promise((resolve) => window.setTimeout(resolve, 50))
     }
   }
+
+  let pendingFit = false
+
+  function onVisibilityChange(): void {
+    if (document.hidden || !pendingFit) return
+    pendingFit = false
+    void fitToGraph()
+  }
+
+  /** 打字的时候不许抢键：输入框里按 1 是输入"1"，不是收拢视野。 */
+  function isTypingAt(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false
+    return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+  }
+
+  function onKeydown(event: KeyboardEvent): void {
+    if (event.defaultPrevented || isTypingAt(event.target)) return
+    const action = canvasShortcut(event.key, event.ctrlKey || event.metaKey || event.altKey)
+    if (action === null) return
+    event.preventDefault()
+    if (action === 'fit') void fitToGraph()
+    else if (action === 'reset') void zoomTo(CANVAS_DEFAULT_ZOOM)
+    else if (action === 'zoom-in') void zoomIn()
+    else void zoomOut()
+  }
+
+  onMounted(() => {
+    window.addEventListener('keydown', onKeydown)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+  })
+  onBeforeUnmount(() => {
+    window.removeEventListener('keydown', onKeydown)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+  })
 
   watch(
     () => store.current?.workflow_id ?? '',

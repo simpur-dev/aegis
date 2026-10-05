@@ -468,6 +468,21 @@ export function nextNodeId(def: WorkflowDef, type: string): string {
 /** 节点卡的实际尺寸（`.wf-node` 宽度钉死 208px，高度按最长的摘要条估）。 */
 export const NODE_FOOTPRINT = { width: 208, height: 120 }
 
+/** 画布默认缩放。模板里的 `:default-viewport` 与快捷键 `0`（回到默认）共用这一个值。 */
+export const CANVAS_DEFAULT_ZOOM = 0.9
+
+/** 画布快捷键只管"看哪儿"这四件；其余按键一律不接（Tab 那套装焦点围栏在用）。 */
+export type CanvasShortcut = 'fit' | 'reset' | 'zoom-in' | 'zoom-out'
+
+export function canvasShortcut(key: string, heldModifier: boolean): CanvasShortcut | null {
+  if (heldModifier) return null
+  if (key === '1') return 'fit'
+  if (key === '0') return 'reset'
+  if (key === '+' || key === '=') return 'zoom-in'
+  if (key === '-' || key === '_') return 'zoom-out'
+  return null
+}
+
 /** 画布可视区在 flow 坐标系里的矩形（flow 单位与 zoom 无关：卡片宽恒为 208 flow 单位）。 */
 export interface FlowBox {
   x: number

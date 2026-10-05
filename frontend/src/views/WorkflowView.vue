@@ -27,6 +27,7 @@ import RuntimePanel from '@/components/workflow/RuntimePanel.vue'
 import { WORKFLOW_NODE_TYPES } from '@/components/workflow/nodeComponents'
 import { confirmDiscardUnsaved, installUnsavedGuard } from '@/components/workflow/confirmDiscard'
 import { useWorkflowCanvas } from '@/components/workflow/useWorkflowCanvas'
+import { CANVAS_DEFAULT_ZOOM } from '@/utils/graph'
 
 const store = useWorkflowStore()
 const { view, fitToGraph, onConnect, onNodeClick, onPaneClick, onNodeDragStart, onNodeDragStop, onDragOver, onDrop } =
@@ -135,7 +136,7 @@ onUnmounted(() => {
     <PageHero icon="程" :status="heroStatus"
       :title="store.current?.name ?? '工作流编排'"
       :badge="`v${store.current?.version ?? 1}`"
-      caption="白盒编排：拖拽画布 → 本地校验 → 保存定义；等签工单与实例状态在右侧栏。"
+      caption="白盒编排：拖拽画布 → 本地校验 → 保存定义；等签工单与实例状态在右侧栏。画布快捷键：1 收拢、0 默认缩放、+ / - 缩放。"
     >
       <template #actions>
         <a-button type="primary" size="small" :loading="store.loading" :disabled="!store.canSave" @click="save">
@@ -174,7 +175,7 @@ onUnmounted(() => {
           :delete-key-code="null"
           :min-zoom="0.2"
           :max-zoom="2"
-          :default-viewport="{ x: 40, y: 40, zoom: 0.9 }"
+          :default-viewport="{ x: 40, y: 40, zoom: CANVAS_DEFAULT_ZOOM }"
           @connect="onConnect"
           @node-click="onNodeClick"
           @pane-click="onPaneClick"

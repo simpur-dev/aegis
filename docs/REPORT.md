@@ -849,6 +849,24 @@ KPI 从白卡搬进**横幅内托盘**（对标 `.overview-stats`：黑 15% 底�
 ③第一次用 perl 注入变异没落上（替换串里的引号没对上，`grep -c` 得 0 而测试照绿），改回 Edit 落变异才拿到红——
 这条坑第十四批就记过一次，这次是靠"先 grep 确认变异串"当场拦住的。
 
+## UI 第二十一批：画布快捷键，与 fit 的"标签页在背后"守卫（2026-10-06）
+
+这批的参照是新克隆的 **n8n**（`E:\_ui_refs\n8n`，用 `--filter=tree:0` + sparse-checkout 只取
+`packages/frontend/editor-ui/src`，整个参照占几十 MB 而不是整仓）。它把两件事做了而我们没做，
+而且其中一件正是第十九批留下的口子。
+
+| 取证项 | 出处（已自己开文件复核） | 落地与读数 |
+| --- | --- | --- |
+| fit 不许跑在"量不出尺寸"的容器上 | `Canvas.vue:1575-1579`：`if (document.hidden) { fitViewWhileHidden = true; return } await fitView({ maxZoom: defaultZoom, padding: 0.2 })` | `fitToGraph()` 开头加同一道守卫（隐藏时记账 `pendingFit`，`visibilitychange` 里补做，`onBeforeUnmount` 摘监听）。**档位说清**：这条只有代码审读 + n8n 同处理的佐证——本机与 jsdom 都造不出"标签页真在背后、容器仍量得出尺寸"的场景，不算实测过 |
+| 画布该能键盘操作 | `Canvas.vue:549-558`（`1` fit、`0` 默认档、`+/-` 缩放、`ctrl_a`、方向键选同类节点），并在控件按钮上用 `KeyboardShortcutTooltip` 标出来 | 纯函数 `canvasShortcut(key, heldModifier)` + `window` 监听；真机 `SHORTCUT start=0.9 minus=0.75 zero=0.9 plus=1.08 fit=1`。快捷键写在横幅 caption 里（画布中央那块提示是 `pointer-events:none` 的居中文案，加行会撞折行判据） |
+| 默认缩放不能写两处 | —— | `CANVAS_DEFAULT_ZOOM = 0.9` 同时给模板 `:default-viewport` 与快捷键 `0` 用；真机 `start=0.9 zero=0.9` 证明确实是同一档 |
+| 打字时不许抢键（我们自己定的口径，n8n 靠 `:disable-keyboard-a11y` 另实现一套） | —— | 处理器先判 `defaultPrevented` 与焦点是否在 `INPUT/TEXTAREA/SELECT`/可编辑区。真机：焦点在"中止理由"框里按 `0` ⇒ `typing value="0" zoom=1`；**变异**（守卫短路成 `false && isTypingAt(...)`）⇒ `typing value="" zoom=0.9` 落红 |
+
+照实记：①门禁 88 → **89 项**，单测 748 → **757**（`src/utils/canvasShortcut.spec.ts` 9 条），收尾全量 **89 passed（16.7m）**；②变异第一版写成"整段删掉 `isTypingAt` 调用"会让 vue-tsc 报 `TS6133`
+⇒ build 失败、门禁跑在旧包上报绿（这个假绿法第十四批就记过），改成 `false && …` 保持类型合法才拿到红；
+③n8n 的手动拖放路径**不做**可视区夹紧（`nodeViewUtils.ts:214-215` 只 snap 网格），
+所以第十九批那条"贴着边也要看得见"仍是超出参照的补强，不是抄来的。
+
 ## 还没测到的（诚实清单）
 
 1. **部署形态的并发曲线**：真总线 + 真库那一档已在 2026-10-02 量过（见上文"部署形态复测"，
