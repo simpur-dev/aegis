@@ -15,7 +15,7 @@ import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { message } from 'ant-design-vue'
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import { useWorkflowStore } from '@/stores/workflow'
 
@@ -68,6 +68,35 @@ let detachUnsavedGuard: (() => void) | null = null
  * 「打开第一张」打开的就是列表首行那张。
  */
 const waitingTickets = computed(() => [...store.instances].reverse().filter((row) => row.status === 'waiting'))
+
+/**
+ * 右栏三块面板改成 pill 切换（对标 NexusMind `.tab-pill`）：三块叠着放时
+ * 运行态（签工单那块）永远在最下面，值班员每次进来都要滚到底。
+ * 默认停在"运行态"，并把上一次选的档记住；待签张数直接挂在 pill 上，
+ * 所以哪怕停在别的档，也知道有几张在等。
+ */
+type RailTab = 'run' | 'def' | 'node'
+const RAIL_TABS: Array<{ key: RailTab; label: string }> = [
+  { key: 'run', label: '运行态' },
+  { key: 'def', label: '定义' },
+  { key: 'node', label: '节点' },
+]
+const RAIL_STORAGE_KEY = 'aegis.workflow.rail'
+const railTab = ref<RailTab>('run')
+try {
+  const saved = localStorage.getItem(RAIL_STORAGE_KEY)
+  if (saved === 'run' || saved === 'def' || saved === 'node') railTab.value = saved
+} catch {
+  /* 隐私模式或存储被禁：用默认档，不拦页面 */
+}
+function pickRail(next: RailTab): void {
+  railTab.value = next
+  try {
+    localStorage.setItem(RAIL_STORAGE_KEY, next)
+  } catch {
+    /* 存不下就算了，切换本身照样生效 */
+  }
+}
 
 onMounted(() => {
   void bootstrap()
@@ -139,9 +168,25 @@ onUnmounted(() => {
       </div>
 
       <aside class="wf__right">
-        <NodeInspector />
-        <DefinitionInspector />
-        <RuntimePanel />
+        <div class="wf-rail" role="tablist" aria-label="右栏面板">
+          <button
+            v-for="tab in RAIL_TABS"
+            :key="tab.key"
+            type="button"
+            role="tab"
+            class="wf-rail__pill"
+            :class="{ 'is-active': railTab === tab.key }"
+            :aria-selected="railTab === tab.key"
+            :data-testid="`rail-${tab.key}`"
+            @click="pickRail(tab.key)"
+          >
+            {{ tab.label }}
+            <span v-if="tab.key === 'run' && waitingTickets.length > 0" class="wf-rail__count">{{ waitingTickets.length }}</span>
+          </button>
+        </div>
+        <NodeInspector v-if="railTab === 'node'" />
+        <DefinitionInspector v-else-if="railTab === 'def'" />
+        <RuntimePanel v-else />
       </aside>
     </div>
   </div>
@@ -205,6 +250,62 @@ onUnmounted(() => {
 .wf__right {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+/* pill 切换（对标 Step5Interaction 的 .tab-pill：36px 高、999 圆角、悬停上雾并微升、
+   选中用主色渐变）；待签张数挂在"运行态"那颗上，切到别的档也知道有几张在等。 */
+.wf-rail {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+.wf-rail__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 999px;
+  background: transparent;
+  color: #4e5969;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.wf-rail__pill:hover {
+  background: rgba(37, 99, 235, 0.06);
+  border-color: rgba(37, 99, 235, 0.24);
+  color: #2563eb;
+  transform: translateY(-1px);
+}
+.wf-rail__pill:active {
+  transform: translateY(0) scale(0.98);
+}
+.wf-rail__pill.is-active {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.22);
+}
+.wf-rail__count {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+.wf-rail__pill:not(.is-active) .wf-rail__count {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
 }
 .wf__canvas {
   position: relative;

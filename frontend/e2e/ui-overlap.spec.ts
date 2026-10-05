@@ -149,6 +149,18 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     if (tops.size > 1) folded.push(`"${(node.textContent ?? '').trim().slice(0, 10)}" 折成 ${tops.size} 行 | ${pathOf(btn)}`)
   }
 
+  /* 短语被折行（"已完成"→"已完/成"、"打开"→"打/开"）：只盯"不含空格也不含天然断点的短词"，
+     长短语正常换行、以及"在途/上限""触达（演练口径）"这类在斜号与括号处断开的不算缺陷。 */
+  const NATURAL_BREAK = /[\s/（）()|·—-]/
+  for (const el of leaves) {
+    const text = (el.textContent ?? '').trim()
+    if (!text || text.length > 8 || NATURAL_BREAK.test(text)) continue
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const tops = new Set([...range.getClientRects()].map((rect) => Math.round(rect.top)))
+    if (tops.size > 1) folded.push(`"${text}" 折成 ${tops.size} 行 | ${pathOf(el)}`)
+  }
+
   /* 顶栏三组都被 overflow 管着：内容比列宽就"静默裁掉"，包围盒还在原处——
      重叠检查看不见它，所以单独量 scrollWidth 与 clientWidth 的差。 */
   const navClip: string[] = []
@@ -408,6 +420,9 @@ test.describe('画布节点不变量 @1440', () => {
     await page.waitForSelector('.page-hero', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(2_000)
+    /* 右栏是 pill 切换、默认停在"运行态"：要看定义列表得先切档 */
+    await page.locator('[data-testid="rail-def"]').click()
+    await page.waitForTimeout(800)
     /* 挑"节点最多的那份定义"来量：第一行那份只有 2 个节点，压不出布局问题 */
     const idx = await page.evaluate(() => {
       const rows = [...document.querySelectorAll('.wf-def__list-item')]

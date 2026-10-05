@@ -112,8 +112,8 @@ const listedInstances = computed(() => {
           :class="[`is-${statusTone(row.status)}`, { 'is-picked': store.instance?.instance_id === row.instance_id }]"
           @click="store.focusInstance(row.instance_id)"
         >
-          <span>{{ row.instance_id }}</span>
-          <span>{{ label(row.status) }}</span>
+          <span class="wf-run__id">{{ row.instance_id }}</span>
+          <span class="wf-run__state">{{ label(row.status) }}</span>
           <span class="wf-run__trace">{{ row.trace_id }}</span>
         </button>
       </li>
@@ -250,5 +250,18 @@ const listedInstances = computed(() => {
 .wf-run__pick.is-picked {
   background: rgba(37, 99, 235, 0.09);
   border-color: rgba(37, 99, 235, 0.45);
+}
+/* 一行里两个长 ID 会把"已完成"挤成"已完/成"（真机 @1440 量到 4 处）：
+   状态词不许折，两个 ID 改成省略号——完整 ID 在点开的实例详情里看得到。 */
+.wf-run__state {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.wf-run__id,
+.wf-run__trace {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

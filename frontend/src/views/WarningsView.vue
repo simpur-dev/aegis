@@ -163,7 +163,14 @@ onBeforeUnmount(() => {
       <p v-if="windowNote" data-testid="window-note" style="margin: 0 0 6px; color: #5a6072; font-size: 12px">
         {{ windowNote }}
       </p>
-      <a-table :columns="columns" :data-source="orderedWarnings" row-key="warning_id" :pagination="{ pageSize: 10 }" size="small">
+      <a-table
+        :columns="columns"
+        :data-source="orderedWarnings"
+        row-key="warning_id"
+        :pagination="{ pageSize: 10 }"
+        size="small"
+        :scroll="{ x: 'max-content' }"
+      >
         <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：中文值班台上一句英文，
              还分不清"确实还没有"与"取数没成功"，也不说下一步去哪造一条。 -->
         <template #emptyText>
