@@ -49,6 +49,30 @@ const inspect = (contrastAllow: string) => {
     return parts.join('>')
   }
   const skip = (el: Element) => !!(el as HTMLElement).closest('.map-frame,.vue-flow,.cesium-viewer,.ant-modal,.ant-drawer,.ant-message,.ant-notification,canvas')
+  /* 真正"被画到屏幕上"的那块矩形：外壳改成"正文自己滚"之后，滚出滚动视口的节点
+     包围盒仍在文档坐标里躺着，会和页脚之类的东西几何相交却没真的叠上去。
+     逐层裁到最近的可滚动祖先的可视区，完全在外面就判 null（不参与重叠/出屏判定）。 */
+  type Rect = { left: number; top: number; right: number; bottom: number }
+  const paintedRect = (el: Element): Rect | null => {
+    const r0 = el.getBoundingClientRect()
+    let box: Rect = { left: r0.left, top: r0.top, right: r0.right, bottom: r0.bottom }
+    let anc = el.parentElement
+    while (anc) {
+      const cs = getComputedStyle(anc)
+      if (/auto|scroll|hidden|clip/.test(`${cs.overflowX} ${cs.overflowY}`)) {
+        const a = anc.getBoundingClientRect()
+        box = {
+          left: Math.max(box.left, a.left),
+          top: Math.max(box.top, a.top),
+          right: Math.min(box.right, a.right),
+          bottom: Math.min(box.bottom, a.bottom),
+        }
+        if (box.right - box.left <= 0 || box.bottom - box.top <= 0) return null
+      }
+      anc = anc.parentElement
+    }
+    return box
+  }
   const visible = (el: Element) => {
     const cs = getComputedStyle(el)
     if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.05) return false
@@ -60,7 +84,9 @@ const inspect = (contrastAllow: string) => {
   )
 
   const overlap: string[] = []
-  const boxes = leaves.map((el) => ({ el, r: el.getBoundingClientRect() }))
+  const boxes = leaves
+    .map((el) => ({ el, r: paintedRect(el) }))
+    .filter((b): b is { el: Element; r: Rect } => b.r !== null)
   for (let i = 0; i < boxes.length; i++) {
     for (let j = i + 1; j < boxes.length; j++) {
       const a = boxes[i]
@@ -78,7 +104,8 @@ const inspect = (contrastAllow: string) => {
   const clipped: string[] = []
   for (const el of leaves) {
     const cs = getComputedStyle(el)
-    const r = el.getBoundingClientRect()
+    const r = paintedRect(el)
+    if (!r) continue
     if (r.right > innerWidth + 1 || r.left < -1) {
       let anc = el.parentElement
       let scrollable = false

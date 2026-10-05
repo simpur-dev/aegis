@@ -106,7 +106,12 @@ const listedInstances = computed(() => {
     <p v-if="onlyWaiting && waitingRows.length === 0" class="wf-run__hint">这一列里没有等人签的实例了。</p>
     <ul class="wf-run__list">
       <li v-for="row in listedInstances" :key="row.instance_id">
-        <button type="button" class="wf-run__pick" :class="[`is-${statusTone(row.status)}`]" @click="store.focusInstance(row.instance_id)">
+        <button
+          type="button"
+          class="wf-run__pick"
+          :class="[`is-${statusTone(row.status)}`, { 'is-picked': store.instance?.instance_id === row.instance_id }]"
+          @click="store.focusInstance(row.instance_id)"
+        >
           <span>{{ row.instance_id }}</span>
           <span>{{ label(row.status) }}</span>
           <span class="wf-run__trace">{{ row.trace_id }}</span>
@@ -215,22 +220,35 @@ const listedInstances = computed(() => {
   overflow-y: auto;
 }
 .wf-run__pick {
+  /* 列表行习语（对标 NexusMind .run-item）：平时透明，悬停上主色雾，
+     选中用**边框**而不是底色——一排白底小按钮读起来像表，不像可选的行。 */
   display: flex;
   gap: 8px;
   align-items: center;
   width: 100%;
-  padding: 2px 6px;
-  border: 1px solid #f0f0f0;
-  border-radius: 4px;
-  background: #fff;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
   font-size: 11px;
   text-align: left;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.wf-run__pick:hover {
+  background: rgba(37, 99, 235, 0.06);
+  border-color: rgba(37, 99, 235, 0.2);
 }
 .wf-run__pick.is-waiting {
   border-color: #d3adf7;
 }
 .wf-run__pick.is-failed {
   border-color: #ffa39e;
+}
+/* 选中态排在状态色之后：同一行既可以"等人签"也可以"我正在看它"，
+   边框得说后一句（状态另有左侧那颗标签文字在说）。 */
+.wf-run__pick.is-picked {
+  background: rgba(37, 99, 235, 0.09);
+  border-color: rgba(37, 99, 235, 0.45);
 }
 </style>

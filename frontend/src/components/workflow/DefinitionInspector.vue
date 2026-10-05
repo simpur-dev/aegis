@@ -198,10 +198,20 @@ function onDescription(event: Event): void {
   border-bottom: 1px dashed #f0f0f0;
 }
 .wf-def__list-item {
+  /* 与运行实例那一列同一个列表行习语（悬停上雾、圆角 10），
+     不再是"虚线分隔的表行"——这一列是可以点开的入口，不是读数。 */
   flex-direction: row;
   gap: 6px;
   align-items: center;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   font-size: 12px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.wf-def__list-item:hover {
+  background: rgba(37, 99, 235, 0.05);
+  border-color: rgba(37, 99, 235, 0.18);
 }
 /* 名字那几段是可伸缩的，两颗按钮不能：原先名字一长就把"打开/归档"挤成两行
    （1440 真机截图里就是"打/开"竖排），这里让文字自己折、按钮保持一行。

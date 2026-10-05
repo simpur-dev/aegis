@@ -153,7 +153,8 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 8px;
   height: 100%;
-  min-height: 0;
+  /* 视口很矮时不硬压：让正文滚动，画布与右栏保住可用高度 */
+  min-height: 560px;
 }
 .wf__polling {
   color: #5eead4;
@@ -191,13 +192,14 @@ onUnmounted(() => {
   gap: 8px;
   flex: 1;
   min-height: 0;
-  height: calc(100vh - 220px);
 }
 .wf__left,
 .wf__right {
-  border: 1px solid #f0f0f0;
-  border-radius: 6px;
-  background: #fff;
+  /* 与卡片同一族（细蓝描边 + 轻投影 + 大圆角），不再是灰线方角小盒子 */
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 14px 32px rgba(37, 99, 235, 0.06);
   overflow-y: auto;
 }
 .wf__right {
@@ -206,9 +208,10 @@ onUnmounted(() => {
 }
 .wf__canvas {
   position: relative;
-  border: 1px solid #f0f0f0;
-  border-radius: 6px;
-  background: #fff;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 14px 32px rgba(37, 99, 235, 0.06);
   min-height: 0;
   /* 网格项默认 min-width:auto：轨道写了 minmax(0,1fr) 也没用，画布仍按内容最小宽撑住 */
   min-width: 0;

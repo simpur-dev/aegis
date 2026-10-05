@@ -42,6 +42,12 @@ const INDICATOR_LABELS: Record<string, string> = {
   assistant_reply_ms: '语义交互一轮耗时',
 }
 
+/** 横幅里那条计量条的宽度：没取到账本或算不出成功率时返回 null（条子留空，不画半条）。 */
+const successPercent = computed<number | null>(() => {
+  const rate = report.value?.collaboration.success_rate
+  return rate == null ? null : Math.round(rate * 1000) / 10
+})
+
 const rows = computed(() => latencyRows(report.value?.metrics ?? {}, INDICATOR_LABELS))
 
 const chartOption = computed<ChartOption>(() => ({
@@ -107,6 +113,18 @@ onBeforeUnmount(() => {
             :suffix="report?.collaboration.success_rate == null ? '' : '%'"
             :value-style="{ color: report?.collaboration.pass ? '#4ade80' : '#f87171' }"
           />
+          <!-- 行内计量条（对标 NexusMind .mini-bar）：条子与数字同一个判色，
+               没量到就是 0 宽——不拿半条冒充"快达标了" -->
+          <span
+            class="mini-bar"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-valuenow="successPercent ?? undefined"
+            aria-label="协同成功率"
+          >
+            <i :style="{ width: `${successPercent ?? 0}%`, background: report?.collaboration.pass ? '#4ade80' : '#f87171' }" />
+          </span>
         </div>
         <div class="hero-stat">
           <!-- 没读到账本就是「—」：0 项越限是一条会让人安心的假消息，只有量出来的 0 才能这么写 -->
@@ -123,12 +141,16 @@ onBeforeUnmount(() => {
       <p class="metrics__stale" data-testid="metrics-updated-at" style="margin: 8px 0 0; color: #5a6072; font-size: 12px">
         {{ updatedAt === null ? '尚未取到数据' : `更新于 ${formatOperatingTime(updatedAt)}（UTC+8，每 15 秒自动取一次）` }}
       </p>
-      <a-alert
-        type="info"
-        show-icon
-        message="口径说明"
-        description="时延类指标以 P95 判定；协同成功率取事务台账（request→response）。预警准确率需 5 灾种历史案例回放数据集方可测得，当前显式标注为未测，不以估算充数。"
-      />
+      <a-alert type="info" show-icon message="口径说明">
+        <!-- 三条口径挤在一句里读要回头重读；按 NexusMind 的"使用提示"列表拆开，一条一句 -->
+        <template #description>
+          <ul class="tip-list">
+            <li>时延类指标以 P95 判定</li>
+            <li>协同成功率取事务台账（request→response）</li>
+            <li>预警准确率需 5 灾种历史案例回放数据集方可测得，当前显式标注为未测，不以估算充数</li>
+          </ul>
+        </template>
+      </a-alert>
       <p v-if="loadError !== null" class="metrics__error" data-testid="metrics-error">
         本页当前读不到账本：{{ loadError }}{{ report === null ? '' : '（下面显示的是上一次成功取到的数字，不是现场实况）' }}
       </p>
@@ -173,6 +195,42 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 横幅内的行内计量条：4px 高、白 16% 底槽，填充色与数字同判色 */
+.mini-bar {
+  display: block;
+  width: 100%;
+  max-width: 140px;
+  height: 4px;
+  margin-top: 7px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+.mini-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s ease;
+}
+/* "使用提示"式列表（NexusMind 用 → 当项目符号）：一条一句，读的人不用回头重读 */
+.tip-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tip-list li {
+  position: relative;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.tip-list li::before {
+  content: '→';
+  position: absolute;
+  left: 0;
+  color: #2563eb;
+  font-weight: 700;
+}
 /* 指标大数字的等宽托盘样式（.hero-stat）在 styles/theme.css，与态势页共用一份。 */
 /* 取数失败的原因要看得见：只有 toast 的话，三秒后页面就只剩一排看着正常的数字 */
 .metrics__error {

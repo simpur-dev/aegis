@@ -132,11 +132,12 @@ const streamLabel = computed<string>(() => {
 
       <main class="main-content">
         <router-view />
+        <!-- 页脚跟着内容走，不钉在视口底：钉着的话每一页都永久吃掉一条，
+             而编排页那种"占满一屏"的布局还要去猜它的高度 -->
+        <footer class="footer">
+          AEGIS · Adaptive Emergency Geo-hazard Intelligence System ｜ 西藏山地灾害多智能体协同调控技术与平台
+        </footer>
       </main>
-
-      <footer class="footer">
-        AEGIS · Adaptive Emergency Geo-hazard Intelligence System ｜ 西藏山地灾害多智能体协同调控技术与平台
-      </footer>
     </div>
   </a-config-provider>
 </template>
@@ -145,7 +146,11 @@ const streamLabel = computed<string>(() => {
 .app-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  /* 外壳定高、正文自己滚：原来写 min-height 时正文高度不定，编排页那种
+     "三列占满一屏"的布局只能去猜 calc(100vh - 220px)，横幅加进来之后那个 220
+     就不成立了——真机量到实例列表最后几行直接盖在页脚上（6 处重叠）。 */
+  height: 100vh;
+  overflow: hidden;
   background: #f2f4f8;
   color: #1d2129;
 }
@@ -355,6 +360,8 @@ const streamLabel = computed<string>(() => {
 
 .main-content {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 20px 24px;
 }
 .footer {
