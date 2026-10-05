@@ -242,7 +242,7 @@ const agentColumns = [
       class="dash-error"
     />
     <a-row :gutter="12">
-      <a-col :span="10">
+      <a-col :xs="24" :lg="10">
         <a-card :title="gridTitle" size="small" :loading="loading">
           <div class="grid">
             <div v-for="cell in regionGrid" :key="cell.region" class="cell" :style="{ borderColor: RISK_COLORS[cell.level] }">
@@ -256,7 +256,7 @@ const agentColumns = [
         </a-card>
       </a-col>
 
-      <a-col :span="14">
+      <a-col :xs="24" :lg="14">
         <a-card :title="chainsTitle" size="small" :loading="loading">
           <a-table :columns="stageColumns" :data-source="recentChains" :pagination="{ pageSize: 6 }" row-key="trace_id" size="small">
             <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：这一张正是"最近做了什么"，
@@ -290,7 +290,7 @@ const agentColumns = [
     </a-row>
 
     <a-row :gutter="12" style="margin-top: 12px">
-      <a-col :span="14">
+      <a-col :xs="24" :lg="14">
         <a-card title="智能体在线状态（经总线契约注册）" size="small">
           <a-table :columns="agentColumns" :data-source="agents" :pagination="false" row-key="agent_id" size="small">
             <!-- 中文值班台的第一屏不能落一句英文 "No data"（与链路表、预警表同一口径）：
@@ -314,7 +314,7 @@ const agentColumns = [
           </a-table>
         </a-card>
       </a-col>
-      <a-col :span="10">
+      <a-col :xs="24" :lg="10">
         <a-card title="实时事件流（SSE）" size="small">
           <a-timeline>
             <a-timeline-item v-for="event in events.slice(0, 8)" :key="event.trace_id + event.ts" color="blue">

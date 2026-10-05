@@ -42,11 +42,17 @@ const INDICATOR_LABELS: Record<string, string> = {
   assistant_reply_ms: '语义交互一轮耗时',
 }
 
-/** 横幅里那条计量条的宽度：没取到账本或算不出成功率时返回 null（条子留空，不画半条）。 */
+/** 横幅里那条计量条/环的宽度：没取到账本或算不出成功率时返回 null（条子留空，不画半条）。 */
 const successPercent = computed<number | null>(() => {
   const rate = report.value?.collaboration.success_rate
   return rate == null ? null : Math.round(rate * 1000) / 10
 })
+
+/** r=18 的周长；dasharray 用它，offset = 周长 × (1 - 成功率)。 */
+const RING_C = 2 * Math.PI * 18
+const ringOffset = computed<number | null>(() =>
+  successPercent.value === null ? null : RING_C * (1 - successPercent.value / 100),
+)
 
 const rows = computed(() => latencyRows(report.value?.metrics ?? {}, INDICATOR_LABELS))
 
@@ -113,18 +119,30 @@ onBeforeUnmount(() => {
             :suffix="report?.collaboration.success_rate == null ? '' : '%'"
             :value-style="{ color: report?.collaboration.pass ? '#4ade80' : '#f87171' }"
           />
-          <!-- 行内计量条（对标 NexusMind .mini-bar）：条子与数字同一个判色，
-               没量到就是 0 宽——不拿半条冒充"快达标了" -->
-          <span
-            class="mini-bar"
+          <!-- 环形成品率（对标 NexusMind WorldStateHero 的 .ring-progress）：深色托盘里
+               一条 4px 横条容易被看成装饰，环把"离满格还差多少"画成角度。
+               没量到就留空环——不画一圈灰当"0%"，那是另一种谎 -->
+          <svg
+            class="ring"
+            width="44"
+            height="44"
+            viewBox="0 0 44 44"
             role="progressbar"
             aria-valuemin="0"
             aria-valuemax="100"
             :aria-valuenow="successPercent ?? undefined"
             aria-label="协同成功率"
           >
-            <i :style="{ width: `${successPercent ?? 0}%`, background: report?.collaboration.pass ? '#4ade80' : '#f87171' }" />
-          </span>
+            <circle class="ring__track" cx="22" cy="22" r="18" />
+            <circle
+              class="ring__fill"
+              cx="22"
+              cy="22"
+              r="18"
+              :stroke="report?.collaboration.pass ? '#4ade80' : '#f87171'"
+              :stroke-dashoffset="ringOffset ?? RING_C"
+            />
+          </svg>
         </div>
         <div class="hero-stat">
           <!-- 没读到账本就是「—」：0 项越限是一条会让人安心的假消息，只有量出来的 0 才能这么写 -->
@@ -199,22 +217,23 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* 横幅内的行内计量条：4px 高、白 16% 底槽，填充色与数字同判色 */
-.mini-bar {
-  display: block;
-  width: 100%;
-  max-width: 140px;
-  height: 4px;
-  margin-top: 7px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.16);
-  overflow: hidden;
+/* 环形成品率：底环白 16%，填充环从 12 点起算，宽度变化带 0.6s 过渡（NexusMind 同款手感） */
+.ring {
+  margin-top: 6px;
 }
-.mini-bar > i {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.6s ease;
+.ring__track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 4;
+}
+.ring__fill {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 113.1;
+  transform: rotate(-90deg);
+  transform-origin: 22px 22px;
+  transition: stroke-dashoffset 0.6s ease-out;
 }
 /* "使用提示"式列表（NexusMind 用 → 当项目符号）：一条一句，读的人不用回头重读 */
 .tip-list {

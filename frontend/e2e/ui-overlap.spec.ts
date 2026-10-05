@@ -23,7 +23,7 @@ const PAGES: Array<[string, string]> = [
   ['metrics', '/metrics'],
   ['assistant', '/assistant'],
 ]
-const WIDTHS = [1440, 1280, 1200, 1100]
+const WIDTHS = [1440, 1280, 1200, 1100, 1000, 900]
 
 /** 对比度豁免：这些位置的字按 antd/交互语义本就该是"非正文"色，不是内容读不到。 */
 const CONTRAST_ALLOW = [
@@ -244,6 +244,9 @@ for (const width of WIDTHS) {
       test(`七页之一 ${name}：无重叠、不出屏、无裁字、顶栏不静默裁切、对比度达标、步进器居中`, async ({ page }) => {
         await page.goto(path)
         await page.waitForSelector('.page-hero', { timeout: 45_000 })
+        /* 先等网络静再量：整批跑（54 项）时后端被前面几页拖慢，只 sleep 固定时长会量到
+           "数据还没落地"的半成品页面，leafCount 下限会误报成空跑（隔离跑不复现、整批跑偶发）。 */
+        await page.waitForLoadState('networkidle')
         await page.waitForTimeout(name === 'map' ? 12_000 : 2_500)
         const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
         console.log(`UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} lowContrast=${r.lowContrastCount} centerOffset=${r.centerOffset}`)
@@ -272,7 +275,7 @@ const OVERLAYS: Array<{ name: string; path: string; trigger: string; scope: stri
   { name: 'warnings-detail', path: '/warnings', trigger: 'role=button[name="详情"]', scope: '.ant-drawer-content', minLeaves: 40 },
 ]
 
-for (const width of [1440, 1280, 1100]) {
+for (const width of [1440, 1280, 1100, 1000]) {
   test.describe(`弹层内不变量 @${width}`, () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize({ width, height: 900 })
@@ -281,6 +284,7 @@ for (const width of [1440, 1280, 1100]) {
       test(`${c.name}：弹层内无重叠、不出屏、无裁字、按钮不折行、对比度达标`, async ({ page }) => {
         await page.goto(c.path)
         await page.waitForSelector('.page-hero', { timeout: 45_000 })
+        await page.waitForLoadState('networkidle')
         await page.waitForTimeout(2_500)
         await page.locator(c.trigger).first().click()
         await page.waitForSelector(c.scope, { timeout: 15_000 })

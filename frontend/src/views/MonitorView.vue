@@ -207,12 +207,12 @@ onBeforeUnmount(() => {
     </a-card>
 
     <a-row :gutter="12" style="margin-top: 12px">
-      <a-col :span="10">
+      <a-col :xs="24" :lg="10">
         <a-card size="small" title="时序曲线（劣化读数以缺口显示，不参与判定）">
           <EChart :option="chartOption" height="360px" />
         </a-card>
       </a-col>
-      <a-col :span="14">
+      <a-col :xs="24" :lg="14">
         <a-card size="small" title="最新遥测明细" :loading="loading">
           <a-table
             :columns="columns"
