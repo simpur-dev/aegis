@@ -6,6 +6,7 @@
  */
 import { computed } from 'vue'
 
+import FreshnessBar from '@/components/FreshnessBar.vue'
 import { confirmDiscardUnsaved } from './confirmDiscard'
 import { confirmArchive } from './confirmArchive'
 
@@ -116,6 +117,14 @@ function onDescription(event: Event): void {
     <p v-else class="wf-def__ok">校验通过，可保存。</p>
 
     <h4 class="wf-def__subtitle">服务端已存定义</h4>
+    <!-- 这一列此前只在进页/保存/归档时对账，别人刚存的那一版要刷新整页才看得见。
+         现在每 15 秒自查一次，并把"什么时候取的、多旧"写在同一栏里。 -->
+    <FreshnessBar
+      :fetched-at="store.definitionsUpdatedAt"
+      :label="`服务端定义（${store.definitions.length}） ｜ 每 15 秒自己对一遍`"
+      :interval-ms="15_000"
+      stacked
+    />
     <ul class="wf-def__list">
       <li v-for="row in store.definitions" :key="row.workflow_id" class="wf-def__list-item">
         <span class="wf-def__name" :title="row.name">{{ row.name }}</span>

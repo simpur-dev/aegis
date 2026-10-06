@@ -71,6 +71,8 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     const instances = ref<InstanceDetail[]>([])
     /** 这一列实例是什么时候取到的。队列不会自己长出来之前，至少要说清它是一份快照。 */
     const instancesUpdatedAt = ref<string | null>(null)
+    /** 「服务端已存定义」那一列同理：别人（助手、另一台浏览器）存了新版，这一页要自己长出来。 */
+    const definitionsUpdatedAt = ref<string | null>(null)
     const current = ref<WorkflowDef | null>(null)
     const positions = ref<Record<string, Position>>({})
     const selectedNodeId = ref<string | null>(null)
@@ -88,8 +90,11 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     const savedSnapshot = ref<string | null>(null)
     let timer: ReturnType<typeof setInterval> | null = null
     let queueTimer: ReturnType<typeof setInterval> | null = null
+    let defTimer: ReturnType<typeof setInterval> | null = null
     /** 队列是整份覆盖的写手，多个来源（挂载、手动刷新、动作后对账、自查）会交错。 */
     let listToken = 0
+    /** 定义列表同上：自查与保存/归档后的对账会撞在一起。 */
+    let defListToken = 0
 
     /**
      * "用户此刻看的是哪一条"的序号：每切一次加一，任何异步回写动手之前先比对。
@@ -319,7 +324,12 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     }
 
     async function loadDefinitions(): Promise<void> {
-      definitions.value = (await client.definitions()).items
+      const token = ++defListToken
+      const next = (await client.definitions()).items
+      // 与实例列表同一件事：自查与手动刷新会撞在一起，后发的那一趟赢，旧快照不许把列表往回带。
+      if (token !== defListToken) return
+      definitions.value = next
+      definitionsUpdatedAt.value = new Date().toISOString()
     }
 
     /**
@@ -566,6 +576,36 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       queueTimer = null
     }
 
+    /**
+     * 定义列表的自查：与队列那条同一个理由——「服务端已存定义」这一列此前
+     * 只在进页/保存/归档时对账，别人（助手、另一台浏览器、同事）新存一版就永远看不见，
+     * 值班员只能刷新整页。刷的是列表，不动画布上正在编辑的那一份。
+     */
+    async function syncDefinitionsQuietly(): Promise<void> {
+      try {
+        await loadDefinitions()
+      } catch (caught) {
+        /**
+         * 列表拉不到不算"保存失败"，也不能静默：这一列此刻是旧的，
+         * 说清是哪一列旧了，人才不会拿它当"服务端就这些"。
+         */
+        error.value = `定义列表没刷新：${describeFailure(caught)}`
+      }
+    }
+
+    function startDefinitionPolling(): void {
+      if (defTimer !== null) return
+      defTimer = setInterval(() => {
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+        void syncDefinitionsQuietly()
+      }, QUEUE_POLL_INTERVAL_MS)
+    }
+
+    function stopDefinitionPolling(): void {
+      if (defTimer !== null) clearInterval(defTimer)
+      defTimer = null
+    }
+
     async function submitDecision(nodeId: string, choice: string, comment = '', by = ''): Promise<boolean> {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return false
@@ -663,6 +703,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       definitions,
       instances,
       instancesUpdatedAt,
+      definitionsUpdatedAt,
       current,
       positions,
       selectedNodeId,
@@ -715,6 +756,8 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       stopPolling,
       startQueuePolling,
       stopQueuePolling,
+      startDefinitionPolling,
+      stopDefinitionPolling,
       submitDecision,
       patchRuntimeConfig,
       insertRuntimeNode,

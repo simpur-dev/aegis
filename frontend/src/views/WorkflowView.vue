@@ -130,12 +130,15 @@ onMounted(() => {
   void bootstrap()
   // 队列要自己长出新单子：值班员盯着这一页等工单时，页面不能一直是开页那一刻的快照
   store.startQueuePolling()
+  // 「服务端已存定义」那一列同理：助手或同事刚存的那一版，不该靠刷新整页才看得见
+  store.startDefinitionPolling()
   // 画布上写着"未保存"，就不能让 F5 一声不响把它清掉（真机：刷新后 3 个节点归零、0 次确认）
   detachUnsavedGuard = installUnsavedGuard(() => store.isDirty)
 })
 onUnmounted(() => {
   store.stopPolling()
   store.stopQueuePolling()
+  store.stopDefinitionPolling()
   detachUnsavedGuard?.()
   detachUnsavedGuard = null
 })

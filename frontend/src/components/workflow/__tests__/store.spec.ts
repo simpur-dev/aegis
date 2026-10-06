@@ -694,6 +694,87 @@ describe('stores/workflow 实例列表与「等人签」计数对账', () => {
     }
   })
 
+  function defRows(count: number) {
+    return {
+      count,
+      items: Array.from({ length: count }, (_, i) => ({
+        workflow_id: `wf_d${i}`,
+        name: `定义 ${i}`,
+        version: 1,
+        status: 'active' as const,
+        description: '',
+        node_count: 2,
+        edge_count: 1,
+      })),
+    }
+  }
+
+  it('「服务端已存定义」也要自己长出来：别人存的那一版 15 秒内进列表，并写上取数时刻', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = fakeClient()
+      vi.mocked(client.definitions).mockResolvedValue(defRows(0))
+      const store = createWorkflowStore(client)()
+      store.resetDefinition('草稿')
+      await store.loadDefinitions()
+      expect(store.definitions).toHaveLength(0)
+      expect(store.definitionsUpdatedAt, '一次取数都没成功就报时间，等于拿当前时间冒充"更新于"').not.toBeNull()
+
+      // 这期间助手（或另一台浏览器）存了两份进来
+      vi.mocked(client.definitions).mockResolvedValue(defRows(2))
+      store.startDefinitionPolling()
+      const callsBefore = vi.mocked(client.definitions).mock.calls.length
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      expect(vi.mocked(client.definitions).mock.calls.length, '定时器没重拉列表，这一列就停在开页那一刻').toBe(callsBefore + 1)
+      expect(store.definitions).toHaveLength(2)
+      store.stopDefinitionPolling()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('页签在后台时定义自查不打接口', async () => {
+    vi.useFakeTimers()
+    const descriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    try {
+      const client = fakeClient()
+      const store = createWorkflowStore(client)()
+      store.resetDefinition('草稿')
+      await store.loadDefinitions()
+      const calls = vi.mocked(client.definitions).mock.calls.length
+      store.startDefinitionPolling()
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(vi.mocked(client.definitions).mock.calls.length, '切走的页签不该继续打接口').toBe(calls)
+      store.stopDefinitionPolling()
+    } finally {
+      if (descriptor === undefined) delete (document as { visibilityState?: unknown }).visibilityState
+      else Object.defineProperty(document, 'visibilityState', descriptor)
+      vi.useRealTimers()
+    }
+  })
+
+  it('定义列表：先发后回的旧快照不许把行数往回带', async () => {
+    const client = fakeClient()
+    const slow = gate<ReturnType<typeof defRows>>()
+    const fast = gate<ReturnType<typeof defRows>>()
+    vi.mocked(client.definitions).mockReturnValueOnce(slow.promise).mockReturnValueOnce(fast.promise)
+    const store = createWorkflowStore(client)()
+    store.resetDefinition('草稿')
+
+    const first = store.loadDefinitions()
+    await Promise.resolve()
+    const second = store.loadDefinitions()
+    fast.resolve(defRows(3))
+    await second
+    expect(store.definitions).toHaveLength(3)
+
+    slow.resolve(defRows(1))
+    await first
+    expect(store.definitions, '旧的一趟晚到了，列表被带回 1 份').toHaveLength(3)
+  })
+
   it('先发后回的旧快照不许把队列数字往回带', async () => {
     const client = fakeClient()
     const slow = gate<ReturnType<typeof rows>>()

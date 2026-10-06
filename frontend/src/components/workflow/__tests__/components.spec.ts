@@ -959,6 +959,24 @@ describe('编排页顶栏「刷新实例」的接线', () => {
     expect(store, '时间戳没人写就永远读不到差别').toMatch(/^\s+instancesUpdatedAt,$/m)
   })
 
+  /**
+   * 定义列表自查的接线（第二十八批）：与队列那条同一个理由——
+   * 「服务端已存定义」此前只在进页/保存/归档时对账，别人刚存的那一版要刷新整页才看得见。
+   */
+  it('挂载起定义自查、卸载停表，且定义那一列也挂上了新鲜度条', () => {
+    const view = readRepoFile('frontend', 'src', 'views', 'WorkflowView.vue')
+    expect(view).toMatch(/onMounted\(\(\) => \{[\s\S]*?store\.startDefinitionPolling\(\)/)
+    expect(view, '卸载不停表，切到别的页也一直在打定义接口').toMatch(/onUnmounted\(\(\) => \{[\s\S]*?store\.stopDefinitionPolling\(\)/)
+    const store = readRepoFile('frontend', 'src', 'stores', 'workflow.ts')
+    expect(store).toMatch(/^\s+startDefinitionPolling,$/m)
+    expect(store).toMatch(/^\s+stopDefinitionPolling,$/m)
+    expect(store, '时间戳没人写就永远读不到差别').toMatch(/^\s+definitionsUpdatedAt,$/m)
+    const inspector = readRepoFile('frontend', 'src', 'components', 'workflow', 'DefinitionInspector.vue')
+    expect(inspector, '自己刷了却不说什么时刻取的数，读的人仍分不清"没有新的"与"这一列是旧的"').toMatch(
+      /<FreshnessBar[\s\S]*?:fetched-at="store\.definitionsUpdatedAt"/,
+    )
+  })
+
   it('store 真的导出了 refreshAll：视图取用未导出的方法，运行时就是 undefined', () => {
     const store = readRepoFile('frontend', 'src', 'stores', 'workflow.ts')
     expect(store).toMatch(/^\s+refreshAll,$/m)

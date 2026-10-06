@@ -1870,3 +1870,68 @@ test.describe('微动效基准 @1440', () => {
     expect(base / total, `0.15s 只占 ${((base / total) * 100).toFixed(0)}%，没真的归一`).toBeGreaterThanOrEqual(0.5)
   })
 })
+
+/**
+ * 「服务端已存定义」自己长出来 @1440（第二十八批）。
+ *
+ * 这一列此前只在进页/保存/归档时对账：助手或同事刚存的那一版，值班员要**刷新整页**才看得见，
+ * 而画布上有未保存改动时刷新还会触发"丢弃吗"的确认——等于没有这条路。
+ * 现在每 15 秒自查一次，并把取数时刻与"多旧"写在同一栏。
+ * 这条判据量的正是"不 reload、不点任何按钮"这一件事，所以中间不许有任何用户动作。
+ */
+test.describe('定义列表自查 @1440', () => {
+  test('别人刚存的那一版会自己出现在列表里，且新鲜度条说得出什么时候取的数', async ({ page, request }) => {
+    test.setTimeout(90_000)
+    const base = process.env.AEGIS_API_TARGET ?? 'http://127.0.0.1:8000'
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/workflow')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.getByRole('tab', { name: /定义/ }).click()
+    await page.waitForTimeout(2_000)
+
+    const before = await page.locator('.wf-def__list-item').count()
+    expect(before, '定义列表一行都没有——判据在空跑').toBeGreaterThanOrEqual(3)
+
+    const name = `GATE-自刷-${Date.now().toString().slice(-7)}`
+    const nodes = [0, 1].map((i) => ({
+      node_id: `gate_poll_${i}`,
+      type: 'notify',
+      name: `自刷节点 ${i}`,
+      config: { text: `p${i}` },
+      sla_ms: 8000,
+      timeout_ms: 5000,
+      on_failure: 'abort',
+      retry: { max_attempts: 1, backoff_ms: 0 },
+    }))
+    const created = await request.post(`${base}/api/v1/workflow/definitions`, {
+      data: {
+        name,
+        description: '门禁用来验"列表会不会自己长出来"的定义',
+        nodes,
+        edges: [{ source: 'gate_poll_0', target: 'gate_poll_1' }],
+      },
+    })
+    expect(created.status(), `门禁自己存一份定义都失败（${created.status()}）`).toBe(201)
+    const createdId = String((await created.json()).workflow_id ?? '')
+
+    try {
+      /* 这里不做任何用户动作：不 reload、不点刷新，只等定时器自己跑一轮（15 秒一档，给到 30 秒）。 */
+      await expect
+        .poll(() => page.locator('.wf-def__list-item').count(), { timeout: 30_000, intervals: [1_000] })
+        .toBeGreaterThan(before)
+      await expect(page.locator('.wf-def__list-item', { hasText: name })).toHaveCount(1)
+
+      const fresh = page.locator('.wf-def [data-testid="freshness"]')
+      await expect(fresh, '定义那一列没挂新鲜度条——自己刷了却不说几点取的数').toHaveCount(1)
+      const text = (await fresh.textContent()) ?? ''
+      console.log(`DEF-POLL rows ${before} → ${await page.locator('.wf-def__list-item').count()} fresh="${text.replace(/\s+/g, ' ')}"`)
+      expect(text, '新鲜度条没报窗口口径').toContain('每 15 秒自己对一遍')
+      expect(text, '新鲜度条没说取数时刻').toMatch(/取数 \d{1,2}:\d{2}/)
+      expect(text, '新鲜度条没说出这份数多旧').toMatch(/\d+ 秒前|\d+ 分前/)
+      await page.screenshot({ path: 'test-results/ui-audit/def-self-refresh.png' })
+    } finally {
+      await request.post(`${base}/api/v1/workflow/definitions/${encodeURIComponent(createdId)}/archive`)
+    }
+  })
+})
