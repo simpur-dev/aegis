@@ -553,16 +553,28 @@ test.describe('空数据态不变量 @1440', () => {
           const d = (el.querySelector('.ant-empty-description')?.textContent ?? '').trim()
           return d !== '' && d !== '暂无数据'
         }).length
-        return { heroes, bare, custom }
+        return { heroes, bare, custom, inCard: document.querySelectorAll('.ant-card .ant-empty').length }
       })
       console.log(
-        `EMPTY ${name} leaves=${r.leafCount} overlap=${r.overlapCount} clipped=${r.clippedCount} folded=${r.foldedCount} lowContrast=${r.lowContrastCount} heroes=${empty.heroes.length} withAction=${empty.heroes.filter((h) => h.action).length} bare=${empty.bare} custom=${empty.custom}`,
+        `EMPTY ${name} leaves=${r.leafCount} overlap=${r.overlapCount} clipped=${r.clippedCount} folded=${r.foldedCount} lowContrast=${r.lowContrastCount} heroes=${empty.heroes.length} withAction=${empty.heroes.filter((h) => h.action).length} bare=${empty.bare} custom=${empty.custom} inCard=${empty.inCard}`,
       )
       await page.screenshot({ path: `test-results/ui-audit/empty-${name}.png` })
       expect(empty.heroes.length + empty.bare + empty.custom, `${name} 一个空态都没渲染出来——这项目判据就没了对象`).toBeGreaterThan(0)
       expect(empty.bare, `${name} 还有 ${empty.bare} 处 antd 默认"暂无数据"（不说为什么没有、也不说下一步去哪）`).toBe(0)
       if (empty.heroes.length > 0) {
         expect(empty.heroes.some((h) => h.action), `${name} 的空态没有"下一步去哪"那个出口`).toBe(true)
+        /* 同一屏不许并排两种空态习语：有芯片块的那一页，卡片正文里就不该再出现
+           antd 那种居中大插图（它没有出口，读起来像"这块坏了"而不是"这块还没数据"）。
+           地图页不受这条约束：它那一处是"未选中要素"的**选择提示**，heroes=0 时不触发。 */
+        expect(empty.inCard, `${name} 同一屏并排着两种空态习语（芯片块 + ${empty.inCard} 处 antd 居中空态）`).toBe(0)
+      }
+      if (name === 'dashboard') {
+        /* 这两块是第三十批从 a-empty 换过来的：换法要能被机器钉住，否则下次有人图省事又换回去。 */
+        for (const id of ['region-empty', 'events-empty']) {
+          const hero = page.locator(`[data-testid="${id}"]`)
+          await expect(hero, `态势页缺了 ${id} 那块带出口的空态`).toHaveCount(1)
+          await expect(hero.locator('.empty-hero__action'), `${id} 没有"下一步去哪"那个出口`).toHaveCount(1)
+        }
       }
       expect(r.overlapCount, `${name} 空态重叠：\n${r.overlap.join('\n')}`).toBe(0)
       expect(r.clippedCount, `${name} 空态文字被裁：\n${r.clipped.join('\n')}`).toBe(0)

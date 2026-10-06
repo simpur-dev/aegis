@@ -251,7 +251,17 @@ const agentColumns = [
               <a-tag :color="RISK_COLORS[cell.level]">{{ RISK_LABELS[cell.level] }}</a-tag>
               <div v-if="cell.degraded" class="degraded">降级：平台规则兜底</div>
             </div>
-            <a-empty v-if="!regionGrid.length" description="暂无研判结论，可在监测页发起演练" />
+            <!-- 卡片级空态一律用带出口的芯片块：原先这里是 antd 的居中大插图，
+                 同一屏另外两张卡（链路记录、智能体）却是"图标芯片 + 一句话 + 去发起演练"，
+                 两种习语并排就像两个系统。整页截图目视复核（第三十批）抓到的。 -->
+            <div v-if="!regionGrid.length" class="empty-hero" data-testid="region-empty">
+              <span class="empty-hero__icon" aria-hidden="true">◇</span>
+              <div>
+                <div class="empty-hero__title">还没有研判结论</div>
+                <div class="empty-hero__desc">这张网格按最近 {{ CHAIN_WINDOW }} 条链路归集，跑一次演练就会落点。</div>
+                <router-link class="empty-hero__action" to="/monitor">去监测页发起演练 →</router-link>
+              </div>
+            </div>
           </div>
         </a-card>
       </a-col>
@@ -321,7 +331,14 @@ const agentColumns = [
               <div>{{ event.payload.title ?? event.payload.warning_id ?? event.subject }}</div>
               <small>{{ formatOperatingTime(event.ts) }}（UTC+8）</small>
             </a-timeline-item>
-            <a-empty v-if="!events.length" description="暂无事件" />
+            <div v-if="!events.length" class="empty-hero" data-testid="events-empty">
+              <span class="empty-hero__icon" aria-hidden="true">◇</span>
+              <div>
+                <div class="empty-hero__title">事件流还没有消息</div>
+                <div class="empty-hero__desc">SSE 连上后链路每一步都会落在这里；一直空白就先跑一次演练看链路是否启动。</div>
+                <router-link class="empty-hero__action" to="/workflow">去流程编排跑一次链路 →</router-link>
+              </div>
+            </div>
           </a-timeline>
         </a-card>
       </a-col>
@@ -362,6 +379,11 @@ const agentColumns = [
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 10px;
+}
+/* 空态要占满整张网格，不是挤进一个 140px 的格子：
+   把 `.empty-hero` 当普通子元素放进去，标题会被折成两行（门禁的"短词折行"判据当场抓到的）。 */
+.grid > .empty-hero {
+  grid-column: 1 / -1;
 }
 .cell {
   border: 2px solid #d9d9d9;
