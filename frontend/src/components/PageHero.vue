@@ -181,7 +181,11 @@ defineProps<{
   position: relative;
   z-index: 1;
   display: flex;
-  align-items: center;
+  /* 顶端对齐而不是垂直居中：托盘里每一格的内容高度不等（带环形 KPI 的那格高出 ~50px），
+     `center` 会把那颗 24px 的大数字抬到比左右两格高 25px 的位置——三格数字不在一条线上，
+     整排读数就散了（真机 @1440 量到 metrics：格顶 184/209/209、数字字形顶 181/206/206）。
+     装饰件（环）该挂在数字下面，不该把数字搬走。 */
+  align-items: flex-start;
   justify-content: space-around;
   margin-top: 12px;
   padding: 10px 6px;

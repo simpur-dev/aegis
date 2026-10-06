@@ -428,6 +428,24 @@ body .ant-card {
   .wf__polling::before {
     animation: none !important;
   }
+  /* antd 自己那几支无限循环也在名单里：按钮加载态的 `loadingCircle`、Spin 的 `antRotate`/`antSpinMove`、
+     卡片加载用的 Skeleton 微光 `ant-skeleton-loading`。真机量到"减动效下 dashboard 还有 12 条在转"，
+     因为原先只列了我们自己写的三条。
+     **注意有两支挂在伪元素上**（`.anticon-spin::before` 与 `li::after`）——只写元素选择器等于没写，
+     这是同一批里第二次撞到（廿六批的 `.wf__polling::before` 就是伪元素）。
+     停的是转，不是这个指示本身：图标与骨架条仍摆在那儿（按钮同时是禁用态、字还在），
+     读的人照样知道"这一下还没完"——Grafana 的 `Spinner.tsx:47-48` 走的就是这个口径。 */
+  .anticon-spin,
+  .anticon-spin::before,
+  .ant-spin-dot,
+  .ant-spin-dot-item,
+  .ant-skeleton-title::after,
+  .ant-skeleton-paragraph > li::after,
+  .ant-skeleton-avatar::after,
+  .ant-skeleton-button::after,
+  .ant-progress-active .ant-progress-bg {
+    animation: none !important;
+  }
 }
 
 /* 「实例状态轮询中」此前是一句静止的文本——它说的恰恰是"此刻还在动"，

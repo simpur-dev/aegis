@@ -1648,16 +1648,22 @@ const scanMotion = (): { infinite: string[]; running: number } => {
   }
   const infinite: string[] = []
   const seen = new Set<string>()
-  for (const el of [...document.querySelectorAll('body *')]) {
-    const cs = getComputedStyle(el)
-    if (cs.animationName === 'none') continue
-    if (!cs.animationIterationCount.split(', ').includes('infinite')) continue
+  const consider = (el: Element, pseudo: string, cs: CSSStyleDeclaration) => {
+    if (cs.animationName === 'none') return
+    if (!cs.animationIterationCount.split(', ').includes('infinite')) return
     for (const name of cs.animationName.split(', ')) {
-      const key = `${name}|${pathOf(el)}`
+      const key = `${name}|${pathOf(el)}${pseudo}`
       if (seen.has(key)) continue
       seen.add(key)
-      infinite.push(`${name} 还在动（${pathOf(el)}）`)
+      infinite.push(`${name} 还在动（${pathOf(el)}${pseudo}）`)
     }
+  }
+  /* 伪元素也要扫：`getAnimations()` 会把 `::before/::after` 上的动画算进来，
+     只量元素就会出"样式层 0 条、动画层 12 条"这种对不上的账（antd 卡片加载的微光就挂在伪元素上）。 */
+  for (const el of [...document.querySelectorAll('body *')]) {
+    consider(el, '', getComputedStyle(el))
+    consider(el, '::before', getComputedStyle(el, '::before'))
+    consider(el, '::after', getComputedStyle(el, '::after'))
   }
   /* 只数"无限循环"的那几条：有限动画（antd 提示条退出 0.3s、卡片入场 0.2s）在减动效口径下是允许的，
      把它们算进来会让"恰好有一条提示正在收"变成误红——门禁不能自己带竞态。 */
@@ -1693,6 +1699,38 @@ test.describe('减动效与动画中的可读性 @1440', () => {
     expect(animated, '七页一个循环动画都没有——这条判据在空跑').toBeGreaterThanOrEqual(PAGES.length)
     expect(offenders, `开了减少动效还在动：\n${offenders.slice(0, 10).join('\n')}`).toHaveLength(0)
     await page.screenshot({ path: 'test-results/ui-audit/reduced-motion.png' })
+  })
+
+  /**
+   * 加载态也要过这一关（第二十九批补的）。
+   *
+   * 上一条跑了两轮都绿，第三轮全量跑才红：那一刻 dashboard 恰好有按钮停在 loading，
+   * 量到 `loadingCircle 还在动（…ant-btn-loading-icon > span.anticon-loading.anticon-spin）`
+   * 与 `getAnimations 里还有 9 条 running`——**reduce 名单原先只列了我们自己写的三条，antd 那几支没进去**。
+   * 状态类缺陷要显式制造（延迟接口让加载态常驻），不然这条判据只在碰巧有请求在飞时才有效。
+   */
+  test('antd 的加载态（按钮转圈 / Spin 点）在减动效下也不许转', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.route('**/api/**', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 6_000))
+      await route.continue()
+    })
+    await page.goto('/dashboard')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForTimeout(1_500)
+    const normal = await page.evaluate(scanMotion)
+    const spinNames = normal.infinite.filter((line) => /loading|spin|ant/i.test(line))
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.waitForTimeout(600)
+    const reduced = await page.evaluate(scanMotion)
+    console.log(
+      `REDUCED-LOADING normal-infinite=${normal.infinite.length} spin=${spinNames.length} running=${normal.running} reduced=${reduced.infinite.length} reducedRunning=${reduced.running}`,
+    )
+    expect(spinNames.length, '没造出加载态动画——route 延迟没生效，判据在空跑').toBeGreaterThanOrEqual(1)
+    expect(reduced.infinite, `减动效下还在转：\n${reduced.infinite.join('\n')}`).toHaveLength(0)
+    expect(reduced.running, `减动效下 getAnimations 仍有 ${reduced.running} 条无限动画在跑`).toBe(0)
+    await page.screenshot({ path: 'test-results/ui-audit/reduced-motion-loading.png' })
   })
 
   const motionContrast = (): Array<{ where: string; need: number; worst: number; samples: string }> => {
@@ -1868,6 +1906,63 @@ test.describe('微动效基准 @1440', () => {
     expect(Object.keys(all).length, `时长还有 ${Object.keys(all).length} 档（${Object.keys(all).join(' ')}），没归一到四档以内`).toBeLessThanOrEqual(4)
     /* "归一"不是把每一档都留着：基准那一档得是**多数**，否则只是换了六个新值。 */
     expect(base / total, `0.15s 只占 ${((base / total) * 100).toFixed(0)}%，没真的归一`).toBeGreaterThanOrEqual(0.5)
+  })
+})
+
+/**
+ * 横幅统计托盘的对齐 @1440（第二十九批）。
+ *
+ * 目视复核七页整页截图时抓到的：托盘是 `display:flex; align-items:center`，
+ * 而带环形 KPI 的那一格比左右两格高出一截（实测 94px vs 44px），
+ * 于是**三格的 24px 大数字不在同一条线上**——中间那颗比两边高 **25px**（cell top 184 vs 209）。
+ * 数字托盘读起来 ragged，而且越加装饰件越歪：这类"格子里内容高度不等 + 垂直居中"的重叠类盲区，
+ * 压叠/裁切/对比度三条判据都看不见。
+ */
+const trayAlignment = (): { cells: number[]; spread: number } => {
+  const tray = document.querySelector('.page-hero__stats')
+  if (!tray) return { cells: [], spread: 0 }
+  const tops: number[] = []
+  for (const cell of [...tray.children]) {
+    /* 量的是"那一排大数字"本身（antd Statistic 的 content 行），不是格子里字号最大的任意元素：
+       带后缀标签（"达标"）的那一格会挑到别的节点，差出 3px 是探针的误差不是页面的缺陷。 */
+    const number = cell.querySelector('.ant-statistic-content')
+    if (number) {
+      tops.push(Math.round(number.getBoundingClientRect().top))
+      continue
+    }
+    let big: HTMLElement | null = null
+    let bigSize = 0
+    for (const el of [...cell.querySelectorAll('*')]) {
+      const hasDigit = [...el.childNodes].some((n) => n.nodeType === 3 && /\d/.test(n.textContent ?? ''))
+      if (!hasDigit) continue
+      const px = parseFloat(getComputedStyle(el).fontSize)
+      if (px > bigSize) {
+        bigSize = px
+        big = el as HTMLElement
+      }
+    }
+    if (big) tops.push(Math.round(big.getBoundingClientRect().top))
+  }
+  return { cells: tops, spread: tops.length > 1 ? Math.max(...tops) - Math.min(...tops) : 0 }
+}
+
+test.describe('横幅统计托盘对齐 @1440', () => {
+  test('每一格的大数字顶边在同一条线上（±1px），带环的那格不许把数字抬走', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const problems: string[] = []
+    let trays = 0
+    for (const [name, path] of PAGES) {
+      await page.goto(path)
+      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForTimeout(1_500)
+      const r = await page.evaluate(trayAlignment)
+      if (r.cells.length === 0) continue
+      trays += 1
+      console.log(`TRAY ${name} tops=${JSON.stringify(r.cells)} spread=${r.spread}`)
+      if (r.cells.length > 1 && r.spread > 1) problems.push(`${name} 大数字顶边差 ${r.spread}px（${r.cells.join(' / ')}）`)
+    }
+    expect(trays, '一个统计托盘都没找到——判据在空跑').toBeGreaterThanOrEqual(2)
+    expect(problems, `托盘里的数字不在一条线上：\n${problems.join('\n')}`).toHaveLength(0)
   })
 })
 
