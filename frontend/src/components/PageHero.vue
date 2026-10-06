@@ -112,6 +112,15 @@ defineProps<{
   padding: 2px 8px;
   border-radius: 4px;
   letter-spacing: 0.1em;
+  /* 脉冲动的是外面那一圈环，不是标签自己的不透明度。
+     NexusMind 两种写法都有：动环的是 `pulse-dot`（`Step4Report.vue:2961-2969`，3px α.2 → 5px α.12）、
+     `step-pulse`（`IncidentWorkspaceView.vue:1936-1947`）、`pulse-border-blue`（`Home.vue:2020`）；
+     而它自己的 `.gsc-badge`（`IncidentWorkspaceView.vue:1450-1463`）淡的正是 opacity 1 → 0.6——
+     那一处是 9px 的字，淡到 0.6 比我们还差，**这一条不照抄**。
+     我们原先照抄的就是淡 opacity 那一支：10px 的「实时」对比度从 5.76:1 掉到 3.08:1，
+     每两秒有将近半秒读不清（真机七页量到，第二十六批）。
+     静止那一圈写在声明里：reduce 关掉动画后兜底成"亮着的环"，不是"没了环"。 */
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.22);
   animation: page-hero-pulse 2s ease-in-out infinite;
 }
 /* 状态语：字用近白（藏青底上 11:1），圆点按 tone 上色。可缩不可撑——它和右侧动作钮
@@ -149,8 +158,8 @@ defineProps<{
   box-shadow: 0 0 8px rgba(248, 113, 113, 0.45);
 }
 @keyframes page-hero-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+  0%, 100% { box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.26); }
+  50% { box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.1); }
 }
 .page-hero__actions {
   margin-left: auto;

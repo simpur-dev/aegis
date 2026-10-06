@@ -10,7 +10,7 @@
  * 观感（渐变、间距、层级）靠真机截图，不在这份源码门禁里硬编码像素。
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -149,5 +149,49 @@ describe('UI 基座', () => {
     }
     // 等级未知那一格是唯一允许的字面色（它不在 RISK_COLORS 里，也没有对应的图上要素）
     expect(panel, '「等级未知」的底色写法变了（原来是 #bfbfbf）').toContain('#bfbfbf')
+  })
+
+  /**
+   * 循环动画必须逐条有减动效兜底（第二十六批立的）。
+   *
+   * 起因是实测量到的：横幅徽标挂了 `page-hero-pulse … infinite`，而 theme.css 那个
+   * `@media (prefers-reduced-motion: reduce)` 块里只写了卡片、顶栏 live 点和轮询点——
+   * 新增的那条没人想起来补，于是"开了减少动效"的机器上 7/7 页还在无限循环。
+   * 真机门禁管的是屏幕上此刻在跑什么的，这条管的是**新写的动画有没有配套**：
+   * 漏一条就红，而不是等下一次体检。
+   */
+  it('每一支 infinite 动画都在 reduce 块里有名字：新增脉冲却漏兜底，这条先红', () => {
+    const theme = readRepoFile('frontend', 'src', 'styles', 'theme.css').replace(/\/\*[\s\S]*?\*\//g, '')
+    const calm = /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/.exec(theme)
+    if (!calm) throw new Error('theme.css 里找不到 prefers-reduced-motion 那块兜底——减动效口径整条没了')
+
+    const srcDir = join(repoRoot(), 'frontend', 'src')
+    const files = readdirSync(srcDir, { recursive: true })
+      .map((p) => String(p))
+      .filter((p) => /\.(vue|css)$/.test(p) && !p.includes('fonts.css'))
+      .sort()
+    const offenders: string[] = []
+    for (const rel of files) {
+      const text = readFileSync(join(srcDir, rel), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const match of text.matchAll(/animation:[^;]*infinite[^;]*/g)) {
+        const head = text.slice(0, match.index)
+        const open = head.lastIndexOf('{')
+        const selector = open < 0 ? '' : head.slice(head.lastIndexOf('}', open) + 1, open).trim()
+        const tokens = [...selector.matchAll(/\.[\w-]+/g)].map((t) => t[0])
+        if (tokens.length === 0) {
+          offenders.push(`${rel}：animation 声明找不到所属选择器（写法变了，这条得跟着改）`)
+          continue
+        }
+        /* 伪元素要连 ::before/::after 一起对上，否则写了 .wf__polling 却没关那颗点。 */
+        const pseudo = /::?(before|after)(?![\w-])/.exec(selector.slice(-12))?.[1]
+        const suffix = pseudo ? `::${pseudo}` : ''
+        for (const token of tokens) {
+          if (!calm[1].includes(token + suffix)) {
+            offenders.push(`${rel}：${selector} 挂着 ${match[0].trim()}，reduce 块里没有 ${token}${suffix}`)
+          }
+        }
+      }
+    }
+    expect(offenders, `漏了减动效兜底：\n${offenders.join('\n')}`).toHaveLength(0)
   })
 })

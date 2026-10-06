@@ -12,7 +12,7 @@
  * 跑法（与地图视觉门禁同一档：构建产物 + 本机 chromium）：
  *   npx playwright test e2e/ui-overlap.spec.ts
  */
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 
 const PAGES: Array<[string, string]> = [
   ['dashboard', '/dashboard'],
@@ -579,7 +579,88 @@ test.describe('空数据态不变量 @1440', () => {
  * 这里单独量两件事：①节点卡之间不重叠；②节点标题不被挤出自己的卡。
  * 打开的是一份有 7 个节点的已存定义（不是空画布），并处理"未保存改动"的确认弹窗。
  */
+/**
+ * 门禁自带的大定义（2026-10-06 加）。
+ *
+ * 撞过的坑：那条"低 zoom 描边还剩多少设备像素"的判据要一份 >30 节点的定义，
+ * 原先**依赖环境里恰好留着一份**——后端换过一次实例（store 是内存态）之后列表里最大只剩 11 节点，
+ * 判据按设计落红"在空跑"。门禁不许靠 leftovers，要用的数据自己种；名字固定、幂等。
+ *
+ * 形状是**九段 × 每段五路并行**而不是 45 颗串成一条：一条长链的画布是 9280×120 的细条，
+ * 按 `minZoom=0.2` 夹住后 fit 只能收到 0.2、**40 颗里 26 颗在视野外**（真机量到，2s/5s/10s 三次一样），
+ * 那是判据在考"画布能不能看全"时被自己的夹具带偏。真实预案那种有并行分支的图才是这里要的形状。
+ */
+const GATE_BIG_DEF = 'GATE-UI大定义'
+const GATE_STAGES = 9
+const GATE_STAGE_WIDTH = 5
+const GATE_BIG_DEF_NODES = GATE_STAGES * GATE_STAGE_WIDTH
+
+async function ensureBigDefinition(request: APIRequestContext): Promise<void> {
+  const base = process.env.AEGIS_API_TARGET ?? 'http://127.0.0.1:8000'
+  const list = await request.get(`${base}/api/v1/workflow/definitions`)
+  expect(list.status(), `取定义列表就是 ${list.status()}——AEGIS_API_TARGET 指的后端在位吗？`).toBe(200)
+  const body = (await list.json()) as {
+    items?: Array<{ workflow_id: string; name: string; node_count: number }>
+  }
+  const items = body.items ?? []
+  /* 形状换过时把旧那份归档掉：同名两份会让"打开最大的那份"这一句含糊。 */
+  for (const stale of items.filter((d) => d.name === GATE_BIG_DEF && d.node_count !== GATE_BIG_DEF_NODES)) {
+    await request.post(`${base}/api/v1/workflow/definitions/${encodeURIComponent(stale.workflow_id)}/archive`)
+  }
+  if (items.some((d) => d.name === GATE_BIG_DEF && d.node_count === GATE_BIG_DEF_NODES)) return
+  const idOf = (stage: number, lane: number): string => `gate_s${stage}_l${lane}`
+  const nodes = Array.from({ length: GATE_STAGES * GATE_STAGE_WIDTH }, (_, i) => ({
+    node_id: idOf(Math.floor(i / GATE_STAGE_WIDTH), i % GATE_STAGE_WIDTH),
+    type: 'notify',
+    name: `大定义 S${Math.floor(i / GATE_STAGE_WIDTH)}·L${i % GATE_STAGE_WIDTH}`,
+    config: { text: `s${Math.floor(i / GATE_STAGE_WIDTH)}l${i % GATE_STAGE_WIDTH}` },
+    sla_ms: 8000,
+    timeout_ms: 5000,
+    on_failure: 'abort',
+    retry: { max_attempts: 1, backoff_ms: 0 },
+  }))
+  const edges: Array<{ source: string; target: string }> = []
+  for (let stage = 0; stage + 1 < GATE_STAGES; stage += 1) {
+    for (let lane = 0; lane < GATE_STAGE_WIDTH; lane += 1) {
+      edges.push({ source: idOf(stage, lane), target: idOf(stage + 1, lane) })
+    }
+    /* 每段再搭一条跨道连线：让布局真出现交叉，而不是五条互不相干的平行线。 */
+    edges.push({ source: idOf(stage, 0), target: idOf(stage + 1, 1) })
+  }
+  const created = await request.post(`${base}/api/v1/workflow/definitions`, {
+    data: {
+      name: GATE_BIG_DEF,
+      description: `UI 门禁自带的大定义（${GATE_STAGES} 段 × ${GATE_STAGE_WIDTH} 路，低 zoom 描边与"看全图"判据用）`,
+      nodes,
+      edges,
+    },
+  })
+  expect(created.status(), `种一份 ${GATE_BIG_DEF_NODES} 节点的大定义失败（${created.status()}）`).toBe(201)
+}
+
+/** 从定义行上取"哪一行最大、它有几个节点"：只读那一格自己的文字，
+ *  读整行会把名字/版本与数字粘成 "v140 节点"（真机就这么误判过一次）。 */
+function pickBiggestDefinition(): { best: number; bestCount: number } {
+  const rows = [...document.querySelectorAll('.wf-def__list-item')]
+  let best = 0
+  let bestCount = -1
+  rows.forEach((row, i) => {
+    const meta = row.querySelector('.wf-def__meta') ?? row
+    const m = /^(\d+)\s*节点/.exec((meta.textContent ?? '').trim())
+    const n = m ? Number(m[1]) : 0
+    if (n > bestCount) {
+      bestCount = n
+      best = i
+    }
+  })
+  return { best, bestCount }
+}
+
 test.describe('画布节点不变量 @1440', () => {
+  test.beforeAll(async ({ request }) => {
+    await ensureBigDefinition(request)
+  })
+
   test('打开有节点的定义：节点卡不互相压叠、标题不出框', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
@@ -615,21 +696,9 @@ test.describe('画布节点不变量 @1440', () => {
     /* 右栏是 pill 切换、默认停在"运行态"：要看定义列表得先切档 */
     await page.locator('[data-testid="rail-def"]').click()
     await page.waitForTimeout(800)
-    /* 挑"节点最多的那份定义"来量：第一行那份只有 2 个节点，压不出布局问题 */
-    const idx = await page.evaluate(() => {
-      const rows = [...document.querySelectorAll('.wf-def__list-item')]
-      let best = 0
-      let bestCount = -1
-      rows.forEach((row, i) => {
-        const m = /(\d+)\s*节点/.exec(row.textContent ?? '')
-        const n = m ? Number(m[1]) : 0
-        if (n > bestCount) {
-          bestCount = n
-          best = i
-        }
-      })
-      return { best, bestCount }
-    })
+    /* 挑"节点最多的那份定义"来量：两份只有 2 个节点的压不出布局问题。
+       计数只读那一格自己的文字（读整行会把名字/版本与数字粘起来，"v1"+"40 节点"→"140"）。 */
+    const idx = await page.evaluate(pickBiggestDefinition)
     expect(idx.bestCount, '服务端定义列表里没有带节点的定义——判据在空跑').toBeGreaterThan(1)
     await page.locator('[data-testid^="open-"]').nth(idx.best).click()
     const confirm = page.locator('.ant-modal-confirm .ant-btn-primary')
@@ -811,8 +880,9 @@ test.describe('画布节点不变量 @1440', () => {
   /**
    * 低 zoom 下描边还剩几个设备像素。
    *
-   * 画布的 zoom 作用在整个变换层上，1px 的连线与节点描边会跟着缩。真机打开那份 111 节点的定义，
-   * fit 落在 zoom=0.318 —— 修之前连线（库里默认还是浅灰 #b1b1b7）只剩 **0.32 设备像素**，
+   * 画布的 zoom 作用在整个变换层上，1px 的连线与节点描边会跟着缩。真机打开大定义（原先是环境里那份
+   * 111 节点的，fit 落在 zoom=0.318；现在换成门禁自种的 `GATE-UI大定义`，见 `ensureBigDefinition`），
+   * 修之前连线（库里默认还是浅灰 #b1b1b7）只剩 **0.32 设备像素**，
    * 基本看不见；而"看全局"恰恰就是要缩到那一档。修完按 `1/zoom`（封顶 3）补偿。
    */
   test('打开最大的那份定义：连线与节点描边仍有可辨粗细（不是 0.3 设备像素）', async ({ page }) => {
@@ -823,25 +893,15 @@ test.describe('画布节点不变量 @1440', () => {
     await page.waitForTimeout(3_000)
     await page.getByRole('tab', { name: /定义/ }).click()
     await page.waitForTimeout(1_500)
-    const pick = await page.evaluate(() => {
-      const rows = [...document.querySelectorAll('.wf-def__list-item')]
-      let best = 0
-      let bestCount = -1
-      rows.forEach((row, i) => {
-        const m = /(\d+)\s*节点/.exec(row.textContent ?? '')
-        const n = m ? Number(m[1]) : 0
-        if (n > bestCount) {
-          bestCount = n
-          best = i
-        }
-      })
-      return { best, bestCount }
-    })
+    const pick = await page.evaluate(pickBiggestDefinition)
     expect(pick.bestCount, '定义列表里没有大定义——这条判据在空跑').toBeGreaterThan(30)
     await page.locator('[data-testid^="open-"]').nth(pick.best).click()
     const confirm = page.locator('.ant-modal-confirm .ant-btn-primary')
     if (await confirm.isVisible().catch(() => false)) await confirm.click()
-    await page.waitForSelector('.vue-flow__edge-path', { timeout: 20_000 })
+    /* 等的是"条数"而不是"某条可见"：直上直下的连线是一条水平线，SVG path 的包围盒高度为 0，
+       Playwright 的可见性判定会把它当成不可见而干等到超时（45 节点那份九段×五路里 45 条连线全是水平线）。
+       这条判据要量的是描边粗细，元素在不在 DOM 里才是前提。 */
+    await page.waitForFunction(() => document.querySelectorAll('.vue-flow__edge-path').length > 3, null, { timeout: 30_000 })
     await page.waitForTimeout(2_500)
     const m = await page.evaluate(() => {
       const pane = document.querySelector('.vue-flow__transformationpane')
@@ -858,14 +918,27 @@ test.describe('画布节点不变量 @1440', () => {
         stroke: es?.stroke ?? '',
         borderPx: Number.parseFloat(ns?.borderTopWidth ?? '0') * zoom,
         barPx: Number.parseFloat(ns?.borderLeftWidth ?? '0') * zoom,
+        /* "收拢"这一句到底收没收到：节点卡有几张落在画布可视区之外。
+           长链那种极端纵横比的图会撞上 `minZoom=0.2` 的夹持（40 颗里 26 颗在视野外），
+           判据要的是真实形状的定义下 fit 能把全图收进眼里。 */
+        nodeCount: document.querySelectorAll('.vue-flow__node').length,
+        offView: (() => {
+          const frame = document.querySelector('.wf__canvas')?.getBoundingClientRect()
+          if (!frame) return -1
+          return [...document.querySelectorAll('.vue-flow__node')].filter((n) => {
+            const r = n.getBoundingClientRect()
+            return r.left < frame.left - 1 || r.top < frame.top - 1 || r.right > frame.right + 1 || r.bottom > frame.bottom + 1
+          }).length
+        })(),
       }
     })
-    console.log(`STROKE zoom=${m.zoom} edges=${m.edges} 线=${m.strokePx.toFixed(2)}设备px/${m.stroke} 描边=${m.borderPx.toFixed(2)} 类别条=${m.barPx.toFixed(2)}`)
+    console.log(`STROKE zoom=${m.zoom} edges=${m.edges} 线=${m.strokePx.toFixed(2)}设备px/${m.stroke} 描边=${m.borderPx.toFixed(2)} 类别条=${m.barPx.toFixed(2)} 节点=${m.nodeCount} 视野外=${m.offView}`)
     expect(m.edges, '画布上一条连线都没有——判据在空跑').toBeGreaterThan(3)
     expect(m.zoom, `这份定义的 fit 落在 ${m.zoom}，不在"看全局"那一档，前提变了`).toBeLessThan(0.6)
     expect(m.strokePx, `连线只剩 ${m.strokePx.toFixed(2)} 设备像素，缩到看全局那档就看不见链路了`).toBeGreaterThanOrEqual(1.2)
     expect(m.borderPx, `节点描边只剩 ${m.borderPx.toFixed(2)} 设备像素`).toBeGreaterThanOrEqual(0.8)
     expect(m.barPx, `节点类别条只剩 ${m.barPx.toFixed(2)} 设备像素`).toBeGreaterThanOrEqual(2)
+    expect(m.offView, `fit 之后仍有 ${m.offView}/${m.nodeCount} 张节点卡在画布视野外（收拢没收到全图）`).toBe(0)
     /* 颜色也要脱离库里那支浅灰：#94a3b8 = rgb(148,163,184) */
     expect(m.stroke, `连线还是库里默认的 ${m.stroke}`).not.toBe('rgb(177, 177, 183)')
     await page.screenshot({ path: 'test-results/ui-audit/canvas-lowzoom-stroke.png' })
@@ -1545,5 +1618,193 @@ test.describe('悬停态体检 @1440', () => {
       expect(problems, `${width} 档悬停态问题：\n${problems.slice(0, 12).join('\n')}`).toHaveLength(0)
     }
     await page.screenshot({ path: 'test-results/ui-audit/hover-narrow.png' })
+  })
+})
+
+/**
+ * 减动效与动画中的可读性 @1440。
+ *
+ * 立这两条的实测起因（2026-10-06，构建产物 + 4175 预览，七页全过）：
+ * ① 横幅徽标 `.page-hero__badge` 挂的是 `page-hero-pulse 2s infinite`，而 `@media (prefers-reduced-motion: reduce)`
+ *    那一块里**没有它**——开"减少动效"后 7/7 页都还在无限循环（`document.getAnimations()` 量到 `iter=Infinity`）；
+ * ② 同一支动画淡的是**文字的不透明度**（0% → 100%、50% → 0.6）：10px/700 的「实时」对比度
+ *    从 5.76:1 掉到 **3.08:1**，每两秒有将近半秒低于 AA 的 4.5:1。
+ * 对标 NexusMind：它动环的那一支 `pulse-dot`（`Step4Report.vue:2961-2969`）改的是 box-shadow 的环，
+ * `step-pulse`（`IncidentWorkspaceView.vue:1936-1947`）、`pulse-border-blue`（`Home.vue:2020`）同理；
+ * 但它的 `.gsc-badge`（`IncidentWorkspaceView.vue:1450-1463`）淡的正是 opacity 1 → 0.6（9px 的字），
+ * 那一处我们不照抄——照抄来的正是这个 3.08:1。
+ */
+const scanMotion = (): { infinite: string[]; running: number } => {
+  const pathOf = (el: Element): string => {
+    const parts: string[] = []
+    let cur: Element | null = el
+    while (cur && parts.length < 3) {
+      parts.unshift(
+        cur.tagName.toLowerCase() + (cur.classList.length ? '.' + [...cur.classList].join('.') : ''),
+      )
+      cur = cur.parentElement
+    }
+    return parts.join(' > ')
+  }
+  const infinite: string[] = []
+  const seen = new Set<string>()
+  for (const el of [...document.querySelectorAll('body *')]) {
+    const cs = getComputedStyle(el)
+    if (cs.animationName === 'none') continue
+    if (!cs.animationIterationCount.split(', ').includes('infinite')) continue
+    for (const name of cs.animationName.split(', ')) {
+      const key = `${name}|${pathOf(el)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      infinite.push(`${name} 还在动（${pathOf(el)}）`)
+    }
+  }
+  /* 只数"无限循环"的那几条：有限动画（antd 提示条退出 0.3s、卡片入场 0.2s）在减动效口径下是允许的，
+     把它们算进来会让"恰好有一条提示正在收"变成误红——门禁不能自己带竞态。 */
+  const running = document
+    .getAnimations()
+    .filter((a) => a.playState === 'running' && a.effect?.getTiming?.().iterations === Infinity).length
+  return { infinite, running }
+}
+
+test.describe('减动效与动画中的可读性 @1440', () => {
+  test('七页开"减少动效"后一个无限动画都不许留（正常态确有动效，不是在空跑）', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const offenders: string[] = []
+    let animated = 0
+    for (const [name, path] of PAGES) {
+      await page.goto(path)
+      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForTimeout(600)
+      /* emulateMedia 是跟着 browser context 走的，一次设定后面每一页都还生效：
+         不显式退回 no-preference，第二页起量到的"正常态"其实是减动效态（第一版就是这么误红过一次——
+         正常态只剩 1 条无限动画，因为其余六页仍在 reduce 下）。 */
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      await page.waitForTimeout(250)
+      animated += (await page.evaluate(scanMotion)).infinite.length
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await page.waitForTimeout(400)
+      const reduced = await page.evaluate(scanMotion)
+      for (const row of reduced.infinite) offenders.push(`${name}：${row}`)
+      /* 真跑着的动画也要一起看：CSS 声明停了但 WAAPI 还在推进的（JS 驱动的动画）同样算没做到。 */
+      if (reduced.running > 0) offenders.push(`${name}：getAnimations 里还有 ${reduced.running} 条 running`)
+    }
+    console.log(`REDUCED-MOTION normal-infinite=${animated} offenders=${offenders.length}`)
+    expect(animated, '七页一个循环动画都没有——这条判据在空跑').toBeGreaterThanOrEqual(PAGES.length)
+    expect(offenders, `开了减少动效还在动：\n${offenders.slice(0, 10).join('\n')}`).toHaveLength(0)
+    await page.screenshot({ path: 'test-results/ui-audit/reduced-motion.png' })
+  })
+
+  const motionContrast = (): Array<{ where: string; need: number; worst: number; samples: string }> => {
+    type RGBA = { r: number; g: number; b: number; a: number }
+    const parse = (c: string): RGBA | null => {
+      const hex = /^#([0-9a-f]{6})$/i.exec(c)
+      if (hex) {
+        const n = parseInt(hex[1], 16)
+        return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255, a: 1 }
+      }
+      const m = /rgba?\(([^)]+)\)/.exec(c)
+      if (!m) return null
+      const p = m[1].split(',').map((s) => parseFloat(s))
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }
+    }
+    const gradFirst = (img: string): RGBA | null => {
+      const m = /(?:^|[, (])\s*(#[0-9a-fA-F]{6}|rgba?\([^)]*\))/.exec(img.replace(/^(linear|radial|conic)-gradient\(/, ''))
+      return m ? parse(m[1]) : null
+    }
+    const over = (dst: RGBA, src: RGBA): RGBA => {
+      const a = src.a + dst.a * (1 - src.a)
+      if (a === 0) return dst
+      return {
+        r: (src.r * src.a + dst.r * dst.a * (1 - src.a)) / a,
+        g: (src.g * src.a + dst.g * dst.a * (1 - src.a)) / a,
+        b: (src.b * src.a + dst.b * dst.a * (1 - src.a)) / a,
+        a,
+      }
+    }
+    const lum = (c: { r: number; g: number; b: number }) => {
+      const f = (v: number) => (v / 255 <= 0.03928 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4)
+      return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b)
+    }
+    const ratio = (x: { r: number; g: number; b: number }, y: { r: number; g: number; b: number }) => {
+      const l1 = lum(x)
+      const l2 = lum(y)
+      return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
+    }
+    const pathOf = (el: Element): string => {
+      const parts: string[] = []
+      let cur: Element | null = el
+      while (cur && parts.length < 2) {
+        parts.unshift(cur.tagName.toLowerCase() + (cur.classList.length ? '.' + [...cur.classList].join('.') : ''))
+        cur = cur.parentElement
+      }
+      return parts.join(' > ')
+    }
+    const out: Array<{ where: string; need: number; worst: number; samples: string }> = []
+    for (const el of [...document.querySelectorAll('body *')]) {
+      const cs = getComputedStyle(el)
+      if (cs.animationName === 'none' || !cs.animationIterationCount.includes('infinite')) continue
+      /* 只管"这个元素自己带文字"的：装饰件（伪元素、纯圆点）淡一下不违背可读性。 */
+      const own = [...el.childNodes].some((n) => n.nodeType === 3 && (n.textContent ?? '').trim() !== '')
+      if (!own) continue
+      const chain: Element[] = []
+      let cur: Element | null = el
+      while (cur && chain.length < 8) {
+        chain.unshift(cur)
+        cur = cur.parentElement
+      }
+      let bg: RGBA = { r: 255, g: 255, b: 255, a: 1 }
+      for (const c of chain) {
+        const s = getComputedStyle(c)
+        const image = s.backgroundImage
+        if (image && image !== 'none') {
+          const g = gradFirst(image)
+          if (g) bg = over(bg, g)
+        }
+        const bc = parse(s.backgroundColor)
+        if (bc && bc.a > 0) bg = over(bg, bc)
+      }
+      const base = parse(cs.color)
+      if (!base) continue
+      const fs = parseFloat(cs.fontSize)
+      const bold = parseInt(cs.fontWeight, 10) >= 700
+      const need = fs >= 24 || (fs >= 18.66 && bold) ? 3 : 4.5
+      const anims = el.getAnimations()
+      const samples: string[] = []
+      let worst = 99
+      for (const frac of [0, 0.25, 0.5, 0.75]) {
+        for (const a of anims) {
+          a.pause()
+          const d = a.effect?.getTiming().duration
+          a.currentTime = (typeof d === 'number' ? d : 2000) * frac
+        }
+        const r = ratio(over(bg, { ...base, a: base.a * parseFloat(getComputedStyle(el).opacity) }), bg)
+        worst = Math.min(worst, r)
+        samples.push(`t=${frac} op=${getComputedStyle(el).opacity} ${r.toFixed(2)}`)
+      }
+      for (const a of anims) a.play()
+      out.push({ where: pathOf(el), need, worst: Number(worst.toFixed(2)), samples: samples.join(' | ') })
+    }
+    return out
+  }
+
+  test('循环动画不许把带字的标签淡到 AA 以下 @1440', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const low: string[] = []
+    let read = 0
+    for (const [name, path] of PAGES) {
+      await page.goto(path)
+      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForTimeout(600)
+      for (const row of await page.evaluate(motionContrast)) {
+        read += 1
+        if (row.worst < row.need) {
+          low.push(`${name} ${row.where} 最低 ${row.worst}:1（要 ${row.need}:1）｜${row.samples}`)
+        }
+      }
+    }
+    console.log(`MOTION-CONTRAST sampled=${read} low=${low.length}`)
+    expect(read, '一个带动画的文字元素都没扫到——判据在空跑').toBeGreaterThanOrEqual(1)
+    expect(low, `动画把字淡到读不清：\n${low.slice(0, 8).join('\n')}`).toHaveLength(0)
   })
 })

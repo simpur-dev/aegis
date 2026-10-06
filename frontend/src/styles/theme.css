@@ -403,10 +403,15 @@ body .ant-card {
 }
 
 /* NexusMind 全站没有 prefers-reduced-motion（grep 零命中），这条是我们自己补的兜底：
-   前庭敏感的用户不该被强制看脉冲与抬升。 */
+   前庭敏感的用户不该被强制看脉冲与抬升。
+   这里必须**逐条列出**src 里每一支 infinite 动画——漏一条就等于那条没写
+   （第二十六批真机量到的正是漏掉的 `.page-hero__badge`：七页全在 reduce 态继续无限循环）。
+   源码门禁 src/uiTheme.spec.ts 会扫 src 里的 `animation: … infinite` 并逐条核对这张名单，
+   新增脉冲忘兜底先在单测红，不用等体检。 */
 @media (prefers-reduced-motion: reduce) {
   body .ant-card,
   .status-dot.live,
+  .page-hero__badge,
   .wf__polling::before {
     animation: none !important;
   }
