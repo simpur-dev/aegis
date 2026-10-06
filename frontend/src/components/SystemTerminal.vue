@@ -92,7 +92,7 @@ const statusLine = computed<string>(() => {
   font-size: 11px;
   letter-spacing: 0.08em;
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
+  transition: background var(--motion-base) ease, border-color var(--motion-base) ease;
   margin-left: auto;
 }
 .sys-term__chip:hover {

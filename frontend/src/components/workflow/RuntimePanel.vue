@@ -241,7 +241,7 @@ const listedInstances = computed(() => {
   font-size: 11px;
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background var(--motion-base) ease, border-color var(--motion-base) ease;
 }
 .wf-run__pick:hover {
   background: rgba(37, 99, 235, 0.06);

@@ -406,7 +406,7 @@ onMounted(() => void loadCapabilities())
   font-weight: 600;
   line-height: 1.4;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: background-color var(--motion-base) ease, border-color var(--motion-base) ease;
 }
 .caps__chip:hover:not(:disabled) {
   border-color: #95de64;

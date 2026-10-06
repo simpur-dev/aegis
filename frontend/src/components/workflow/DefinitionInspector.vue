@@ -213,7 +213,7 @@ function onDescription(event: Event): void {
   border-radius: 10px;
   font-size: 12px;
   /* 0.15s 是 NexusMind 全站的微动效基准（284 处 `transition: all .15s`） */
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background var(--motion-base) ease, border-color var(--motion-base) ease;
 }
 .wf-def__list-item:hover {
   background: rgba(37, 99, 235, 0.05);

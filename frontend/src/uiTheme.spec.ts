@@ -194,4 +194,39 @@ describe('UI 基座', () => {
     }
     expect(offenders, `漏了减动效兜底：\n${offenders.join('\n')}`).toHaveLength(0)
   })
+
+  /**
+   * 微动效只有一档基准（第二十七批）。
+   *
+   * 改之前 `src` 里手写的 9 条 `transition` 散在 0.15/0.16/0.18/0.2/0.24 五档，
+   * 加上 antd 默认的 0.2/0.3 就是"每一页都在按自己的节奏动"。
+   * 现在时长全部走 theme.css 的 `--motion-*` 令牌：**源码里不许再出现字面时长**，
+   * 新增一条 0.35s 在这条就红，不用等真机门禁去数屏上的档数（那条管库内部的默认值，这条管我们写的）。
+   */
+  it('过渡时长只许走 --motion-* 令牌：src 里不许出现字面秒数', () => {
+    const theme = readRepoFile('frontend', 'src', 'styles', 'theme.css')
+    for (const token of ['--motion-fast', '--motion-base', '--motion-draw']) {
+      expect(theme, `theme.css 里的微动效令牌 ${token} 没了——基准无从谈起`).toContain(`${token}:`)
+    }
+    const srcDir = join(repoRoot(), 'frontend', 'src')
+    const files = readdirSync(srcDir, { recursive: true })
+      .map((p) => String(p))
+      .filter((p) => /\.(vue|css)$/.test(p))
+      .sort()
+    const strays: string[] = []
+    let tokened = 0
+    for (const rel of files) {
+      const text = readFileSync(join(srcDir, rel), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const match of text.matchAll(/transition:[^;]*;/g)) {
+        const decl = match[0]
+        if (decl.includes('var(--motion-')) {
+          tokened += 1
+          continue
+        }
+        if (/\d+(\.\d+)?m?s/.test(decl)) strays.push(`${rel}：${decl.trim()}`)
+      }
+    }
+    expect(tokened, '一条走令牌的 transition 都没有——这条在空跑').toBeGreaterThanOrEqual(9)
+    expect(strays, `写死了时长而没走令牌：\n${strays.join('\n')}`).toHaveLength(0)
+  })
 })

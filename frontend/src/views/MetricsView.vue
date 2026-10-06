@@ -235,7 +235,7 @@ onBeforeUnmount(() => {
   stroke-dasharray: 113.1;
   transform: rotate(-90deg);
   transform-origin: 22px 22px;
-  transition: stroke-dashoffset 0.6s ease-out;
+  transition: stroke-dashoffset var(--motion-draw) ease-out;
 }
 /* .tip-list 与 .pill-dashed 在 styles/theme.css（助手页共用一份） */
 /* 指标大数字的等宽托盘样式（.hero-stat）在 styles/theme.css，与态势页共用一份。 */

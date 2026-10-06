@@ -5,6 +5,19 @@
  * 是运行时 cssinjs 注入的，后注入且同权重时会压过静态 CSS，前缀用来稳住权重。
  */
 
+/* —— 微动效基准 ——
+   真机摸底（2026-10-06，逐元素读计算样式）：改之前同屏并存 **0.15 / 0.16 / 0.18 / 0.2 / 0.24 / 0.3** 六档
+   （顶栏步进器 0.24、轨道 pill 0.18、地图芯片 0.16、卡片抬起 0.2、antd 默认 0.2 与 spin 0.3）。
+   一档一档看过去像五个系统。NexusMind 全站是一个 `transition: all .15s`（284 处），
+   这里把"悬停/选中这类状态反馈"统一收到 0.15s，只留两档例外：
+   antd 内部 hover 反馈走 0.1s（`motionDurationFast`），时间线那一笔描线是**一次性绘制**不是状态反馈，
+   慢到 0.6s 才读得出"在长"。 —— */
+:root {
+  --motion-fast: 0.1s;
+  --motion-base: 0.15s;
+  --motion-draw: 0.6s;
+}
+
 /* —— 页面基座 —— */
 body {
   margin: 0;
@@ -58,7 +71,7 @@ body .ant-card {
     inset 0 0 0 1px rgba(255, 255, 255, 0.7),
     0 2px 8px rgba(0, 0, 0, 0.04),
     0 18px 44px rgba(37, 99, 235, 0.07);
-  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+  transition: box-shadow var(--motion-base) ease, transform var(--motion-base) ease, border-color var(--motion-base) ease;
 }
 body .ant-card-hoverable:hover {
   transform: translateY(-2px);

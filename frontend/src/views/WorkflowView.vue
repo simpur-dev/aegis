@@ -317,7 +317,7 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+  transition: transform var(--motion-base) ease, background var(--motion-base) ease, border-color var(--motion-base) ease, color var(--motion-base) ease;
 }
 .wf-rail__pill:hover {
   background: rgba(37, 99, 235, 0.06);

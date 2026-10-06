@@ -57,6 +57,12 @@ onBeforeUnmount(() => {
 const theme: ThemeConfig = {
   token: {
     colorPrimary: '#2563EB',
+    /* 微动效对齐 NexusMind 的 `all .15s` 基准（284 处）：antd 的按钮/卡片/表格/分页默认走
+       `motionDurationMid = 0.2s`、spin 走 Slow 0.3s，与我们自己那批 0.15s 混在同一屏。
+       这三档是**库内部**的时长，只能从这里改；我们自己写的规则用 theme.css 的 `--motion-*`。 */
+    motionDurationFast: '0.1s',
+    motionDurationMid: '0.15s',
+    motionDurationSlow: '0.2s',
     /* antd 默认把 hover 派生成**更浅**的蓝（实测 #3b82f6），白字压上去只有 3.68:1——
        主按钮上的字是 14px/400，要 4.5:1。悬停态是常驻判据新加的一档（悬停态体检）抓到的，
        所以这里显式让 hover/active 都往深走：#1d4ed8 白字 6.3:1、#1e40af 更深一档。 */
@@ -284,7 +290,7 @@ const statusTitle = computed<string>(() =>
   color: #5a6072;
   text-decoration: none;
   white-space: nowrap;
-  transition: all 0.24s ease;
+  transition: all var(--motion-base) ease;
 }
 .flow-step + .flow-step::before {
   content: '';
@@ -306,7 +312,7 @@ const statusTitle = computed<string>(() =>
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   font-weight: 800;
-  transition: all 0.24s ease;
+  transition: all var(--motion-base) ease;
 }
 .flow-step-label {
   font-size: 12px;

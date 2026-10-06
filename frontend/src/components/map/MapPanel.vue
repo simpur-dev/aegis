@@ -334,7 +334,7 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
   font-weight: 600;
   line-height: 1.4;
   cursor: pointer;
-  transition: background-color 0.16s ease, border-color 0.16s ease;
+  transition: background-color var(--motion-base) ease, border-color var(--motion-base) ease;
 }
 .risk-chip:hover {
   background: rgba(59, 130, 246, 0.06);

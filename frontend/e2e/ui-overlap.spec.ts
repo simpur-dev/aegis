@@ -1808,3 +1808,65 @@ test.describe('减动效与动画中的可读性 @1440', () => {
     expect(low, `动画把字淡到读不清：\n${low.slice(0, 8).join('\n')}`).toHaveLength(0)
   })
 })
+
+/**
+ * 微动效基准 @1440（第二十七批）。
+ *
+ * 摸底量到改之前**同屏并存六档**过渡时长：0.15（我们写的）/ 0.16（地图芯片）/ 0.18（轨道 pill）/
+ * 0.2（antd 默认与卡片抬起）/ 0.24（顶栏步进器）/ 0.3（antd spin）。
+ * 一档一档看过去像五个系统在各自动。NexusMind 全站是一个 `transition: all .15s`（284 处），
+ * 这里把"悬停/选中这类状态反馈"钉在同一档，只留三档有理由的例外：
+ * `0.1s`＝antd 内部的即时反馈（`motionDurationFast`）、`0.2s`＝antd 的复杂过渡（Slow，如 spin 淡入）、
+ * `0.6s`＝时间线那一笔**一次性描线**（不是状态反馈，慢才读得出"在长"）。
+ * 判据读的是计算样式，所以"库内部的默认时长没被 token 压住"这种漂移也抓得到。
+ */
+const MOTION_ALLOW = ['0.1s', '0.15s', '0.2s', '0.6s']
+
+const scanDurations = (): { strays: string[]; tally: Record<string, number> } => {
+  const pathOf = (el: Element): string => {
+    const cls = el.classList
+    return (
+      el.tagName.toLowerCase() + (cls.length ? '.' + [...cls].slice(0, 2).join('.') : '')
+    )
+  }
+  const strays: string[] = []
+  const tally: Record<string, number> = {}
+  for (const el of [...document.querySelectorAll('body *')]) {
+    const cs = getComputedStyle(el)
+    if (cs.transitionProperty === 'none') continue
+    const durations = cs.transitionDuration.split(',').map((s) => s.trim())
+    for (const d of durations) {
+      if (d === '0s') continue
+      tally[d] = (tally[d] ?? 0) + 1
+    }
+    /* 这份名单与上面的 `MOTION_ALLOW` 是**故意重复**的：`page.evaluate` 只序列化函数本身，
+       引用不到模块作用域的常量（引用了就是运行时 undefined）。改一处要改两处。 */
+    const bad = durations.filter((d) => d !== '0s' && !['0.1s', '0.15s', '0.2s', '0.6s'].includes(d))
+    if (bad.length > 0) strays.push(`${pathOf(el)} → ${bad.join('/')}`)
+  }
+  return { strays, tally }
+}
+
+test.describe('微动效基准 @1440', () => {
+  test('七页同屏只许出现四档时长，且基准那一档占多数', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const strays: string[] = []
+    const all: Record<string, number> = {}
+    for (const [name, path] of PAGES) {
+      await page.goto(path)
+      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForTimeout(1_800)
+      const r = await page.evaluate(scanDurations)
+      for (const line of r.strays) strays.push(`${name} ${line}`)
+      for (const [d, n] of Object.entries(r.tally)) all[d] = (all[d] ?? 0) + n
+    }
+    const base = all['0.15s'] ?? 0
+    const total = Object.values(all).reduce((a, b) => a + b, 0)
+    console.log(`MOTION-BASE tally=${JSON.stringify(all)} base=${base}/${total} strays=${strays.length}`)
+    expect(total, '一个带过渡的元素都没扫到——判据在空跑').toBeGreaterThan(20)
+    expect(strays, `出现了基准之外的时长档：\n${[...new Set(strays)].slice(0, 10).join('\n')}`).toHaveLength(0)
+    expect(Object.keys(all).length, `时长还有 ${Object.keys(all).length} 档（${Object.keys(all).join(' ')}），没归一到四档以内`).toBeLessThanOrEqual(4)
+    /* "归一"不是把每一档都留着：基准那一档得是**多数**，否则只是换了六个新值。 */
+    expect(base / total, `0.15s 只占 ${((base / total) * 100).toFixed(0)}%，没真的归一`).toBeGreaterThanOrEqual(0.5)
+  })
+})
