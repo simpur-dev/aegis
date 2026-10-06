@@ -129,4 +129,25 @@ describe('UI 基座', () => {
     expect(vue, '面板次要文字没提到 #94a3b8').toMatch(/color: #94a3b8/)
     expect(vue, '面板主文字没提到 #cbd5e1').toMatch(/color: #cbd5e1/)
   })
+
+  /**
+   * 芯片一族：形状全站统一（NexusMind `.filter-chip` 的 999 圆角 / 4px 10px / 12px / 600），
+   * 颜色只许从"数据自己的那份"取。
+   *
+   * 为什么在源码层钉：形状回归（漂回 4px 方角）在截图里不显眼，而颜色一旦在组件里写死字面值，
+   * 图例就会和图上说的不是一回事——这种"两张皮"最难被看见，第十五批的标签三件套就是这么漂的。
+   */
+  it('芯片：形状统一 999 圆角，语义色一律取自数据那一份（不许就地写死）', () => {
+    const assistant = readRepoFile('frontend', 'src', 'views', 'AssistantView.vue').replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(assistant, '助手页动作芯片不是芯片一族（圆角该是 999px）').toMatch(/\.caps__chip\s*\{[\s\S]{0,400}border-radius: 999px/)
+    expect(assistant, '芯片矮于 26px，点起来是"文字链"不是"按钮"').toMatch(/\.caps__chip\s*\{[\s\S]{0,400}min-height: 26px/)
+
+    const panel = readRepoFile('frontend', 'src', 'components', 'map', 'MapPanel.vue').replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(panel, '风险芯片的颜色不是从 riskLegend() 那一份取的').toMatch(/chipStyle\(entry\.colorCss\)/)
+    for (const banned of ['#cf1322', '#fa8c16', '#fadb14', '#1677ff']) {
+      expect(panel.toLowerCase(), `MapPanel 里写死了风险色 ${banned}（图例与图上会分成两张皮）`).not.toContain(`: ${banned}`)
+    }
+    // 等级未知那一格是唯一允许的字面色（它不在 RISK_COLORS 里，也没有对应的图上要素）
+    expect(panel, '「等级未知」的底色写法变了（原来是 #bfbfbf）').toContain('#bfbfbf')
+  })
 })

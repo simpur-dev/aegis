@@ -386,19 +386,40 @@ onMounted(() => void loadCapabilities())
   flex-wrap: wrap;
   gap: 6px;
 }
+/*
+ * 形状归一到 NexusMind 的芯片一族（`CausalGraphView.vue:301-315`：999 圆角 / 4px 10px / 12px / 600），
+ * 颜色**保留语义**——绿＝只读查询、红＝会改状态需确认。
+ * 这不是"跑色"：Grafana 的调色板文件里把颜色分成两类（`palette_new.ts:56,82,108,134` 注释写
+ * "Status: error/warning/success/info"，`:121,160,173` 写"Categorisation"），
+ * 状态语义用红/琥珀/绿/蓝，紫与青只用于分类。我们禁的是装饰性紫青，不是数据自己的颜色。
+ */
 .caps__chip {
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 10px;
   border: 1px solid #b7eb8f;
-  border-radius: 4px;
+  border-radius: 999px;
   background: #f6ffed;
   color: #1d6b14;
   font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
   cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.caps__chip:hover:not(:disabled) {
+  border-color: #95de64;
+  background: #ebffdc;
 }
 .caps__chip.is-missing {
   border-color: #ffa39e;
   background: #fff1f0;
   color: #cf1322;
+}
+.caps__chip.is-missing:hover:not(:disabled) {
+  border-color: #ff7875;
+  background: #fff1f0;
 }
 .caps__chip:disabled {
   cursor: not-allowed;

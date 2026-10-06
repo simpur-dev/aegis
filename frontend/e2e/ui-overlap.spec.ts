@@ -12,7 +12,7 @@
  * 跑法（与地图视觉门禁同一档：构建产物 + 本机 chromium）：
  *   npx playwright test e2e/ui-overlap.spec.ts
  */
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 const PAGES: Array<[string, string]> = [
   ['dashboard', '/dashboard'],
@@ -1464,44 +1464,57 @@ const HOVER_TARGETS = [
   '.ant-card-hoverable',
 ]
 
+/**
+ * 悬停扫描：逐页把可悬停元素逐个 hover，每次悬停后跑同一套判据。
+ *
+ * `perPage` 是预算：一次全页体检要 1~3 秒，七页 ×N 直接决定这条判据跑多久
+ * （门禁是给人反复跑的，慢到没人愿意跑就等于没有）。
+ */
+async function hoverSweep(
+  page: Page,
+  opts: { perPage: number },
+): Promise<{ hovered: number; problems: string[] }> {
+  const problems: string[] = []
+  let hovered = 0
+  for (const [name, path] of PAGES) {
+    await page.goto(path)
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(2_500)
+    let budget = opts.perPage
+    for (const selector of HOVER_TARGETS) {
+      if (budget <= 0) break
+      const locator = page.locator(selector)
+      const found = Math.min(await locator.count(), 2)
+      for (let index = 0; index < found && budget > 0; index += 1) {
+        const target = locator.nth(index)
+        if (!(await target.isVisible().catch(() => false))) continue
+        budget -= 1
+        await target.hover({ timeout: 3_000 }).catch(() => {})
+        await page.waitForTimeout(150)
+        const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
+        hovered += 1
+        const groups: Array<[string, string[]]> = [
+          ['对比度', r.lowContrast],
+          ['压叠', r.overlap],
+          ['裁切', r.clipped],
+          ['折行', r.folded],
+        ]
+        for (const [label, lines] of groups) {
+          for (const line of lines) problems.push(`${name} 悬停 ${selector} 第${index + 1}个 → ${label}：${line}`)
+        }
+        await page.mouse.move(0, 0)
+        await page.waitForTimeout(60)
+      }
+    }
+  }
+  return { hovered, problems }
+}
+
 test.describe('悬停态体检 @1440', () => {
   test('逐页悬停顶栏步骤/横幅按钮/行与芯片：对比度、压叠、裁切、折行都不许变坏', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
-    const problems: string[] = []
-    let hovered = 0
-    for (const [name, path] of PAGES) {
-      await page.goto(path)
-      await page.waitForSelector('.page-hero', { timeout: 45_000 })
-      await page.waitForLoadState('networkidle').catch(() => {})
-      await page.waitForTimeout(2_500)
-      /* 每页最多悬停 6 个：七页 × 6 次全页体检已经要一分多钟，再多就没人愿意跑这条门禁了。 */
-      let budget = 6
-      for (const selector of HOVER_TARGETS) {
-        if (budget <= 0) break
-        const locator = page.locator(selector)
-        const found = Math.min(await locator.count(), 2)
-        for (let index = 0; index < found && budget > 0; index += 1) {
-          const target = locator.nth(index)
-          if (!(await target.isVisible().catch(() => false))) continue
-          budget -= 1
-          await target.hover({ timeout: 3_000 }).catch(() => {})
-          await page.waitForTimeout(150)
-          const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
-          hovered += 1
-          const groups: Array<[string, string[]]> = [
-            ['对比度', r.lowContrast],
-            ['压叠', r.overlap],
-            ['裁切', r.clipped],
-            ['折行', r.folded],
-          ]
-          for (const [label, lines] of groups) {
-            for (const line of lines) problems.push(`${name} 悬停 ${selector} 第${index + 1}个 → ${label}：${line}`)
-          }
-          await page.mouse.move(0, 0)
-          await page.waitForTimeout(60)
-        }
-      }
-    }
+    const { hovered, problems } = await hoverSweep(page, { perPage: 6 })
     console.log(`HOVER targets=${hovered} problems=${problems.length}`)
     expect(hovered, '一个可悬停元素都没找到——判据在空跑').toBeGreaterThanOrEqual(20)
     expect(problems, `悬停态问题：\n${problems.slice(0, 14).join('\n')}`).toHaveLength(0)
@@ -1513,5 +1526,24 @@ test.describe('悬停态体检 @1440', () => {
     await page.locator('.page-hero .ant-btn-primary').last().hover()
     await page.waitForTimeout(250)
     await page.screenshot({ path: 'test-results/ui-audit/hover-primary.png' })
+  })
+
+  /**
+   * 窄档（1000 / 900）的悬停态。
+   *
+   * `.wf-rail__pill:hover` 与主按钮 hover 都带 `translateY(-1px)`，而窄档轨道更挤——
+   * "抬起 + 加宽底色"会不会压到邻居，@1440 那一档看不出来。
+   * 这里只判压叠/出容器/裁切/折行/对比度，**不判"文字被省略号截断"**：
+   * 窄档收字是有意的设计（第十八批定的口径），一律判就成了逼产品改口径。
+   */
+  test('窄档 1000 / 900 悬停：抬起与加宽底色不许压到邻居', async ({ page }) => {
+    for (const width of [1000, 900]) {
+      await page.setViewportSize({ width, height: 900 })
+      const { hovered, problems } = await hoverSweep(page, { perPage: 3 })
+      console.log(`HOVER-NARROW ${width} targets=${hovered} problems=${problems.length}`)
+      expect(hovered, `${width} 档一个可悬停元素都没找到——判据在空跑`).toBeGreaterThanOrEqual(10)
+      expect(problems, `${width} 档悬停态问题：\n${problems.slice(0, 12).join('\n')}`).toHaveLength(0)
+    }
+    await page.screenshot({ path: 'test-results/ui-audit/hover-narrow.png' })
   })
 })
