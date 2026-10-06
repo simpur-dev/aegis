@@ -1301,6 +1301,97 @@ test.describe('键盘焦点态 @1440', () => {
 })
 
 /**
+ * 「服务端已存定义」那一列的行 + 全站入场动效 @1440。
+ *
+ * 定义行原先是 `flex-wrap: wrap`：322px 的右栏装不下"名字 + 计数 + 状态 + 两颗按钮"，
+ * 折到哪一行没人管——真机量到两颗按钮落在**不同行的不同位置**
+ * （"打开"右缘 1384、"归档"右缘 1150）。改两行网格之后行高统一、按钮右缘对齐成一列。
+ * 动效那条钉的是移植 NexusMind 的 `fadeIn .2s ease-out + translateY(5px)`，
+ * 以及它全站都没有、我们自己补的 `prefers-reduced-motion` 兜底。
+ */
+test.describe('定义行网格与入场动效 @1440', () => {
+  test('每一行两颗按钮右缘对齐、行高统一，不靠意外折行', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/workflow')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(3_000)
+    await page.getByRole('tab', { name: /定义/ }).click()
+    await page.waitForTimeout(2_000)
+    const m = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.wf-def__list-item')]
+      const rail = document.querySelector('.wf-def')?.getBoundingClientRect()
+      const detail = rows.map((row) => {
+        const r = row.getBoundingClientRect()
+        const btn = (sel: string) => row.querySelector(sel)?.getBoundingClientRect() ?? null
+        const open = btn('.wf-def__button--open')
+        const archive = btn('.wf-def__button--archive')
+        /* 这一列要点了"定义"档才渲染，页面级那 42 项看不到它 ⇒ 行内子元素自己两两求交 */
+        const kids = [...row.children]
+          .map((k) => k.getBoundingClientRect())
+          .filter((k) => k.width > 1 && k.height > 1)
+        let inner = 0
+        for (let i = 0; i < kids.length; i += 1) {
+          for (let j = i + 1; j < kids.length; j += 1) {
+            const ox = Math.min(kids[i].right, kids[j].right) - Math.max(kids[i].left, kids[j].left)
+            const oy = Math.min(kids[i].bottom, kids[j].bottom) - Math.max(kids[i].top, kids[j].top)
+            if (ox > 2 && oy > 2) inner += 1
+          }
+        }
+        return {
+          h: Math.round(r.height),
+          inside: !!rail && r.left >= rail.left - 1 && r.right <= rail.right + 1,
+          openRight: open ? Math.round(open.right) : -1,
+          archiveRight: archive ? Math.round(archive.right) : -1,
+          openTop: open ? Math.round(open.top) : -1,
+          archiveTop: archive ? Math.round(archive.top) : -1,
+          ver: (row.querySelector('.wf-def__ver')?.textContent ?? '').trim(),
+          inner,
+        }
+      })
+      return { count: rows.length, detail }
+    })
+    expect(m.count, '定义列表不足 3 行——判据在空跑').toBeGreaterThanOrEqual(3)
+    for (const [index, row] of m.detail.entries()) {
+      const at = `第 ${index + 1} 行`
+      expect(row.inside, `${at} 撑出右栏之外`).toBe(true)
+      expect(row.h, `${at} 行高 ${row.h}px，比"两行网格"该有的还高（说明还在乱折）`).toBeLessThanOrEqual(60)
+      expect(row.openRight, `${at}「打开」右缘`).toBe(row.archiveRight)
+      expect(row.archiveTop, `${at}「归档」应与「打开」分行（第一行放主操作）`).toBeGreaterThan(row.openTop)
+      expect(row.inner, `${at} 行内子元素压叠 ${row.inner} 处`).toBe(0)
+      /* 版本号单独一格：名字再长也只截名字，"v几"必须看得见（截了就没人知道自己开的是哪版） */
+      expect(row.ver, `${at} 版本号不见了`).toMatch(/^v\d+$/)
+    }
+    await page.screenshot({ path: 'test-results/ui-audit/def-rows-grid.png' })
+  })
+
+  test('卡片有入场淡入上浮；开了"减少动效"就不该动', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/dashboard')
+    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    const animated = await page.evaluate(() => {
+      const card = document.querySelector('.ant-card')
+      const cs = card ? getComputedStyle(card) : null
+      return { name: cs?.animationName ?? '', duration: cs?.animationDuration ?? '' }
+    })
+    console.log(`MOTION normal animation=${JSON.stringify(animated)}`)
+    expect(animated.name, '卡片没有入场动效——NexusMind 那条 fadeIn 没接上').toContain('aegis-rise-in')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.waitForTimeout(200)
+    const calm = await page.evaluate(() => {
+      const card = document.querySelector('.ant-card')
+      const cs = card ? getComputedStyle(card) : null
+      return { name: cs?.animationName ?? '', fill: cs?.animationFillMode ?? '', transform: cs?.transform ?? '' }
+    })
+    console.log(`MOTION reduced=${JSON.stringify(calm)}`)
+    expect(calm.name, '开了 prefers-reduced-motion 还在放动画').toBe('none')
+    /* `backwards` 而不是 `both`：both 会把最后一帧的 transform 永久留下，
+       那会让卡片一直充当 fixed 后代的包含块。 */
+    expect(calm.fill, 'fill-mode 不该是 both（会在元素上永久留下 transform）').not.toBe('both')
+  })
+})
+
+/**
  * 风险等级芯片（兼图例）@1440。
  * 一排按钮同时干两件事：不点也是"每级什么色"的图例，点下去是"只看这一级"的筛选。
  * 最贵的两种退化是**图例说谎**（芯片色与图上色不是同一份）与**点了没反应**，两样都在这条里量。

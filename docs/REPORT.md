@@ -959,6 +959,35 @@ monitor 悬停 .page-hero button 第2个 → 对比度：ratio=3.68<4.5
 ③插入用例时把下一条的注释开头两行吃掉了，`npx playwright test --list` 当场报
 `SyntaxError: Identifier directly after number`——**挪动/新增用例之后先 `--list` 再跑测试**。
 
+## UI 第二十四批：定义行不该靠"意外折行"排版，外加一条 NexusMind 的入场动效（2026-10-06）
+
+### 先记两条**实测否掉**的移植
+
+| 想抄的 | 否掉它的证据 |
+| --- | --- |
+| 悬停才显形的行内按钮（`.baseline-del-btn`，`IncidentWorkspaceView.vue:1612-1624`） | 全仓只有 3 处、真正的列表行只 1 处，**NexusMind 的主流是常驻按钮**（另一处删除钮 `:270` 就是常驻的）；且它只改 `opacity`——`focus-within`/`focus-visible`/`@media (hover`/`(pointer`/`prefers-reduced-motion` 在它整个 `frontend/src` 里 **grep 零命中**，照抄会同时撞我们的可聚焦性与第二十二批刚加的悬停态判据 |
+| HUD 切角 / 四角刻度 | 不成型：`corner-mark` 全仓**只有一处**（`HistoryDatabase.vue:61,980-990`），`clip-path` 只出现在 `Home.vue` 的 4 条规则里，没有四 span 组件、没有 `border-radius:0` 的 HUD 框 |
+
+### 落地的四件
+
+| 取证项 | 怎么量的 | 结果 |
+| --- | --- | --- |
+| 「服务端已存定义」每一行靠**意外折行**排版 | 真机 @1440 逐行量 `getBoundingClientRect()` | 322px 的右栏装不下"名字 + N节点/M连线 + 状态 + 两颗 42px 按钮"（合计 ≈347px）；修前行高 **62px**，两颗按钮落在**不同行的不同位置**（"打开"右缘 1384、"归档"右缘 1150）⇒ 一列右缘参差，扫一眼比不了长短 |
+| 改成刻意的两行网格 | `display:grid` + 手工指定 `grid-area`：第一行 名字 + 版本号 + 打开，第二行 计数 + 状态 + 归档 | 行高统一 **56px**（12 行省 72px ≈ 1.3 行），两颗按钮右缘同为 **1384**（对齐成一列）；新判据钉"行高 ≤60 / 右缘相等 / 两颗分行 / 行内子元素两两求交为 0" |
+| 长名字仍会把行撑高 | 新判据第一次跑就抓到"第 9 行 63px" | 名字改单行省略号 + 全文进 `title`（与画布节点卡同一口径），**版本号单独一格**并钉 `^v\d+$`——名字再长也不许把"v几"截掉 |
+| 入场动效（NexusMind 4 处重复的原子） | `Step1GraphBuild.vue:770-773` 等：`fadeIn 0.2s ease-out` + `translateY(5px)` | 移植为 `aegis-rise-in` 挂 `body .ant-card`；**用 `backwards` 不用 `both`**——`both` 会把最后一帧的 `transform` 永久留在元素上，让卡片一直充当 `position:fixed` 后代的包含块。判据同时钉 `animationName` 含 `aegis-rise-in` 与 `fill-mode != both` |
+| 我们自己补的一条 | NexusMind 全站没有 `prefers-reduced-motion` | `@media (prefers-reduced-motion: reduce)` 关掉卡片入场与脉冲点；判据用 `page.emulateMedia({reducedMotion:'reduce'})` 验 `animationName === 'none'`（真机读数 `MOTION normal {"name":"aegis-rise-in","duration":"0.2s"}` → `reduced {"name":"none","fill":"none","transform":"none"}`） |
+
+另外把"实例状态轮询中"这句**静止**文本配了脉冲点（NexusMind 蓝合规变体 `Process.vue:2198-2200`：
+`#2563eb` + `box-shadow 0 0 10px rgba(37,99,235,.38)` + `pulse 1.5s`）——它说的恰恰是"此刻还在动"。
+核对后确认**早已移植**、本批不重复做的有：顶栏 live 脉冲点、发丝竖分隔线、蓝色滚动条、列表行悬停上雾。
+
+新参照 **Grafana** 已用同一套 sparse-checkout 方式落到 `E:\_ui_refs\grafana`（9.6M，只取
+`grafana-ui` 的 Badge / spinners / themes 与统一告警组件），给"状态色板"那条待拍板项当依据。
+
+照实记：①门禁 91 → **93 项**，单测 762 不变，收尾全量 **93 passed（18.3m）**；②**同一批内复犯**一次"插入用例吃掉下一条注释开头"，
+`--list` 报 `Total: 0 tests` 才拦住——这条得从"记得看一下"升成固定动作：**每次改完 spec 先跑 `--list`**。
+
 ## 还没测到的（诚实清单）
 
 1. **部署形态的并发曲线**：真总线 + 真库那一档已在 2026-10-02 量过（见上文"部署形态复测"，

@@ -118,17 +118,18 @@ function onDescription(event: Event): void {
     <h4 class="wf-def__subtitle">服务端已存定义</h4>
     <ul class="wf-def__list">
       <li v-for="row in store.definitions" :key="row.workflow_id" class="wf-def__list-item">
-        <span>{{ row.name }} v{{ row.version }}</span>
-        <span class="wf-def__muted">{{ row.node_count }} 节点 / {{ row.edge_count }} 连线</span>
-        <span class="wf-def__muted">{{ definitionStatusLabel(row.status) }}</span>
+        <span class="wf-def__name" :title="row.name">{{ row.name }}</span>
+        <span class="wf-def__ver">v{{ row.version }}</span>
+        <span class="wf-def__muted wf-def__meta">{{ row.node_count }} 节点 / {{ row.edge_count }} 连线</span>
+        <span class="wf-def__muted wf-def__state">{{ definitionStatusLabel(row.status) }}</span>
         <!-- 打开排在归档前面：这是一条能存不能开的链路修好后的样子，
              顺序也是提醒——先能拿回来编辑，再谈要不要收走它 -->
-        <button type="button" class="wf-def__button" :data-testid="`open-${row.workflow_id}`" @click="open(row.workflow_id)">打开</button>
+        <button type="button" class="wf-def__button wf-def__button--open" :data-testid="`open-${row.workflow_id}`" @click="open(row.workflow_id)">打开</button>
         <!-- 归档与取消归档是同一个开关的两面：一按就改了服务端状态的动作要先问一句，
              而把它撤回的那一下不该再拦人 -->
         <button
           type="button"
-          class="wf-def__button"
+          class="wf-def__button wf-def__button--archive"
           :data-testid="`archive-${row.workflow_id}`"
           @click="toggleArchive(row)"
         >
@@ -190,43 +191,66 @@ function onDescription(event: Event): void {
   font-size: 12px;
 }
 .wf-def__edge,
+/**
+ * 「服务端已存定义」每一行。
+ *
+ * 之前是 `flex-wrap: wrap`（为了修更早的"打/开竖排"），结果折到哪一行没人管：
+ * 真机 @1440 量到行高 62px，而两颗按钮落在**不同行的不同位置**
+ * （"打开" top=599 靠右、"归档" top=625 靠左下）。322px 的右栏里
+ * 名字 + "N 节点 / M 连线" + 状态 + 两颗按钮（各 42px）+ 间距 ≈ 347px，
+ * 一行**装不下**——所以问题不是"该不该折"，而是"折得有没有规矩"。
+ * 这里改成两行网格：第一行 名字 + 打开，第二行 计数 + 状态 + 归档，
+ * 两颗按钮右缘对齐成一列（扫一眼就能比长短），行高由内容决定而不是由 wrap 决定。
+ */
 .wf-def__list-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 0;
-  border-bottom: 1px dashed #f0f0f0;
-}
-.wf-def__list-item {
-  /* 与运行实例那一列同一个列表行习语（悬停上雾、圆角 10），
-     不再是"虚线分隔的表行"——这一列是可以点开的入口，不是读数。 */
-  flex-direction: row;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  column-gap: 6px;
+  row-gap: 2px;
   align-items: center;
-  padding: 7px 10px;
+  padding: 6px 10px;
   border: 1px solid transparent;
   border-radius: 10px;
   font-size: 12px;
+  /* 0.15s 是 NexusMind 全站的微动效基准（284 处 `transition: all .15s`） */
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 .wf-def__list-item:hover {
   background: rgba(37, 99, 235, 0.05);
   border-color: rgba(37, 99, 235, 0.18);
 }
-/* 名字那几段是可伸缩的，两颗按钮不能：原先名字一长就把"打开/归档"挤成两行
-   （1440 真机截图里就是"打/开"竖排），这里让文字自己折、按钮保持一行。
-   计数与状态那两段是词组，折在中间读起来像坏了，只允许名字折。 */
-.wf-def__list-item {
-  flex-wrap: wrap;
-}
-.wf-def__list-item > span {
+.wf-def__name {
+  grid-area: 1 / 1 / 2 / 2;
   min-width: 0;
+  /* 名字单行收尾、全文进 title——和画布节点卡同一套口径（长标题不许把行撑高，
+     否则一列长短不齐，"扫一眼比数量"就失效了）。真机量到一份长名字的定义把行撑到 63px。 */
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wf-def__list-item > span:first-child {
-  flex: 1 1 auto;
-  white-space: normal;
-  overflow-wrap: anywhere;
+.wf-def__ver {
+  grid-area: 1 / 2 / 2 / 3;
+  color: #5a6072;
+  white-space: nowrap;
+}
+.wf-def__meta {
+  grid-area: 2 / 1 / 3 / 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wf-def__state {
+  grid-area: 2 / 2 / 3 / 3;
+  white-space: nowrap;
+}
+.wf-def__button--open {
+  grid-area: 1 / 3 / 2 / 4;
+  justify-self: end;
+}
+.wf-def__button--archive {
+  grid-area: 2 / 3 / 3 / 4;
+  justify-self: end;
 }
 .wf-def__edge-endpoints {
   display: flex;

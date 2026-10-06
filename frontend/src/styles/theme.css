@@ -384,6 +384,56 @@ body .empty-hero__action:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* —— 入场动效：移植 NexusMind 的 `fadeIn 0.2s ease-out` + `translateY(5px)`
+     （`Step1GraphBuild.vue:770-773`、`Step2EnvSetup.vue:2834,3021`、`Step4Report.vue:4306-4308`）。
+     用 `backwards` 而不是 `both`：`both` 会把最后一帧的 transform 永久留在元素上，
+     那会让卡片一直充当 `position: fixed` 后代的包含块——一个入场动画不该改坐标系。 —— */
+@keyframes aegis-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+body .ant-card {
+  animation: aegis-rise-in 0.2s ease-out backwards;
+}
+
+/* NexusMind 全站没有 prefers-reduced-motion（grep 零命中），这条是我们自己补的兜底：
+   前庭敏感的用户不该被强制看脉冲与抬升。 */
+@media (prefers-reduced-motion: reduce) {
+  body .ant-card,
+  .status-dot.live,
+  .wf__polling::before {
+    animation: none !important;
+  }
+}
+
+/* 「实例状态轮询中」此前是一句静止的文本——它说的恰恰是"此刻还在动"，
+   配一颗和顶栏事件流同款的脉冲点才对得上（NexusMind 的 live dot 习语）。 */
+.wf__polling {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wf__polling::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2563eb;
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.38);
+  animation: aegis-status-pulse 1.5s infinite;
+  content: '';
+}
+@keyframes aegis-status-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
 /* —— 画布连线：库里默认是 1px 的浅灰 #b1b1b7，而 zoom 作用在整个变换层上——
      真机打开那份 111 节点的定义，fit 落在 zoom=0.318，1px 只剩 **0.32 设备像素**，
      线基本看不见；而"看全局"恰恰要缩到那一档。所以按 `--canvas-stroke-k`（1/zoom，封顶 3）补偿，
