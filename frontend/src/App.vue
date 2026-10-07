@@ -22,14 +22,6 @@ const pages = [
   { key: 'assistant', to: '/assistant', label: '智能助手' },
 ] as const
 
-const currentIndex = computed(() => {
-  const idx = pages.findIndex((page) => page.key === menuKey.value)
-  return idx === -1 ? 0 : idx
-})
-const pageBadge = computed(
-  () => `${String(currentIndex.value + 1).padStart(2, '0')} / ${String(pages.length).padStart(2, '0')}`,
-)
-
 const health = ref<{ status: string; version: string } | null>(null)
 const { events, connected, stalled } = useEventStream()
 
@@ -115,10 +107,9 @@ const statusTitle = computed<string>(() =>
         </div>
 
         <div class="nav-center">
-          <div class="page-badge">{{ pageBadge }}</div>
           <div class="immersive-stepper">
             <router-link
-              v-for="(page, idx) in pages"
+              v-for="page in pages"
               :key="page.key"
               class="flow-step"
               :class="{ active: menuKey === page.key }"
@@ -127,7 +118,6 @@ const statusTitle = computed<string>(() =>
               :aria-label="page.label"
               :aria-current="menuKey === page.key ? 'page' : undefined"
             >
-              <span class="flow-step-node">{{ idx + 1 }}</span>
               <span class="flow-step-label">{{ page.label }}</span>
             </router-link>
           </div>
@@ -206,10 +196,11 @@ const statusTitle = computed<string>(() =>
   position: sticky;
   top: 0;
   z-index: var(--aeg-z-header);
-  /* 三列网格：左右两列都是 1fr 等宽，因此中间列恒等于屏幕中线；
-     窄屏时先压缩/隐藏两侧内容，而不是像绝对居中那样让三组文字互相压住。 */
+  /* 三列网格：左右两列各取所需（auto），中间导航吃掉余量（1fr）。
+     旧写法左右都是 1fr 等宽——右列要装"胶囊+切换器"共 375px，左列品牌只要 ~200px，
+     等宽轨道等于逼着中间列按右列的胃口留地，页名就是这么被挤没的（@1440 轨道只剩 293px）。 */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--aeg-space-s4);
   height: var(--aeg-header-height);
@@ -258,9 +249,10 @@ const statusTitle = computed<string>(() =>
   white-space: nowrap;
 }
 
-/* —— 中间：页码徽标 + 步进器 ——
-   步进器改成"轨道 + 选中格"的分段控件写法（Arco/Linear 那一族）：轨道 `sunken`、选中格 `elevated` + 一档投影，
-   不再是渐变蓝实心 + 蓝雾投影。页码徽标也从实心渐变换成中性胶囊——它是读数不是操作，不该比操作更显眼。 */
+/* —— 中间：页签导航 ——
+   "轨道 + 选中格"的分段控件写法（Arco/Linear 那一族）：轨道 `sunken`、选中格 `elevated` + 一档投影。
+   页名全档铺开：七枚页签合计 ~560px，最窄一档（1100，右列收成圆点）也装得下——
+   编号圆点与连接短线已退役：页名就是标识，序号不表达任何状态，挂着只是噪声。 */
 .nav-center {
   display: flex;
   align-items: center;
@@ -268,59 +260,24 @@ const statusTitle = computed<string>(() =>
   justify-self: center;
   min-width: 0;
 }
-.page-badge {
-  padding: 5px var(--aeg-space-s3);
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-pill);
-  background: var(--aeg-color-sunken);
-  color: var(--aeg-color-text-secondary);
-  font-family: var(--aeg-font-mono);
-  font-size: var(--aeg-font-xs);
-  font-weight: var(--aeg-weight-bold);
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-}
 .immersive-stepper {
   display: flex;
   align-items: center;
-  padding: 6px;
+  gap: 2px;
+  padding: 4px;
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-pill);
   background: var(--aeg-color-sunken);
 }
 .flow-step {
-  position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 12px 6px 8px;
+  padding: 6px var(--aeg-space-s3);
   border-radius: var(--aeg-radius-pill);
   color: var(--aeg-color-text-secondary);
   text-decoration: none;
   white-space: nowrap;
   transition: background-color var(--aeg-motion-base) ease, color var(--aeg-motion-base) ease, box-shadow var(--aeg-motion-base) ease;
-}
-.flow-step + .flow-step::before {
-  content: '';
-  position: absolute;
-  left: -5px;
-  width: 10px;
-  height: 1px;
-  background: var(--aeg-color-border-strong);
-}
-.flow-step-node {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--aeg-color-card);
-  color: var(--aeg-color-text-secondary);
-  font-family: var(--aeg-font-mono);
-  font-size: var(--aeg-font-xs);
-  font-weight: var(--aeg-weight-bold);
-  transition: background-color var(--aeg-motion-base) ease, color var(--aeg-motion-base) ease;
 }
 .flow-step-label {
   font-size: var(--aeg-font-sm);
@@ -335,12 +292,6 @@ const statusTitle = computed<string>(() =>
   background: var(--aeg-color-elevated);
   box-shadow: var(--aeg-shadow-sm);
   color: var(--aeg-color-text);
-}
-.flow-step.active .flow-step-node {
-  /* 选中格的编号是实心主色 + `text-inverse`（浅主题白字 5.98:1、深主题深蓝黑字 5.09:1，两档都过 AA）。
-     上一版这里挂的是"白 22% 蒙在渐变蓝上 + 白字"，真机量到 11px 编号只有 3.49:1。 */
-  background: var(--aeg-color-brand);
-  color: var(--aeg-color-text-inverse);
 }
 
 /* —— 右侧：状态胶囊 + 主题切换器 —— */
@@ -477,30 +428,14 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text-secondary);
 }
 
-/* 窄屏逐层收：先收副题，再收步进器文字（编号点与顺序仍在，页名挪进 title/aria-label），最后收状态文字。
-   三档都是"少显示一点"，不是"互相压上去"也不是"把状态胶囊裁掉半颗"——
+/* 窄屏只收两侧，不动页签：先收副题，再收状态文字。
+   两档都是"少显示一点"，不是"互相压上去"也不是"把状态胶囊裁掉半颗"——
    真机量到的顶栏重叠与静默裁切就是这么来的。
-
-   步进器文字的下限从 1320 提到 1640 是这一轮量出来的（探针读网格的**已用轨道宽**）：
-   七格带名字时中间列占 773px，两侧轨道只剩 (W−853)/2 —— @1440 是 293px、@1366 只有 256px；
-   而右列现在要装"状态胶囊 273 + 间距 12 + 主题切换器 90 = 375px"（三个数都是量的）。
-   轨道不够时胶囊会被 flex 挤到 scrollWidth > clientWidth，那是**静默裁字**（那条判据本来就是禁它的）。
-   轨道 ≥375 要 W ≥ 1600，所以带名字的档位从 1600 起（留 40px 余量取 1640）：
-   1920 大屏铺页名，1440/1366 笔记本收成编号点。 */
+   页签为什么不收：七枚合计 ~560px，把副题（≤1360 收）与状态文字（≤1140 收）让出来的地算上，
+   最窄的 1100 档三列总和 ~845px，余量还很大；页名收回编号点那档已被用户否掉（2026-10-07：导航留顶部、页名要好看）。 */
 @media (max-width: 1360px) {
   .brand-sub {
     display: none;
-  }
-}
-@media (max-width: 1640px) {
-  .flow-step-label {
-    display: none;
-  }
-  .flow-step {
-    padding: 6px 8px;
-  }
-  .nav-center {
-    gap: var(--aeg-space-s3);
   }
 }
 @media (max-width: 1140px) {

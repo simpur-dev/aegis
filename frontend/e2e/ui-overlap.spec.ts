@@ -2118,8 +2118,8 @@ test.describe('定义列表自查 @1440', () => {
  * 2) 七页在深色下过同一套常驻几何与 AA 对比度判据（复用上面那个 inspect，不自建一套宽松版）；
  * 3) 顶栏切换器真的在换肤、真的存得住：点"深"→ `data-theme=dark` → reload 之后还是深色。
  *
- * @1920 那一档单独跑一次：步进器只有 ≥1640 才铺页名（右列要装"状态胶囊+切换器"，轨道宽度是量出来的），
- * 深色大屏正好是那一档，别让它变成从没被真机走过的分支。
+ * 页签导航那一组单独钉一条：页名全档铺开（1100–1920 四档连跑），任何一档把页名挤回编号点、
+ * 或让右列压叠/裁字，都会当场红——顶栏是七页共用的唯一导航，它的破绽在哪一页都一样刺眼。
  * ECharts / Cesium / Vue Flow 的**画面内部**不在这里（那是阶段 2 的活，现在钉上就是一条永远红的判据），
  * 用的是上面同一份 skipSel：画布与地图容器整体跳过。
  */
@@ -2200,10 +2200,14 @@ test.describe('深色主题换肤', () => {
     await page.reload({ waitUntil: 'networkidle' }).catch(() => {})
     await page.waitForSelector('.navbar', { timeout: 45_000 })
     expect(await page.evaluate(() => document.documentElement.dataset.theme), 'reload 之后忘了用户选过深色').toBe('dark')
-    /* 步进器页名在 ≥1640 才铺，这里顺手验窄档收成编号点时页名仍可从 title 读到 */
-    const titled = await page.evaluate(() =>
-      [...document.querySelectorAll('.flow-step')].every((el) => (el.getAttribute('title') ?? '').length > 1))
-    expect(titled, '收成编号点之后 title 里的页名也没了——只剩一串数字').toBe(true)
+    /* 页签导航全档铺页名之后，title/aria-label 仍要带着页名（读屏与 hover 都靠它），
+       可见文字本身也得是真页名——这条防"铺是铺了，铺的是占位符"。 */
+    const navText = await page.evaluate(() => ({
+      titled: [...document.querySelectorAll('.flow-step')].every((el) => (el.getAttribute('title') ?? '').length > 1),
+      labelled: [...document.querySelectorAll('.flow-step-label')].every((el) => (el.textContent ?? '').trim().length > 1),
+    }))
+    expect(navText.titled, '页签的 title 里没了页名——读屏只剩下一格空壳').toBe(true)
+    expect(navText.labelled, '页签铺出来的不是页名（空文字或单字符）').toBe(true)
   })
 
   for (const [name, path] of PAGES) {
@@ -2226,30 +2230,35 @@ test.describe('深色主题换肤', () => {
     })
   }
 
-  test('1920 大屏档：步进器铺页名时右列仍不压叠、不裁字 @1920', async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem('aegis.theme', 'dark'))
-    await page.setViewportSize({ width: 1920, height: 1080 })
-    await page.goto('/dashboard')
-    await page.waitForSelector('.navbar', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
-    await page.waitForTimeout(2_000)
-    const nav = await page.evaluate(() => {
-      const box = (sel: string) => {
-        const el = document.querySelector(sel)
-        if (!el) return null
-        const r = el.getBoundingClientRect()
-        return { left: Math.round(r.left), right: Math.round(r.right), w: Math.round(r.width), scroll: el.scrollWidth, client: el.clientWidth }
-      }
-      return { stepper: box('.immersive-stepper'), right: box('.nav-right'), status: box('.nav-status'), sw: box('.theme-switch'), labels: document.querySelectorAll('.flow-step-label').length, labelShown: [...document.querySelectorAll('.flow-step-label')].some((el) => getComputedStyle(el).display !== 'none') }
+  /* 页签导航现在是全档铺页名（2026-10-07 拍板：导航留顶部、不要编号点）。
+     "铺没铺"不再是 1920 的专属分支，所以这条从单档改成 1100–1920 四档连跑：
+     每一档都要求页名在场、右列不压叠不裁字——任何一档空间算错都会当场红。 */
+  for (const width of [1100, 1280, 1440, 1920]) {
+    test(`顶栏页签 @${width}：页名铺开，右列不压叠、不裁字`, async ({ page }) => {
+      await page.addInitScript(() => localStorage.setItem('aegis.theme', 'dark'))
+      await page.setViewportSize({ width, height: 1080 })
+      await page.goto('/dashboard')
+      await page.waitForSelector('.navbar', { timeout: 45_000 })
+      await page.waitForLoadState('networkidle').catch(() => {})
+      await page.waitForTimeout(2_000)
+      const nav = await page.evaluate(() => {
+        const box = (sel: string) => {
+          const el = document.querySelector(sel)
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return { left: Math.round(r.left), right: Math.round(r.right), w: Math.round(r.width), scroll: el.scrollWidth, client: el.clientWidth }
+        }
+        return { stepper: box('.immersive-stepper'), right: box('.nav-right'), status: box('.nav-status'), sw: box('.theme-switch'), labels: document.querySelectorAll('.flow-step-label').length, labelShown: [...document.querySelectorAll('.flow-step-label')].some((el) => getComputedStyle(el).display !== 'none') }
+      })
+      console.log(`NAV@${width} ${JSON.stringify(nav)}`)
+      expect(nav.labelShown, `@${width} 页名没铺开——页签导航是全档铺页名的，这一档不许掉回编号点`).toBe(true)
+      expect(nav.labels, '页签页名数不对（七页都该有）').toBe(7)
+      expect(nav.status!.left, `状态胶囊压进了页签（页签右缘=${nav.stepper!.right}，胶囊左缘=${nav.status!.left}）`).toBeGreaterThan(nav.stepper!.right)
+      expect(nav.right!.scroll - nav.right!.client, `右列被裁：scroll=${nav.right!.scroll} client=${nav.right!.client}`).toBeLessThanOrEqual(1)
+      expect(nav.status!.scroll - nav.status!.client, `状态胶囊静默裁字：scroll=${nav.status!.scroll} client=${nav.status!.client}`).toBeLessThanOrEqual(1)
+      if (width === 1920) await page.screenshot({ path: 'test-results/ui-audit/dark-nav-1920.png' })
     })
-    console.log(`NAV1920 ${JSON.stringify(nav)}`)
-    expect(nav.labelShown, '1920 大屏档没铺页名——这条判据要走的正是那一档').toBe(true)
-    expect(nav.labels, '步进器页名数不对（七页都该有）').toBe(7)
-    expect(nav.status!.left, `状态胶囊压进了步进器（步进右缘=${nav.stepper!.right}，胶囊左缘=${nav.status!.left}）`).toBeGreaterThan(nav.stepper!.right)
-    expect(nav.right!.scroll - nav.right!.client, `右列被裁：scroll=${nav.right!.scroll} client=${nav.right!.client}`).toBeLessThanOrEqual(1)
-    expect(nav.status!.scroll - nav.status!.client, `状态胶囊静默裁字：scroll=${nav.status!.scroll} client=${nav.status!.client}`).toBeLessThanOrEqual(1)
-    await page.screenshot({ path: 'test-results/ui-audit/dark-nav-1920.png' })
-  })
+  }
 })
 
 /**

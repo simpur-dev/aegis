@@ -286,7 +286,9 @@ describe('UI 基座', () => {
          所以这一支只抓得到旧的那条轨。 */
       if (text.includes('--motion-')) doubles.push(rel)
     }
-    expect(tokened, '一条走令牌的 transition 都没有——这条在空跑').toBeGreaterThanOrEqual(11)
+    /* 地板随实测定：顶栏页签的编号圆点退役带走了它那条 transition（2026-10-07 顶栏页名全档铺开），
+       全库走令牌的 transition 从 11 条变 10 条——地板跟着调到 10，防空跑的职责不变。 */
+    expect(tokened, '一条走令牌的 transition 都没有——这条在空跑').toBeGreaterThanOrEqual(10)
     expect(strays, `写死了时长而没走令牌：\n${strays.join('\n')}`).toHaveLength(0)
     expect(doubles, `还留着第二套动效令牌名 --motion-*（应统一为 --aeg-motion-*）：\n${doubles.join('\n')}`).toHaveLength(0)
   })
