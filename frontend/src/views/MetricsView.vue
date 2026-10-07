@@ -8,6 +8,7 @@ import EChart from '@/components/EChart.vue'
 import PageHero from '@/components/PageHero.vue'
 import FreshnessBar from '@/components/FreshnessBar.vue'
 import type { ChartOption } from '@/components/echarts'
+import { font } from '@/theme/tokens'
 import { latencyRows } from '@/views/metrics/rows'
 import { formatMetricValue, toMillis } from '@/utils/metricUnits'
 
@@ -60,7 +61,7 @@ const chartOption = computed<ChartOption>(() => ({
   tooltip: { trigger: 'axis' },
   legend: { data: ['P50', 'P95'] },
   grid: { left: 70, right: 24, bottom: 90 },
-  xAxis: { type: 'category', data: rows.value.map((r) => r.label), axisLabel: { rotate: 35, fontSize: 10 } },
+  xAxis: { type: 'category', data: rows.value.map((r) => r.label), axisLabel: { rotate: 35, fontSize: font.size.xs } },
   yAxis: { type: 'log', logBase: 10, name: 'ms（对数轴）' },
   // 共用一根毫秒轴：秒制那几条先按出口声明的单位换算，否则轴标签说的"ms"对它们不成立
   series: [

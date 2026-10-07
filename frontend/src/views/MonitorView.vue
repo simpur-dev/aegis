@@ -47,7 +47,7 @@ const reportOpen = ref(false)
 
 /** 图表与表格用的就是 `readings`：筛选已经交给后端，这里不再本地二次过滤（见 `load()`）。 */
 const chartOption = computed<ChartOption>(() => ({
-  title: { text: `${metric.value} 时序（${region.value || '全部区域'}）`, left: 'center', textStyle: { fontSize: 14 } },
+  title: { text: `${metric.value} 时序（${region.value || '全部区域'}）`, left: 'center' },
   tooltip: { trigger: 'axis' },
   grid: { left: 56, right: 24, bottom: 48 },
   xAxis: { type: 'category', data: readings.value.map((r) => operatingClock(r.observed_at)) },
