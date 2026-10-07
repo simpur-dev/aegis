@@ -1,43 +1,38 @@
 /*
- * AEGIS 视觉基座（对标 NexusMind）：浅底白卡、细描边、轻投影、渐变点缀。
- * 令牌级改动（主色/圆角/字体/布局底色）在 App.vue 的 ConfigProvider 里，
- * 这里只放令牌覆盖不到的整型规则。选择器统一加 `body` 前缀：antd 的样式
- * 是运行时 cssinjs 注入的，后注入且同权重时会压过静态 CSS，前缀用来稳住权重。
+ * AEGIS 视觉基座（阶段 1：令牌驱动、双主题）。
+ *
+ * 这一份只读令牌，不写颜色。真源在 `src/theme/tokens.ts`，由 `src/theme/vars.ts` 在
+ * `app.mount()` 之前注入成 `--aeg-*`（所以首屏就有变量可解析，不闪白），深色主题走
+ * `html[data-theme='dark']` 同一批槽位的另一组值。**这里出现一个 hex 就是一个换肤破绽**：
+ * 令牌换了、这里没换，切到深色就是"antd 变深、基座仍浅"的白底补丁。
+ * `src/uiTheme.spec.ts` 用棘轮数着这里的字面色，只许减不许增。
+ *
+ * 选择器统一加 `body` 前缀：antd 的样式是运行时 cssinjs 注入的，后注入且同权重时会压过
+ * 静态 CSS，前缀用来稳住权重。
+ *
+ * 与上一版（对标 NexusMind 的玻璃拟态那一版）的四处口径变更，都是"去掉没有功能目的的装饰"：
+ * 1. 卡片不再半透白 + `backdrop-filter`：换成不透明 `card` 底色 + 一档投影 + 细描边。
+ *    模糊在 Cesium/ECharts 之上还会造成真实的重绘代价，而它换来的只是"看起来透"。
+ * 2. 卡头标题下那道渐变细线、标题前的 ◆ 删除——它们不表达任何状态或层级。
+ * 3. 主按钮由渐变蓝 + 蓝雾投影改为实心 `brand`，悬停往深走（对比度判据没变：白字仍 ≥4.5:1）。
+ * 4. 滚动条由蓝渐变改中性描边色，只有悬停才提亮；位置指示不该抢内容的注意力。
+ *
+ * 保留的"看起来像装饰但有名分"的两处：卡片入场 `aegis-rise-in`（一次性，且 reduce 下关）、
+ * `.tip-list` 的 → 项目符号（替掉 `list-style`，中文长行不用回头重读；上一批是为可读性加的）。
  */
-
-/* —— 微动效基准 ——
-   真机摸底（2026-10-06，逐元素读计算样式）：改之前同屏并存 **0.15 / 0.16 / 0.18 / 0.2 / 0.24 / 0.3** 六档
-   （顶栏步进器 0.24、轨道 pill 0.18、地图芯片 0.16、卡片抬起 0.2、antd 默认 0.2 与 spin 0.3）。
-   一档一档看过去像五个系统。NexusMind 全站是一个 `transition: all .15s`（284 处），
-   这里把"悬停/选中这类状态反馈"统一收到 0.15s，只留两档例外：
-   antd 内部 hover 反馈走 0.1s（`motionDurationFast`），时间线那一笔描线是**一次性绘制**不是状态反馈，
-   慢到 0.6s 才读得出"在长"。 —— */
-:root {
-  --motion-fast: 0.1s;
-  --motion-base: 0.15s;
-  --motion-draw: 0.6s;
-}
 
 /* —— 页面基座 —— */
 body {
   margin: 0;
-  background:
-    radial-gradient(circle at 12% -8%, rgba(37, 99, 235, 0.06), transparent 34%),
-    #f2f4f8;
-  color: #0a0a0c;
-  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  background: var(--aeg-color-page);
+  color: var(--aeg-color-text);
+  font-family: var(--aeg-font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-/* 原生控件（勾选/单选）跟着主色走，不留浏览器默认蓝 */
-body {
-  accent-color: #2563eb;
+  /* 原生控件（勾选/单选）跟着主色走，不留浏览器默认蓝 */
+  accent-color: var(--aeg-color-brand);
 }
 
-/* —— 渐变滚动条 ——
-   色相走 NexusMind **蓝系那一支**（Home.vue:741-773 的 #93c5fd→#60a5fa）。
-   早先这版抄的是它另一支（紫青 #a7f9ff→#887dff→#ff68d6），而我们的口径是"只移植蓝系"，
-   所以这是一处真走偏；uiTheme.spec.ts 里补了一条源码门禁盯着，别再漂回去。 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -46,66 +41,40 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 999px;
-  background: linear-gradient(180deg, #93c5fd, #60a5fa) padding-box;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-border-strong);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #60a5fa, #3b82f6) padding-box;
+  background: var(--aeg-color-text-muted);
 }
 /* Firefox 不认 ::-webkit-scrollbar-* */
 html {
   scrollbar-width: thin;
-  scrollbar-color: #93c5fd transparent;
+  scrollbar-color: var(--aeg-color-border-strong) transparent;
 }
 
-/* —— 卡片：玻璃拟态面板（对标 NexusMind .left-panel/.right-panel 那套）——
-     半透白 + saturate 模糊 + 内圈白描边 + 一层大半径蓝雾投影，圆角 18px。 */
+/* —— 卡片：白卡 + 细描边 + 微妙投影（Arco/Linear 那一档，不是玻璃）——
+     悬停只加深投影与描边，不再 translateY：卡片里常嵌表格与地图，位移会让浮层锚点抖一下。 */
 body .ant-card {
-  border: 1px solid rgba(37, 99, 235, 0.12);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(18px) saturate(1.12);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
-    0 2px 8px rgba(0, 0, 0, 0.04),
-    0 18px 44px rgba(37, 99, 235, 0.07);
-  transition: box-shadow var(--motion-base) ease, transform var(--motion-base) ease, border-color var(--motion-base) ease;
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-card);
+  box-shadow: var(--aeg-shadow-sm);
+  transition: box-shadow var(--aeg-motion-base) ease, border-color var(--aeg-motion-base) ease;
 }
 body .ant-card-hoverable:hover {
-  transform: translateY(-2px);
-  border-color: rgba(37, 99, 235, 0.28);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
-    0 14px 28px rgba(37, 99, 235, 0.1);
+  border-color: var(--aeg-color-border-strong);
+  box-shadow: var(--aeg-shadow-md);
 }
 
-/* —— 卡头：◆ 前缀 + 标题下那道渐变细线（NexusMind panel-header 的签名）—— */
+/* —— 卡头：一条实色分隔线就够，渐变细线与 ◆ 已退役 —— */
 body .ant-card-head {
-  position: relative;
-  border-bottom: 1px solid rgba(37, 99, 235, 0.1);
-}
-body .ant-card-head::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 1px;
-  background: linear-gradient(to right, rgba(37, 99, 235, 0.25) 0%, rgba(125, 170, 200, 0.18) 45%, transparent 100%);
-  pointer-events: none;
-}
-body .ant-card-head-title::before {
-  content: '◆';
-  margin-right: 8px;
-  font-size: 0.72em;
-  color: #2563eb;
+  border-bottom: 1px solid var(--aeg-color-border-subtle);
 }
 
 /* —— 表头柔和底色 + 数字列等宽对齐 —— */
 body .ant-table-thead > tr > th {
-  background: rgba(247, 249, 252, 0.9);
+  background: var(--aeg-color-alter);
 }
 body .ant-table-thead > tr > th::before {
   background-color: transparent;
@@ -117,131 +86,206 @@ body .ant-statistic-content {
   font-variant-numeric: tabular-nums;
 }
 
-/* —— 标签胶囊化 ——
-   移植 NexusMind `.badge` 三件套（Step1GraphBuild.vue:630-662）：**底色雾 12% + 一圈同色 1px 描边 +
-   压深的字**，10px/600 大写；我们内容是中文，字号留 11px（10px 中文低于可读线），不做 uppercase。 */
+/* —— 标签：三件套换成令牌三件套（底 / 描边 / 字）——
+   上一版是"12% 雾底 + 同色描边 + 压深字"，六个色相写死在这里。现在四档色调各一组
+   `--aeg-tag-*`，两主题各一套，且**每一组都是实色**（不是 alpha），对比度在令牌层就能算死：
+   浅底 5.66–7.63:1、深底 8.60–9.38:1，全部过 AA（探针 E:\tmp\tag-contrast-probe.mjs）。 */
 body .ant-tag {
-  border-radius: 999px;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: var(--aeg-radius-pill);
   padding: 1px 10px;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-semibold);
 }
 body .ant-tag-green,
 body .ant-tag-success {
-  background: rgba(34, 197, 94, 0.12);
-  border-color: rgba(34, 197, 94, 0.2);
+  background: var(--aeg-tag-green-bg);
+  border-color: var(--aeg-tag-green-line);
+  color: var(--aeg-tag-green-text);
 }
 body .ant-tag-orange,
 body .ant-tag-gold,
 body .ant-tag-warning {
-  background: rgba(245, 158, 11, 0.12);
-  border-color: rgba(245, 158, 11, 0.2);
+  background: var(--aeg-tag-orange-bg);
+  border-color: var(--aeg-tag-orange-line);
+  color: var(--aeg-tag-orange-text);
 }
 body .ant-tag-blue,
 body .ant-tag-processing {
-  background: rgba(59, 130, 246, 0.12);
-  border-color: rgba(59, 130, 246, 0.2);
+  background: var(--aeg-tag-blue-bg);
+  border-color: var(--aeg-tag-blue-line);
+  color: var(--aeg-tag-blue-text);
 }
 body .ant-tag-red,
 body .ant-tag-error {
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.2);
-}
-/* antd 预设的"浅底深字"里绿/橙/金三档字色只有 3.0–3.4:1（真机量的 "ok" 标签 3.37），
-   压深一档到 AA 之上；实心色标签（风险等级）走内联白字，不受这里影响。 */
-body .ant-tag-green,
-body .ant-tag-success {
-  color: #166534;
-}
-body .ant-tag-orange,
-body .ant-tag-gold,
-body .ant-tag-warning {
-  color: #8a4005;
-}
-body .ant-tag-red,
-body .ant-tag-error {
-  color: #b91c1c;
-}
-/* 上面那套"雾底 + 压深字"只在**浅底**成立。横幅是藏青的，12% 的橙雾叠上去底色只有 rgb(41,57,56)，
-   再压 `#8a4005` 就是暗底暗字（真机量的 "语义服务未配置" ratio=1.63）。
-   深色底上反过来：**底色压深、字提亮**，语义靠色相而不是靠深浅。 */
-.page-hero .ant-tag {
-  border-width: 1px;
-  border-style: solid;
-}
-.page-hero .ant-tag-green,
-.page-hero .ant-tag-success {
-  background: rgba(34, 197, 94, 0.16);
-  border-color: rgba(110, 231, 183, 0.45);
-  color: #6ee7b7;
-}
-.page-hero .ant-tag-orange,
-.page-hero .ant-tag-gold,
-.page-hero .ant-tag-warning {
-  background: rgba(245, 158, 11, 0.16);
-  border-color: rgba(251, 191, 36, 0.45);
-  color: #fbbf24;
-}
-.page-hero .ant-tag-red,
-.page-hero .ant-tag-error {
-  background: rgba(239, 68, 68, 0.18);
-  border-color: rgba(252, 165, 165, 0.45);
-  color: #fca5a5;
-}
-.page-hero .ant-tag-blue,
-.page-hero .ant-tag-processing {
-  background: rgba(59, 130, 246, 0.2);
-  border-color: rgba(147, 197, 253, 0.45);
-  color: #93c5fd;
+  background: var(--aeg-tag-red-bg);
+  border-color: var(--aeg-tag-red-line);
+  color: var(--aeg-tag-red-text);
 }
 
 /* 分页里那个"•••"与前后箭头是跳页入口，antd 给的是 25% 黑（真机 1.83:1），提到正文灰。
    选择器要压过 antd 运行时注入的那条：它带 css- 哈希类（四级 class），所以这里也得到四级。 */
 body .ant-pagination .ant-pagination-item-link,
 body .ant-pagination .ant-pagination-item-link .ant-pagination-item-container .ant-pagination-item-ellipsis {
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
+}
+/* 页码本身也一样：antd 给当前页的是主色系链接（深色主题下真机量到 #3572D4 压深蓝黑卡底 3.74:1），
+   统一走 `brand-hover`——浅色那档是压深的 #1D4ED8（白底 8.6:1），深色那档是提亮的 #60A5FA（暗底 6.6:1）。 */
+body .ant-pagination .ant-pagination-item a {
+  color: var(--aeg-color-text-secondary);
+}
+body .ant-pagination .ant-pagination-item-active a {
+  color: var(--aeg-color-brand-hover);
 }
 
-/* —— 主按钮：渐变蓝 + 轻投影；悬停提亮而不是换色（NexusMind 的 filter 手法）—— */
+/* —— 按钮：实心主色，悬停/按下往深走 ——
+   悬停**变深不是变亮**：主按钮的字是 14px/400 要 4.5:1，浅一档（#3b82f6）白字只有 3.68:1。
+   深色主题下 `brand` 是提亮的 #3B82F6，配的hover/active 与文字槽（`text-inverse`）都换向，
+   这一段两主题都成立——具体数值由 `tokens.spec.ts` 的 AA 判据现算现验。 */
 body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled) {
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
-  border-color: transparent;
-  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.22);
+  background: var(--aeg-color-brand);
+  border-color: var(--aeg-color-brand);
+  /* 字色必须自己写，不能留给 antd 的 `colorTextLightSolid`（那一枚恒是白）：
+     深色主题的主色是提亮过的 #3B82F6，白字压上去只有 3.68:1（真机 @1440 助手页"发送"量到的），
+     换成 `text-inverse`（深色=深蓝黑 #0B1220）之后 5.09:1；浅色主题它仍是白，5.17:1。 */
+  color: var(--aeg-color-text-inverse);
+  box-shadow: none;
 }
 body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover {
-  /* 悬停往**深**走。原先是往浅走（#3b82f6），白字压上去只有 3.68:1——
-     主按钮的字是 14px/400，要 4.5:1；常驻判据不悬停，所以这条一直没人看见
-     （新加的"悬停态体检"抓的正是这类）。抬起 1px 与更深的投影已经足够表达"悬停"，
-     不需要靠变亮。 */
-  background: linear-gradient(135deg, #1d4ed8, #1e40af);
-  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.28);
-  transform: translateY(-1px);
+  background: var(--aeg-color-brand-hover);
+  border-color: var(--aeg-color-brand-hover);
 }
 body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):active {
-  background: linear-gradient(135deg, #1e40af, #1e3a8a);
-  transform: translateY(0);
+  background: var(--aeg-color-brand-active);
+  border-color: var(--aeg-color-brand-active);
 }
-/* 次级按钮：白底细描边，悬停给一层主色雾（NexusMind .action-btn.secondary） */
+/* 次级按钮：底色不动，描边与字给主色 */
 body .ant-btn-default:not(:disabled):hover {
-  background: rgba(37, 99, 235, 0.06);
-  border-color: rgba(37, 99, 235, 0.4);
-  color: #1d4ed8;
+  background: var(--aeg-color-brand-soft);
+  border-color: var(--aeg-color-brand-line);
+  color: var(--aeg-color-brand-hover);
 }
 
-/* —— 焦点环：NexusMind 全站没有 :focus-visible，这条是补它缺的那一课 —— */
+/* —— 焦点环：两层（内层用卡片底色把环与控件隔开，外层主色）——
+   上一版顺手写了 `border-radius: 8px`，那会在获得焦点的一刻改掉控件自己的形状；
+   环应该跟着元素的圆角走，所以这里只画环不改形状。 */
 body :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 0 4px rgba(37, 99, 235, 0.45);
-  border-radius: 8px;
+  box-shadow: 0 0 0 2px var(--aeg-color-card), 0 0 0 4px var(--aeg-color-brand-line);
 }
 body .ant-input:focus-visible,
 body .ant-select-focused .ant-select-selector,
 body .ant-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+  box-shadow: 0 0 0 4px var(--aeg-color-brand-soft);
 }
 
-/* —— 横幅内的 KPI 托盘条目（PageHero 的 stats 槽，对标 .overview-stats）——
+/* —— 空态：图形 + 一句话 + 一个出口 ——
+   antd 的 a-empty 只给一张灰图和一行字，值班员看完不知道下一步去哪。
+   底色走 `alter`（浅主题近白、深主题深蓝），图标底走主色雾 + 主色字，两主题都成立。 */
+body .empty-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-alter);
+  text-align: left;
+}
+body .empty-hero__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-brand);
+  font-size: var(--aeg-font-lg);
+}
+body .empty-hero__title {
+  margin-bottom: 6px;
+  font-size: var(--aeg-font-md);
+  font-weight: var(--aeg-weight-bold);
+  color: var(--aeg-color-text);
+}
+body .empty-hero__desc {
+  font-size: var(--aeg-font-base);
+  line-height: var(--aeg-lh-normal);
+  color: var(--aeg-color-text-secondary);
+}
+body .empty-hero__action {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  /* 这枚链接挂在 `alter` 面上（不是卡片白），深色主题下 brand(#3B82F6) 压 alter(#13203A) 只有 4.41:1，
+     12px/600 要 4.5:1。取 brand-hover：浅档 #1D4ED8 / 深档 #60A5FA，两档都在 6:1 以上。 */
+  color: var(--aeg-color-brand-hover);
+}
+body .empty-hero__action:hover {
+  text-decoration: underline;
+}
+
+/* "使用提示"式列表与 dashed 状态胶囊：指标页与助手页共用，所以放基座而不是页面里。 */
+body .tip-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+body .tip-list li {
+  position: relative;
+  padding-left: 16px;
+  font-size: var(--aeg-font-sm);
+  line-height: 1.8;
+}
+body .tip-list li::before {
+  content: '→';
+  position: absolute;
+  left: 0;
+  color: var(--aeg-color-brand);
+  font-weight: var(--aeg-weight-bold);
+}
+/* "没量过 / 不在这台机器上"用虚线胶囊：实心色标签在界面上意味着"这是测出来的状态" */
+body .pill-dashed {
+  display: inline-block;
+  margin: 0 2px;
+  padding: 1px 8px;
+  border: 1px dashed var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-pill);
+  background: transparent;
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-semibold);
+  letter-spacing: 0.04em;
+}
+
+/* —— 入场动效：一次性淡入上移 5px。
+     用 `backwards` 而不是 `both`：`both` 会把最后一帧的 transform 永久留在元素上，
+     那会让卡片一直充当 `position: fixed` 后代的包含块——一个入场动画不该改坐标系。 —— */
+@keyframes aegis-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+body .ant-card {
+  animation: aegis-rise-in var(--aeg-motion-slow) ease-out backwards;
+}
+
+/* —— 以下两块属于 PageHero 那条藏青横幅（阶段 3 随横幅退役）——
+   横幅底色是**固定的藏青**，不随主题变（深色主题下它就是深色、浅色主题下它是页面唯一的深色面），
+   所以里面的白/半透白不能挂 `--aeg-color-*`：那些槽位会跟着主题翻，翻了就是白字压白底。
+   这一段是本文件还剩字面色的唯一原因，也是棘轮基线不肯归零的主要余额。 */
+
+/* —— 横幅内的 KPI 托盘条目（PageHero 的 stats 槽）——
      大数在上、小标签在下；数字等宽 + tabular-nums；条目之间一条白 15% 竖线。 */
 body .hero-stat {
   flex: 1;
@@ -282,84 +326,36 @@ body .hero-stat .ant-statistic-content-suffix {
   color: rgba(255, 255, 255, 0.65);
 }
 
-/* "使用提示"式列表与 dashed 状态胶囊（对标 NexusMind .tip-list / .pill--pending）：
-   指标页与助手页共用，所以放基座而不是页面里。→ 当项目符号，中文行读起来不用回头重读。 */
-body .tip-list {
-  margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
+/* 横幅里的标签：浅底那套"雾底 + 压深字"搬到藏青上会变成暗底暗字（真机量的 ratio=1.63），
+   深底反过来——底色压深、字提亮，语义靠色相而不是靠深浅。 */
+.page-hero .ant-tag {
+  border-width: 1px;
+  border-style: solid;
 }
-body .tip-list li {
-  position: relative;
-  padding-left: 16px;
-  font-size: 12px;
-  line-height: 1.8;
+.page-hero .ant-tag-green,
+.page-hero .ant-tag-success {
+  background: rgba(34, 197, 94, 0.16);
+  border-color: rgba(110, 231, 183, 0.45);
+  color: #6ee7b7;
 }
-body .tip-list li::before {
-  content: '→';
-  position: absolute;
-  left: 0;
-  color: #2563eb;
-  font-weight: 700;
+.page-hero .ant-tag-orange,
+.page-hero .ant-tag-gold,
+.page-hero .ant-tag-warning {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fbbf24;
 }
-/* "没量过 / 不在这台机器上"用虚线胶囊：实心色标签在界面上意味着"这是测出来的状态" */
-body .pill-dashed {
-  display: inline-block;
-  margin: 0 2px;
-  padding: 1px 8px;
-  border: 1px dashed #b8bec9;
-  border-radius: 999px;
-  background: transparent;
-  color: #5a6072;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+.page-hero .ant-tag-red,
+.page-hero .ant-tag-error {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(252, 165, 165, 0.45);
+  color: #fca5a5;
 }
-
-/* —— 空态：图形 + 一句话 + 一个出口（对标 NexusMind .empty-hero）——
-     antd 的 a-empty 只给一张灰图和一行字，值班员看完不知道下一步去哪。 */
-body .empty-hero {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 18px 20px;
-  border: 1px solid rgba(37, 99, 235, 0.1);
-  border-radius: 16px;
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.06), rgba(99, 102, 241, 0.04));
-  text-align: left;
-}
-body .empty-hero__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  min-width: 48px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #2563eb, #4f46e5);
-  color: #fff;
-  font-size: 20px;
-}
-body .empty-hero__title {
-  margin-bottom: 6px;
-  font-size: 15px;
-  font-weight: 700;
-  color: #1d2129;
-}
-body .empty-hero__desc {
-  font-size: 13px;
-  line-height: 1.6;
-  color: #4e5969;
-}
-body .empty-hero__action {
-  display: inline-block;
-  margin-top: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #2563eb;
-}
-body .empty-hero__action:hover {
-  text-decoration: underline;
+.page-hero .ant-tag-blue,
+.page-hero .ant-tag-processing {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(147, 197, 253, 0.45);
+  color: #93c5fd;
 }
 
 /* —— 深色横幅里的按钮：antd 的禁用态是"浅底深字"（primary 禁用 = rgba(0,0,0,.04) 底 +
@@ -372,7 +368,7 @@ body .empty-hero__action:hover {
   background: rgba(255, 255, 255, 0.1);
   box-shadow: none;
   /* 横幅里的动作钮是这一页的主入口，antd small 只有 24px 高，在值班台上偏小。
-     NexusMind 给主操作的是 46px 全宽钮（Step1GraphBuild.vue:988-1003）；深底横幅里放 46 会压过标题，
+     NexusMind 给主操作的是 46px 全宽钮；深底横幅里放 46 会压过标题，
      取 36px——比 small 高一档，又不至于把横幅头部撑变形。 */
   min-height: 36px;
 }
@@ -382,12 +378,14 @@ body .empty-hero__action:hover {
   background: rgba(255, 255, 255, 0.2);
 }
 .page-hero .ant-btn-primary:not(:disabled) {
+  /* 钉住**浅色主题**那档主色：横幅底色两主题都是藏青，跟着 `--aeg-color-brand` 走会在深色下
+     翻成 #3B82F6，白字压上去掉到 3.66:1（14px/400 要 4.5:1）。 */
   border-color: transparent;
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  background: #2563eb;
 }
 .page-hero .ant-btn-primary:not(:disabled):hover {
   /* 悬停往深走，和 App.vue 的 colorPrimaryHover 同向：浅一档白字就掉到 4.5 以下。 */
-  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+  background: #1d4ed8;
 }
 .page-hero .ant-btn:disabled,
 .page-hero .ant-btn.ant-btn-disabled {
@@ -397,27 +395,9 @@ body .empty-hero__action:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
-/* —— 入场动效：移植 NexusMind 的 `fadeIn 0.2s ease-out` + `translateY(5px)`
-     （`Step1GraphBuild.vue:770-773`、`Step2EnvSetup.vue:2834,3021`、`Step4Report.vue:4306-4308`）。
-     用 `backwards` 而不是 `both`：`both` 会把最后一帧的 transform 永久留在元素上，
-     那会让卡片一直充当 `position: fixed` 后代的包含块——一个入场动画不该改坐标系。 —— */
-@keyframes aegis-rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-body .ant-card {
-  animation: aegis-rise-in 0.2s ease-out backwards;
-}
-
 /* NexusMind 全站没有 prefers-reduced-motion（grep 零命中），这条是我们自己补的兜底：
    前庭敏感的用户不该被强制看脉冲与抬升。
-   这里必须**逐条列出**src 里每一支 infinite 动画——漏一条就等于那条没写
+   这里必须**逐条列出** src 里每一支 infinite 动画——漏一条就等于那条没写
    （第二十六批真机量到的正是漏掉的 `.page-hero__badge`：七页全在 reduce 态继续无限循环）。
    源码门禁 src/uiTheme.spec.ts 会扫 src 里的 `animation: … infinite` 并逐条核对这张名单，
    新增脉冲忘兜底先在单测红，不用等体检。 */
@@ -449,7 +429,7 @@ body .ant-card {
 }
 
 /* 「实例状态轮询中」此前是一句静止的文本——它说的恰恰是"此刻还在动"，
-   配一颗和顶栏事件流同款的脉冲点才对得上（NexusMind 的 live dot 习语）。 */
+   配一颗和顶栏事件流同款的脉冲点才对得上。 */
 .wf__polling {
   display: inline-flex;
   align-items: center;
@@ -459,8 +439,7 @@ body .ant-card {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #2563eb;
-  box-shadow: 0 0 10px rgba(37, 99, 235, 0.38);
+  background: var(--aeg-color-brand);
   animation: aegis-status-pulse 1.5s infinite;
   content: '';
 }
@@ -473,48 +452,49 @@ body .ant-card {
 /* —— 画布连线：库里默认是 1px 的浅灰 #b1b1b7，而 zoom 作用在整个变换层上——
      真机打开那份 111 节点的定义，fit 落在 zoom=0.318，1px 只剩 **0.32 设备像素**，
      线基本看不见；而"看全局"恰恰要缩到那一档。所以按 `--canvas-stroke-k`（1/zoom，封顶 3）补偿，
-     并把颜色从"浅灰"提到 slate-400。参照 n8n `CanvasEdge.vue:212` 的同一条做法。 —— */
+     颜色走 `text-muted`（浅主题 slate 中灰、深主题亮灰，两档在各自画布底上都看得清）。
+     参照 n8n `CanvasEdge.vue:212` 的同一条做法。 —— */
 .wf__canvas .vue-flow__edge-path {
-  stroke: #94a3b8;
+  stroke: var(--aeg-color-text-muted);
   stroke-width: calc(1.5px * var(--canvas-stroke-k, 1));
 }
 .wf__canvas .vue-flow__edge.selected .vue-flow__edge-path {
-  stroke: #2563eb;
+  stroke: var(--aeg-color-brand);
 }
 
 /* —— 画布浮层：@vue-flow 的 minimap 默认只有一个 `background-color:#fff`，controls 只有 2px 投影，
-     放进我们的圆角玻璃画布里就是两块生硬的白方块（真机截图里那块"空白矩形"就是它）。
-     统一成卡片族同一套语言：半透白 + 主色细描边 + 12px 圆角 + 蓝雾投影。 —— */
+     放进我们的画布里就是两块生硬的白方块（深色主题下更是一块发光的白板）。
+     统一成卡片族同一套语言：`elevated` 底 + 令牌描边 + md 圆角 + md 投影。 —— */
 .wf__canvas .vue-flow__minimap {
   overflow: hidden;
-  border: 1px solid rgba(37, 99, 235, 0.16);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 10px 24px rgba(13, 30, 66, 0.1);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-elevated);
+  box-shadow: var(--aeg-shadow-md);
 }
-/* 空画布上这块"什么都没有的白框"不画出来，但要留在 DOM 里——落点让位得量它的真实尺寸当禁落区，
+/* 空画布上这块"什么都没有的框"不画出来，但要留在 DOM 里——落点让位得量它的真实尺寸当禁落区，
    否则第一颗贴着右下角落的节点会在落好之后被刚挂载的小地图盖住（`visibility:hidden` 仍占布局）。 */
 .wf__canvas .vue-flow__minimap.is-ghost {
   visibility: hidden;
 }
 .wf__canvas .vue-flow__controls {
   overflow: hidden;
-  border: 1px solid rgba(37, 99, 235, 0.14);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 10px 24px rgba(13, 30, 66, 0.1);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-elevated);
+  box-shadow: var(--aeg-shadow-md);
 }
 .wf__canvas .vue-flow__controls-button {
   width: 22px;
   height: 22px;
   padding: 6px;
-  border-bottom: 1px solid rgba(37, 99, 235, 0.12);
+  border-bottom: 1px solid var(--aeg-color-border);
   background: transparent;
-  color: #334155;
+  color: var(--aeg-color-text-secondary);
   fill: currentColor;
 }
 .wf__canvas .vue-flow__controls-button:hover {
-  background: rgba(37, 99, 235, 0.1);
+  background: var(--aeg-color-brand-soft);
 }
 .wf__canvas .vue-flow__controls-button:last-child {
   border-bottom: none;

@@ -66,8 +66,8 @@ function onDragStart(event: DragEvent, type: NodeType): void {
   height: 100%;
   padding: 12px;
   overflow-y: auto;
-  border-right: 1px solid #f0f0f0;
-  background: #fafafa;
+  border-right: 1px solid var(--aeg-color-border);
+  background: var(--aeg-color-sunken);
 }
 .wf-palette__title {
   margin: 0;
@@ -81,7 +81,7 @@ function onDragStart(event: DragEvent, type: NodeType): void {
 }
 .wf-palette__group-title {
   margin: 6px 0 2px;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
   font-weight: 500;
 }
@@ -91,26 +91,25 @@ function onDragStart(event: DragEvent, type: NodeType): void {
   justify-content: space-between;
   gap: 6px;
   padding: 6px 8px;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
-  background: #fff;
-  color: #262626;
+  border: 1px solid var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-elevated);
+  color: var(--aeg-color-text);
   font-size: 12px;
   text-align: left;
   cursor: grab;
 }
 .wf-palette__item:hover {
-  /* 主色归一：#1677ff 是 antd 默认蓝，和全站移植的 #2563eb 并存。 */
-  border-color: #2563eb;
+  border-color: var(--aeg-color-brand);
 }
 .wf-palette__type {
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
 }
 .wf-palette__tip {
   margin: auto 0 0;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 11px;
 }
 </style>

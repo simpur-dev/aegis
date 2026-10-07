@@ -377,7 +377,7 @@ onMounted(() => void loadCapabilities())
 
 <style scoped>
 .muted {
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .caps {
@@ -406,7 +406,7 @@ onMounted(() => void loadCapabilities())
   font-weight: 600;
   line-height: 1.4;
   cursor: pointer;
-  transition: background-color var(--motion-base) ease, border-color var(--motion-base) ease;
+  transition: background-color var(--aeg-motion-base) ease, border-color var(--aeg-motion-base) ease;
 }
 .caps__chip:hover:not(:disabled) {
   border-color: #95de64;
@@ -442,7 +442,7 @@ onMounted(() => void loadCapabilities())
   font-size: 13px;
 }
 .frame .kind {
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-family: 'Consolas', monospace;
   min-width: 76px;
 }
@@ -463,6 +463,6 @@ onMounted(() => void loadCapabilities())
 .decision {
   margin-top: 6px;
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.65);
+  color: var(--aeg-color-text-secondary);
 }
 </style>

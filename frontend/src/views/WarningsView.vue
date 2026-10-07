@@ -201,7 +201,7 @@ function onDrawerVisible(visible: boolean): void {
 
     <a-card size="small" title="预警发布与靶向触达" :loading="loading">
       <FreshnessBar :fetched-at="fetchedAt" :label="freshLabel" :interval-ms="REFRESH_MS" />
-      <p v-if="windowNote" data-testid="window-note" style="margin: 0 0 6px; color: #5a6072; font-size: 12px">
+      <p v-if="windowNote" data-testid="window-note" style="margin: 0 0 6px; color: var(--aeg-color-text-secondary); font-size: 12px">
         {{ windowNote }}
       </p>
       <a-table

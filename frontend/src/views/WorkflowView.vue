@@ -255,12 +255,12 @@ onUnmounted(() => {
   font-size: 12px;
 }
 .wf__error {
-  background: #fff2f0;
-  color: #cf1322;
+  background: var(--aeg-tag-red-bg);
+  color: var(--aeg-tag-red-text);
 }
 .wf__warn {
-  background: #fffbe6;
-  color: #874d00;
+  background: var(--aeg-tag-orange-bg);
+  color: var(--aeg-tag-orange-text);
 }
 .wf__todos {
   display: flex;
@@ -283,10 +283,10 @@ onUnmounted(() => {
 .wf__left,
 .wf__right {
   /* 与卡片同一族（细蓝描边 + 轻投影 + 大圆角），不再是灰线方角小盒子 */
-  border: 1px solid rgba(37, 99, 235, 0.12);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 14px 32px rgba(37, 99, 235, 0.06);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-card);
+  box-shadow: var(--aeg-shadow-sm);
   overflow-y: auto;
 }
 .wf__right {
@@ -302,9 +302,9 @@ onUnmounted(() => {
   flex: 0 0 auto;
   gap: 4px;
   padding: 4px;
-  border: 1px solid rgba(37, 99, 235, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-sunken);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
 }
 .wf-rail__pill {
@@ -316,45 +316,45 @@ onUnmounted(() => {
   border: 1px solid rgba(37, 99, 235, 0.12);
   border-radius: 999px;
   background: transparent;
-  color: #4e5969;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform var(--motion-base) ease, background var(--motion-base) ease, border-color var(--motion-base) ease, color var(--motion-base) ease;
+  transition: transform var(--aeg-motion-base) ease, background var(--aeg-motion-base) ease, border-color var(--aeg-motion-base) ease, color var(--aeg-motion-base) ease;
 }
 .wf-rail__pill:hover {
-  background: rgba(37, 99, 235, 0.06);
-  border-color: rgba(37, 99, 235, 0.24);
-  color: #2563eb;
+  background: var(--aeg-color-brand-soft);
+  border-color: var(--aeg-color-brand-line);
+  color: var(--aeg-color-brand-hover);
   transform: translateY(-1px);
 }
 .wf-rail__pill:active {
   transform: translateY(0) scale(0.98);
 }
 .wf-rail__pill.is-active {
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  background: var(--aeg-color-brand);
   border-color: transparent;
-  color: #fff;
+  color: var(--aeg-color-text-inverse);
   box-shadow: 0 8px 20px rgba(37, 99, 235, 0.22);
 }
 .wf-rail__count {
   padding: 0 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--aeg-color-brand-active);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   font-weight: 700;
 }
 .wf-rail__pill:not(.is-active) .wf-rail__count {
-  background: rgba(37, 99, 235, 0.12);
-  color: #1d4ed8;
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-brand-hover);
 }
 .wf__canvas {
   position: relative;
-  border: 1px solid rgba(37, 99, 235, 0.12);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 14px 32px rgba(37, 99, 235, 0.06);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-card);
+  box-shadow: var(--aeg-shadow-sm);
   min-height: 0;
   /* 网格项默认 min-width:auto：轨道写了 minmax(0,1fr) 也没用，画布仍按内容最小宽撑住 */
   min-width: 0;
@@ -382,21 +382,21 @@ onUnmounted(() => {
   place-items: center;
   width: 40px;
   height: 40px;
-  border: 1px dashed rgba(37, 99, 235, 0.4);
+  border: 1px dashed var(--aeg-color-brand-line);
   border-radius: 12px;
-  background: rgba(37, 99, 235, 0.06);
-  color: #2563eb;
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-brand-hover);
   font-size: 18px;
 }
 .wf__canvas-hint-title {
   font-size: 15px;
   font-weight: 700;
-  color: #1d2129;
+  color: var(--aeg-color-text);
 }
 .wf__canvas-hint-desc {
   font-size: 12px;
   line-height: 1.6;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
 }
 
 /*

@@ -181,7 +181,7 @@ function onConfig(next: Record<string, JsonValue>): void {
 }
 .wf-inspector__empty {
   margin: 12px;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .wf-inspector__head {
@@ -195,19 +195,19 @@ function onConfig(next: Record<string, JsonValue>): void {
   font-size: 14px;
 }
 .wf-inspector__id {
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 11px;
 }
 .wf-inspector__desc {
   margin: 0;
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .wf-inspector__row {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .wf-inspector__grid {
@@ -223,7 +223,7 @@ function onConfig(next: Record<string, JsonValue>): void {
 }
 .wf-inspector__hint {
   margin: 0;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 11px;
 }
 .wf-inspector__config {
@@ -234,7 +234,7 @@ function onConfig(next: Record<string, JsonValue>): void {
 }
 .wf-inspector__config legend {
   padding: 0 4px;
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .wf-inspector__actions {

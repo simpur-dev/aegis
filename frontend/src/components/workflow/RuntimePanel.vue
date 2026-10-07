@@ -143,12 +143,12 @@ const listedInstances = computed(() => {
 }
 .wf-run__subtitle {
   margin-top: 6px;
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .wf-run__waiting {
   margin-left: 6px;
-  color: #cf1322;
+  color: var(--aeg-color-status-danger);
   font-weight: 400;
 }
 .wf-run__bar {
@@ -157,35 +157,36 @@ const listedInstances = computed(() => {
 }
 .wf-run__button {
   padding: 2px 10px;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
-  background: #fff;
+  border: 1px solid var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-card);
   font-size: 12px;
   cursor: pointer;
 }
 .wf-run__button--primary {
-  /* 与全站主色 #2563eb 归一（原来是 antd 默认蓝 #1677ff，同一屏两种蓝）；
-     白字压 #2563eb 是 5.17:1，压 #1677ff 只有 4.6:1。 */
-  border-color: #2563eb;
-  background: #2563eb;
-  color: #fff;
+  /* 主色走令牌：浅色 #2563EB 压 text-inverse 是 5.17:1；
+     深色主题的主色是提亮过的 #3B82F6，那时 text-inverse 是深蓝黑（5.09:1）——
+     写死 #fff 会在深色下掉到 3.68:1（真机 @1440 量的）。 */
+  border-color: var(--aeg-color-brand);
+  background: var(--aeg-color-brand);
+  color: var(--aeg-color-text-inverse);
 }
 .wf-run__button--danger {
-  border-color: #ffa39e;
-  color: #cf1322;
+  border-color: var(--aeg-color-status-danger);
+  color: var(--aeg-color-status-danger);
 }
 .wf-run__button:disabled {
-  border-color: #f0f0f0;
-  background: #f5f5f5;
-  color: #5a6072;
+  border-color: var(--aeg-color-border);
+  background: var(--aeg-color-sunken);
+  color: var(--aeg-color-text-secondary);
   cursor: not-allowed;
 }
 .wf-run__input {
   flex: 1;
   min-width: 0;
   padding: 2px 6px;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
+  border: 1px solid var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-sm);
   font-size: 12px;
 }
 .wf-run__state {
@@ -199,12 +200,12 @@ const listedInstances = computed(() => {
   color: #13c2c2;
 }
 .wf-run__paused {
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
 }
 .wf-run__hint,
 .wf-run__trace {
   margin: 0;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 11px;
 }
 .wf-run__awaiting {
@@ -241,7 +242,7 @@ const listedInstances = computed(() => {
   font-size: 11px;
   text-align: left;
   cursor: pointer;
-  transition: background var(--motion-base) ease, border-color var(--motion-base) ease;
+  transition: background var(--aeg-motion-base) ease, border-color var(--aeg-motion-base) ease;
 }
 .wf-run__pick:hover {
   background: rgba(37, 99, 235, 0.06);

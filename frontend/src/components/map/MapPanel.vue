@@ -302,12 +302,12 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
 }
 .row .count {
   font-variant-numeric: tabular-nums;
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .note {
   font-size: 12px;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   line-height: 1.6;
 }
 .tip {
@@ -329,15 +329,15 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
   border: 1px solid var(--chip-line);
   border-radius: 999px;
   background: transparent;
-  color: #334155;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
   cursor: pointer;
-  transition: background-color var(--motion-base) ease, border-color var(--motion-base) ease;
+  transition: background-color var(--aeg-motion-base) ease, border-color var(--aeg-motion-base) ease;
 }
 .risk-chip:hover {
-  background: rgba(59, 130, 246, 0.06);
+  background: var(--aeg-color-brand-soft);
 }
 .risk-chip.is-on {
   border-color: var(--chip);
@@ -357,14 +357,14 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
 }
 .risk-chip__count {
   font-variant-numeric: tabular-nums;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
 }
 .legend-item {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
 }
 .legend-item i {
   width: 10px;
@@ -385,10 +385,10 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
   gap: 6px 12px;
   margin-bottom: 8px;
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.65);
+  color: var(--aeg-color-text-secondary);
 }
 .unlocated-group {
-  border-left: 2px solid #faad14;
+  border-left: 2px solid var(--aeg-color-status-warning);
   padding-left: 6px;
 }
 .unlocated-title {

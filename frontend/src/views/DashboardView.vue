@@ -386,22 +386,22 @@ const agentColumns = [
   grid-column: 1 / -1;
 }
 .cell {
-  border: 2px solid #d9d9d9;
+  border: 2px solid var(--aeg-color-border-strong);
   border-radius: 6px;
   padding: 10px;
-  background: #fff;
+  background: var(--aeg-color-card);
 }
 .region {
   font-weight: 600;
 }
 .hazard {
   font-size: 12px;
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
   margin-bottom: 4px;
 }
 .degraded {
   margin-top: 6px;
   font-size: 11px;
-  color: #fa8c16;
+  color: var(--aeg-color-status-warning);
 }
 </style>

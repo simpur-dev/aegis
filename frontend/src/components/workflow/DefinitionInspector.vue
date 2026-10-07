@@ -165,14 +165,14 @@ function onDescription(event: Event): void {
 }
 .wf-def__subtitle {
   margin-top: 6px;
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .wf-def__row {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .wf-def__input {
@@ -185,7 +185,7 @@ function onDescription(event: Event): void {
   display: flex;
   gap: 8px;
   margin: 0;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 11px;
 }
 .wf-def__edges,
@@ -222,7 +222,7 @@ function onDescription(event: Event): void {
   border-radius: 10px;
   font-size: 12px;
   /* 0.15s 是 NexusMind 全站的微动效基准（284 处 `transition: all .15s`） */
-  transition: background var(--motion-base) ease, border-color var(--motion-base) ease;
+  transition: background var(--aeg-motion-base) ease, border-color var(--aeg-motion-base) ease;
 }
 .wf-def__list-item:hover {
   background: rgba(37, 99, 235, 0.05);
@@ -239,7 +239,7 @@ function onDescription(event: Event): void {
 }
 .wf-def__ver {
   grid-area: 1 / 2 / 2 / 3;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   white-space: nowrap;
 }
 .wf-def__meta {
@@ -290,7 +290,7 @@ function onDescription(event: Event): void {
 .wf-def__ok,
 .wf-def__muted {
   margin: 0;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 11px;
 }
 .wf-def__ok {

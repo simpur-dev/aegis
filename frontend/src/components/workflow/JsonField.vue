@@ -77,7 +77,7 @@ function onInput(event: Event): void {
   gap: 4px;
 }
 .wf-json__label {
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .wf-json__area {

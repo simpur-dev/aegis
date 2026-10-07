@@ -277,7 +277,7 @@ function reset(): void {
   margin-bottom: 8px;
 }
 .report-note__count {
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
   margin: 2px 0 0;
 }
@@ -297,7 +297,7 @@ function reset(): void {
   padding-top: 10px;
 }
 .chain {
-  color: rgba(0, 0, 0, 0.65);
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
   margin-top: 8px;
 }
@@ -320,7 +320,7 @@ function reset(): void {
   color: rgba(0, 0, 0, 0.55);
 }
 .leg-rationale {
-  color: rgba(0, 0, 0, 0.65);
+  color: var(--aeg-color-text-secondary);
   flex: 1;
   min-width: 160px;
 }

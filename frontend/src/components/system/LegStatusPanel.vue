@@ -119,7 +119,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 .leg-detail {
-  color: rgba(0, 0, 0, 0.65);
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .leg-facts {
@@ -129,11 +129,11 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 .leg-facts span {
-  color: rgba(0, 0, 0, 0.65);
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .leg-empty {
-  color: rgba(0, 0, 0, 0.65);
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
   padding: 8px 0;
 }

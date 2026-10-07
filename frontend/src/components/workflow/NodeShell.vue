@@ -79,7 +79,7 @@ const badge = computed(() => (props.state === null ? '未运行' : style.value.l
   background: #f9f0ff;
 }
 .wf-node.is-idle {
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
 }
 .wf-node__head {
   display: flex;
@@ -104,7 +104,7 @@ const badge = computed(() => (props.state === null ? '未运行' : style.value.l
   white-space: nowrap;
 }
 .wf-node__type {
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .wf-node__meta {
@@ -114,6 +114,6 @@ const badge = computed(() => (props.state === null ? '未运行' : style.value.l
   margin-top: 6px;
   padding-top: 4px;
   border-top: 1px dashed #f0f0f0;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
 }
 </style>

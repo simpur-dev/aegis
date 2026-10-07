@@ -383,7 +383,7 @@ watch(visibility, (value) => {
   pointer-events: none;
 }
 .map-placeholder .hint {
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
   line-height: 1.7;
 }
@@ -393,15 +393,15 @@ watch(visibility, (value) => {
   gap: 6px;
   padding: 6px 10px;
   font-size: 12px;
-  color: #5a6072;
-  border-top: 1px solid #f0f0f0;
-  background: #fff;
+  color: var(--aeg-color-text-secondary);
+  border-top: 1px solid var(--aeg-color-border-subtle);
+  background: var(--aeg-color-card);
 }
 .scene-bar .hint {
   color: #fa8c16;
 }
 .muted {
   font-size: 12px;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
 }
 </style>

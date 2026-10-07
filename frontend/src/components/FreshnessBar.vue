@@ -60,7 +60,7 @@ const rightLabel = computed<string>(() => {
   margin: 0 0 8px;
   font-size: 12px;
   line-height: 1.4;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 /* 两端都可缩不可撑：中间那道线是 flex:1，窄屏下先让文字省略号，不许换行成两排 */

@@ -117,7 +117,7 @@ function onNumber(field: ConfigField, event: Event): void {
 .wf-field__label {
   display: flex;
   gap: 4px;
-  color: #595959;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 .wf-field__required {
@@ -133,7 +133,7 @@ function onNumber(field: ConfigField, event: Event): void {
 }
 .wf-fields__empty {
   margin: 0;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-size: 12px;
 }
 </style>

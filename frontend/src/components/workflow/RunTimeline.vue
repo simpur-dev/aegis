@@ -144,7 +144,7 @@ const rows = computed(() => props.runs.map((run, index) => ({ run, index, tone: 
   flex: 0 0 auto;
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
 }
 .wf-tl__name {
   min-width: 0;
@@ -160,12 +160,12 @@ const rows = computed(() => props.runs.map((run, index) => ({ run, index, tone: 
   margin-left: auto;
   font-size: 11px;
   font-weight: 600;
-  color: #334155;
+  color: var(--aeg-color-text-secondary);
 }
 .wf-tl__meta {
   margin: 4px 0 0;
   font-size: 11px;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 .wf-tl__err {
@@ -179,6 +179,6 @@ const rows = computed(() => props.runs.map((run, index) => ({ run, index, tone: 
 .wf-tl__empty {
   margin: 0;
   font-size: 12px;
-  color: #5a6072;
+  color: var(--aeg-color-text-secondary);
 }
 </style>
