@@ -6,7 +6,7 @@
  * 注入发生在 `app.mount()` 之前（`main.ts`），所以首屏就有变量可解析，不会闪白。
  */
 
-import { colorSlots, font, fontFamily, layout, motion, radius, riskText, shadow, space, z, type ColorSlot, type ThemeMode } from './tokens'
+import { colorSlots, font, fontFamily, layout, motion, radius, riskText, shadow, space, tagTone, z, type ColorSlot, type ThemeMode } from './tokens'
 
 export const varPrefix = '--aeg-'
 
@@ -15,6 +15,11 @@ export function colorVars(mode: ThemeMode): Record<string, string> {
   for (const slot of Object.keys(colorSlots[mode]) as ColorSlot[]) out[`${varPrefix}color-${slot}`] = colorSlots[mode][slot]
   const levels = Object.keys(riskText[mode]) as unknown as (keyof typeof riskText[typeof mode])[]
   for (const level of levels) out[`${varPrefix}risk-text-${level}`] = riskText[mode][level as 1 | 2 | 3 | 4 | 5]
+  for (const [tone, trio] of Object.entries(tagTone[mode])) {
+    out[`${varPrefix}tag-${tone}-bg`] = trio.bg
+    out[`${varPrefix}tag-${tone}-line`] = trio.line
+    out[`${varPrefix}tag-${tone}-text`] = trio.text
+  }
   return out
 }
 

@@ -103,6 +103,30 @@ export const riskFill: Record<ThemeMode, Record<RiskLevel, string>> = {
   dark: { 1: '#EF4444', 2: '#F97316', 3: '#EAB308', 4: '#3B82F6', 5: '#71717A' },
 }
 
+/**
+ * 状态标签（芯片）一族：底色 / 描边 / 字色成套，两主题同一组语义键。
+ *
+ * 底色给的是**不透明值**：`theme.css` 原来写的是 `rgba(34,197,94,.12)` 这种半透雾，
+ * 叠在白卡和叠在深蓝黑卡上会得到两个合成色，AA 就没法在令牌层一次算清
+ * （阶段 0 那次灰字事故正是"只对某一块底成立"）。这里把合成结果落成实色，
+ * `tokens.spec.ts` 才能对每一对文字/底色现算现验。
+ */
+export type TagTone = 'green' | 'orange' | 'blue' | 'red'
+export const tagTone: Record<ThemeMode, Record<TagTone, { bg: string; line: string; text: string }>> = {
+  light: {
+    green: { bg: '#EAF6EE', line: '#BFE3C9', text: '#166534' },
+    orange: { bg: '#FDF1E2', line: '#F3D3A5', text: '#8A4005' },
+    blue: { bg: '#E9F0FE', line: '#C3D6F8', text: '#1E40AF' },
+    red: { bg: '#FDECEC', line: '#F6C4C4', text: '#B91C1C' },
+  },
+  dark: {
+    green: { bg: '#12301F', line: '#2F6A48', text: '#6EE7B7' },
+    orange: { bg: '#33240D', line: '#6E4E1B', text: '#FBBF24' },
+    blue: { bg: '#14243F', line: '#2C4C7E', text: '#93C5FD' },
+    red: { bg: '#3B191D', line: '#7A2C33', text: '#FCA5A5' },
+  },
+}
+
 export function riskColor(level: RiskLevel | null, mode: ThemeMode = 'light'): string {
   return level === null ? colorSlots[mode]['text-muted'] : riskFill[mode][level]
 }
