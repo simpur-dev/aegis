@@ -19,10 +19,11 @@ import { describe, expect, it } from 'vitest'
 import { readRepoFile, repoRoot } from '@/testing/repoSource'
 
 /** 棘轮基线：2026-10-07 阶段 1 由探针（E:\tmp\color-count.mjs，与本条同一套走目录/剥注释/正则）量得。
- *  轨迹：458（阶段 0 摸底）→ 335（`theme.css`+`App.vue` 接令牌）→ 228（再把七页共用的灰字与几块白底接上令牌）。
- *  现在最重的三处：`PageHero.vue` 31（藏青横幅，随阶段 3 退役）、`styles/theme.css` 27（同一条横幅的两块深底面）、
- *  `SystemTerminal.vue` 21（固定深底的面板）。`App.vue` 已归零。 */
-const COLOR_BASELINE = 228
+ *  轨迹：458（阶段 0 摸底）→ 335（`theme.css`+`App.vue` 接令牌）→ 228（七页共用的灰字与几块白底接上令牌）
+ *  → **159（藏青横幅退役：`PageHero.vue` 31→0、`theme.css` 27→0；顺带把指标页三处"深底色压亮面"改成档位 + 槽位）**。
+ *  现在最重的三处：`SystemTerminal.vue` 21（固定深底的面板，它本来就不随主题翻，但要收进令牌槽）、
+ *  `AssistantView.vue` 15、`NodeShell.vue` 14。`App.vue`、`theme.css`、`PageHero.vue` 与 `MetricsView.vue` 都已归零。 */
+const COLOR_BASELINE = 159
 
 function fontsCss(): string {
   return readRepoFile('frontend', 'src', 'styles', 'fonts.css')
@@ -91,7 +92,15 @@ describe('UI 基座', () => {
     expect(new Set(navTargets)).toEqual(new Set(routePaths))
   })
 
-  it('每个页面都挂 PageHero 深色横幅：新增页面漏挂，就掉出同一套观感', () => {
+  /**
+   * 页头覆盖七页（旧口径是"每页都挂 PageHero 深色横幅"）。
+   *
+   * 断言的**职责没变**：新增页面漏挂统一页头，就会掉出同一套观感。变的是两点口径：
+   * ① 横幅退役成亮面页头，所以要求的是 `title=` + `caption=`（页名与这页在讲什么）；
+   * ② 单字形图标（语/势/图/标/测/警/程）随装饰一起退役——标题已经说了页名，那颗渐变芯片没有功能目的，
+   *    所以这里反过来**禁止**再传 `icon=`。
+   */
+  it('每个页面都挂统一页头（title + caption），且不再挂单字形图标', () => {
     const routerText = readRepoFile('frontend', 'src', 'router.ts')
     const names = [...routerText.matchAll(/path:\s*'\/([a-z]+)'/g)].map(
       (match) => `${(match[1] as string)[0]!.toUpperCase()}${(match[1] as string).slice(1)}View.vue`,
@@ -99,9 +108,11 @@ describe('UI 基座', () => {
     expect(names.length).toBeGreaterThanOrEqual(7)
     for (const name of names) {
       const text = readRepoFile('frontend', 'src', 'views', name)
-      expect(text, `${name} 没接 PageHero`).toContain("import PageHero from '@/components/PageHero.vue'")
-      expect(text, `${name} 模板里没用 PageHero`).toMatch(/<PageHero[\s>]/)
-      expect(text, `${name} 的横幅没给单字形图标`).toMatch(/<PageHero[^>]*icon="[^"]+"/s)
+      expect(text, `${name} 没接页头组件`).toContain("import PageHero from '@/components/PageHero.vue'")
+      expect(text, `${name} 模板里没用页头`).toMatch(/<PageHero[\s>]/)
+      expect(text, `${name} 的页头没给标题`).toMatch(/<PageHero[^>]*[:\s]title=/s)
+      expect(text, `${name} 的页头没给说明句（caption）`).toMatch(/<PageHero[^>]*[:\s]caption=/s)
+      expect(text, `${name} 又传回了单字形图标 icon=（那颗渐变芯片已退役）`).not.toMatch(/<PageHero[^>]*[:\s]icon=/s)
     }
   })
 
@@ -113,7 +124,8 @@ describe('UI 基座', () => {
    *    这四样正是"糟糕、不专业"判词点名的东西（渐变细线、符号前缀、玻璃模糊）；
    * 2. **色相仍只走蓝系**——那六支紫青/品红照旧逐条禁（这一条比原来更硬：基座现在压根没有字面渐变可用）；
    * 3. **标签三件套必须来自令牌**——四档 hue × bg/line/text 十二个引用，少一个槽位深色主题就破一块；
-   * 4. **两条实测硬约束原样保留**——横幅动作钮 36px 下限、藏青横幅里标签"深底反提"（真机量的 1.63:1 那一条）。
+   * 4. **两条实测硬约束换了宿主但没换职责**——动作钮 36px 下限搬进 `PageHero.vue` 的 scoped 样式，
+   *    旧"藏青横幅里标签深底反提"（真机量的 1.63:1）反过来钉：**页头是亮面，那种特例一处都不许留**。
    */
   it('基座只读令牌：渐变/模糊/◆ 已退役，标签三件套走 --aeg-tag-*，色相仍只走蓝系', () => {
     const css = readRepoFile('frontend', 'src', 'styles', 'theme.css').replace(/\/\*[\s\S]*?\*\//g, '')
@@ -136,9 +148,20 @@ describe('UI 基座', () => {
         )
       }
     }
-    expect(css, '横幅里的动作钮还是 antd small 的 24px 高').toMatch(/\.page-hero \.ant-btn\s*\{[\s\S]{0,400}min-height: 36px/)
-    // 浅底那套"浅底深字"搬到藏青横幅上会变成暗底暗字（真机量的 ratio=1.63）——深底必须反过来提亮字
-    expect(css, '深色横幅里的标签没有单独的深底配色').toMatch(/\.page-hero \.ant-tag-orange[\s\S]{0,200}color: #fbbf24/)
+    /* 动作钮 36px 下限这条**换了宿主**：横幅时代它写在 theme.css 的 `.page-hero .ant-btn` 上
+       （整块深底特例都住在那儿）；页头是亮面，特例没了，只剩"主入口按钮别退回 antd small 的 24px"
+       这一条真机量出来的约束，于是它搬进组件自己的 scoped 样式。断言跟着改读 PageHero.vue，**不是删掉**。 */
+    const head = readRepoFile('frontend', 'src', 'components', 'PageHero.vue').replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(head, '页头动作区的按钮又退回 antd small 的 24px 高').toMatch(
+      /\.page-head__actions :deep\(\.ant-btn\)\s*\{[\s\S]{0,160}min-height: 36px/,
+    )
+    /* 旧横幅那批"深底反提亮"的特例（`.page-hero .ant-tag-*` 配 #fbbf24/#6ee7b7…）必须**一处不剩**：
+       页头落在亮面上，标签统一走全局那套 `--aeg-tag-*`，留特例等于给下一次"暗底暗字"开门。
+       这条是原"深底标签必须反提亮"的反向口径——职责仍是"别让标签在它的底上读不清"。 */
+    expect(css, 'theme.css 里还留着藏青横幅的 .page-hero 特例').not.toMatch(/\.page-hero/)
+    expect(css, 'theme.css 里还留着为深底反提亮的特例色').not.toMatch(/#fbbf24|#6ee7b7|#fca5a5|#93c5fd/)
+    expect(head.toLowerCase(), 'PageHero.vue 自己写了 hex：页头只能读 --aeg-* 槽位').not.toMatch(/#[0-9a-f]{6}/)
+    for (const [name, pattern] of retired) expect(pattern.test(head), `页头里又出现 ${name}`).toBe(false)
   })
 
   /**

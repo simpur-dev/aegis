@@ -6,7 +6,7 @@
  * ② 状态胶囊被网格列裁掉半颗（box 还在、字看不见，重叠检查看不出来，所以另加 clip 检查）；
  * ③ 落地页装配事实条那条长串（dataset=内置预案模板…）一路顶出卡片、压到右邻那一行；
  * ④ 灰字对比度不到 4.5:1（步进器未选态 3.17、页脚 3.05、绿色标签 3.37）。
- * 判据全部来自包围盒与计算样式；底色会解析渐变（横幅/徽标/主按钮都是渐变，
+ * 判据全部来自包围盒与计算样式；底色会解析渐变（旧横幅那几支渐变已退役，解析器留着是为了回退时立刻红，
  * 只读 backgroundColor 会得到 transparent，白字就被误判成"白底白字"）。
  *
  * 跑法（与地图视觉门禁同一档：构建产物 + 本机 chromium）：
@@ -28,7 +28,7 @@ const WIDTHS = [1440, 1280, 1200, 1100, 1000, 900]
 /** 对比度豁免：这些位置的字按 antd/交互语义本就该是"非正文"色，不是内容读不到。 */
 const CONTRAST_ALLOW = [
   /* 禁用态为什么豁免：浅底上灰字＝"点不动"的提示（WCAG 1.4.11 也把"非活动组件"排除在外）。
-     但**深色横幅里不成立**——那边是暗底暗字，所以 `.page-hero__actions` 另走 heroLow 一条，不豁免。 */
+     页头退役成亮面之后，动作区里的禁用钮回到"浅底灰字=点不动"这一档，跟全站同一口径。 */
   '.ant-btn[disabled]',
   '.ant-btn-loading',
   '.ant-select-selection-placeholder',
@@ -256,24 +256,25 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     if (got < need) lowContrast.push(`ratio=${got}<${need} "${(el.textContent ?? '').trim().slice(0, 16)}" ${cs.color} on rgb(${Math.round(bg.r)},${Math.round(bg.g)},${Math.round(bg.b)}) ${size}px/${cs.fontWeight} | ${pathOf(el)}`)
   }
 
-  /* 深色横幅里的按钮**不吃**上面那条"禁用态豁免"。豁免的理由是"浅底上灰一点=点不动"，
-     但 antd 的禁用样式是"浅底 + 25% 黑字"，搬进藏青横幅就成了暗底暗字——不是弱化，是读不到。
-     横幅里每个按钮（含禁用）都得过 4.5:1。 */
+  /* 页头动作区单独再量一遍：**可点的**按钮必须过 4.5:1，禁用态按全站口径豁免。
+     旧版这里走的是反豁免（`.page-head__actions` 里连禁用钮都要过），理由是
+     "antd 的禁用样式是浅底 + 25% 黑字，搬进藏青横幅就成了暗底暗字——不是弱化，是读不到"。
+     横幅退役成亮面之后那个前提没了，反豁免照理该一起退役；**但这条判据不删**：
+     动作区是这一页的主入口，它比正文更容易被"顺手改小改淡"，所以留着正向量 AA + 一个防空跑的计数。 */
   const heroLow: string[] = []
   let heroBtnCount = 0
   for (const el of leaves) {
-    if (!(el as HTMLElement).closest('.page-hero__actions')) continue
+    if (!(el as HTMLElement).closest('.page-head__actions')) continue
+    const btn = (el as HTMLElement).closest('button')
     heroBtnCount += 1
+    if (btn?.disabled) continue
     const cs = getComputedStyle(el)
     const fg = parse(cs.color)
     if (!fg) continue
     const bg = bgOf(el)
     const eff = fg.a < 1 ? { r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a) } : fg
     const got = ratio(eff, bg)
-    if (got < 4.5) {
-      const btn = (el as HTMLElement).closest('button')
-      heroLow.push(`hero ratio=${got}<4.5 "${(el.textContent ?? '').trim().slice(0, 16)}" ${cs.color} on rgb(${Math.round(bg.r)},${Math.round(bg.g)},${Math.round(bg.b)})${btn?.disabled ? ' [disabled]' : ''}`)
-    }
+    if (got < 4.5) heroLow.push(`head ratio=${got}<4.5 "${(el.textContent ?? '').trim().slice(0, 16)}" ${cs.color} on rgb(${Math.round(bg.r)},${Math.round(bg.g)},${Math.round(bg.b)})`)
   }
 
   /* 顶栏状态文字被省略号截断＝那条真话少了一半。上面两条都看不见它：
@@ -289,10 +290,10 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     }
   }
 
-  /* 横幅里的动作钮是这一页的主入口。antd 的 small 只有 24px 高，在值班台上偏小
-     （NexusMind 给主操作的是 46px 全宽钮）；判据取 ≥34px，钉住"别再退回 small"。 */
+  /* 页头动作区是这一页的主入口。antd 的 small 只有 24px 高，在值班台上偏小；
+     判据取 ≥34px，钉住"别再退回 small"——这条与底色无关，横幅退役后照样成立。 */
   const heroShortBtns: string[] = []
-  for (const btn of [...document.querySelectorAll('.page-hero__actions .ant-btn')]) {
+  for (const btn of [...document.querySelectorAll('.page-head__actions .ant-btn')]) {
     const r = (btn as HTMLElement).getBoundingClientRect()
     if (r.height > 0 && r.height < 34) heroShortBtns.push(`"${(btn.textContent ?? '').trim().slice(0, 10)}" 高=${Math.round(r.height)}px`)
   }
@@ -342,7 +343,7 @@ for (const width of WIDTHS) {
     for (const [name, path] of PAGES) {
       test(`七页之一 ${name}：无重叠、不出屏、无裁字、顶栏不静默裁切、对比度达标、步进器居中`, async ({ page }) => {
         await page.goto(path)
-        await page.waitForSelector('.page-hero', { timeout: 45_000 })
+        await page.waitForSelector('.page-head', { timeout: 45_000 })
         /* 先等网络静 + 再"量到内容够了才继续"：整批跑（71 项）时前面的地图项要吃十几秒 GPU，
            监测页的台账表会晚于固定 sleep 才落地，leafCount 下限就被误触发
            （隔离跑全绿、整批偶发红，量的都是同一个页面）。这不是页面缺陷，是探针的等待方式。
@@ -366,8 +367,8 @@ for (const width of WIDTHS) {
 ${r.navTruncated.join('\n')}`).toHaveLength(0)
         expect(r.navIntrude, `${name}@${width} 顶栏三列互相侵入：\n${r.navIntrude.join('\n')}`).toHaveLength(0)
         expect(r.lowContrastCount, `${name}@${width} 有字对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
-        expect(r.heroLowCount, `${name}@${width} 横幅里的按钮在深底上读不清：\n${r.heroLow.join('\n')}`).toBe(0)
-        expect(r.heroShortBtns, `${name}@${width} 横幅主入口按钮太矮（<34px）：\n${r.heroShortBtns.join('\n')}`).toHaveLength(0)
+        expect(r.heroLowCount, `${name}@${width} 页头动作区的按钮读不清：\n${r.heroLow.join('\n')}`).toBe(0)
+        expect(r.heroShortBtns, `${name}@${width} 页头主入口按钮太矮（<34px）：\n${r.heroShortBtns.join('\n')}`).toHaveLength(0)
         expect(r.englishEmptyCount, `${name}@${width} 出现纯英文空态文案：\n${r.englishEmpty.join('\n')}`).toBe(0)
         if (r.centerOffset !== null) expect(r.centerOffset, `${name}@${width} 步进器偏离中线`).toBeLessThanOrEqual(1)
       })
@@ -394,7 +395,7 @@ for (const width of [1440, 1280, 1100, 1000]) {
     for (const c of OVERLAYS) {
       test(`${c.name}：弹层内无重叠、不出屏、无裁字、按钮不折行、对比度达标`, async ({ page }) => {
         await page.goto(c.path)
-        await page.waitForSelector('.page-hero', { timeout: 45_000 })
+        await page.waitForSelector('.page-head', { timeout: 45_000 })
         await page.waitForLoadState('networkidle')
         await page.waitForTimeout(2_500)
         await page.locator(c.trigger).first().click()
@@ -424,7 +425,7 @@ test.describe('弹层焦点不外泄 @1440', () => {
     test(`${c.name}：Tab 十二步焦点不逃出弹层，Esc 关得掉`, async ({ page }) => {
       await page.setViewportSize({ width: 1440, height: 900 })
       await page.goto(c.path)
-      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForSelector('.page-head', { timeout: 45_000 })
       await page.waitForLoadState('networkidle').catch(() => {})
       await page.waitForTimeout(2_500)
       await page.locator(c.trigger).first().click()
@@ -462,7 +463,7 @@ test.describe('弹层焦点不外泄 @1440', () => {
  * 故障态与空数据态过同一套判据。这两档恰恰是文案最长的时候（错误横幅、"取不到"的说明），
  * 而此前 54 项全在"后端正常 + 有数据"下跑——降级画面没人看过一眼。
  * 判据不放宽：重叠/出屏/裁字/折行/对比度一律为 0；只把 leafCount 下限降到 12
- * （降级页本就少几块内容，但仍必须有顶栏 + 横幅 + 那句"为什么是空的"）。
+ * （降级页本就少几块内容，但仍必须有顶栏 + 页头 + 那句"为什么是空的"）。
  */
 const killBackend = async (page: import('@playwright/test').Page) => {
   await page.route('**/readyz', (route) => route.abort())
@@ -478,7 +479,7 @@ for (const width of [1440, 1100]) {
     for (const [name, path] of PAGES) {
       test(`后端不可达时 ${name} 仍不重叠、不出屏、不裁字、对比度达标`, async ({ page }) => {
         await page.goto(path)
-        await page.waitForSelector('.page-hero', { timeout: 45_000 })
+        await page.waitForSelector('.page-head', { timeout: 45_000 })
         /* 先等顶栏真翻成**最长那句**故障文案再量：故障态的胶囊比在线态长
            （"后端不可达" + "事件流已中断"），只等 health 翻脸是不够的——SSE 那条先是
            "事件流重连中"（短 65px），此时右列已经长出轨道、但还没长到压住步进器，
@@ -502,12 +503,12 @@ for (const width of [1440, 1100]) {
         expect(r.clippedCount, `${name}@${width} 故障态文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
         expect(r.foldedCount, `${name}@${width} 故障态按钮折行：\n${r.folded.join('\n')}`).toBe(0)
         expect(r.lowContrastCount, `${name}@${width} 故障态对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
-        expect(r.heroLowCount, `${name}@${width} 故障态横幅按钮读不清：\n${r.heroLow.join('\n')}`).toBe(0)
+        expect(r.heroLowCount, `${name}@${width} 故障态页头按钮读不清：\n${r.heroLow.join('\n')}`).toBe(0)
         expect(r.navClip, `${name}@${width} 故障态顶栏静默裁字：\n${r.navClip.join('\n')}`).toHaveLength(0)
         expect(r.navTruncated, `${name}@${width} 故障态顶栏状态文字被截断：
 ${r.navTruncated.join('\n')}`).toHaveLength(0)
         expect(r.navIntrude, `${name}@${width} 故障态顶栏三列互相侵入：\n${r.navIntrude.join('\n')}`).toHaveLength(0)
-        expect(r.heroShortBtns, `${name}@${width} 故障态横幅主入口按钮太矮：\n${r.heroShortBtns.join('\n')}`).toHaveLength(0)
+        expect(r.heroShortBtns, `${name}@${width} 故障态页头主入口按钮太矮：\n${r.heroShortBtns.join('\n')}`).toHaveLength(0)
         expect(r.englishEmptyCount, `${name}@${width} 故障态出现纯英文空态：\n${r.englishEmpty.join('\n')}`).toBe(0)
       })
     }
@@ -532,7 +533,7 @@ test.describe('空数据态不变量 @1440', () => {
   ] as const) {
     test(`没有数据时 ${name} 的空态排版达标`, async ({ page }) => {
       await page.goto(path)
-      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForSelector('.page-head', { timeout: 45_000 })
       await page.waitForTimeout(2_500)
       const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
       const empty = await page.evaluate(() => {
@@ -712,14 +713,14 @@ test.describe('画布节点不变量 @1440', () => {
   test('打开有节点的定义：节点卡不互相压叠、标题不出框', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(2_000)
     /* 刚进页面时是"新建画布"那份空定义：① 画布上没有节点，小地图里什么都没有，不许把它画出来
        （但它得**挂在 DOM 里**——落点让位要量它的真实尺寸当禁落区，见下面那条拖拽用例）；
-       ② 横幅里"保存定义"此时是禁用态——antd 的禁用样式是"浅底 + 25% 黑字"，落在藏青横幅上
-       就是暗底暗字。全局对比度判据对 `.ant-btn[disabled]` 是豁免的（浅底上那是"点不动"的提示，
-       不算读不到），横幅里不能豁免，所以单独量一次，并钉住"这里真的有禁用按钮"。 */
+       ② 页头里"保存定义"此时是禁用态。全局对比度判据对 `.ant-btn[disabled]` 照旧豁免
+       （浅底上那是"点不动"的提示，不算读不到），但这里**钉住"真的有禁用按钮"、
+       且动作区里量得到按钮文本**——不然这条判据会静默空跑。 */
     await page.waitForTimeout(1_500)
     const empty = await page.evaluate(() => ({
       nodes: document.querySelectorAll('.wf-node').length,
@@ -730,16 +731,16 @@ test.describe('画布节点不变量 @1440', () => {
         return s.visibility !== 'hidden' && s.display !== 'none' && el.getBoundingClientRect().width > 0
       })(),
       minimapMounted: !!document.querySelector('.vue-flow__minimap'),
-      disabled: document.querySelectorAll('.page-hero__actions button:disabled').length,
+      disabled: document.querySelectorAll('.page-head__actions button:disabled').length,
     }))
     const heroC = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
     console.log(`CANVAS[empty] nodes=${empty.nodes} minimap=${empty.minimap} mounted=${empty.minimapMounted} heroBtn=${heroC.heroBtnCount} heroDisabled=${empty.disabled} heroLow=${heroC.heroLowCount}`)
     expect(empty.nodes, '这条要量的是"空画布"，但画布上已经有节点了').toBe(0)
     expect(empty.minimap, '空画布上还画着一个小地图（里面什么都没有，只是块白框）').toBe(false)
     expect(empty.minimapMounted, '空画布上小地图整个不在 DOM 里——落点让位就拿不到它的尺寸，第一颗节点会被它盖住').toBe(true)
-    expect(empty.disabled, '横幅里没有禁用态按钮——这条判据在空跑（"保存定义"此时该是禁用的）').toBeGreaterThan(0)
-    expect(heroC.heroBtnCount, '横幅里一个按钮文本都没量到——判据在空跑').toBeGreaterThanOrEqual(2)
-    expect(heroC.heroLowCount, `横幅里的按钮在深底上读不清：\n${heroC.heroLow.join('\n')}`).toBe(0)
+    expect(empty.disabled, '页头里没有禁用态按钮——这条判据在空跑（"保存定义"此时该是禁用的）').toBeGreaterThan(0)
+    expect(heroC.heroBtnCount, '页头动作区一个按钮文本都没量到——判据在空跑').toBeGreaterThanOrEqual(2)
+    expect(heroC.heroLowCount, `页头动作区的按钮读不清：\n${heroC.heroLow.join('\n')}`).toBe(0)
 
     /* 右栏是 pill 切换、默认停在"运行态"：要看定义列表得先切档 */
     await page.locator('[data-testid="rail-def"]').click()
@@ -856,7 +857,7 @@ test.describe('画布节点不变量 @1440', () => {
   test('连拖三颗节点：不压叠、不出画布、不被浮层盖住、画布不被 fit 放大', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(3_000)
     const items = page.locator('.wf-palette__item')
@@ -936,7 +937,7 @@ test.describe('画布节点不变量 @1440', () => {
   test('打开最大的那份定义：连线与节点描边仍有可辨粗细（不是 0.3 设备像素）', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(3_000)
     await page.getByRole('tab', { name: /定义/ }).click()
@@ -1000,7 +1001,7 @@ test.describe('画布节点不变量 @1440', () => {
   test('画布快捷键 1 / 0 / + / - 生效，且在输入框里不抢键', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(3_000)
     const canvas = page.locator('.wf__canvas')
@@ -1062,7 +1063,7 @@ test.describe('提示条落点 @1440', () => {
       route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"probe boom"}' }),
     )
     await page.goto('/workflow')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForTimeout(1_500)
     await page.getByRole('button', { name: '刷新实例' }).click()
     await page.waitForSelector('.ant-message-notice', { timeout: 15_000 })
@@ -1088,11 +1089,11 @@ test.describe('提示条落点 @1440', () => {
 })
 
 /**
- * 横幅状态位（PageHero 的 `status`）：那句"现在怎么样了"是深色横幅最贵的一行字，
+ * 页头状态位（PageHero 的 `status`）：那句"现在怎么样了"是页头最贵的一行字，
  * 圆点必须真的按 tone 变色（不是所有档都画同一个灰点），文字必须读得清。
  * 目前只有编排页与预警页给了 status——断言按页来，别拿"每页都得有"当判据。
  */
-test.describe('横幅状态位 @1440', () => {
+test.describe('页头状态位 @1440', () => {
   for (const [name, path] of [
     ['workflow', '/workflow'],
     ['warnings', '/warnings'],
@@ -1100,11 +1101,11 @@ test.describe('横幅状态位 @1440', () => {
     test(`${name} 的状态语有彩色圆点且字读得清`, async ({ page }) => {
       await page.setViewportSize({ width: 1440, height: 900 })
       await page.goto(path)
-      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForSelector('.page-head', { timeout: 45_000 })
       await page.waitForTimeout(3_000)
       const m = await page.evaluate(() => {
-        const el = document.querySelector('.page-hero__status')
-        const dot = el?.querySelector('.page-hero__status-dot') as HTMLElement | null
+        const el = document.querySelector('.page-head__status')
+        const dot = el?.querySelector('.page-head__status-dot') as HTMLElement | null
         const cs = el ? getComputedStyle(el) : null
         const r = dot?.getBoundingClientRect()
         return {
@@ -1117,7 +1118,7 @@ test.describe('横幅状态位 @1440', () => {
         }
       })
       console.log(`HEROSTATUS ${name} cls=${m.cls} dot=${m.dotBg} ${m.dotW}x${m.dotH} text="${m.text}"`)
-      expect(m.text, `${name}：横幅没有状态语——这条判据在空跑`).not.toBe('')
+      expect(m.text, `${name}：页头没有状态语——这条判据在空跑`).not.toBe('')
       expect(m.cls, `${name}：状态语没带 tone 类（is-ok/is-warn/is-bad/is-idle）`).not.toBe('')
       expect(m.dotW, `${name}：圆点宽 0`).toBeGreaterThanOrEqual(6)
       expect(m.dotH, `${name}：圆点高 0`).toBeGreaterThanOrEqual(6)
@@ -1193,7 +1194,7 @@ test.describe('运行时间线 @1440', () => {
   test('选中实例后：轴宽 24、点线同轴、dashed 档保持虚线', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(2_500)
     const picks = page.locator('.wf-run__pick')
@@ -1322,7 +1323,7 @@ test.describe('系统输出浮层 @1440', () => {
   test('展开后：面板在视口内、不压分页、深底文字读得清', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/monitor')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(2_500)
     const chip = await page.evaluate(() => {
@@ -1390,7 +1391,7 @@ test.describe('键盘焦点态 @1440', () => {
     let brandRings = 0
     for (const [, path] of PAGES) {
       await page.goto(path)
-      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForSelector('.page-head', { timeout: 45_000 })
       await page.waitForTimeout(2_000)
       for (let i = 0; i < 10; i++) {
         await page.keyboard.press('Tab')
@@ -1434,7 +1435,7 @@ test.describe('定义行网格与入场动效 @1440', () => {
   test('每一行两颗按钮右缘对齐、行高统一，不靠意外折行', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(3_000)
     await page.getByRole('tab', { name: /定义/ }).click()
@@ -1489,7 +1490,7 @@ test.describe('定义行网格与入场动效 @1440', () => {
   test('卡片有入场淡入上浮；开了"减少动效"就不该动', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/dashboard')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     const animated = await page.evaluate(() => {
       const card = document.querySelector('.ant-card')
       const cs = card ? getComputedStyle(card) : null
@@ -1521,7 +1522,7 @@ test.describe('风险芯片兼图例 @1440', () => {
   test('五枚芯片取自 RISK_COLORS，点下去按下态与"筛后 / 全量"都跟着变', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/map')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(12_000)
     const chips = page.locator('.risk-chip')
@@ -1575,7 +1576,7 @@ test.describe('风险芯片兼图例 @1440', () => {
 const HOVER_TARGETS = [
   '.flow-step',
   '.theme-switch__btn',
-  '.page-hero button',
+  '.page-head button',
   '.ant-list-item',
   '.wf-rail__pill',
   '.wf-def__list-item',
@@ -1600,7 +1601,7 @@ async function hoverSweep(
   let hovered = 0
   for (const [name, path] of PAGES) {
     await page.goto(path)
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.waitForTimeout(2_500)
     let budget = opts.perPage
@@ -1634,7 +1635,7 @@ async function hoverSweep(
 }
 
 test.describe('悬停态体检 @1440', () => {
-  test('逐页悬停顶栏步骤/横幅按钮/行与芯片：对比度、压叠、裁切、折行都不许变坏', async ({ page }) => {
+  test('逐页悬停顶栏步骤/页头按钮/行与芯片：对比度、压叠、裁切、折行都不许变坏', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const { hovered, problems } = await hoverSweep(page, { perPage: 6 })
     console.log(`HOVER targets=${hovered} problems=${problems.length}`)
@@ -1643,9 +1644,9 @@ test.describe('悬停态体检 @1440', () => {
     /* 留一张悬停态的图：判据说"读得清"，图要能自己看出来——主按钮悬停是变深+抬起，
        不是变浅（变浅正是这条判据第一次跑就抓到的缺陷）。 */
     await page.goto('/monitor')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForTimeout(2_500)
-    await page.locator('.page-hero .ant-btn-primary').last().hover()
+    await page.locator('.page-head .ant-btn-primary').last().hover()
     await page.waitForTimeout(250)
     await page.screenshot({ path: 'test-results/ui-audit/hover-primary.png' })
   })
@@ -1674,7 +1675,7 @@ test.describe('悬停态体检 @1440', () => {
  * 减动效与动画中的可读性 @1440。
  *
  * 立这两条的实测起因（2026-10-06，构建产物 + 4175 预览，七页全过）：
- * ① 横幅徽标 `.page-hero__badge` 挂的是 `page-hero-pulse 2s infinite`，而 `@media (prefers-reduced-motion: reduce)`
+ * ① 旧横幅徽标挂的是 `page-hero-pulse 2s infinite`（这支脉冲已随旧视觉退役；这里留的是当时漏兜底的记录），而 `@media (prefers-reduced-motion: reduce)`
  *    那一块里**没有它**——开"减少动效"后 7/7 页都还在无限循环（`document.getAnimations()` 量到 `iter=Infinity`）；
  * ② 同一支动画淡的是**文字的不透明度**（0% → 100%、50% → 0.6）：10px/700 的「实时」对比度
  *    从 5.76:1 掉到 **3.08:1**，每两秒有将近半秒低于 AA 的 4.5:1。
@@ -1729,7 +1730,7 @@ test.describe('减动效与动画中的可读性 @1440', () => {
     let animated = 0
     for (const [name, path] of PAGES) {
       await page.goto(path)
-      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForSelector('.page-head', { timeout: 45_000 })
       await page.waitForTimeout(600)
       /* emulateMedia 是跟着 browser context 走的，一次设定后面每一页都还生效：
          不显式退回 no-preference，第二页起量到的"正常态"其实是减动效态（第一版就是这么误红过一次——
@@ -1766,7 +1767,7 @@ test.describe('减动效与动画中的可读性 @1440', () => {
       await route.continue()
     })
     await page.goto('/dashboard')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForTimeout(1_500)
     const normal = await page.evaluate(scanMotion)
     const spinNames = normal.infinite.filter((line) => /loading|spin|ant/i.test(line))
@@ -1881,7 +1882,7 @@ test.describe('减动效与动画中的可读性 @1440', () => {
     let read = 0
     for (const [name, path] of PAGES) {
       await page.goto(path)
-      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForSelector('.page-head', { timeout: 45_000 })
       await page.waitForTimeout(600)
       for (const row of await page.evaluate(motionContrast)) {
         read += 1
@@ -1890,8 +1891,32 @@ test.describe('减动效与动画中的可读性 @1440', () => {
         }
       }
     }
-    console.log(`MOTION-CONTRAST sampled=${read} low=${low.length}`)
-    expect(read, '一个带动画的文字元素都没扫到——判据在空跑').toBeGreaterThanOrEqual(1)
+    /* 防空跑的地板换成**自检**：旧口径是"至少扫到一个"，那靠的是横幅徽标那支 `pulse` 无限脉冲；
+       旧视觉停用之后全站没有"带字的 infinite 动画"了——这正是我们要的状态，但不能让判据因此静默空转。
+       所以现场种一个把字淡到 0.25 的标签，扫不到就是扫描器坏了（数学/选择器/时序任一环节退化都会红）。 */
+    await page.goto('/dashboard')
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
+    await page.evaluate(() => {
+      const style = document.createElement('style')
+      style.id = 'probe-fade-css'
+      style.textContent = '@keyframes probe-fade{0%,100%{opacity:1}50%{opacity:.25}}'
+      const el = document.createElement('span')
+      el.id = 'probe-fade-el'
+      /* pathOf 只拼 tagName + class（不带 id），所以要给一个专属 class 才认得出来 */
+      el.className = 'probe-fade-el'
+      el.textContent = '实时'
+      el.style.cssText = 'position:fixed;top:140px;left:140px;z-index:9999;padding:4px;background:#FFFFFF;color:#0A0A0C;font-size:12px;animation:probe-fade 2s infinite'
+      document.body.append(style, el)
+    })
+    await page.waitForTimeout(300)
+    const planted = (await page.evaluate(motionContrast)).filter((row) => row.where.includes('probe-fade-el'))
+    await page.evaluate(() => {
+      document.getElementById('probe-fade-el')?.remove()
+      document.getElementById('probe-fade-css')?.remove()
+    })
+    console.log(`MOTION-CONTRAST sampled=${read} low=${low.length} planted=${JSON.stringify(planted)}`)
+    expect(planted.length, '现场种的"淡到 0.25 的带字无限动画"没被扫到——扫描器坏了，这条判据在空转').toBe(1)
+    expect(planted[0].worst, `自检那格的最低对比=${planted[0]?.worst}，没低于门槛说明数学退化`).toBeLessThan(planted[0].need)
     expect(low, `动画把字淡到读不清：\n${low.slice(0, 8).join('\n')}`).toHaveLength(0)
   })
 })
@@ -1941,7 +1966,7 @@ test.describe('微动效基准 @1440', () => {
     const all: Record<string, number> = {}
     for (const [name, path] of PAGES) {
       await page.goto(path)
-      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForSelector('.page-head', { timeout: 45_000 })
       await page.waitForTimeout(1_800)
       const r = await page.evaluate(scanDurations)
       for (const line of r.strays) strays.push(`${name} ${line}`)
@@ -1959,7 +1984,7 @@ test.describe('微动效基准 @1440', () => {
 })
 
 /**
- * 横幅统计托盘的对齐 @1440（第二十九批）。
+ * 页头统计托盘的对齐 @1440（第二十九批）。
  *
  * 目视复核七页整页截图时抓到的：托盘是 `display:flex; align-items:center`，
  * 而带环形 KPI 的那一格比左右两格高出一截（实测 94px vs 44px），
@@ -1968,7 +1993,7 @@ test.describe('微动效基准 @1440', () => {
  * 压叠/裁切/对比度三条判据都看不见。
  */
 const trayAlignment = (): { cells: number[]; spread: number } => {
-  const tray = document.querySelector('.page-hero__stats')
+  const tray = document.querySelector('.page-head__stats')
   if (!tray) return { cells: [], spread: 0 }
   const tops: number[] = []
   for (const cell of [...tray.children]) {
@@ -1995,14 +2020,14 @@ const trayAlignment = (): { cells: number[]; spread: number } => {
   return { cells: tops, spread: tops.length > 1 ? Math.max(...tops) - Math.min(...tops) : 0 }
 }
 
-test.describe('横幅统计托盘对齐 @1440', () => {
+test.describe('页头统计托盘对齐 @1440', () => {
   test('每一格的大数字顶边在同一条线上（±1px），带环的那格不许把数字抬走', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const problems: string[] = []
     let trays = 0
     for (const [name, path] of PAGES) {
       await page.goto(path)
-      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForSelector('.page-head', { timeout: 45_000 })
       await page.waitForTimeout(1_500)
       const r = await page.evaluate(trayAlignment)
       if (r.cells.length === 0) continue
@@ -2029,7 +2054,7 @@ test.describe('定义列表自查 @1440', () => {
     const base = process.env.AEGIS_API_TARGET ?? 'http://127.0.0.1:8000'
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
-    await page.waitForSelector('.page-hero', { timeout: 45_000 })
+    await page.waitForSelector('.page-head', { timeout: 45_000 })
     await page.waitForLoadState('networkidle').catch(() => {})
     await page.getByRole('tab', { name: /定义/ }).click()
     await page.waitForTimeout(2_000)
@@ -2186,7 +2211,7 @@ test.describe('深色主题换肤', () => {
       await page.addInitScript(() => localStorage.setItem('aegis.theme', 'dark'))
       await page.setViewportSize({ width: 1440, height: 900 })
       await page.goto(path)
-      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForSelector('.page-head', { timeout: 45_000 })
       await page.waitForLoadState('networkidle').catch(() => {})
       await page.waitForTimeout(2_500)
       const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
