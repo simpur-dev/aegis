@@ -502,3 +502,35 @@ scoped 样式里对 `--aeg-color-status-success/danger/text-muted` 取值，环�
 | 画面（局部） | `… npx playwright test ui-overlap -g "metrics"` | **11 passed（1.5m）**：修前同一条子集 6 红 |
 | 画面（全量） | `… npx playwright test ui-overlap` | **112 passed（17.0m）**，exit 0。第一趟 111 passed / 1 failed——红的不是画面，是那条动画判据的防空跑地板（见上文"第二条被打中的地方"），换成现场自检后复跑全绿 |
 | 后端 | `backend/.venv/Scripts/python.exe -m ruff check src tests scripts` / `-m pytest -q --junitxml` | exit 0 / **2523 tests, 0 failures, 0 errors, 83 skipped（309.5s）**（本批零后端文件改动，只作回归确认） |
+
+---
+
+## 13. 顶栏页签导航（页名全档铺开）交付记录（ADR，2026-10-07）
+
+### 决策 9：导航留顶部、退役编号点——§7 第 4 问随之化解
+
+用户拍板"导航留顶部、不要编号点"。落地三件事：
+
+1. **三列网格改 `auto minmax(0,1fr) auto`**：旧写法左右两列 `1fr` 等宽，等于逼中间列按右列（状态胶囊+切换器 375px）的胃口留地，
+   @1440 轨道只剩 293px，页名就是这么被挤没的（§10 决策 5 当时的"≤1640 收页名"是被这个轨道分配逼出来的折中，不是真需求）。
+2. **编号圆点、连接短线、页码徽标（02/07）全退役**：页名就是标识，序号不表达任何状态，挂着只是噪声；
+   `title`/`aria-label` 仍带页名（读屏与 hover 都靠它）。七枚页签合计实测 514px，最窄一档（@1100，右列收成圆点 188px）也装得下。
+3. **e2e 页签判据从"@1920 单档"改"1100/1280/1440/1920 四档连跑"**：铺页名不再是高档专属分支，
+   任何一档把页名挤回去、或右列压叠/裁字都当场红——顶栏是七页共用唯一导航，它的破绽在哪一页都一样刺眼。
+
+`uiTheme.spec.ts` 动效地板随实测定：编号点退役带走它那条 transition，全库走令牌的 transition 11→10，
+地板调到 10（防空跑职责不变，注释里写明来历）。BRIEF §7 第 4 问、§10 决策 5 的"≤1640 收页名"口径**作废**。
+
+### 本轮验证记录（2026-10-07 顶栏页签）
+
+| 门禁 | 命令 | 结果 |
+| --- | --- | --- |
+| 类型 | `npm run typecheck` | exit 0（无输出） |
+| 单测 | `node node_modules/vitest/vitest.mjs run` | **793 passed / 45 个文件**（exit 0；用例数不变，动效地板那条是改基线不是新增） |
+| 构建 | `npm run build` | **✓ built in 54.74s**（exit 0） |
+| 画面（深色组） | `AEGIS_API_TARGET=http://127.0.0.1:8321 npx playwright test ui-overlap -g "深色主题换肤"` | **13 passed（53.9s）**：切换器持久化 + 七页深色扫描 + 页签四档连跑（@1100 右列 188px 收成圆点仍不裁字，其余三档 354px 全铺） |
+| 画面（全量回归） | 同上不带 `-g` | 后台进行中，结果补记于看板工作日志 |
+| 后端 | 未跑（本批只动 `frontend/src/App.vue` 与两份测试，无后端与契约文件） | 上一批同口径：ruff exit 0、pytest 2523 tests / 0 failures / 83 skipped |
+
+提交：`65fd80e refactor(ui): 顶栏页签页名全档铺开，编号点与页码徽标退役`。
+另：本轮起新建 `docs/AGENT_PROGRESS.md` 自主改进看板（此前缺失），任务分解 T01–T26 以该看板为准，本 BRIEF 继续当台账/ADR 细节层。
