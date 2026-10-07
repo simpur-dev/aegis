@@ -24,6 +24,10 @@
 | `npm run build` | 通过，`built in 47.87s`；`dist` 50 MB，其中 `Cesium-*.js` 4869 KB、`ui-*.js` 1385 KB、`charts-*.js` 491 KB |
 | `npx playwright test e2e/ui-overlap.spec.ts` | 上一轮全量 **100 passed（21.0m）**（HEAD `7cb8bd6`） |
 
+**阶段 0 之后的同一条门禁（2026-10-07 复跑）**：typecheck 通过；vitest **786 passed / 44 个文件**（769/42 → 新增 `theme/tokens.spec.ts` 9 条、`theme/useTheme.spec.ts` 7 条、`uiTheme.spec.ts` 的颜色棘轮 1 条：769+9+7+1=786，文件 42+2=44）；
+`npm run build` **✓ built in 47.01s**；后端 `ruff check` 通过、`pytest -q` exit 0（本批零后端文件改动，只作回归确认）。
+画面门禁见 §9——第一次全量跑出 6 红，根因是**门禁自己有未声明的数据前置**，已改成自种后复跑。
+
 ### 1.2 耦合面（决定迁移工作量的真实数字）
 
 | 量 | 值 | 怎么量的 |
@@ -132,10 +136,15 @@
 - [x] 2026-10-07 耦合面量化：202 处 `a-*`、16 个 import 文件、51 处 antd 类名断言、478 处硬编码颜色
 - [x] 2026-10-07 组件库选型提案 + 推荐（Arco Vue 首选，Naive 次选）——**本文档**
 - [ ] **等用户确认选型**（未确认前只做阶段 0）
-- [ ] 阶段 0：`src/theme/tokens.ts` 令牌真源 + `--aeg-*` 变量 + "不许字面色"源码门禁（按文件清欠）
-- [ ] 阶段 0：候选库双主题探针实测（Arco 暗色是否纯 CSS 变量 / 表格 1366×768 / 体积变化）
-- [ ] 阶段 1：`useTheme()` 三态 + 顶栏切换器 + localStorage + 跟随系统
-- [ ] 阶段 1：布局骨架（可折叠侧栏含智能体状态迷你区 + 顶栏 + 栅格）
+- [x] 阶段 0：`src/theme/` 四层落地——`tokens.ts`（真源）→ `vars.ts`（`--aeg-*` 变量 + `applyTheme`）→ `antd.ts`（库主题派生）→ `useTheme.ts`（三态）
+- [x] 阶段 0：源码门禁加**颜色棘轮**（`uiTheme.spec.ts` 第 12 条，基线 **458** = 探针实量，只减不增）
+- [x] 阶段 0：令牌自检 `src/theme/tokens.spec.ts`（9 条：4px 网格、字号阶、两主题槽位对齐、**每一对文字/底色实算 AA**、风险五档可辨、派生层逐值等旧字面）
+- [x] 阶段 0：三态用例 `src/theme/useTheme.spec.ts`（7 条：跟随系统/显式覆盖/翻系/持久化/隐私模式）
+- [ ] 阶段 0 收尾（欠）：按文件把 458 处字面色收敛成 `var(--aeg-*)`（先 `theme.css` 103 处与 `App.vue` 47 处）
+- [ ] **等用户确认选型**：阶段 0 的候选库探针实测（Arco 暗色是否纯 CSS 变量 / 表格 1366×768 / 体积变化）——要装新依赖，不自主动手
+- [x] 阶段 1（前半）：`useTheme()` 三态 + `localStorage` 持久化 + `matchMedia` 跟随系统 + `main.ts` 首帧前落色
+- [ ] 阶段 1：顶栏主题切换器（**本轮故意没上**：外壳还没接令牌，切了会只换 antd 组件、页面仍是浅底——见 §8 决策 3）
+- [ ] 阶段 1：布局骨架（可折叠侧栏含智能体状态迷你区 + 顶栏 + 栅格）——**要先批准**
 - [ ] 阶段 1：真机门禁扩到"两主题各跑一遍"
 - [ ] 阶段 2：组件层替换 + e2e 里 51 处 `ant-*` 选择器迁移
 - [ ] 阶段 2：`uiTheme.spec.ts` 11 条按新规范重写（4 条改口径、7 条保留）
@@ -151,3 +160,96 @@
 2. **旧视觉的处置节奏**：`theme.css`（521 行）与 `PageHero` 深色横幅是**新骨架就位后再删**，还是现在就停用？
    —— 我倾向前者（先立后破，避免中途出现"没有门禁可跑"的空窗）；删除文件前会再征求同意。
 3. **验收演示的时间点**：若有汇报日期，阶段 3 的页面顺序要按"演示主角优先"调（默认 `/dashboard` 先做，它是风格标杆）。
+
+---
+
+## 8. 阶段 0 交付记录（ADR，2026-10-07）
+
+### 决策 1：令牌层先做，且不生成 CSS 文件
+
+`src/theme/` 分四层，每层只干一件事：
+`tokens.ts`（唯一真源，色值/间距/字号/圆角/阴影/动效都在这）→ `vars.ts`（派生成 `--aeg-*` 变量 + `applyTheme` 写 `data-theme`/`color-scheme`）→
+`antd.ts`（把同一批令牌交给 ConfigProvider）→ `useTheme.ts`（三态与持久化）。
+`App.vue` 里原来那 30 行字面 `ThemeConfig` 删掉了，换成 `antdTheme(resolved.value)`；`main.ts` 在 `mount()` 之前调 `initTheme()`，
+避免首帧闪白。
+
+**为什么不编译出一份 `tokens.css`**：生成的 CSS 文件是**第二个真源**——它一旦被手改或忘记重生成，"令牌改了画面没变"就又是两张皮。
+运行时由 `vars.ts` 直接写 `documentElement.style`，源头只有一个函数。
+派生层自己**不许带字面色**（门禁第 12 条逐文件检查），换库时只改 `antd.ts` 的函数体。
+
+### 决策 2：颜色收敛用"棘轮"，不用一次清零
+
+门禁第 12 条走 `src` 目录（排除 `theme/**` 与 `*.spec.ts`）、剥掉 `/* */` 与 `<!-- -->` 注释后数色值，**只许 ≤ 基线 458**。
+458 由 `E:\tmp\color-ratchet-probe.mjs` 量得（与门禁同一套走目录 + 同一支正则，不是 `grep` 的 478 那个口径——那个数含注释与被删掉的 App.vue 字面块）。
+分布：`styles/theme.css` 103、`App.vue` 47、`WorkflowView.vue` 36、`PageHero.vue` 31……31 个文件。
+为什么不一次清零：逐页重做的批次每改一处就往下掉一个数，往上加才红；这样既不打断页面改造，也不许新代码继续就地写 hex。
+`api/types.ts` 那 5 支风险基色**照样计入**（它是语义真源但不开后门，阶段 3 收进令牌层）。
+两条变异检查做过：页面里加一处 hex → 红并点名最重的五个文件；只在派生层第三个文件加 hex → 红并点名该文件
+（这一支专门验"带 `g` 的正则把 `lastIndex` 带给下一次检查"那个坑，所以判"有没有"用的是另起的不带 `g` 的表达式）。
+
+### 决策 3：主题切换器**故意这一轮没上**
+
+三态逻辑、持久化、跟随系统、首帧落色都已就位并有 7 条用例；但外壳（`App.vue` 的顶栏渐变、`theme.css` 的卡片）还没接令牌。
+此时把切换器放上去，深色态只有 antd 组件变深、页面与横幅仍是浅底——正是需求里点名要避免的"白底补丁"。
+所以顺序是：**先把外壳与页面的颜色收敛到 `var(--aeg-*)`（决策 2 的清欠），再上切换器**，那之后真机门禁跑双主题才有意义。
+
+### 两个由新用例逮到的真 bug（不是重构副产品）
+
+1. **灰字差 0.05 没过 AA**：`#6B7488` 落在白卡 4.69:1 勉强过，落到 `alter`(#F7F9FC) 只有 4.45、落到页面底 #F2F4F8 只有 4.26。
+   压深到 `#626B7D` 后 card 5.36 / alter 5.08 / page 4.87，三处都过（`tokens.spec.ts` 把每一对都实算了一遍）。
+2. **"跟随系统"根本不会跟着动**：`resolved` 里直接调 `matchMedia(...).matches`，那不是响应式依赖，`computed` 把第一次的结果**永久缓存**了；
+   另外 `STORAGE_KEY` 的字面值里混进了一个 U+2026（写成 `'aeg…heme'`），持久化键从来不是 `aegis.theme`——
+   表现为"选了深色、刷新就没了"。两处都是先把用例写红、再改绿；变异检查复跑过（把任一处退回去，用例立刻红）。
+
+### 下一步（按依赖顺序）
+
+1. 把 `theme.css`(103) 与 `App.vue`(47) 的字面色收敛成变量，让外壳真正能换肤 → 再上顶栏切换器；
+2. 真机门禁扩到两主题各跑一遍（现有 100 项几何判据与风格无关，正好当换肤破绽探针）；
+3. §7 三问等批准：组件库选型 / 旧视觉处置节奏 / 演示时间点（布局骨架属"大改先提案"，未批不动）。
+
+**清欠时的变量名对照**（`applyTheme` 在 `:root` 上真写出来的就是这些，别再新起名）：
+`--aeg-color-<槽位>`（槽位名即 `tokens.ts` 的 key：`page`/`card`/`elevated`/`sunken`/`alter`/`border`/`border-subtle`/`border-strong`/
+`text`/`text-secondary`/`text-muted`/`text-inverse`/`brand`/`brand-hover`/`brand-active`/`brand-soft`/`brand-line`/`status-*`/`overlay-scrim`）、
+`--aeg-risk-text-<1..5>`、`--aeg-shadow-sm|md|lg`、`--aeg-space-s1..s12`、`--aeg-font-<字号阶>`、`--aeg-weight-*`、`--aeg-lh-*`、
+`--aeg-radius-sm|md|lg|pill`、`--aeg-motion-fast|base|slow|draw`、`--aeg-z-*`、`--aeg-header-height|sidebar-width|sidebar-collapsed|content-max`、
+`--aeg-font-sans|mono`。
+
+**已知的一处双轨（清欠时要一并收）**：`theme.css` 自己有一套 `--motion-fast/base/draw`（19 处 transition 在用），
+令牌层现在又发一份 `--aeg-motion-*`。同名不同源就是下一次"每页按自己节奏动"的起点——
+收敛做法：把 `theme.css` 里的 `--motion-*` 定义改成从 `--aeg-motion-*` 取值（保留旧名做别名、逐文件替换完再摘掉），
+这一步归进上面第 1 项一起做，不单独开批次。
+
+---
+
+## 9. 本轮验证记录（2026-10-07 阶段 0 交付）
+
+| 门禁 | 命令 | 结果 |
+| --- | --- | --- |
+| 类型 | `npm run typecheck` | exit 0（`vue-tsc --noEmit` 无输出） |
+| 单测 | `npm run test` | **786 passed / 44 个文件**（exit 0） |
+| 构建 | `npm run build` | **✓ built in 47.01s**（exit 0） |
+| 令牌层 | `npx vitest run src/theme/` | 16 passed（tokens 9 + useTheme 7） |
+| 源码门禁 | `npx vitest run src/uiTheme.spec.ts` | 12 passed（含新的颜色棘轮） |
+| 后端 | `python -m ruff check src scripts tests` / `python -m pytest -q` | exit 0 / exit 0（本批零后端文件改动，只作回归确认） |
+| 画面 | `AEGIS_API_TARGET=http://127.0.0.1:8321 npx playwright test ui-overlap` | 第一趟 **94 passed / 6 failed（35.5m）**，第二趟（加了自种夹具）**100 passed（21.1m）** |
+
+### 那 6 项红是怎么查出来的（值得记，因为红的不是画面）
+
+`warnings-detail`（四个视口）+ 弹层焦点那一套 + 运行时间线，全部卡在同一个地方：
+`locator('role=button[name="详情"]')` 与 `.wf-run__pick` 等不到元素，180 秒超时。
+对着后端读了一遍接口才发现：`GET /api/v1/warnings` 与 `/workflow/instances` 的 `count` 都是 **0**——
+后端是本轮重起的，内存 store 从零开始，而这两项判据**一直在吃"这台机器的后端恰好有数据"这个未声明前提**。
+上一轮 100 全绿是因为那个进程被灌过数。
+
+处理方式不是"先把数灌进去再跑一遍交差"，而是**把前提写进门禁**：
+新增 `ensureGateRows()`（`e2e/ui-overlap.spec.ts`），文件级 `test.beforeAll` 里查计数，
+预警为 0 就 `POST /api/v1/drill/run {scenario:"surge"}`（最多三轮），实例为 0 就用门禁自种的
+`GATE-UI大定义` `POST /api/v1/workflow/instances` 起一条；两种情况都在断言里写清"是几号状态码/为什么红"。
+走的是真接口，不在组件里塞假数据；需要空态的那些项本来就用 `page.route` 自己灌空列表，加真数据不串台。
+复跑证据：空 store 起步（`warnings count=0`、`instances count=0`）**100 项全绿**。
+
+### 断言的变异检查（每条都先红过再绿）
+
+- 颜色棘轮：页面里加一处 hex → 红，报"基线 458 涨到 459"并列出最重的五个文件；只在派生层第三个文件加 hex → 红并点名该文件（同时验掉"带 `g` 的正则把 `lastIndex` 带给下一次检查"这个坑）。
+- 三态用例：把 `resolved` 改回"computed 里直读 `matchMedia`" → 翻系那条即红；把 `STORAGE_KEY` 改个后缀 → 持久化三条全红。
+- 两次变异都由脚本改盘并 `finally` 回滚，回滚后 `git status` 只剩本轮真正的改动。
