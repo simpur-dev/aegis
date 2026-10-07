@@ -650,6 +650,42 @@ async function ensureBigDefinition(request: APIRequestContext): Promise<void> {
   expect(created.status(), `种一份 ${GATE_BIG_DEF_NODES} 节点的大定义失败（${created.status()}）`).toBe(201)
 }
 
+/**
+ * 门禁的两条**数据前置**：预警列表与实例队列各至少要有一行。
+ *
+ * 之前它们靠"这台机器的后端恰好有数据"：内存 store 一重启就空，
+ * `role=button[name="详情"]` 与 `.wf-run__pick` 各自等到 180 秒超时——
+ * 2026-10-07 那一趟 100 项里红了 6 项，红的不是排版而是**没有行可点**，
+ * 而画面判据本来要看的正是"点开之后那一屏"。这种红既吓人又费人，必须自己种。
+ * 走真接口（`/drill/run`、`/workflow/instances`），不在组件里塞假数据；
+ * 需要空态的那些项早就是用 `page.route` 自己灌空列表的，加真数据不会串台。
+ */
+async function ensureGateRows(request: APIRequestContext): Promise<void> {
+  const base = process.env.AEGIS_API_TARGET ?? 'http://127.0.0.1:8000'
+  const countOf = async (path: string): Promise<number> => {
+    const res = await request.get(`${base}${path}`)
+    expect(res.status(), `${path} 返回 ${res.status()}——AEGIS_API_TARGET 指的后端在位吗？`).toBe(200)
+    return ((await res.json()) as { count?: number }).count ?? 0
+  }
+
+  for (let round = 0; round < 3 && (await countOf('/api/v1/warnings?limit=1')) === 0; round += 1) {
+    const drill = await request.post(`${base}/api/v1/drill/run`, { data: { scenario: 'surge' } })
+    expect(drill.status(), `演练注入返回 ${drill.status()}——预警抽屉那条判据没有行可点`).toBe(200)
+  }
+  expect(await countOf('/api/v1/warnings?limit=1'), '三轮 surge 之后预警仍是 0 条（模拟器没启用，或触发规则一条没命中）').toBeGreaterThan(0)
+
+  if ((await countOf('/api/v1/workflow/instances?limit=1')) === 0) {
+    await ensureBigDefinition(request)
+    const started = await request.post(`${base}/api/v1/workflow/instances`, { data: { workflow_name: GATE_BIG_DEF } })
+    expect(started.status(), `用 ${GATE_BIG_DEF} 起一条实例失败（${started.status()}）`).toBeLessThan(400)
+  }
+  expect(await countOf('/api/v1/workflow/instances?limit=1'), '实例队列是空的——时间线那条判据在空跑').toBeGreaterThan(0)
+}
+
+test.beforeAll(async ({ request }) => {
+  await ensureGateRows(request)
+})
+
 /** 从定义行上取"哪一行最大、它有几个节点"：只读那一格自己的文字，
  *  读整行会把名字/版本与数字粘成 "v140 节点"（真机就这么误判过一次）。 */
 function pickBiggestDefinition(): { best: number; bestCount: number } {
