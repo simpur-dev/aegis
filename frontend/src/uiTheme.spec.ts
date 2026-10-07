@@ -1,13 +1,15 @@
 /**
- * UI 基座契约（对标 NexusMind 改版，批次一、二）。
+ * UI 基座契约（阶段 0/1 的口径：令牌单一真源 + 双主题）。
  *
- * 钉住四件会静默回归、肉眼又难以及时发现的东西：
+ * 钉住这些会静默回归、肉眼又难以及时发现的东西：
  * 1) 字体自托管——“弱网离线可用”是部署形态 P0，外链字体 CDN 在离线环境会掉字；
  * 2) 样式入口——fonts.css / theme.css 不进 main.ts，整套改造等于没做；
  * 3) 顶部导航覆盖——新增页面路由却不进顶栏，值班员就点不到那一页；
- * 4) 逐页深色横幅——漏挂的页在七页动线里一眼是"另一个系统"；
- * 5) 调色板只走蓝系——NexusMind 内部并存五支调色板，漂回紫青那一支肉眼在截图里不容易发现。
- * 观感（渐变、间距、层级）靠真机截图，不在这份源码门禁里硬编码像素。
+ * 4) 基座只读令牌——渐变/模糊/符号前缀一旦漂回来，截图里只多一点点，源码里一眼看得出；
+ * 5) 动效只有一条轨——`--motion-*` 与 `--aeg-motion-*` 并存就是"改了令牌页面没改"；
+ * 6) 颜色字面量棘轮——真源之外的硬编码只许减不许增（逐页换肤每改一处就往下掉一个数）；
+ * 7) 循环动画的减动效兜底、深底字色过 AA（都是真机量出来的坑，写在各自那条的注释里）。
+ * 观感（间距、层级、留白）靠真机截图 + e2e 几何门禁，不在这份源码门禁里硬编码像素。
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -16,8 +18,11 @@ import { describe, expect, it } from 'vitest'
 
 import { readRepoFile, repoRoot } from '@/testing/repoSource'
 
-/** 棘轮基线：2026-10-07 阶段 0 由探针量得（458 = 31 个文件里的色值总数）。 */
-const COLOR_BASELINE = 458
+/** 棘轮基线：2026-10-07 阶段 1 由探针（E:\tmp\color-count.mjs，与本条同一套走目录/剥注释/正则）量得。
+ *  轨迹：458（阶段 0 摸底）→ 335（`theme.css`+`App.vue` 接令牌）→ 228（再把七页共用的灰字与几块白底接上令牌）。
+ *  现在最重的三处：`PageHero.vue` 31（藏青横幅，随阶段 3 退役）、`styles/theme.css` 27（同一条横幅的两块深底面）、
+ *  `SystemTerminal.vue` 21（固定深底的面板）。`App.vue` 已归零。 */
+const COLOR_BASELINE = 228
 
 function fontsCss(): string {
   return readRepoFile('frontend', 'src', 'styles', 'fonts.css')
@@ -100,31 +105,39 @@ describe('UI 基座', () => {
     }
   })
 
-  it('调色板只走蓝系：滚动条不许漂回 NexusMind 的紫青那一支，标签是"雾底 + 同色描边"三件套', () => {
-    // 注释里会提到被禁的色值（说明为什么禁），判据只看真的生效声明
+  /**
+   * 基座只读令牌（阶段 1 重写这条，原来是"滚动条必须是指定的蓝渐变 + 标签是 12% 雾底三件套"）。
+   *
+   * 口径换了但判据没松，四条都在：
+   * 1. **装饰性写法归零**——`linear-gradient`/`radial-gradient`/`backdrop-filter`/`content: '◆'` 一处都不许有，
+   *    这四样正是"糟糕、不专业"判词点名的东西（渐变细线、符号前缀、玻璃模糊）；
+   * 2. **色相仍只走蓝系**——那六支紫青/品红照旧逐条禁（这一条比原来更硬：基座现在压根没有字面渐变可用）；
+   * 3. **标签三件套必须来自令牌**——四档 hue × bg/line/text 十二个引用，少一个槽位深色主题就破一块；
+   * 4. **两条实测硬约束原样保留**——横幅动作钮 36px 下限、藏青横幅里标签"深底反提"（真机量的 1.63:1 那一条）。
+   */
+  it('基座只读令牌：渐变/模糊/◆ 已退役，标签三件套走 --aeg-tag-*，色相仍只走蓝系', () => {
     const css = readRepoFile('frontend', 'src', 'styles', 'theme.css').replace(/\/\*[\s\S]*?\*\//g, '')
     for (const banned of ['#a7f9ff', '#887dff', '#ff68d6', '#6366f1', '#818cf8', '#a855f7']) {
       expect(css.toLowerCase(), `theme.css 里出现了非蓝系的 ${banned}`).not.toContain(banned)
     }
-    expect(css, '滚动条没走蓝系（NexusMind Home.vue 的 #93c5fd→#60a5fa）').toMatch(
-      /linear-gradient\(180deg, #93c5fd, #60a5fa\)/,
-    )
-    // NexusMind `.badge` 的三件套：12% 雾底 + 同色 1px 描边 + 压深的字（Step1GraphBuild.vue:630-662）
-    for (const [hue, rgb] of [
-      ['green', '34, 197, 94'],
-      ['orange', '245, 158, 11'],
-      ['blue', '59, 130, 246'],
-      ['red', '239, 68, 68'],
-    ] as const) {
-      expect(css, `标签 .ant-tag-${hue} 没上雾底`).toMatch(
-        new RegExp(`\\.ant-tag-${hue}[\\s\\S]{0,200}background: rgba\\(${rgb}, 0\\.12\\)`),
-      )
-      expect(css, `标签 .ant-tag-${hue} 没上同色描边`).toMatch(
-        new RegExp(`\\.ant-tag-${hue}[\\s\\S]{0,200}border-color: rgba\\(${rgb}, 0\\.2\\)`),
-      )
+    const retired: Array<[string, RegExp]> = [
+      ['linear-gradient（渐变细线/渐变钮底）', /linear-gradient\s*\(/],
+      ['radial-gradient（页面底那团蓝雾）', /radial-gradient\s*\(/],
+      ['backdrop-filter（玻璃模糊）', /backdrop-filter/],
+      ["标题前的 ◆ 符号前缀", /content:\s*'◆'/],
+    ]
+    for (const [name, pattern] of retired) {
+      expect(pattern.test(css), `theme.css 里还留着 ${name}`).toBe(false)
+    }
+    for (const hue of ['green', 'orange', 'blue', 'red']) {
+      for (const part of ['bg', 'line', 'text']) {
+        expect(css, `标签 .ant-tag-${hue} 没从令牌取 --aeg-tag-${hue}-${part}`).toMatch(
+          new RegExp(`\\.ant-tag-${hue}[\\s\\S]{0,400}var\\(--aeg-tag-${hue}-${part}\\)`),
+        )
+      }
     }
     expect(css, '横幅里的动作钮还是 antd small 的 24px 高').toMatch(/\.page-hero \.ant-btn\s*\{[\s\S]{0,400}min-height: 36px/)
-    // 浅底那套"雾底 + 压深字"搬到藏青横幅上会变成暗底暗字（真机量的 1.63:1）——深底必须反过来提亮字
+    // 浅底那套"浅底深字"搬到藏青横幅上会变成暗底暗字（真机量的 ratio=1.63）——深底必须反过来提亮字
     expect(css, '深色横幅里的标签没有单独的深底配色').toMatch(/\.page-hero \.ant-tag-orange[\s\S]{0,200}color: #fbbf24/)
   })
 
@@ -208,38 +221,51 @@ describe('UI 基座', () => {
   })
 
   /**
-   * 微动效只有一档基准（第二十七批）。
+   * 微动效只有一档基准，且只有一条轨（第二十七批立的规矩，阶段 1 把双轨合一）。
    *
-   * 改之前 `src` 里手写的 9 条 `transition` 散在 0.15/0.16/0.18/0.2/0.24 五档，
-   * 加上 antd 默认的 0.2/0.3 就是"每一页都在按自己的节奏动"。
-   * 现在时长全部走 theme.css 的 `--motion-*` 令牌：**源码里不许再出现字面时长**，
-   * 新增一条 0.35s 在这条就红，不用等真机门禁去数屏上的档数（那条管库内部的默认值，这条管我们写的）。
+   * 起因有两个：改之前 `src` 里手写的 9 条 `transition` 散在 0.15/0.16/0.18/0.2/0.24 五档；
+   * 而阶段 0 建令牌层之后，`theme.css` 的 `--motion-*` 与 `tokens.ts` 派生的 `--aeg-motion-*`
+   * 并存了一段时间——同一件事两个名字，改一个不动另一个就"令牌改了页面没改"。
+   * 现在：**时长只能来自 `tokens.ts` 的 `motion`，引用一律 `var(--aeg-motion-*)`**，
+   * 出现字面秒数或裸 `--motion-` 都直接红。
    */
-  it('过渡时长只许走 --motion-* 令牌：src 里不许出现字面秒数', () => {
-    const theme = readRepoFile('frontend', 'src', 'styles', 'theme.css')
-    for (const token of ['--motion-fast', '--motion-base', '--motion-draw']) {
-      expect(theme, `theme.css 里的微动效令牌 ${token} 没了——基准无从谈起`).toContain(`${token}:`)
+  it('过渡时长只许走 --aeg-motion-* 令牌：不许字面秒数，也不许留第二套令牌名', () => {
+    const tokens = readRepoFile('frontend', 'src', 'theme', 'tokens.ts')
+    const vars = readRepoFile('frontend', 'src', 'theme', 'vars.ts')
+    for (const step of ['fast', 'base', 'slow', 'draw']) {
+      expect(tokens, `tokens.ts 的 motion 少了 ${step} 档`).toMatch(new RegExp(`\\b${step}: '\\d+(\\.\\d+)?s'`))
     }
+    expect(vars, 'vars.ts 没把 motion 注成 --aeg-motion-*').toMatch(/--aeg-motion-|motion-\$\{k\}|\$\{varPrefix\}motion-/)
+
     const srcDir = join(repoRoot(), 'frontend', 'src')
     const files = readdirSync(srcDir, { recursive: true })
       .map((p) => String(p))
       .filter((p) => /\.(vue|css)$/.test(p))
       .sort()
     const strays: string[] = []
+    const doubles: string[] = []
     let tokened = 0
     for (const rel of files) {
       const text = readFileSync(join(srcDir, rel), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '')
       for (const match of text.matchAll(/transition:[^;]*;/g)) {
         const decl = match[0]
-        if (decl.includes('var(--motion-')) {
-          tokened += 1
+        /* 先查字面时长再数令牌：一条 `transition:` 里常常并列四五个属性，
+           只要有一个还写着 `0.35s` 就是没归一。反过来先看到 var 就放过，
+           `transform 0.35s ease, background var(--aeg-motion-base) ease` 这种混写法正好漏网（变异检查抓出来的）。 */
+        const stray = /\d+(\.\d+)?m?s\b/.exec(decl)
+        if (stray) {
+          strays.push(`${rel}：${stray[0]} ← ${decl.trim()}`)
           continue
         }
-        if (/\d+(\.\d+)?m?s/.test(decl)) strays.push(`${rel}：${decl.trim()}`)
+        if (decl.includes('var(--aeg-motion-')) tokened += 1
       }
+      /* `--aeg-motion-` 里不含子串 `--motion-`（前面是 "aeg-"，只有一个连字符挨着 motion），
+         所以这一支只抓得到旧的那条轨。 */
+      if (text.includes('--motion-')) doubles.push(rel)
     }
-    expect(tokened, '一条走令牌的 transition 都没有——这条在空跑').toBeGreaterThanOrEqual(9)
+    expect(tokened, '一条走令牌的 transition 都没有——这条在空跑').toBeGreaterThanOrEqual(11)
     expect(strays, `写死了时长而没走令牌：\n${strays.join('\n')}`).toHaveLength(0)
+    expect(doubles, `还留着第二套动效令牌名 --motion-*（应统一为 --aeg-motion-*）：\n${doubles.join('\n')}`).toHaveLength(0)
   })
 
   /**

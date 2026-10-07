@@ -1574,6 +1574,7 @@ test.describe('风险芯片兼图例 @1440', () => {
  */
 const HOVER_TARGETS = [
   '.flow-step',
+  '.theme-switch__btn',
   '.page-hero button',
   '.ant-list-item',
   '.wf-rail__pill',
@@ -2076,5 +2077,152 @@ test.describe('定义列表自查 @1440', () => {
     } finally {
       await request.post(`${base}/api/v1/workflow/definitions/${encodeURIComponent(createdId)}/archive`)
     }
+  })
+})
+
+/**
+ * 深色主题（大屏演示模式）——阶段 1 立起来的换肤判据。
+ *
+ * 为什么单独钉一条而不是把上面 WIDTHS 那几档复制一遍：这条盯的不是几何而是**表面归属**。
+ * 深色下还剩一块亮底，就是规则里点名的"白底补丁"——它只会在整页截图里刺眼，
+ * 重叠/出屏/裁字那四类几何判据一条都不会红（顶栏此前正是这样：antd 组件变了深蓝黑，外壳仍是 rgb(242,244,248)）。
+ *
+ * 三条判据：
+ * 1) 结构性表面（body/外壳/顶栏/内容区/卡片/卡头/表头/输入框/标签）在深色下必须**是暗的**（0–255 相对亮度 ≤128）；
+ *    同一套读数在浅色下必须**是亮的**——两个方向都验，这样判据本身反了或写坏了会当场露出来（不是在空跑）；
+ * 2) 七页在深色下过同一套常驻几何与 AA 对比度判据（复用上面那个 inspect，不自建一套宽松版）；
+ * 3) 顶栏切换器真的在换肤、真的存得住：点"深"→ `data-theme=dark` → reload 之后还是深色。
+ *
+ * @1920 那一档单独跑一次：步进器只有 ≥1640 才铺页名（右列要装"状态胶囊+切换器"，轨道宽度是量出来的），
+ * 深色大屏正好是那一档，别让它变成从没被真机走过的分支。
+ * ECharts / Cesium / Vue Flow 的**画面内部**不在这里（那是阶段 2 的活，现在钉上就是一条永远红的判据），
+ * 用的是上面同一份 skipSel：画布与地图容器整体跳过。
+ */
+const shellLum = (opts: { limit: number; wantBright: boolean }) => {
+  const { limit, wantBright } = opts
+  const parse = (value: string): number[] | null => {
+    const m = /rgba?\(([^)]+)\)/.exec(value)
+    if (!m) return null
+    const parts = m[1].split(/[,\s/]+/).filter(Boolean).map(Number)
+    if (parts.length >= 4 && parts[3] < 0.9) return null
+    return parts.slice(0, 3)
+  }
+  const lum = (c: number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+  const SELS = ['body', '.app-shell', '.navbar', '.main-content', '.ant-card', '.ant-card-head',
+    '.ant-table-thead > tr > th', '.ant-input', '.ant-select-selector']
+  const wrong: string[] = []
+  let seen = 0
+  for (const sel of SELS) {
+    for (const el of Array.from(document.querySelectorAll(sel)).slice(0, 4)) {
+      const rgb = parse(getComputedStyle(el).backgroundColor)
+      if (!rgb) continue
+      seen += 1
+      const bright = lum(rgb) > limit
+      if (wantBright ? !bright : bright) wrong.push(`${sel}=${getComputedStyle(el).backgroundColor} 亮度=${Math.round(lum(rgb))}`)
+    }
+  }
+  return { wrong, seen }
+}
+
+test.describe('深色主题换肤', () => {
+  test('结构性表面两档都归位：深色全是暗面、浅色全是亮面 @1440', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('aegis.theme', 'dark'))
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/dashboard')
+    await page.waitForSelector('.ant-card', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(2_000)
+    const dark = await page.evaluate(shellLum, { limit: 128, wantBright: false })
+    console.log(`SHELL-dark seen=${dark.seen} wrong=${dark.wrong.join(' | ')}`)
+    expect(dark.seen, '一块表面都没读到——判据在空跑').toBeGreaterThanOrEqual(8)
+    expect(dark.wrong, `深色下还有亮底（白底补丁）：\n${dark.wrong.join('\n')}`).toHaveLength(0)
+
+    /* 反向对照：同一份读数在浅色下必须全是亮面。只验深色一边的话，判据写反了（或恒真）也是绿的。 */
+    await page.click('[data-testid="theme-light"]')
+    await page.waitForTimeout(700)
+    const light = await page.evaluate(shellLum, { limit: 128, wantBright: true })
+    console.log(`SHELL-light seen=${light.seen} wrong=${light.wrong.join(' | ')}`)
+    expect(light.seen, '浅色这一档没读到表面——两向对照失效').toBeGreaterThanOrEqual(8)
+    expect(light.wrong, `浅色主题里出现了暗面（说明令牌被写死、没跟着主题翻）：\n${light.wrong.join('\n')}`).toHaveLength(0)
+    expect(await page.evaluate(() => document.documentElement.dataset.theme), '浅色档没落到 DOM 上').toBe('light')
+  })
+
+  test('顶栏切换器：点"深"就换肤，reload 之后还记得 @1440', async ({ page }) => {
+    /* 要带条件：addInitScript 每次导航都跑（reload 也算），无条件写会把刚存下的 dark 又盖回 light，
+       于是"持久化"这条永远验不到真东西——探针里同一个坑栽过一次。 */
+    await page.addInitScript(() => {
+      if (!localStorage.getItem('aegis.theme')) localStorage.setItem('aegis.theme', 'light')
+    })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/dashboard')
+    await page.waitForSelector('.theme-switch', { timeout: 45_000 })
+    await page.waitForTimeout(1_200)
+    expect(await page.evaluate(() => document.documentElement.dataset.theme), '初始该是浅色').toBe('light')
+    await page.click('[data-testid="theme-dark"]')
+    await page.waitForTimeout(700)
+    const after = await page.evaluate(() => ({
+      theme: document.documentElement.dataset.theme,
+      stored: localStorage.getItem('aegis.theme'),
+      scheme: document.documentElement.style.colorScheme,
+      pressed: document.querySelector('.theme-switch__btn.is-on')?.getAttribute('aria-pressed'),
+      body: getComputedStyle(document.body).backgroundColor,
+    }))
+    console.log(`SWITCH click -> ${JSON.stringify(after)}`)
+    expect(after.theme, '点了"深"但 data-theme 没翻').toBe('dark')
+    expect(after.stored, '选择没存进 localStorage').toBe('dark')
+    expect(after.scheme, 'color-scheme 没跟着翻（原生控件与滚动条会留浅色）').toBe('dark')
+    expect(after.pressed, '选中那格的 aria-pressed 没翻（读屏听不出当前是哪档）').toBe('true')
+    await page.reload({ waitUntil: 'networkidle' }).catch(() => {})
+    await page.waitForSelector('.navbar', { timeout: 45_000 })
+    expect(await page.evaluate(() => document.documentElement.dataset.theme), 'reload 之后忘了用户选过深色').toBe('dark')
+    /* 步进器页名在 ≥1640 才铺，这里顺手验窄档收成编号点时页名仍可从 title 读到 */
+    const titled = await page.evaluate(() =>
+      [...document.querySelectorAll('.flow-step')].every((el) => (el.getAttribute('title') ?? '').length > 1))
+    expect(titled, '收成编号点之后 title 里的页名也没了——只剩一串数字').toBe(true)
+  })
+
+  for (const [name, path] of PAGES) {
+    test(`${name} 深色：无重叠、不出屏、无裁字、不折行、对比度达标 @1440`, async ({ page }) => {
+      await page.addInitScript(() => localStorage.setItem('aegis.theme', 'dark'))
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.goto(path)
+      await page.waitForSelector('.page-hero', { timeout: 45_000 })
+      await page.waitForLoadState('networkidle').catch(() => {})
+      await page.waitForTimeout(2_500)
+      const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
+      console.log(`DARK ${name} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} lowContrast=${r.lowContrastCount}`)
+      expect(r.leafCount, `${name} 深色下只看到 ${r.leafCount} 个文本节点——判据在空跑`).toBeGreaterThan(0)
+      expect(r.overlapCount, `${name} 深色重叠：\n${r.overlap.join('\n')}`).toBe(0)
+      expect(r.beyondCount, `${name} 深色出屏：\n${r.beyond.join('\n')}`).toBe(0)
+      expect(r.clippedCount, `${name} 深色文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
+      expect(r.foldedCount, `${name} 深色按钮折行：\n${r.folded.join('\n')}`).toBe(0)
+      expect(r.lowContrastCount, `${name} 深色对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
+      await page.screenshot({ path: `test-results/ui-audit/dark-${name}.png` })
+    })
+  }
+
+  test('1920 大屏档：步进器铺页名时右列仍不压叠、不裁字 @1920', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('aegis.theme', 'dark'))
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    await page.goto('/dashboard')
+    await page.waitForSelector('.navbar', { timeout: 45_000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+    await page.waitForTimeout(2_000)
+    const nav = await page.evaluate(() => {
+      const box = (sel: string) => {
+        const el = document.querySelector(sel)
+        if (!el) return null
+        const r = el.getBoundingClientRect()
+        return { left: Math.round(r.left), right: Math.round(r.right), w: Math.round(r.width), scroll: el.scrollWidth, client: el.clientWidth }
+      }
+      return { stepper: box('.immersive-stepper'), right: box('.nav-right'), status: box('.nav-status'), sw: box('.theme-switch'), labels: document.querySelectorAll('.flow-step-label').length, labelShown: [...document.querySelectorAll('.flow-step-label')].some((el) => getComputedStyle(el).display !== 'none') }
+    })
+    console.log(`NAV1920 ${JSON.stringify(nav)}`)
+    expect(nav.labelShown, '1920 大屏档没铺页名——这条判据要走的正是那一档').toBe(true)
+    expect(nav.labels, '步进器页名数不对（七页都该有）').toBe(7)
+    expect(nav.status!.left, `状态胶囊压进了步进器（步进右缘=${nav.stepper!.right}，胶囊左缘=${nav.status!.left}）`).toBeGreaterThan(nav.stepper!.right)
+    expect(nav.right!.scroll - nav.right!.client, `右列被裁：scroll=${nav.right!.scroll} client=${nav.right!.client}`).toBeLessThanOrEqual(1)
+    expect(nav.status!.scroll - nav.status!.client, `状态胶囊静默裁字：scroll=${nav.status!.scroll} client=${nav.status!.client}`).toBeLessThanOrEqual(1)
+    await page.screenshot({ path: 'test-results/ui-audit/dark-nav-1920.png' })
   })
 })
