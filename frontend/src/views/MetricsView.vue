@@ -55,6 +55,19 @@ const ringOffset = computed<number | null>(() =>
   successPercent.value === null ? null : RING_C * (1 - successPercent.value / 100),
 )
 
+/**
+ * 托盘里那几颗大数的语气：ok/bad/idle。
+ * 原来这里直接写 `#4ade80`/`#f87171`/`rgba(255,255,255,.65)`——那是**深色横幅**上的三个色，
+ * 页头退役成亮面之后同一份写法变成"绿字压白底 1.65:1"（真机门禁 @1440/1280/1200/1100 全红逮到的正是它）。
+ * 现在只出档位，具体颜色交给 scoped 样式里的 `--aeg-color-status-*`：两主题各自成立，也不用在这份文件里存 hex。
+ */
+const successTone = computed<'idle' | 'ok' | 'bad'>(() =>
+  report.value === null ? 'idle' : report.value.collaboration.pass ? 'ok' : 'bad',
+)
+const violationsTone = computed<'idle' | 'ok' | 'bad'>(() =>
+  report.value === null ? 'idle' : Object.keys(report.value.violations).length > 0 ? 'bad' : 'ok',
+)
+
 const rows = computed(() => latencyRows(report.value?.metrics ?? {}, INDICATOR_LABELS))
 
 const chartOption = computed<ChartOption>(() => ({
@@ -105,20 +118,19 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
-    <PageHero icon="标" title="考核指标" badge="实测" caption="数据来自运行时埋点，非人工填写。">
+    <PageHero title="考核指标" badge="实测" caption="数据来自运行时埋点，非人工填写。">
       <template #actions>
         <a-button @click="load">重新读取</a-button>
       </template>
       <template #stats>
-        <div class="hero-stat">
+        <div class="stat-cell">
           <a-statistic title="协同事务总数" :value="report === null ? '—' : report.collaboration.transactions" />
         </div>
-        <div class="hero-stat">
+        <div class="stat-cell" :class="`is-${successTone}`">
           <a-statistic
             title="协同成功率"
             :value="report?.collaboration.success_rate == null ? '—' : (report.collaboration.success_rate * 100).toFixed(1)"
             :suffix="report?.collaboration.success_rate == null ? '' : '%'"
-            :value-style="{ color: report?.collaboration.pass ? '#4ade80' : '#f87171' }"
           />
           <!-- 环形成品率（对标 NexusMind WorldStateHero 的 .ring-progress）：深色托盘里
                一条 4px 横条容易被看成装饰，环把"离满格还差多少"画成角度。
@@ -140,18 +152,14 @@ onBeforeUnmount(() => {
               cx="22"
               cy="22"
               r="18"
-              :stroke="report?.collaboration.pass ? '#4ade80' : '#f87171'"
+              :class="`ring__fill is-${successTone}`"
               :stroke-dashoffset="ringOffset ?? RING_C"
             />
           </svg>
         </div>
-        <div class="hero-stat">
+        <div class="stat-cell" :class="`is-${violationsTone}`">
           <!-- 没读到账本就是「—」：0 项越限是一条会让人安心的假消息，只有量出来的 0 才能这么写 -->
-          <a-statistic
-            title="越限项数"
-            :value="report === null ? '—' : Object.keys(report.violations).length"
-            :value-style="{ color: report === null ? 'rgba(255,255,255,0.65)' : Object.keys(report.violations).length ? '#f87171' : '#4ade80' }"
-          />
+          <a-statistic title="越限项数" :value="report === null ? '—' : Object.keys(report.violations).length" />
         </div>
       </template>
     </PageHero>
@@ -226,7 +234,7 @@ onBeforeUnmount(() => {
 }
 .ring__track {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.16);
+  stroke: var(--aeg-color-border-strong);
   stroke-width: 4;
 }
 .ring__fill {
@@ -238,16 +246,35 @@ onBeforeUnmount(() => {
   transform-origin: 22px 22px;
   transition: stroke-dashoffset var(--aeg-motion-draw) ease-out;
 }
+/* 环与数字同一档：ok/bad/idle 三档只在这里落到槽位，两主题各自成立 */
+.ring__fill.is-ok {
+  stroke: var(--aeg-color-status-success);
+}
+.ring__fill.is-bad {
+  stroke: var(--aeg-color-status-danger);
+}
+.ring__fill.is-idle {
+  stroke: var(--aeg-color-text-muted);
+}
+.stat-cell.is-ok :deep(.ant-statistic-content) {
+  color: var(--aeg-color-status-success);
+}
+.stat-cell.is-bad :deep(.ant-statistic-content) {
+  color: var(--aeg-color-status-danger);
+}
+.stat-cell.is-idle :deep(.ant-statistic-content) {
+  color: var(--aeg-color-text-muted);
+}
 /* .tip-list 与 .pill-dashed 在 styles/theme.css（助手页共用一份） */
-/* 指标大数字的等宽托盘样式（.hero-stat）在 styles/theme.css，与态势页共用一份。 */
+/* 指标大数字的等宽托盘样式（.stat-cell）在 styles/theme.css，与态势页共用一份。 */
 /* 取数失败的原因要看得见：只有 toast 的话，三秒后页面就只剩一排看着正常的数字 */
 .metrics__error {
-  margin: 10px 0 0;
-  padding: 6px 10px;
-  border: 1px solid #ffccc7;
-  border-radius: 4px;
-  background: #fff2f0;
-  color: #cf1322;
-  font-size: 12px;
+  margin: var(--aeg-space-s2) 0 0;
+  padding: var(--aeg-space-s1) var(--aeg-space-s2);
+  border: 1px solid var(--aeg-tag-red-line);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-tag-red-bg);
+  color: var(--aeg-tag-red-text);
+  font-size: var(--aeg-font-sm);
 }
 </style>

@@ -215,7 +215,7 @@ const agentColumns = [
 
 <template>
   <div>
-    <PageHero icon="势" title="态势总览" badge="实时" caption="值班员的第一屏：KPI、风险网格、链路执行记录与实时事件流。">
+    <PageHero title="态势总览" badge="实时" caption="值班员的第一屏：KPI、风险网格、链路执行记录与实时事件流。">
       <template #actions>
         <span data-testid="dashboard-updated">
           {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
@@ -223,7 +223,7 @@ const agentColumns = [
         <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
       </template>
       <template #stats>
-        <div v-for="kpi in kpis" :key="kpi.label" class="hero-stat">
+        <div v-for="kpi in kpis" :key="kpi.label" class="stat-cell">
           <a-statistic :title="kpi.label" :value="kpi.value" :suffix="kpi.suffix" />
         </div>
       </template>
@@ -355,7 +355,7 @@ const agentColumns = [
 </template>
 
 <style scoped>
-/* KPI 托盘（.hero-stat）与空态（.empty-hero）的样式在 styles/theme.css：两页共用一份。 */
+/* KPI 托盘（.stat-cell）与空态（.empty-hero）的样式在 styles/theme.css：两页共用一份。 */
 .dash-error {
   margin-bottom: 12px;
 }

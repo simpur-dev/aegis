@@ -1,195 +1,135 @@
 <script setup lang="ts">
+/**
+ * 页头（阶段 1 后半·旧视觉停用）。
+ *
+ * 这里原来是 NexusMind 那块藏青横幅：`linear-gradient(145deg,…)` + 两团 `radial-gradient` 辉光
+ * + 标题前的 ◆ + 单字形渐变图标芯片 + 徽标无限脉冲 + 黑 15% 的数字托盘。
+ * 判词是"糟糕、不专业"，2026-10-07 拍板**现在停用**，所以这些一律没有，只留三件有功能目的的东西：
+ * 页名（这屏在讲什么）、状态语（现在怎么样了）、动作区（能干什么）。
+ * 单字形图标退役：标题已经说了页名，那颗芯片只是装饰。
+ *
+ * 两条实测约束保留，只是换了宿主选择器：
+ * ① 动作区里的按钮 `min-height: 36px`——窄屏上 antd small 的 24px 高在横幅里点不准（真机量的）；
+ * ② 状态语**可缩不可撑**，挤不下省略号收尾、完整那句进 `title`，不许把动作钮推出行。
+ */
 defineProps<{
   title: string
   badge?: string
   caption?: string
-  /** 单字形图标（NexusMind 用 emoji 占这个位置，这里用汉字：离线、无版权、且中文台不违和） */
-  icon?: string
-  /** 一眼看得出的当下状态（对标 .global-status-card 那句带圆点的状态语）。
-   *  只写"现在怎么样了"，不复述标题；tone 由数据决定，不许拿它当装饰。 */
+  /** 一眼看得出的当下状态（只写"现在怎么样了"，不复述标题；tone 由数据决定，不许拿它当装饰）。 */
   status?: { tone: 'ok' | 'warn' | 'bad' | 'idle'; text: string }
 }>()
 </script>
 
 <template>
-  <section class="page-hero" :class="{ 'page-hero--icon': !!icon }">
-    <div class="page-hero__header">
-      <span v-if="icon" class="page-hero__icon" aria-hidden="true">{{ icon }}</span>
-      <span v-else class="page-hero__deco" aria-hidden="true">◆</span>
-      <h2 class="page-hero__title">{{ title }}</h2>
-      <span v-if="badge" class="page-hero__badge">{{ badge }}</span>
-      <span v-if="status" class="page-hero__status" :class="`is-${status.tone}`" :title="status.text">
-        <span class="page-hero__status-dot" aria-hidden="true"></span>
-        {{ status.text }}
+  <header class="page-head">
+    <div class="page-head__row">
+      <h2 class="page-head__title">{{ title }}</h2>
+      <span v-if="badge" class="page-head__badge">{{ badge }}</span>
+      <span v-if="status" class="page-head__status" :class="`is-${status.tone}`" :title="status.text">
+        <span class="page-head__status-dot" aria-hidden="true"></span>
+        <span class="page-head__status-text">{{ status.text }}</span>
       </span>
-      <div class="page-hero__actions">
+      <div class="page-head__actions">
         <slot name="actions" />
       </div>
     </div>
-    <p v-if="caption" class="page-hero__caption">{{ caption }}</p>
-    <div v-if="$slots.stats" class="page-hero__stats">
+    <p v-if="caption" class="page-head__caption">{{ caption }}</p>
+    <div v-if="$slots.stats" class="page-head__stats">
       <slot name="stats" />
     </div>
-  </section>
+  </header>
 </template>
 
-<!-- 深色横幅移植自 NexusMind：藏青渐变 + 两团辉光 + 等宽字徽标（.global-status-card），
-     数字托盘是它的 .overview-stats（黑 15% 底板 + 白色等宽大数 + 小字大写标签）。 -->
 <style scoped>
-.page-hero {
-  position: relative;
-  overflow: hidden;
-  background: linear-gradient(145deg, #0d2b3e 0%, #0f3d52 50%, #0d4a62 100%);
-  border-radius: 16px;
-  padding: 16px 22px;
-  margin-bottom: 16px;
-  box-shadow: 0 8px 30px rgba(15, 60, 82, 0.35), 0 0 0 1px rgba(37, 99, 235, 0.15);
+.page-head {
+  margin-bottom: var(--aeg-space-s4);
 }
-.page-hero::before {
-  content: '';
-  position: absolute;
-  top: -40px;
-  right: -40px;
-  width: 160px;
-  height: 160px;
-  background: radial-gradient(circle, rgba(37, 99, 235, 0.2) 0%, transparent 70%);
-  pointer-events: none;
-}
-.page-hero::after {
-  content: '';
-  position: absolute;
-  bottom: -20px;
-  left: -20px;
-  width: 100px;
-  height: 100px;
-  background: radial-gradient(circle, rgba(37, 99, 235, 0.12) 0%, transparent 70%);
-  pointer-events: none;
-}
-.page-hero__header {
-  position: relative;
-  z-index: 1;
+.page-head__row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--aeg-space-s3);
 }
-.page-hero__deco {
-  font-size: 12px;
-  color: #5aa2ff;
-}
-/* 图标芯片（对标 .tool-icon-wrapper：34px / 圆角 12 / 渐变底 + 同色雾投影） */
-.page-hero__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.32), inset 0 0 0 1px rgba(255, 255, 255, 0.22);
-  color: #fff;
-  font-size: 15px;
-  font-weight: 700;
-}
-.page-hero--icon .page-hero__caption {
-  /* 有芯片时标题从 44px 起，说明文字跟着对齐，不然左边缘两条线不齐 */
-  margin-left: 44px;
-}
-.page-hero__title {
+.page-head__title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: #fff;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--aeg-font-lg);
+  font-weight: var(--aeg-weight-semibold);
+  line-height: var(--aeg-lh-snug);
+  color: var(--aeg-color-text);
 }
-.page-hero__badge {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  font-weight: 700;
-  color: #7cb3ff;
-  background: rgba(37, 99, 235, 0.18);
-  border: 1px solid rgba(37, 99, 235, 0.35);
-  padding: 2px 8px;
-  border-radius: 4px;
-  letter-spacing: 0.1em;
-  /* 脉冲动的是外面那一圈环，不是标签自己的不透明度。
-     NexusMind 两种写法都有：动环的是 `pulse-dot`（`Step4Report.vue:2961-2969`，3px α.2 → 5px α.12）、
-     `step-pulse`（`IncidentWorkspaceView.vue:1936-1947`）、`pulse-border-blue`（`Home.vue:2020`）；
-     而它自己的 `.gsc-badge`（`IncidentWorkspaceView.vue:1450-1463`）淡的正是 opacity 1 → 0.6——
-     那一处是 9px 的字，淡到 0.6 比我们还差，**这一条不照抄**。
-     我们原先照抄的就是淡 opacity 那一支：10px 的「实时」对比度从 5.76:1 掉到 3.08:1，
-     每两秒有将近半秒读不清（真机七页量到，第二十六批）。
-     静止那一圈写在声明里：reduce 关掉动画后兜底成"亮着的环"，不是"没了环"。 */
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.22);
-  animation: page-hero-pulse 2s ease-in-out infinite;
+/* 徽标是"这一页的数据从哪来"的口径标记（实时/实测/离线三维…），不是装饰：
+   中性灰的等宽小牌，不脉冲、不发光——原来那支 infinite 脉冲让 10px 的字每两秒淡到 3.08:1。 */
+.page-head__badge {
+  flex: 0 0 auto;
+  padding: 2px var(--aeg-space-s2);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-sunken);
+  color: var(--aeg-color-text-secondary);
+  font-family: var(--aeg-font-mono);
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-bold);
+  letter-spacing: 0.06em;
 }
-/* 状态语：字用近白（藏青底上 11:1），圆点按 tone 上色。可缩不可撑——它和右侧动作钮
-   同处一行，挤不下时省略号收尾（完整那句在 title 里），不许把按钮推出横幅。 */
-.page-hero__status {
+.page-head__status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--aeg-space-s1);
   flex: 0 1 auto;
   min-width: 0;
+  font-size: var(--aeg-font-sm);
+  color: var(--aeg-color-text-secondary);
+}
+.page-head__status-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.86);
 }
-.page-hero__status-dot {
+.page-head__status-dot {
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.5);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-border-strong);
 }
-.page-hero__status.is-ok .page-hero__status-dot {
-  background: #34d399;
-  box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+.page-head__status.is-ok .page-head__status-dot {
+  background: var(--aeg-color-status-success);
 }
-.page-hero__status.is-warn .page-hero__status-dot {
-  background: #fbbf24;
-  box-shadow: 0 0 8px rgba(251, 191, 36, 0.45);
+.page-head__status.is-warn .page-head__status-dot {
+  background: var(--aeg-color-status-warning);
 }
-.page-hero__status.is-bad .page-hero__status-dot {
-  background: #f87171;
-  box-shadow: 0 0 8px rgba(248, 113, 113, 0.45);
+.page-head__status.is-bad .page-head__status-dot {
+  background: var(--aeg-color-status-danger);
 }
-@keyframes page-hero-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.26); }
-  50% { box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.1); }
-}
-.page-hero__actions {
+.page-head__actions {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  /* 槽位内容由各页模板提供，颜色与字号靠继承落到横幅里。 */
-  color: rgba(255, 255, 255, 0.78);
-  font-size: 12px;
+  gap: var(--aeg-space-s2);
 }
-.page-hero__caption {
-  position: relative;
-  z-index: 1;
-  margin: 8px 0 0 22px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.72);
+/* 动作区里是各页模板塞进来的 antd 按钮，scoped 样式够不到，必须 :deep。
+   36px 这个下限是真机量的：small 档 24px 高在窄屏上点不准。 */
+.page-head__actions :deep(.ant-btn) {
+  min-height: 36px;
 }
-.page-hero__stats {
-  position: relative;
-  z-index: 1;
+.page-head__caption {
+  margin: var(--aeg-space-s2) 0 0;
+  font-size: var(--aeg-font-sm);
+  line-height: var(--aeg-lh-normal);
+  color: var(--aeg-color-text-secondary);
+  max-width: 72ch;
+}
+.page-head__stats {
   display: flex;
-  /* 顶端对齐而不是垂直居中：托盘里每一格的内容高度不等（带环形 KPI 的那格高出 ~50px），
-     `center` 会把那颗 24px 的大数字抬到比左右两格高 25px 的位置——三格数字不在一条线上，
-     整排读数就散了（真机 @1440 量到 metrics：格顶 184/209/209、数字字形顶 181/206/206）。
-     装饰件（环）该挂在数字下面，不该把数字搬走。 */
+  flex-flow: row wrap;
+  /* 顶端对齐：托盘里每格内容高度不等（带环形 KPI 的那格高出 ~50px），
+     center 会把 24px 的大数字抬到比左右两格高 25px，整排读数就散了（真机 @1440 量过）。 */
   align-items: flex-start;
-  justify-content: space-around;
-  margin-top: 12px;
-  padding: 10px 6px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.15);
+  gap: var(--aeg-space-s4);
+  margin-top: var(--aeg-space-s3);
+  padding: var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-alter);
 }
 </style>

@@ -146,7 +146,7 @@ onUnmounted(() => {
 
 <template>
   <div class="wf">
-    <PageHero icon="程" :status="heroStatus"
+    <PageHero :status="heroStatus"
       :title="store.current?.name ?? '工作流编排'"
       :badge="`v${store.current?.version ?? 1}`"
       caption="白盒编排：拖拽画布 → 本地校验 → 保存定义；等签工单与实例状态在右侧栏。画布快捷键：1 收拢、0 默认缩放、+ / - 缩放。"

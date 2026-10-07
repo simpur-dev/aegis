@@ -280,131 +280,61 @@ body .ant-card {
   animation: aegis-rise-in var(--aeg-motion-slow) ease-out backwards;
 }
 
-/* —— 以下两块属于 PageHero 那条藏青横幅（阶段 3 随横幅退役）——
-   横幅底色是**固定的藏青**，不随主题变（深色主题下它就是深色、浅色主题下它是页面唯一的深色面），
-   所以里面的白/半透白不能挂 `--aeg-color-*`：那些槽位会跟着主题翻，翻了就是白字压白底。
-   这一段是本文件还剩字面色的唯一原因，也是棘轮基线不肯归零的主要余额。 */
-
-/* —— 横幅内的 KPI 托盘条目（PageHero 的 stats 槽）——
-     大数在上、小标签在下；数字等宽 + tabular-nums；条目之间一条白 15% 竖线。 */
-body .hero-stat {
-  flex: 1;
+/* —— 页头的数字托盘条目（`.page-head__stats` 里的 `.stat-cell`）——
+     阶段 1 后半·旧视觉停用：这两块原来叫"藏青横幅专用"，里面全是白/半透白字面量
+     （横幅底色不随主题翻，那些槽位会翻，翻了就是白字压白底——那是它存在的唯一理由）。
+     横幅退役后托盘落在 `--aeg-color-alter` 上，所以整块改读槽位：本文件从此没有一处字面色。
+     原来挂在横幅里的 `.ant-tag` / `.ant-btn` 深底特例（"暗底暗字 ratio=1.63"那批）一并删除：
+     页头是亮面，全局那套 `--aeg-tag-*` 与 `--aeg-color-brand` 规则直接成立。 */
+body .stat-cell {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0 8px;
+  padding: 0 var(--aeg-space-s2);
 }
-body .hero-stat + .hero-stat {
-  border-left: 1px solid rgba(255, 255, 255, 0.15);
+body .stat-cell + .stat-cell {
+  border-left: 1px solid var(--aeg-color-border);
 }
-body .hero-stat .ant-statistic {
+body .stat-cell .ant-statistic {
+  /* 标签在下、数字在上：读数时眼睛先抓大数，再找它是什么 */
   display: flex;
   flex-direction: column-reverse;
   align-items: center;
 }
-body .hero-stat .ant-statistic-title {
+body .stat-cell .ant-statistic-title {
   margin: 2px 0 0;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-semibold);
   letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--aeg-color-text-secondary);
 }
-body .hero-stat .ant-statistic-content {
-  font-family: 'JetBrains Mono', monospace;
+body .stat-cell .ant-statistic-content {
+  font-family: var(--aeg-font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 24px;
-  font-weight: 800;
+  font-size: var(--aeg-font-xl);
+  font-weight: var(--aeg-weight-bold);
   line-height: 1.1;
-  color: #fff;
+  color: var(--aeg-color-text);
 }
-body .hero-stat .ant-statistic-content-suffix {
-  margin-left: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.65);
-}
-
-/* 横幅里的标签：浅底那套"雾底 + 压深字"搬到藏青上会变成暗底暗字（真机量的 ratio=1.63），
-   深底反过来——底色压深、字提亮，语义靠色相而不是靠深浅。 */
-.page-hero .ant-tag {
-  border-width: 1px;
-  border-style: solid;
-}
-.page-hero .ant-tag-green,
-.page-hero .ant-tag-success {
-  background: rgba(34, 197, 94, 0.16);
-  border-color: rgba(110, 231, 183, 0.45);
-  color: #6ee7b7;
-}
-.page-hero .ant-tag-orange,
-.page-hero .ant-tag-gold,
-.page-hero .ant-tag-warning {
-  background: rgba(245, 158, 11, 0.16);
-  border-color: rgba(251, 191, 36, 0.45);
-  color: #fbbf24;
-}
-.page-hero .ant-tag-red,
-.page-hero .ant-tag-error {
-  background: rgba(239, 68, 68, 0.18);
-  border-color: rgba(252, 165, 165, 0.45);
-  color: #fca5a5;
-}
-.page-hero .ant-tag-blue,
-.page-hero .ant-tag-processing {
-  background: rgba(59, 130, 246, 0.2);
-  border-color: rgba(147, 197, 253, 0.45);
-  color: #93c5fd;
-}
-
-/* —— 深色横幅里的按钮：antd 的禁用态是"浅底深字"（primary 禁用 = rgba(0,0,0,.04) 底 +
-     rgba(0,0,0,.25) 字），搬进藏青横幅就成了暗底暗字——"保存定义"未保存可点时几乎读不出字。
-     三态都在深底上重定：描边与字用白，禁用留 55% 白 + 虚线（虚线=点不动，跟 pill-dashed 同一口径）。
-     选择器带 .page-hero 前缀，浅底页面里的按钮不受影响。 —— */
-.page-hero .ant-btn {
-  border-color: rgba(255, 255, 255, 0.34);
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: none;
-  /* 横幅里的动作钮是这一页的主入口，antd small 只有 24px 高，在值班台上偏小。
-     NexusMind 给主操作的是 46px 全宽钮；深底横幅里放 46 会压过标题，
-     取 36px——比 small 高一档，又不至于把横幅头部撑变形。 */
-  min-height: 36px;
-}
-.page-hero .ant-btn:not(:disabled):hover {
-  border-color: rgba(255, 255, 255, 0.6);
-  color: #fff;
-  background: rgba(255, 255, 255, 0.2);
-}
-.page-hero .ant-btn-primary:not(:disabled) {
-  /* 钉住**浅色主题**那档主色：横幅底色两主题都是藏青，跟着 `--aeg-color-brand` 走会在深色下
-     翻成 #3B82F6，白字压上去掉到 3.66:1（14px/400 要 4.5:1）。 */
-  border-color: transparent;
-  background: #2563eb;
-}
-.page-hero .ant-btn-primary:not(:disabled):hover {
-  /* 悬停往深走，和 App.vue 的 colorPrimaryHover 同向：浅一档白字就掉到 4.5 以下。 */
-  background: #1d4ed8;
-}
-.page-hero .ant-btn:disabled,
-.page-hero .ant-btn.ant-btn-disabled {
-  border-color: rgba(255, 255, 255, 0.32);
-  border-style: dashed;
-  color: rgba(255, 255, 255, 0.58);
-  background: rgba(255, 255, 255, 0.06);
+body .stat-cell .ant-statistic-content-suffix {
+  margin-left: var(--aeg-space-s1);
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-semibold);
+  color: var(--aeg-color-text-muted);
 }
 
 /* NexusMind 全站没有 prefers-reduced-motion（grep 零命中），这条是我们自己补的兜底：
    前庭敏感的用户不该被强制看脉冲与抬升。
    这里必须**逐条列出** src 里每一支 infinite 动画——漏一条就等于那条没写
-   （第二十六批真机量到的正是漏掉的 `.page-hero__badge`：七页全在 reduce 态继续无限循环）。
+   （第二十六批真机量到的正是漏掉的页头徽标：七页全在 reduce 态继续无限循环。
+   那一支脉冲已随旧视觉退役，名单里也就没有它——门禁扫的是"还在跑的"，不是历史名单）。
    源码门禁 src/uiTheme.spec.ts 会扫 src 里的 `animation: … infinite` 并逐条核对这张名单，
    新增脉冲忘兜底先在单测红，不用等体检。 */
 @media (prefers-reduced-motion: reduce) {
   body .ant-card,
   .status-dot.live,
-  .page-hero__badge,
   .wf__polling::before {
     animation: none !important;
   }
