@@ -312,7 +312,7 @@ describe('UI 基座', () => {
         `docs/UI_UX_REDESIGN_BRIEF.md 记一笔。\n最重的五个文件：\n${heaviest}`,
     ).toBeLessThanOrEqual(COLOR_BASELINE)
 
-    for (const rel of ['theme/antd.ts', 'theme/vars.ts', 'theme/useTheme.ts']) {
+    for (const rel of ['theme/antd.ts', 'theme/vars.ts', 'theme/useTheme.ts', 'theme/chart.ts']) {
       expect(strip(readFileSync(join(srcDir, rel), 'utf-8')), `${rel} 出现了字面色：派生层只能从 tokens.ts 取`).not.toMatch(HIT)
     }
   })

@@ -2226,3 +2226,94 @@ test.describe('深色主题换肤', () => {
     await page.screenshot({ path: 'test-results/ui-audit/dark-nav-1920.png' })
   })
 })
+
+/**
+ * 画布像素级换肤判据（ECharts 那一面）。
+ *
+ * 为什么 DOM 那套不够：ECharts 画在 canvas 里，常驻的 `inspect()` 又把 canvas 整体 skip，
+ * 所以"主题注册到底生效没有"在 DOM 上量不出来——改造前深色下量到 91.2% 的成笔像素
+ * 对比只有 3:1–4.5:1（轴标还是内置的 #666），而页面 DOM 一切正常。
+ * 口径：只统计 alpha≥240 的成笔像素（抗锯齿边缘本就落在两支令牌之间，不算违规），
+ * 每一颗都必须在**当前主题**的 `--aeg-*` 里找得到逐通道差 ≤2 的一支。
+ * 阈值 1.5% 由实测定：浅/深两档未命中占比最大 0.80%（`E:\tmp\chart-gate-numbers.mjs`）。
+ */
+const canvasInk = (opts: { tol: number }) => {
+  const { tol } = opts
+  const parse = (value: string): number[] | null => {
+    const m = /rgba?\(([^)]+)\)/.exec(value)
+    if (!m) return null
+    const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number)
+    return [p[0], p[1], p[2]]
+  }
+  const root = document.documentElement
+  const scratch = document.createElement('div')
+  document.body.appendChild(scratch)
+  const palette: number[][] = []
+  for (const decl of (root.getAttribute('style') ?? '').split(';')) {
+    const key = (decl.split(':')[0] ?? '').trim()
+    if (!key.startsWith('--aeg-')) continue
+    scratch.style.color = `var(${key})`
+    const rgb = parse(getComputedStyle(scratch).color)
+    if (rgb) palette.push(rgb)
+  }
+  scratch.remove()
+  const near = (p: number[]) => palette.some((q) => Math.abs(p[0] - q[0]) <= tol && Math.abs(p[1] - q[1]) <= tol && Math.abs(p[2] - q[2]) <= tol)
+
+  let opaque = 0
+  let unmatched = 0
+  const freq = new Map<string, number>()
+  for (const canvas of [...document.querySelectorAll('canvas')]) {
+    const ctx = (canvas as HTMLCanvasElement).getContext('2d')
+    if (!ctx || canvas.width < 8) continue
+    const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 240) continue
+      opaque++
+      if (near([d[i], d[i + 1], d[i + 2]])) continue
+      unmatched++
+      const key = `${d[i]},${d[i + 1]},${d[i + 2]}`
+      freq.set(key, (freq.get(key) ?? 0) + 1)
+    }
+  }
+  const worst = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([c, n]) => `${c}×${n}`)
+  return {
+    theme: root.dataset.theme ?? '',
+    slots: palette.length,
+    opaque,
+    unmatched,
+    pct: opaque ? Number(((unmatched / opaque) * 100).toFixed(2)) : 0,
+    worst,
+  }
+}
+
+test.describe('ECharts 画布换肤', () => {
+  const CHART_PAGES: Array<[string, string]> = [
+    ['monitor', '/monitor'],
+    ['metrics', '/metrics'],
+  ]
+  for (const [name, path] of CHART_PAGES) {
+    test(`${name} 画布只用当前主题的令牌色，翻主题立刻重画 @1440`, async ({ page }) => {
+      await page.addInitScript(() => localStorage.setItem('aegis.theme', 'dark'))
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.goto(path)
+      await page.waitForSelector('.ant-card canvas', { timeout: 45_000 })
+      await page.waitForLoadState('networkidle').catch(() => {})
+      await page.waitForTimeout(2_200)
+      const dark = await page.evaluate(canvasInk, { tol: 2 })
+      console.log(`CANVAS-${name}-dark ${JSON.stringify(dark)}`)
+      expect(dark.slots, '一个 --aeg-* 颜色变量都没读到——判据在空跑').toBeGreaterThanOrEqual(15)
+      expect(dark.opaque, '画布上没有成笔像素——判据在空跑').toBeGreaterThanOrEqual(15_000)
+      expect(dark.pct, `深色画布上有令牌外的色（${dark.unmatched} 颗，最重的几支 ${dark.worst.join(' / ')}）`).toBeLessThanOrEqual(1.5)
+
+      /* 点切换器翻到浅色再量一遍：如果实例没随主题重建，这一趟读到的仍是深色的墨，
+         未命中占比会直接冲到两位数——这一条同时是"翻转立刻重画"的证据。 */
+      await page.click('[data-testid="theme-light"]')
+      await page.waitForTimeout(1_500)
+      const light = await page.evaluate(canvasInk, { tol: 2 })
+      console.log(`CANVAS-${name}-light ${JSON.stringify(light)}`)
+      expect(light.theme, '点了"浅"但主题没翻').toBe('light')
+      expect(light.pct, `浅色画布上有令牌外的色（${light.unmatched} 颗，最重的几支 ${light.worst.join(' / ')}）`).toBeLessThanOrEqual(1.5)
+      await page.screenshot({ path: `test-results/ui-audit/canvas-${name}-light.png` })
+    })
+  }
+})
