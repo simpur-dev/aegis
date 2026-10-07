@@ -7,6 +7,13 @@ import './styles/theme.css'
 
 import App from './App.vue'
 import { router } from './router'
+import { initTheme } from './theme/useTheme'
+
+/**
+ * 主题变量必须在 `mount()` 之前落到 `documentElement` 上：
+ * 晚一步首屏就会有一段"CSS 里 `var(--aeg-*)` 还没值"的空窗（浅色下是白闪、深色下是黑闪）。
+ */
+initTheme()
 
 const app = createApp(App)
 app.use(Antd)

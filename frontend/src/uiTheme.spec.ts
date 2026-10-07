@@ -11,10 +11,13 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { readRepoFile, repoRoot } from '@/testing/repoSource'
+
+/** 棘轮基线：2026-10-07 阶段 0 由探针量得（458 = 31 个文件里的色值总数）。 */
+const COLOR_BASELINE = 458
 
 function fontsCss(): string {
   return readRepoFile('frontend', 'src', 'styles', 'fonts.css')
@@ -60,10 +63,19 @@ describe('UI 基座', () => {
     expect(theme).toBeGreaterThan(fonts)
   })
 
-  it('主色令牌钉在 ConfigProvider：科技蓝 #2563EB', () => {
+  /**
+   * 主色这条从"App.vue 里写着 #2563EB"改成了"派生链在位"（阶段 0 重写，不是删断言）：
+   * 真源挪到 `src/theme/tokens.ts`，页面/组件里再出现 hex 就是往回退。
+   */
+  it('主色来自令牌真源：tokens → antdTheme → ConfigProvider，App.vue 不再自己写 hex', () => {
     const text = appVue()
-    expect(text).toMatch(/colorPrimary:\s*'#2563EB'/)
+    expect(text, 'App.vue 里还写着字面 hex：颜色只能来自 src/theme/tokens.ts').not.toMatch(/colorPrimary:\s*'#/)
+    expect(text, 'App.vue 没从派生层取主题').toMatch(/import \{ antdTheme \} from '@\/theme\/antd'/)
+    expect(text).toMatch(/antdTheme\(resolved\.value\)/)
     expect(text).toMatch(/:theme="theme"/)
+    const tokens = readRepoFile('frontend', 'src', 'theme', 'tokens.ts')
+    expect(tokens, '主色不再是科技蓝 #2563EB（令牌被改了要说明理由）').toMatch(/base: '#2563EB'/)
+    expect(tokens).toMatch(/'brand': brand\.light\.base/)
   })
 
   it('顶部导航覆盖全部页面路由：router 里的每一页在顶栏都点得到', () => {
@@ -228,5 +240,54 @@ describe('UI 基座', () => {
     }
     expect(tokened, '一条走令牌的 transition 都没有——这条在空跑').toBeGreaterThanOrEqual(9)
     expect(strays, `写死了时长而没走令牌：\n${strays.join('\n')}`).toHaveLength(0)
+  })
+
+  /**
+   * 颜色棘轮（阶段 0）。
+   *
+   * 基线 458 不是估的：`E:\tmp\color-ratchet-probe.mjs` 用与本条**同一套**走目录 + 剥注释 + 正则量出来
+   * （69 个文件、31 个文件有色值，`styles/theme.css` 一支占 103）。为什么不一次清零：逐页换肤的批次
+   * 每改一处就往下掉一个数，**只许减不许增**——既不打断页面改造节奏，也不许把硬编码当默认写法。
+   *
+   * 计数范围：`src/theme/**`（真源，hex 就该只活在那里）与 `*.spec.ts`（要写 hex 才能算对比度）不参与；
+   * `api/types.ts` 那 5 支风险基色照样计入——它是语义真源但不给开后门，阶段 3 收进令牌层。
+   * 派生层反过来必须零字面色：`antd.ts` 一旦自己写 hex，"改了令牌组件不跟着变"的两张皮就回来了。
+   */
+  it('颜色字面量只减不增：真源之外不许新增硬编码，派生层一格 hex 都不许有', () => {
+    const COUNT = /#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![0-9a-fA-F])|\brgba?\(|\bhsla?\(/g
+    /* 判"有没有"要另起一支不带 g 的：带 g 的 .test() 会记住上次 lastIndex，第二、三个文件就成了漏网之鱼。 */
+    const HIT = /#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![0-9a-fA-F])|\brgba?\(|\bhsla?\(/
+    const strip = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '')
+
+    const srcDir = join(repoRoot(), 'frontend', 'src')
+    const files = readdirSync(srcDir, { recursive: true })
+      .map((p) => String(p).split(sep).join('/'))
+      .filter((p) => /\.(vue|css|ts)$/.test(p))
+      .filter((p) => !p.endsWith('.spec.ts') && !p.startsWith('theme/'))
+      .sort()
+    expect(files.length, 'src 一条都没走到——这条在空跑').toBeGreaterThanOrEqual(60)
+
+    const counted = new Map<string, number>()
+    for (const rel of files) {
+      const hits = strip(readFileSync(join(srcDir, rel), 'utf-8')).match(COUNT) ?? []
+      if (hits.length > 0) counted.set(rel, hits.length)
+    }
+    const total = [...counted.values()].reduce((sum, n) => sum + n, 0)
+    expect(total, '真源外的色值一个都没数到——判据失效').toBeGreaterThanOrEqual(100)
+    const heaviest = [...counted.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([rel, n]) => `  ${String(n).padStart(4)} ${rel}`)
+      .join('\n')
+    expect(
+      total,
+      `硬编码颜色从基线 ${COLOR_BASELINE} 涨到 ${total}。色值只能写进 src/theme/tokens.ts，` +
+        `页面里用 var(--aeg-color-*)。确认是合理减少就把基线改成新值，并在 ` +
+        `docs/UI_UX_REDESIGN_BRIEF.md 记一笔。\n最重的五个文件：\n${heaviest}`,
+    ).toBeLessThanOrEqual(COLOR_BASELINE)
+
+    for (const rel of ['theme/antd.ts', 'theme/vars.ts', 'theme/useTheme.ts']) {
+      expect(strip(readFileSync(join(srcDir, rel), 'utf-8')), `${rel} 出现了字面色：派生层只能从 tokens.ts 取`).not.toMatch(HIT)
+    }
   })
 })

@@ -6,6 +6,8 @@ import zhCN from 'ant-design-vue/es/locale/zh_CN'
 
 import api from '@/api/client'
 import { useEventStream } from '@/composables/useEventStream'
+import { antdTheme } from '@/theme/antd'
+import { useTheme } from '@/theme/useTheme'
 
 const route = useRoute()
 const menuKey = computed(() => (route.name as string) ?? 'dashboard')
@@ -51,38 +53,13 @@ onBeforeUnmount(() => {
 })
 
 /**
- * 全局设计令牌（对标 NexusMind）：科技蓝主色、浅灰蓝底、白卡、Space Grotesk
- * 拉丁 + 系统中文栈；令牌管不到的整型规则在 styles/theme.css。
+ * 组件库主题从设计令牌派生（真源 `src/theme/tokens.ts`，派生层 `src/theme/antd.ts`）。
+ * 这里**不再写任何 hex 与时长**：以前这份 30 行字面值就是"页面各按各的颜色"的源头之一。
+ * 浅色那一档的取值与改造前逐项相同（含 hover/active 往深走那两条，那是悬停态体检量出来的），
+ * 所以"接令牌层"这一步不掺任何视觉变化——视觉回归由后面的逐页重做负责。
  */
-const theme: ThemeConfig = {
-  token: {
-    colorPrimary: '#2563EB',
-    /* 微动效对齐 NexusMind 的 `all .15s` 基准（284 处）：antd 的按钮/卡片/表格/分页默认走
-       `motionDurationMid = 0.2s`、spin 走 Slow 0.3s，与我们自己那批 0.15s 混在同一屏。
-       这三档是**库内部**的时长，只能从这里改；我们自己写的规则用 theme.css 的 `--motion-*`。 */
-    motionDurationFast: '0.1s',
-    motionDurationMid: '0.15s',
-    motionDurationSlow: '0.2s',
-    /* antd 默认把 hover 派生成**更浅**的蓝（实测 #3b82f6），白字压上去只有 3.68:1——
-       主按钮上的字是 14px/400，要 4.5:1。悬停态是常驻判据新加的一档（悬停态体检）抓到的，
-       所以这里显式让 hover/active 都往深走：#1d4ed8 白字 6.3:1、#1e40af 更深一档。 */
-    colorPrimaryHover: '#1D4ED8',
-    colorPrimaryActive: '#1E40AF',
-    colorInfo: '#2563EB',
-    colorLink: '#2563EB',
-    colorBgLayout: '#F2F4F8',
-    colorBgContainer: '#FFFFFF',
-    colorFillAlter: '#F7F9FC',
-    colorBorder: '#E6E8EF',
-    colorBorderSecondary: '#EEF0F5',
-    colorText: '#0A0A0C',
-    colorTextDescription: '#5A6072',
-    borderRadius: 10,
-    borderRadiusLG: 16,
-    fontFamily:
-      "'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif",
-  },
-}
+const { resolved } = useTheme()
+const theme = computed<ThemeConfig>(() => antdTheme(resolved.value))
 
 /**
  * 事件流徽标的三条真话。
