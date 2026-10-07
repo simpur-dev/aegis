@@ -23,7 +23,7 @@ import { readRepoFile, repoRoot } from '@/testing/repoSource'
  *  → **159（藏青横幅退役：`PageHero.vue` 31→0、`theme.css` 27→0；顺带把指标页三处"深底色压亮面"改成档位 + 槽位）**。
  *  现在最重的三处：`SystemTerminal.vue` 21（固定深底的面板，它本来就不随主题翻，但要收进令牌槽）、
  *  `AssistantView.vue` 15、`NodeShell.vue` 14。`App.vue`、`theme.css`、`PageHero.vue` 与 `MetricsView.vue` 都已归零。 */
-const COLOR_BASELINE = 159
+const COLOR_BASELINE = 158
 
 function fontsCss(): string {
   return readRepoFile('frontend', 'src', 'styles', 'fonts.css')
@@ -337,7 +337,7 @@ describe('UI 基座', () => {
         `docs/UI_UX_REDESIGN_BRIEF.md 记一笔。\n最重的五个文件：\n${heaviest}`,
     ).toBeLessThanOrEqual(COLOR_BASELINE)
 
-    for (const rel of ['theme/antd.ts', 'theme/vars.ts', 'theme/useTheme.ts', 'theme/chart.ts']) {
+    for (const rel of ['theme/antd.ts', 'theme/vars.ts', 'theme/useTheme.ts', 'theme/chart.ts', 'theme/map.ts']) {
       expect(strip(readFileSync(join(srcDir, rel), 'utf-8')), `${rel} 出现了字面色：派生层只能从 tokens.ts 取`).not.toMatch(HIT)
     }
   })

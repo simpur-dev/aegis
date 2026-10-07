@@ -29,6 +29,8 @@ import type {
 
 import type { BasemapConfig, BasemapSource } from './basemap'
 import { BASEMAP_ATTRIBUTION, chooseBasemapSource, createBasemapSetup, DEFAULT_BASEMAP_CONFIG } from './basemap'
+import { mapPalette, type MapPalette } from '@/theme/map'
+import type { ThemeMode } from '@/theme/tokens'
 import { clearMapDebugHandle, publishMapDebugHandle } from './debugHandle'
 import type {
   BBox,
@@ -54,8 +56,7 @@ export type LayerName = PlanLayer
 
 const LAYER_NAMES: readonly LayerName[] = PLAN_LAYERS
 
-/** 无影像时的地球底色：深色而不是白屏，避免"看起来像崩了"。 */
-const GLOBE_BASE_COLOR = '#101923'
+/** 无影像时的地球底色等画面内部的颜色，全部由 `@/theme/map` 按当前主题派生（本文件不写字面色）。 */
 
 /** 渲染端的显隐状态形状（值由视图持有，本文件只施加）。 */
 export type LayerVisibility = Record<LayerName, boolean>
@@ -73,6 +74,8 @@ export interface MapSceneOptions {
   origin?: string
   onViewChanged?: (bbox: BBox | null, zoom: number) => void
   onSelect?: (featureId: string | null) => void
+  /** 建场时所处主题；之后的翻转由 `setTheme` 推进。缺省按浅色。 */
+  themeMode?: ThemeMode
 }
 
 export interface MapSceneInfo {
@@ -85,6 +88,14 @@ export interface MapSceneInfo {
 export interface MapScene {
   /** 幂等：要素 id 集合不变时跳过重建（相机每挪一点就重画会掉帧）。 */
   render(data: RenderData): void
+  /**
+   * 换主题：把地球底色/图元色换到新档，并**重画全部图层**。
+   * 必须重画——Cesium 的图元色是在 `entities.add()` 那一刻烤进去的，
+   * 只换 `globe.baseColor` 会留下"底翻面了、标记还是上一档的白字黑边"这种半翻画面。
+   */
+  setTheme(mode: ThemeMode): void
+  /** 当前生效的调色板（只读，供真机门禁核对画面确实按主题派生）。 */
+  readonly palette: MapPalette
   focusAt(point: LngLat): void
   fitBBox(box: BBox): void
   currentBBox(): BBox | null
@@ -131,7 +142,11 @@ export function applyOfflineCredits(cesium: CesiumModule): void {
 }
 
 /** 站点：有台账高程时用绝对高度（地形缺失也不贴地），否则钳地。高危等级才出文字标签。 */
-function stationGraphics(cesium: CesiumModule, feature: StationFeature & { lonlat: LngLat }): Entity.ConstructorOptions {
+function stationGraphics(
+  cesium: CesiumModule,
+  feature: StationFeature & { lonlat: LngLat },
+  palette: MapPalette,
+): Entity.ConstructorOptions {
   const severe = feature.riskLevel !== null && feature.riskLevel <= 2
   return {
     id: feature.id,
@@ -139,8 +154,8 @@ function stationGraphics(cesium: CesiumModule, feature: StationFeature & { lonla
     position: cesium.Cartesian3.fromDegrees(feature.lonlat.lon, feature.lonlat.lat, feature.elevationM ?? 0),
     point: {
       pixelSize: severe ? 15 : 10,
-      color: cesium.Color.fromCssColorString(feature.colorCss),
-      outlineColor: cesium.Color.WHITE,
+      color: cesium.Color.fromCssColorString(palette.fillFor(feature.colorCss)),
+      outlineColor: cesium.Color.fromCssColorString(palette.markerOutline),
       outlineWidth: 2,
       heightReference: feature.elevationM === null ? cesium.HeightReference.CLAMP_TO_GROUND : undefined,
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -149,20 +164,24 @@ function stationGraphics(cesium: CesiumModule, feature: StationFeature & { lonla
       ? {
           text: feature.nameZh,
           font: '12px sans-serif',
-          fillColor: cesium.Color.WHITE,
-          outlineColor: cesium.Color.BLACK,
+          fillColor: cesium.Color.fromCssColorString(palette.labelText),
+          outlineColor: cesium.Color.fromCssColorString(palette.labelHalo),
           outlineWidth: 2,
           pixelOffset: new cesium.Cartesian2(0, -18),
           showBackground: true,
-          backgroundColor: cesium.Color.fromCssColorString(GLOBE_BASE_COLOR).withAlpha(0.7),
+          backgroundColor: cesium.Color.fromCssColorString(palette.labelBackground).withAlpha(palette.labelBackgroundAlpha),
         }
       : undefined,
   }
 }
 
 /** 预警：区域级 marker，空心环形色带，等级由颜色承担，标题留在详情面板。 */
-function warningGraphics(cesium: CesiumModule, feature: WarningFeature & { lonlat: LngLat }): Entity.ConstructorOptions {
-  const color = cesium.Color.fromCssColorString(feature.colorCss)
+function warningGraphics(
+  cesium: CesiumModule,
+  feature: WarningFeature & { lonlat: LngLat },
+  palette: MapPalette,
+): Entity.ConstructorOptions {
+  const color = cesium.Color.fromCssColorString(palette.fillFor(feature.colorCss))
   return {
     id: feature.id,
     name: feature.title,
@@ -179,15 +198,15 @@ function warningGraphics(cesium: CesiumModule, feature: WarningFeature & { lonla
 }
 
 /** 触达 marker：语义是"通道是否打通"，故配红色只给劣化项（见 entities.buildReachLayer）。 */
-function reachGraphics(cesium: CesiumModule, feature: ReachFeature & { lonlat: LngLat }): Entity.ConstructorOptions {
+function reachGraphics(cesium: CesiumModule, feature: ReachFeature & { lonlat: LngLat }, palette: MapPalette): Entity.ConstructorOptions {
   return {
     id: feature.id,
     name: feature.title,
     position: cesium.Cartesian3.fromDegrees(feature.lonlat.lon, feature.lonlat.lat),
     point: {
       pixelSize: 8,
-      color: cesium.Color.fromCssColorString(feature.colorCss),
-      outlineColor: cesium.Color.BLACK,
+      color: cesium.Color.fromCssColorString(palette.fillFor(feature.colorCss)),
+      outlineColor: cesium.Color.fromCssColorString(palette.markerOutline),
       outlineWidth: 1,
       heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -195,21 +214,26 @@ function reachGraphics(cesium: CesiumModule, feature: ReachFeature & { lonlat: L
     label: {
       text: feature.title,
       font: '11px sans-serif',
-      fillColor: cesium.Color.WHITE,
+      fillColor: cesium.Color.fromCssColorString(palette.labelText),
       pixelOffset: new cesium.Cartesian2(0, 14),
       showBackground: true,
-      backgroundColor: cesium.Color.fromCssColorString(GLOBE_BASE_COLOR).withAlpha(0.6),
+      backgroundColor: cesium.Color.fromCssColorString(palette.labelBackground).withAlpha(palette.labelBackgroundAlpha),
     },
   }
 }
 
 /** 灾害面：贴地分类（TERRAIN）→ 地形没烘焙时自动贴在椭球面上，同一份数据两种形态都对齐。 */
-function hazardZoneGraphics(cesium: CesiumModule, feature: HazardZoneFeature, classificationType: ClassificationType): Entity.ConstructorOptions {
+function hazardZoneGraphics(
+  cesium: CesiumModule,
+  feature: HazardZoneFeature,
+  classificationType: ClassificationType,
+  palette: MapPalette,
+): Entity.ConstructorOptions {
   const outer = feature.outer.map((point) => cesium.Cartesian3.fromDegrees(point.lon, point.lat))
   const holes = feature.holes.map(
     (ring) => new cesium.PolygonHierarchy(ring.map((point) => cesium.Cartesian3.fromDegrees(point.lon, point.lat))),
   )
-  const color = cesium.Color.fromCssColorString(feature.colorCss)
+  const color = cesium.Color.fromCssColorString(palette.fillFor(feature.colorCss))
   return {
     id: feature.id,
     name: feature.title,
@@ -225,14 +249,14 @@ function hazardZoneGraphics(cesium: CesiumModule, feature: HazardZoneFeature, cl
 }
 
 /** 聚合簇：尺寸按成员数对数增长，标签就是计数（"多少个要素在这一格里"）。 */
-function clusterGraphics(cesium: CesiumModule, cluster: PointCluster): Entity.ConstructorOptions {
+function clusterGraphics(cesium: CesiumModule, cluster: PointCluster, palette: MapPalette): Entity.ConstructorOptions {
   return {
     id: cluster.id,
     position: cesium.Cartesian3.fromDegrees(cluster.lonlat.lon, cluster.lonlat.lat),
     point: {
       pixelSize: Math.min(44, 18 + Math.log2(Math.max(2, cluster.count)) * 6),
-      color: cesium.Color.fromCssColorString(cluster.colorCss).withAlpha(0.85),
-      outlineColor: cesium.Color.WHITE,
+      color: cesium.Color.fromCssColorString(palette.fillFor(cluster.colorCss)).withAlpha(0.85),
+      outlineColor: cesium.Color.fromCssColorString(palette.markerOutline),
       outlineWidth: 2,
       heightReference: cesium.HeightReference.CLAMP_TO_GROUND,
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -240,8 +264,8 @@ function clusterGraphics(cesium: CesiumModule, cluster: PointCluster): Entity.Co
     label: {
       text: String(cluster.count),
       font: 'bold 12px sans-serif',
-      fillColor: cesium.Color.WHITE,
-      outlineColor: cesium.Color.BLACK,
+      fillColor: cesium.Color.fromCssColorString(palette.labelText),
+      outlineColor: cesium.Color.fromCssColorString(palette.labelHalo),
       outlineWidth: 2,
     },
   }
@@ -333,7 +357,19 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     terrainProvider: terrainSetup.provider as TerrainProvider,
   })
 
-  viewer.scene.globe.baseColor = cesium.Color.fromCssColorString(GLOBE_BASE_COLOR)
+  let palette = mapPalette(options.themeMode ?? 'light')
+  /**
+   * 主题落到场景上：地球底色 + 画面外底色，并把太阳/月亮/天空大气关掉——
+   * 那三样是不表达任何状态的装饰光，而深色档下那条蓝色地平线辉光是画布里唯一不肯翻面的亮面。
+   */
+  function applyPalette(): void {
+    viewer.scene.globe.baseColor = cesium.Color.fromCssColorString(palette.globeBase)
+    viewer.scene.backgroundColor = cesium.Color.fromCssColorString(palette.spaceBackdrop)
+    if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false
+    if (viewer.scene.sun) viewer.scene.sun.show = false
+    if (viewer.scene.moon) viewer.scene.moon.show = false
+  }
+  applyPalette()
   viewer.scene.globe.enableLighting = false
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 200
@@ -354,12 +390,29 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     viewer.scene.requestRender()
   }
 
+  let lastData: RenderData | null = null
+
   function render(data: RenderData): void {
-    rebuild('hazards', data.hazards, (zone) => handles.hazards.entities.add(hazardZoneGraphics(cesium, zone, cesium.ClassificationType.TERRAIN)))
-    rebuild('stations', data.stations, (feature) => handles.stations.entities.add(stationGraphics(cesium, feature)))
-    rebuild('warnings', data.warnings, (feature) => handles.warnings.entities.add(warningGraphics(cesium, feature)))
-    rebuild('reach', data.reach, (feature) => handles.reach.entities.add(reachGraphics(cesium, feature)))
-    rebuild('clusters', data.clusters, (cluster) => handles.clusters.entities.add(clusterGraphics(cesium, cluster)))
+    lastData = data
+    rebuild('hazards', data.hazards, (zone) => handles.hazards.entities.add(hazardZoneGraphics(cesium, zone, cesium.ClassificationType.TERRAIN, palette)))
+    rebuild('stations', data.stations, (feature) => handles.stations.entities.add(stationGraphics(cesium, feature, palette)))
+    rebuild('warnings', data.warnings, (feature) => handles.warnings.entities.add(warningGraphics(cesium, feature, palette)))
+    rebuild('reach', data.reach, (feature) => handles.reach.entities.add(reachGraphics(cesium, feature, palette)))
+    rebuild('clusters', data.clusters, (cluster) => handles.clusters.entities.add(clusterGraphics(cesium, cluster, palette)))
+  }
+
+  /**
+   * 换主题：换调色板 → 重画。
+   * 签名要逐层抹成一个不可能等于真实签名的哨兵值：图元色是 `entities.add()` 时烤进去的，
+   * 而"要素集合没变"这条幂等判据正好会把它挡掉——不抹掉的话，翻主题后底翻面、标记不翻面。
+   */
+  function setTheme(mode: ThemeMode): void {
+    if (palette.mode === mode) return
+    palette = mapPalette(mode)
+    applyPalette()
+    for (const name of LAYER_NAMES) signatures[name] = '#aegis-rebuild-for-theme#'
+    if (lastData) render(lastData)
+    viewer.scene.requestRender()
   }
 
   const handler = new cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
@@ -396,6 +449,10 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   let destroyed = false
   return {
     render,
+    setTheme,
+    get palette() {
+      return palette
+    },
     focusAt: (point) => {
       viewer.camera.flyTo({ destination: cesium.Cartesian3.fromDegrees(point.lon, point.lat, 20_000), duration: 1.2 })
     },

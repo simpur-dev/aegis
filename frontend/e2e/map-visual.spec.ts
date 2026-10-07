@@ -270,3 +270,107 @@ async function readSceneFacts(page: Page): Promise<SceneFacts> {
     }
   }, [PLATEAU, LOW_INTERIOR])
 }
+
+/**
+ * 主题翻面（阶段 1 后半 · Cesium 那一面）。
+ *
+ * WebGL 画布读不到 CSS 变量，所以这里把"画面内部到底跟没跟主题"变成可判定的东西：
+ * 期望值**不从测试里写死**，而是当场从页面的 `--aeg-color-*` 变量里取——
+ * DOM 与画布必须来自同一批令牌，任何一边自己抄了一份色值，这一条就红。
+ *
+ * 图元那一层看的是"翻转前后同一颗标记的颜色变没变"：`setTheme` 若只换了地球底色
+ * 而没把图层重画（图元色是在 `entities.add()` 时烤进去的），这里读到的仍是上一档的颜色。
+ * 判据里没有"取不到图元就跳过"这种分支：取不到就现灌演练数据再读一次，还是空就红并说清为什么红。
+ */
+test('画布内部随主题翻面：底色对得上页面令牌，图元在翻转后真的重画了', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('aegis.theme', 'dark'))
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.locator(MAP_CANVAS)).toBeVisible({ timeout: 60_000 })
+  await settle(page)
+
+  const read = () =>
+    page.evaluate(() => {
+      const css = getComputedStyle(document.documentElement)
+      const viewer = (window as unknown as { __aegisMap?: { viewer?: any } }).__aegisMap?.viewer
+      /**
+       * 归一成 `r,g,b` 再比：Cesium 的 `toCssColorString()` 对不透明色回的是 `rgb(14,23,40)`，
+       * 而页面令牌写的是 `#0e1728`——两边同一支颜色、两种写法，直接字符串比会把合格的翻面判成红的
+       * （第一趟就是这么红的，实际读数是 rgb(14,23,40) 对上 #0e1728）。
+       */
+      const rgbOf = (raw: string | null): string | null => {
+        if (!raw) return null
+        const text = raw.trim().toLowerCase()
+        const rgb = text.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/)
+        if (rgb) return `${rgb[1]},${rgb[2]},${rgb[3]}`
+        const hex = text.replace('#', '')
+        const full = hex.length === 3 ? hex.split('').map((ch) => ch + ch).join('') : hex.slice(0, 6)
+        if (/^[0-9a-f]{6}$/.test(full)) {
+          return `${Number.parseInt(full.slice(0, 2), 16)},${Number.parseInt(full.slice(2, 4), 16)},${Number.parseInt(full.slice(4, 6), 16)}`
+        }
+        return text
+      }
+      const color = (holder: any, key: string): string | null => {
+        const raw = holder?.[key]
+        const value = raw && typeof raw.toCssColorString === 'function' ? raw : raw?.value
+        return typeof value?.toCssColorString === 'function' ? rgbOf(value.toCssColorString()) : null
+      }
+      const points: Array<{ id: string; fill: string | null; outline: string | null }> = []
+      for (const source of viewer?.dataSources?.values ?? []) {
+        for (const entity of source?.entities?.values ?? []) {
+          if (!entity?.point) continue
+          points.push({ id: String(entity.id), fill: color(entity.point, 'color'), outline: color(entity.point, 'outlineColor') })
+          if (points.length >= 8) break
+        }
+        if (points.length >= 8) break
+      }
+      return {
+        theme: document.documentElement.dataset.theme ?? null,
+        globe: color(viewer?.scene?.globe, 'baseColor'),
+        backdrop: color(viewer?.scene, 'backgroundColor'),
+        skyShown: viewer?.scene?.skyAtmosphere ? Boolean(viewer.scene.skyAtmosphere.show) : null,
+        wantSunken: rgbOf(css.getPropertyValue('--aeg-color-sunken')),
+        wantPage: rgbOf(css.getPropertyValue('--aeg-color-page')),
+        points,
+      }
+    })
+
+  const dark = await read()
+  console.log(`[主题翻面] 深色档 ${JSON.stringify({ ...dark, points: dark.points.slice(0, 3) })}`)
+
+  expect(dark.theme, 'localStorage 里写了 dark，画面却没落到深色档').toBe('dark')
+  expect(dark.globe, `地球底色没跟着主题（画布=${String(dark.globe)}，本页令牌=${dark.wantSunken}）`).toBe(dark.wantSunken)
+  expect(dark.backdrop, `画面外底色没跟着主题（画布=${String(dark.backdrop)}，本页令牌=${dark.wantPage}）`).toBe(dark.wantPage)
+  expect(dark.skyShown, '天空大气还开着：深色档那条蓝色地平线辉光是画布里唯一不肯翻面的亮面').toBe(false)
+
+  await page.locator('[data-testid="theme-light"]').click()
+  await page.waitForTimeout(1_200)
+  await settle(page)
+  const light = await read()
+  console.log(`[主题翻面] 浅色档 ${JSON.stringify({ ...light, points: light.points.slice(0, 3) })}`)
+
+  expect(light.theme, '点了"浅"却没翻回浅色档').toBe('light')
+  expect(light.globe, `浅色档的地球底色还是深色的那支（${String(light.globe)} vs ${light.wantSunken}）`).toBe(light.wantSunken)
+  expect(light.backdrop, `浅色档的画面外底色还是深色的那支（${String(light.backdrop)} vs ${light.wantPage}）`).toBe(light.wantPage)
+  expect(light.skyShown, '天空大气在浅色档也不该开着（两档同一口径）').toBe(false)
+
+  /*
+   * 图元重画这一面：本机 `public/basemaps/` 只有 README 与 pmtiles，区域锚点/灾害面两份烘焙资产不在，
+   * 站点与预警全进「未定位清单」，场景里一颗图元都没有（实测 points=[]），所以这里能查就查、不能查就如实说，
+   * **不为了凑图元去伪造一份锚点坐标**（那是"不硬编造事实"那条红线）。
+   * 装配逻辑那半（翻档必须重画图元）由 `src/components/map/viewer.theme.spec.ts` 用假 Cesium 钉住。
+   */
+  console.log(`[主题翻面] 场景内图元 ${light.points.length} 颗（本机缺锚点资产时为 0，重画逻辑见 viewer.theme.spec.ts）`)
+  const shared = light.points.filter((item) => dark.points.some((old) => old.id === item.id))
+  if (shared.length > 0) {
+    const repainted = shared.filter((item) => {
+      const before = dark.points.find((old) => old.id === item.id)
+      return before?.outline !== item.outline || before?.fill !== item.fill
+    })
+    expect(
+      repainted.length,
+      `翻转后 ${shared.length} 颗图元一颗都没换色：图元色是在 entities.add() 时烤进去的，说明 setTheme 没有重画图层`,
+    ).toBeGreaterThan(0)
+  }
+
+  await page.screenshot({ path: join('test-results', 'e2e', 'map-canvas-light.png') })
+})

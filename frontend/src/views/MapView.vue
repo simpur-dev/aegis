@@ -40,6 +40,7 @@ import type { OfflineMachine } from '@/components/map/offline'
 import MapPanel from '@/components/map/MapPanel.vue'
 import { terrainProbeUrl } from '@/components/map/terrain'
 import type { LayerName, MapScene, MapSceneInfo } from '@/components/map/viewer'
+import { useTheme } from '@/theme/useTheme'
 
 /** 数据轮询与源探针周期：野外弱网下"少而稳"胜过"快而抖"。 */
 const DATA_REFRESH_MS = 30_000
@@ -50,6 +51,8 @@ const host = ref<HTMLElement | null>(null)
 const scene = shallowRef<MapScene | null>(null)
 const sceneInfo = ref<MapSceneInfo | null>(null)
 const sceneError = ref<string | null>(null)
+/** 画布内部读不到 CSS 变量，所以主题要显式喂给场景（见 `@/theme/map`）。 */
+const { resolved: themeMode } = useTheme()
 
 const readings = ref<TelemetryReading[]>([])
 const warnings = ref<WarningRecord[]>([])
@@ -199,6 +202,7 @@ async function initScene(): Promise<void> {
       onSelect: (featureId) => {
         selectedId.value = featureId
       },
+      themeMode: themeMode.value,
     })
     scene.value = created
     sceneInfo.value = created.info
@@ -272,6 +276,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('online', onBrowserOnline)
   scene.value?.destroy()
   scene.value = null
+})
+
+/** 主题翻转 → 场景换调色板并重画图元（图元色是 add 那一刻烤进去的，不重画就是半翻画面）。 */
+watch(themeMode, (mode) => {
+  scene.value?.setTheme(mode)
 })
 
 // 数据/视野变化 → 重算渲染计划并推给场景：plan 是 computed（纯函数产物），页面不手改图元。
