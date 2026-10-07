@@ -156,8 +156,9 @@
 - [x] 阶段 1 后半（ECharts 那一面）：`src/theme/chart.ts` 派生层 + `echarts.registerTheme('aegis-light'|'aegis-dark')` +
       `EChart.vue` 按 `resolved` 初始化并在翻转时**重建实例**；真机加两条画布像素判据（见 §11）
 - [ ] 阶段 1 后半（欠）：Cesium 的底图/标记/标签 与 Vue Flow 的画布内部随主题换肤（DOM 文字已过 AA，画布与图元还没）
-- [ ] 阶段 1 后半（已批准，下一批）：**旧视觉现在停用**——`theme.css` 藏青横幅那 27 处与 `PageHero.vue` 31 处一起退役，
-      `PageHero` 改写成朴素页头（标题 + 说明 + 右侧动作），连带把 `uiTheme.spec.ts` 里两条"横幅硬约束"改成新口径
+- [x] 阶段 1 后半（已批准，本轮做完）：**旧视觉停用**——`PageHero` 改写成朴素页头（标题 + 说明 + 右侧动作 + 状态语），
+      `theme.css` 藏青横幅那 27 处与 `PageHero.vue` 31 处一起归零；`uiTheme.spec.ts` 两条横幅硬约束**改口径而不是删断言**；
+      e2e 里 36 处 `page-hero` 选择器同步改名。棘轮 **228 → 159**（顺带修掉指标页三处"深底色压亮面"，见 §12）
 - [ ] 阶段 1：布局骨架（可折叠侧栏含智能体状态迷你区 + 顶栏 + 栅格）——**要先批准**
 - [ ] 阶段 2：组件层替换 + e2e 里 51 处 `ant-*` 选择器迁移
 - [ ] 阶段 2：`uiTheme.spec.ts` 11 条按新规范重写（4 条改口径、7 条保留）
@@ -427,3 +428,77 @@ ECharts/Cesium/Vue Flow 的**画面内部**走的是同一份 `skipSel`（画布
 | 画布专项 | `AEGIS_API_TARGET=… npx playwright test ui-overlap -g "ECharts 画布换肤"` | **2 passed（13.3s）**；变异档 **2 failed** |
 | 全量画面 | `AEGIS_API_TARGET=… npx playwright test ui-overlap` | **112 passed（17.2m）**，exit 0（原 110 项一项没红 + 画布 2 项；画布未命中占比 monitor 0.51%、metrics 0.07%，阈值 1.5%） |
 | 后端 | 未跑（本批只动 `frontend/src` 与 `e2e`，无后端与契约文件） | 上一批同口径：ruff exit 0、pytest 2523 tests / 0 failures / 83 skipped |
+
+---
+
+## 12. 旧视觉停用（藏青横幅退役）交付记录（ADR，2026-10-07）
+
+### 决策 8：页头只留"有功能目的"的三件事，深底特例整块删掉
+
+用户 2026-10-07 拍板"现在停用"，所以没等新骨架。退役的是**装饰**，不是**职责**：
+
+| 原来在横幅上的 | 处置 | 为什么 |
+| --- | --- | --- |
+| `linear-gradient(145deg,#0d2b3e…)` 藏青底 + 两团 `radial-gradient` 辉光 | 删 | 判词点名的"渐变/辉光"；且它是全站唯一不随主题翻的面，深色下反而成了唯一亮面 |
+| 标题前的 ◆ 与单字形渐变图标芯片（语/势/图/标/测/警/程） | 删，`icon` prop 一并去掉 | 标题已经说了页名，那颗芯片没有功能目的 |
+| 徽标 `page-hero-pulse 2s infinite` | 删 | 10px 的字每两秒淡到 3.08:1（第二十六批真机量过）；现在是不脉冲的等宽小牌 |
+| 数字托盘 `rgba(0,0,0,.15)` 底板 | 换成 `--aeg-color-alter` + `--aeg-color-border` 描边 | 亮面成立、深色也成立，不用为两种底各写一套 |
+| `.page-hero .ant-tag-*` / `.ant-btn-*` 两整块深底特例（theme.css 27 处字面色的全部来源） | 删 | 页头是亮面，全局那套 `--aeg-tag-*` 与 `--aeg-color-brand` 直接成立 |
+
+两条**实测约束换宿主不换职责**：① 动作钮 `min-height: 36px` 从 `theme.css` 搬进 `PageHero.vue` 的 scoped 样式
+（`.page-head__actions :deep(.ant-btn)`）；② 状态语"可缩不可撑、挤不下省略号收尾、完整那句进 title"原样保留。
+门禁 `uiTheme.spec.ts` 跟着改口径：原来断言"深底标签必须反提亮"，现在**反过来断言那种特例一处不许留**
+（`.page-hero`、`#fbbf24/#6ee7b7/#fca5a5/#93c5fd` 在 theme.css 里必须查不到，`PageHero.vue` 必须零 hex、零渐变、零模糊），
+页头覆盖那条也从"每页都给了单字形图标"改成"每页都给 `title` + `caption`，且**不许再传 `icon=`**"。
+组件文件仍叫 `PageHero.vue`（改名=删文件，按规矩要再征求同意；七页 import 路径也因此不用动）。
+
+### 这一改当场逮到的真缺陷（门禁红的，不是我预判的）
+
+`MetricsView.vue` 有三处把**深色横幅那套字色写死在行内**：`value-style` 的 `#4ade80`/`#f87171`、
+未取到账本时的 `rgba(255,255,255,.65)`，以及环的底轨 `stroke: rgba(255,255,255,.16)`。
+横幅还在的时候它们压在藏青上成立；页头换成亮面之后同一份写法变成
+**绿字压 `alter` 底 1.65:1**——真机门禁在 @1440/@1280/@1200/@1100 四个视口 + 故障态两档同时红（共 6 项）。
+修法是"只出档位、颜色落在槽位上"：`successTone`/`violationsTone` 给 `is-ok|is-bad|is-idle`，
+scoped 样式里对 `--aeg-color-status-success/danger/text-muted` 取值，环的 `stroke` 同档，
+错误条改用 red 那一套标签三件套（`--aeg-tag-red-bg/line/text`，两主题各自过 AA）。
+
+**教训值得记**：换一块底的颜色的时候，必须顺着"谁继承了这块底的白字"查一遍——
+行内 `style`/`:stroke` 这类**不在 CSS 文件里的色**不会被 `theme.css` 的改写覆盖，只有真机渲染后量合成底才发现。
+
+### 第二条被"退役"打中的地方：门禁自己的防空跑地板（不是画面红，是判据空转）
+
+`e2e` 里"循环动画不许把带字的标签淡到 AA 以下"那条，地板原来是**"至少扫到一个带动画的文字元素"**——
+而全站唯一那个"带字的 infinite 动画"正是横幅徽标的 `pulse`。徽标退役后扫描结果变成 `sampled=0`，
+这条以"判据在空跑"红掉（画面本身没问题）。
+处置不是把地板删掉，而是换成**自检**：现场种一个 `opacity 1 → 0.25` 的带字无限动画（`span.probe-fade-el`），
+扫不到它就红、它的最低对比度没跌破门槛也红（实测 `worst=1.79 < need=4.5`），扫完拔掉。
+这样判据与"当下有没有 offender"解耦——**没有 offender 是好事，但扫描器必须证明自己还能抓到**。
+另注意 `pathOf()` 只拼 tagName + class（不带 id），种探针元素要给 class，否则过滤器认不出来。
+
+### 棘轮与门禁
+
+- 颜色棘轮 **228 → 159**（`PageHero.vue` 31→0、`theme.css` 27→0、`MetricsView.vue` 11→0）。
+  现在最重的三处：`SystemTerminal.vue` 21（固定深底面板，本就不随主题翻，但仍要收进令牌槽）、`AssistantView.vue` 15、`NodeShell.vue` 14。
+- 变异检查四处，全部先红：页头又传回 `icon=` / 动作区按钮退回 antd small 的 24px /
+  `theme.css` 里放回 `.page-hero .ant-tag-orange { color: #fbbf24 }` / 页头里再写 `linear-gradient`。
+- 目视复核：`E:\tmp\head-{light,dark}-{dashboard,workflow}.png` 四张，标题 20px、按钮实测 36px、
+  字色随主题翻（浅 `rgb(10,10,12)` / 深 `rgb(230,237,247)`）。
+
+### 下一步
+
+1. Cesium 底图/标记与 Vue Flow 画布内部接令牌（`viewer.ts` 的 `GLOBE_BASE_COLOR`、标签 `Color.WHITE/BLACK`、
+   `utils/graph.ts` 的 `NODE_STATE_STYLES` 那 12 处是主要余额，含待拍板的 #35）；
+2. Arco 探针实测（选型已批）→ 阶段 2 组件层迁移；
+3. `PageHero.vue` 是否改名 `PageHead.vue`（删文件要同意，先问）。
+
+### 本轮验证记录（2026-10-07 旧视觉停用）
+
+| 门禁 | 命令 | 结果 |
+| --- | --- | --- |
+| 类型 | `npm run typecheck` | exit 0 |
+| 单测 | `node node_modules/vitest/vitest.mjs run` | **793 passed / 45 个文件**（用例数不变：页头那条是改口径不是新增） |
+| 构建 | `npm run build` | **✓ built in 49.86s** |
+| 棘轮 | `node E:\tmp\color-count.mjs` | 228 → **159**（门禁基线同步下调） |
+| 画面（局部） | `… npx playwright test ui-overlap -g "metrics"` | **11 passed（1.5m）**：修前同一条子集 6 红 |
+| 画面（全量） | `… npx playwright test ui-overlap` | **112 passed（17.0m）**，exit 0。第一趟 111 passed / 1 failed——红的不是画面，是那条动画判据的防空跑地板（见上文"第二条被打中的地方"），换成现场自检后复跑全绿 |
+| 后端 | `backend/.venv/Scripts/python.exe -m ruff check src tests scripts` / `-m pytest -q --junitxml` | exit 0 / **2523 tests, 0 failures, 0 errors, 83 skipped（309.5s）**（本批零后端文件改动，只作回归确认） |
