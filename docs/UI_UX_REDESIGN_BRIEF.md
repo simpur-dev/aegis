@@ -155,7 +155,8 @@
 - [x] 阶段 1：真机门禁扩到两主题（新增 10 项：外壳表面两向归位、切换器点得动也存得住、七页深色各过一遍常驻判据、@1920 铺页名档）
 - [x] 阶段 1 后半（ECharts 那一面）：`src/theme/chart.ts` 派生层 + `echarts.registerTheme('aegis-light'|'aegis-dark')` +
       `EChart.vue` 按 `resolved` 初始化并在翻转时**重建实例**；真机加两条画布像素判据（见 §11）
-- [ ] 阶段 1 后半（欠）：Cesium 的底图/标记/标签 与 Vue Flow 的画布内部随主题换肤（DOM 文字已过 AA，画布与图元还没）
+- [x] 阶段 1 后半（Cesium 那一面）：`src/theme/map.ts` 派生层 + 图元按调色板画 + `setTheme` 重画图元 + 真机画面级对账（见 §14）
+- [ ] 阶段 1 后半（欠）：Vue Flow 的画布内部随主题换肤（`utils/graph.ts` `NODE_STATE_STYLES` 12 处，含待拍板的 #35）
 - [x] 阶段 1 后半（已批准，本轮做完）：**旧视觉停用**——`PageHero` 改写成朴素页头（标题 + 说明 + 右侧动作 + 状态语），
       `theme.css` 藏青横幅那 27 处与 `PageHero.vue` 31 处一起归零；`uiTheme.spec.ts` 两条横幅硬约束**改口径而不是删断言**；
       e2e 里 36 处 `page-hero` 选择器同步改名。棘轮 **228 → 159**（顺带修掉指标页三处"深底色压亮面"，见 §12）
@@ -534,3 +535,66 @@ scoped 样式里对 `--aeg-color-status-success/danger/text-muted` 取值，环�
 
 提交：`65fd80e refactor(ui): 顶栏页签页名全档铺开，编号点与页码徽标退役`。
 另：本轮起新建 `docs/AGENT_PROGRESS.md` 自主改进看板（此前缺失），任务分解 T01–T26 以该看板为准，本 BRIEF 继续当台账/ADR 细节层。
+
+---
+
+## 14. Cesium 那一面接令牌（阶段 1 后半收尾）交付记录（ADR，2026-10-07）
+
+### 决策 10：画面内部的颜色只从 `src/theme/map.ts` 派生，翻主题必须重画图元
+
+改造前 `viewer.ts` 里钉着 `GLOBE_BASE_COLOR = '#101923'` 与四类 `Color.WHITE/BLACK` 图元色——
+深浅两档画出来是同一张图。现在分三层：
+
+1. `src/theme/map.ts`（派生层，与 `chart.ts`/`antd.ts` 同规则，已进第 12 条零 hex 名单）：
+   地球底=`sunken`、画面外底=`page`、标签字=`text`、光晕=`card`、底板=`elevated`(.82)、图元描边=`text`；
+   另给 `fillFor(css)`——深色档把 `riskFill.light` 五支逐档换成 `riskFill.dark`，**键与查询都归大写**
+   （上游 `RISK_COLORS` 是小写、令牌里是大写，不归一就静默退回浅色档那支，暗画布上留一颗亮标记）。
+2. `viewer.ts` 只按调色板画，并新增 `setTheme(mode)`：**换调色板 + 抹图层签名 + 用上一份数据重画**。
+   必须重画：图元色是 `entities.add()` 那一刻烤进去的，而"要素 id 集合没变就跳过"这条幂等判据正好会把它挡掉。
+3. `MapView.vue` 把 `useTheme().resolved` 喂进建场参数，翻转时调 `scene.setTheme(mode)`。
+   顺带：`hazardZone`/站点/聚合簇那三处白色/黑色描边、标签白字黑边全部退役；太阳/月亮/天空大气**两档都关**（不表达状态的装饰光，且深色档那条蓝色地平线辉光是画布里唯一不肯翻面的亮面）。
+
+### 证据分两半，因为本机缺一半资产（这是查出来的，不是预判的）
+
+`public/basemaps/` 本机只有 `README.md` 与 `aegis.pmtiles`——**区域锚点与灾害面两份烘焙资产不在**，
+站点与预警全进「未定位清单」，场景里一颗图元都没有（真机判据第一趟就是这么红的：`points: []`）。
+为了凑图元去伪造一份锚点坐标等于踩"不硬编造事实"，所以：
+
+- **真机**（`e2e/map-visual.spec.ts` 新增 1 项）钉画面级：地球底与画面外底**当场跟页面的 `--aeg-color-*` 变量对账**
+  （期望值不写死在测试里——DOM 与画布只要有一边自己抄了色值就红），加天空大气关闭、翻档后仍是本档值；
+  有图元时顺手比"同一颗图元翻转前后颜色变没变"，没有就打印颗数并说明由哪条单测覆盖。
+- **装配逻辑**（`src/components/map/viewer.theme.spec.ts`，假 Cesium）钉换底色 + 重画图元 + 逐档换风险色 +
+  认不出原样透出 + 同档重复翻不重画。假 Cesium 是必要的：单测环境无 WebGL，而这条判据不能空转。
+
+### 这一轮被自己逮到的三处（都改了）
+
+1. **`toCssColorString()` 回 `rgb(14,23,40)` 而不是 `#0e1728`**：真机第一趟红在此，颜色其实是对的。
+   判据改成两边都归一成 `r,g,b` 再比——**"读数是 `rgb(...)`"不等于"没跟着主题"**。
+2. **通道色与风险档同值**：`REACH_DEGRADED_COLOR = '#cf1322'` 正是等级 1 的红、`REACH_OK = '#1677ff'` 正是等级 4 的蓝，
+   所以它们跟着换档是一致而不是漏网（我最初把"通道色"当成映射不到的那一类写进断言，被自己的用例驳回了）。
+3. **变异检查差点空转**：先用不带 `g` 的正则找 `for (const name of LAYER_NAMES) signatures[name] = ...`，
+   结果它先命中了 `createLayerHandles` 里那句**同名初始化循环**，改完仍绿——看着像"断言没牙"。
+   换成整行精确匹配后才验实：抹掉哨兵那行 → `图层没有重建：只换了底色，图元还是上一档的颜色: expected 1 to be 2` 与
+   `重复翻到同一档不该再重画` 双红，回滚后绿。**教训：变异要改哪一行，就先确认全文件只有一行像它。**
+
+另外记一条**不构成缺陷的变异**：把 `labelText` 从 `text` 换成 `text-muted` 仍绿——浅 5.36 / 深 5.72 对底板本就过 AA，
+这条变异期望红是错的；真正有牙的是把它换成 `border-subtle`（红）与把光晕 `labelHalo` 换成与字色同档（补了一条
+"字色与光晕对比 ≥4.5"之后红）。
+
+### 本轮验证记录（2026-10-07 Cesium 接令牌）
+
+| 门禁 | 命令 | 结果 |
+| --- | --- | --- |
+| 类型 | `npm run typecheck` | exit 0 |
+| 单测 | `node node_modules/vitest/vitest.mjs run` | **805 passed / 47 个文件**（793 + map.spec 7 + viewer.theme.spec 5） |
+| 构建 | `npm run build` | **✓ built in 48.01s** |
+| 棘轮 | `node E:\tmp\color-count.mjs` | 159 → **158**（`viewer.ts` 那支 `#101923` 归零，门禁基线同步下调） |
+| 画面（地图专项） | `AEGIS_API_TARGET=http://127.0.0.1:8321 npx playwright test e2e/map-visual.spec.ts` | **7 passed（17.5s）**，exit 0（原 6 项 + 新增翻面 1 项） |
+| 画面（全量） | `… npx playwright test e2e/ui-overlap.spec.ts e2e/map-visual.spec.ts` | 收集 115 项（`--list` 实量）；一趟跑完 70 项后被我并发的第二次 playwright 打断 → **该趟不作数**，重跑结果追记到看板工作日志 |
+| 后端 | 未跑（本批只动 `frontend/src` 与 `frontend/e2e`，无后端与契约文件） | 上一批同口径：ruff exit 0、pytest 2523 tests / 0 failures / 83 skipped |
+
+### 下一步（按依赖顺序）
+
+1. T09 Vue Flow 画布内部接令牌（`utils/graph.ts` 的 `NODE_STATE_STYLES` 12 处，含紫/品红/青那几支——同一套派生层 + 像素/场景双证据）；
+2. T10 Arco 探针实测（选型已批）→ T12 组件层迁移；
+3. `viewer.theme.spec.ts` 那套假 Cesium 可以继续当 Vue Flow 那半的模板。

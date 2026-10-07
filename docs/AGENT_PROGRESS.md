@@ -26,8 +26,8 @@
 | T05 | ECharts 画布接令牌（registerTheme + 重建实例） | done | T02 | chart.spec 7 + 画布像素判据 2 项，全量 112 | BRIEF §11 决策 7 |
 | T06 | 旧视觉停用：PageHero 改朴素页头 + 藏青横幅删除 | done | T02 | 棘轮 228→159、全量 112、变异 4 处 | BRIEF §12 决策 8 |
 | T07 | 顶栏页签导航：页名全档铺开、编号点/连线/页码徽标退役 | done | T06 | 已跑：typecheck exit 0、单测 793/45、build 54.74s、e2e 深色组 13 passed(53.9s) 含页签四档(1100/1280/1440/1920)连跑 | 提交 `65fd80e`；BRIEF §13 记决策 9；全量 e2e 回归后台跑，结果追记工作日志 |
-| T08 | Cesium 底图/标记/标签接令牌 | in_progress | T05 | 复用画布像素判据（canvasInk）+ map 页双主题真机 | viewer.ts GLOBE_BASE_COLOR、标签 Color.WHITE/BLACK 是主要余额 |
-| T09 | Vue Flow 画布内部接令牌 | todo | T05 | graph.spec 单测 + workflow 页双主题真机 | utils/graph.ts NODE_STATE_STYLES 12 处（含原任务 #35） |
+| T08 | Cesium 底图/标记/标签接令牌 | done | T05 | 已跑：typecheck ✓ / 单测 805（新增 map.spec 7 + viewer.theme.spec 5）/ build 48.01s / e2e map-visual 7 passed（含新增翻面 1 项） | 派生层 `src/theme/map.ts`；证据分两半：真机钉画面级对账，图元重画由假 Cesium 单测钉（本机缺锚点资产，见 BRIEF §14） |
+| T09 | Vue Flow 画布内部接令牌 | in_progress | T05 | graph.spec 单测 + workflow 页双主题真机 | utils/graph.ts NODE_STATE_STYLES 12 处（含原任务 #35）；同 T08 的派生层套路 |
 | T10 | Arco 探针实测（暗色纯 CSS 变量？/表格 1366×768/体积变化） | todo | — | 临时分支装 @arco-design/web-vue 起探针页，三问各有实测数字 | 选型已批可装依赖；不过则退 Naive→退保留 antd |
 | T11 | 布局骨架：可折叠侧栏（含智能体状态迷你区）+ 顶栏 + 栅格 | blocked | 用户批准 | — | 方向性改动，按升级机制等批准（见阻塞清单 B1） |
 | T12 | 阶段 2 组件层替换 antd→Arco（16 文件/202 标签）+ e2e 51 处 ant-* 选择器迁移 | todo | T10 | 全门禁绿 + 全量 e2e | 机械可改；不得动契约 |
@@ -66,3 +66,10 @@
 - 2026-10-07 轮次1：接手时发现上一批（T07 顶栏页签）已改完未提交；跑 typecheck ✓、uiTheme.spec 12 ✓，全量单测+build 进行中；
   探明服务在位（后端 8321 `/healthz` ok、preview 4175 ok），e2e 深色组待 build 完成后跑；创建本看板（此前缺失，BRIEF 是唯一台账）。
   下一步：门禁全绿后提交 T07 → 台账补记 → 领 T08/T09（Cesium/Vue Flow 画布接令牌）。
+- 2026-10-07 轮次2：T07 全门禁绿（typecheck / 793 单测 / build 54.74s / e2e 深色组 13 passed 含页签四档）→ 提交 `65fd80e` + 台账 `3ddcd9b`。
+  接着做 T08：新建 `src/theme/map.ts` 派生层、`viewer.ts` 按调色板画 + `setTheme` 重画图元、`MapView.vue` 接 `useTheme().resolved`；
+  证据分两半（真机钉画面级令牌对账 e2e 7 passed；图元重画用假 Cesium 单测 5 条，因本机 `public/basemaps/` 缺锚点/灾害面资产、场景零图元，且不为凑图元伪造坐标）；
+  颜色棘轮 159→158（`viewer.ts` 的 `#101923` 归零）；变异检查：`border-subtle` 标签字 / 同色光晕 / 深浅同底色 / 不抹签名 四处全红，
+  `text-muted` 那处期望错（本就过 AA，非缺陷，已记 BRIEF §14）。全量 ui-overlap+map-visual 干净重跑进行中，结果下轮追记。
+  代码提交 `75fa1f9 feat(ui): Cesium 画面内部接令牌…`。
+  下一步：T09 Vue Flow 画布接令牌（照 T08 的派生层套路，`utils/graph.ts` 12 处含紫/品红/青）。
