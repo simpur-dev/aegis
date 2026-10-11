@@ -204,6 +204,9 @@ class Settings(BaseSettings):
     sla_sync_ms: int = 3_000
     sla_schedule_ms: int = 2_000
     sla_reschedule_ms: int = 10_000
+    # §5 口径分档：≤2s/≤10s 是"调度口径"（节点就绪→开始），LLM 工作发生在节点执行内部、不进那两个量测点；
+    # 段端到端（研判/执行/反馈）另设这一档，并卷入"预警生成 ≤3min"的端到端约束。
+    sla_agent_stage_ms: int = 60_000
     sla_ingest_seconds: float = 300.0
     sla_warning_gen_seconds: float = 180.0
     sla_reach_seconds: float = 1_200.0

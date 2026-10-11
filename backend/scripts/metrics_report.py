@@ -50,8 +50,12 @@ INDICATORS: dict[str, str] = {
     # 链路阶段时延沿用同一档预算，但只作诊断行：把"研判耗时"挂成"调度响应"来判达标，
     # 审的人按定义一问就穿（真 LLM 跑一次还出现过两行同名、判定相反的表）。
     "workflow_schedule_ms": "常规任务调度响应时延 ≤2s",
-    "stage_assess_ms": "研判阶段时延（诊断行，预算沿用 ≤2s）",
-    "stage_plan_ms": "决策阶段时延（诊断行，预算沿用 ≤2s）",
+    # §5 口径分档：这几行走 LLM 档（各 ≤60s，卷入预警生成 ≤3min 端到端），不再是"沿用 ≤2s 的诊断行"
+    "stage_assess_ms": "研判段端到端 ≤60s（LLM 档）",
+    "stage_execute_ms": "执行段端到端 ≤60s（LLM 档：三分支文案+翻译）",
+    "stage_feedback_ms": "反馈段端到端 ≤60s（LLM 档：归因）",
+    "stage_plan_ms": "决策段时延（诊断行，不设 LLM 档：缺网关时走本地剧本）",
+    "stage_perceive_ms": "感知段时延（诊断行，不设 LLM 档：语义腿为委派）",
     "warning_generation_ms": "预警信息生成时间 ≤3min",
     "warning_reach_ms": "预警信息靶向触达 ≤20min",
     "ingest_end_to_end_seconds": "多源数据接入时延 ≤5分钟",

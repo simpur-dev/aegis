@@ -449,9 +449,12 @@ def register_sla_budgets(
         "workflow_node_ms": float(settings.sla_schedule_ms),
         # 异常工况识别与重调度响应时长 ≤10s
         "workflow_reschedule_ms": float(settings.sla_reschedule_ms),
-        # 链路分段时延沿用调度口径，与 latency_report() 既有映射保持一致
-        "stage_assess_ms": float(settings.sla_schedule_ms),
-        "stage_plan_ms": float(settings.sla_schedule_ms),
+        # 链路分段时延走 LLM 档（§5 口径分档）：LLM 工作发生在节点执行内部，
+        # 拿"调度 ≤2s"去判研判段，等于用就绪等待的尺子量模型耗时——真 key 一跑就是 7s 对 2s 的假超标。
+        # 决策段与感知段的 LLM 腿可缺位（缺 LLM 时走本地剧本/规则），故不设档，报表里如实显示"未设阈值"。
+        "stage_assess_ms": float(settings.sla_agent_stage_ms),
+        "stage_execute_ms": float(settings.sla_agent_stage_ms),
+        "stage_feedback_ms": float(settings.sla_agent_stage_ms),
         # 多源数据接入时延 ≤5 分钟（该指标值为秒，故预算也按秒）
         "ingest_end_to_end_seconds": float(settings.sla_ingest_seconds),
         # 人工上报是第四条接入腿（架构文档 §6.2 场景二）：文本→三路解析→进链路，沿用 ≤5 分钟口径
