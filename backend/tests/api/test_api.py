@@ -61,6 +61,21 @@ class TestOpsEndpoints:
         assert body["status"] == "ok"
         assert body["contract"] == "agent_message.v1"
 
+    async def test_model_cards_endpoint_reports_real_config_without_fabricated_scores(
+        self, client: httpx.AsyncClient, container: PlatformContainer
+    ) -> None:
+        """§5 模型卡片出口：真实路由/prompt 版本 + 未训练未评测如实 None，不冒充达标。"""
+        response = await client.get("/api/v1/agents/model-cards")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["measured_columns"] == []
+        cards = {c["agent"]: c for c in body["cards"]}
+        assert cards["assess"]["model"] == "qwen-plus"
+        assert cards["assess"]["prompt_version"] == "1.0.0"  # 已迁入版本化真源
+        assert cards["execute"]["prompt_version"] is None  # 未迁入如实留白
+        for card in body["cards"]:
+            assert card["trained_dataset"] is None and card["eval_score"] is None and card["measured"] is False
+
     async def test_readyz_reports_state(self, client: httpx.AsyncClient) -> None:
         response = await client.get("/readyz")
         assert response.status_code == 200

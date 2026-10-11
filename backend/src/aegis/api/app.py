@@ -566,6 +566,19 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "transactions": [r.as_dict() for r in ctn.gateway.transactions[-200:]],
         }
 
+    @app.get("/api/v1/agents/model-cards", tags=["agent"])
+    async def model_cards(ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
+        from aegis.services.model_cards import build_model_cards
+        from aegis.services.prompt_registry import PromptRegistry
+
+        cards = build_model_cards(ctn.settings, PromptRegistry.builtin())
+        return {
+            "cards": cards,
+            "measured_columns": [],
+            "llm_configured": ctn.llm_gateway is not None and ctn.llm_gateway.available,
+            "note": "模型/版本来自真实路由配置与已迁入的版本化 prompt；训练集与评测分未做即 None，不冒充达标。",
+        }
+
     @app.get("/api/v1/metrics/latency", tags=["metrics"])
     async def latency(ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
         return ctn.latency_report()
