@@ -23,6 +23,8 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from aegis.config import Settings, get_settings
 from aegis.domain.enums import HazardType
 from aegis.observability.tracer import Tracer
@@ -158,6 +160,21 @@ class Intent:
             "note": self.note,
             "requires_confirmation": _SPEC_BY_NAME[self.action].requires_confirmation if self.action in _SPEC_BY_NAME else True,
         }
+
+
+class PlanStep(BaseModel):
+    """意图解构引擎产出的单个计划步（动作必须落在白名单内，越权动作在执行层前即被剔除）。"""
+
+    model_config = {"extra": "forbid"}
+
+    action: str
+    reason: str = Field(default="", max_length=200)
+
+
+class PlanDecomposition(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    steps: list[PlanStep] = Field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,6 +499,48 @@ class AssistantService:
             self._reject(None, action=action or "<empty>", reason="LLM 建议的动作不在白名单内")
             return None
         return action
+
+    async def propose_plan(self, text: str, *, region_code: str | None = None, hazard_hint: str | None = None) -> dict[str, Any]:
+        """意图解构引擎（§4.7 / R6）：把模糊指令分解成【白名单动作链】。
+
+        安全边界不变：LLM 只有"规划权"——产出的每一步动作仍逐个过人工确认闸，越权动作在此即被剔除并
+        计入拒绝；本方法不执行任何东西。未配 LLM 时如实返回空计划（不臆造多步），与全平台"没接上就说没接上"一致。
+        """
+        llm = self._llm
+        if llm is None or not self.llm_available:
+            return {"steps": [], "decided_by": "none", "note": "意图解构需要已配置的 LLM；未配置则不产出多步计划（不臆造）。"}
+        try:
+            decomp = await llm.chat_structured(
+                [],
+                schema=PlanDecomposition,
+                task="assistant",
+                prompt_key="assistant",
+                prompt_vars={"text": text[:600], "actions": str(sorted(ACTION_WHITELIST))},
+                temperature=0.1,
+            )
+        except Exception as exc:
+            return {"steps": [], "decided_by": "none", "note": f"解构降级：{type(exc).__name__}"}
+
+        steps: list[dict[str, Any]] = []
+        rejected: list[str] = []
+        for step in decomp.steps:
+            if step.action not in ACTION_WHITELIST:
+                rejected.append(step.action or "<empty>")
+                self._reject(None, action=step.action or "<empty>", reason="计划步骤动作不在白名单内")
+                continue
+            intent = self._build_intent(
+                step.action, text, region_code=region_code, hazard_hint=hazard_hint, reporter=None, decided_by="llm"
+            )
+            entry = intent.as_dict()
+            if step.reason:
+                entry["reason"] = step.reason
+            steps.append(entry)
+        return {
+            "steps": steps,
+            "rejected": rejected[:8],
+            "decided_by": "llm",
+            "note": "LLM 仅有规划权；执行类动作仍逐个过人工确认闸，本接口不触发任何执行。",
+        }
 
     # ---------- 执行 ----------
 

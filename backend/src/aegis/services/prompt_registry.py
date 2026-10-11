@@ -67,6 +67,15 @@ _BUILTIN_TEMPLATES: list[PromptTemplate] = [
         ),
         user="{warning_line}\n触达回执：{reach}\n响应态：{response_state}\n现场上报：{reports}\n",
     ),
+    PromptTemplate(
+        task="assistant",
+        version="1.0.0",
+        system=(
+            "你是意图解构引擎。把用户的模糊指令分解为有序的最小动作计划，动作只能从给定白名单里选，"
+            '不得发明新动作或参数。只输出 JSON：{"steps":[{"action","reason"}]}；无合适动作则 steps 为空数组。'
+        ),
+        user="指令：{text}\n可选动作（白名单）：{actions}\n",
+    ),
 ]
 
 

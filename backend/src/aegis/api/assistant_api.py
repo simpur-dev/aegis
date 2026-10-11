@@ -47,6 +47,14 @@ class ConfirmRequest(BaseModel):
     actor: str | None = Field(default=None, max_length=64)
 
 
+class PlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=2_000)
+    region_code: str | None = Field(default=None, pattern=r"^[0-9A-Z]{6,24}$")
+    hazard_hint: str | None = Field(default=None, max_length=64)
+
+
 def get_container(request: Request) -> PlatformContainer:
     container: PlatformContainer | None = getattr(request.app.state, "container", None)
     if container is None:
@@ -106,6 +114,12 @@ def build_router() -> APIRouter:
         service = _assistant(ctn)
         result = await service.confirm(session_id=payload.session_id, action_id=payload.action_id, actor=payload.actor)
         return result
+
+    @router.post("/plan")
+    async def plan(payload: PlanRequest, ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
+        """意图解构引擎：把模糊指令分解为白名单动作链【提案】，不执行——执行仍逐步过人工确认闸。"""
+        service = _assistant(ctn)
+        return await service.propose_plan(payload.message, region_code=payload.region_code, hazard_hint=payload.hazard_hint)
 
     @router.get("/sessions/{session_id}")
     async def session(

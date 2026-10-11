@@ -143,12 +143,35 @@ async def test_配置关闭时这个出口根本不存在() -> None:
         async with _client(container) as client:
             assert (await client.get("/api/v1/assistant/capabilities")).status_code == 404
             assert (await client.post("/api/v1/assistant/chat", json={"message": "在线智能体有几个"})).status_code == 404
+            assert (await client.post("/api/v1/assistant/plan", json={"message": "看看风险再准备演练"})).status_code == 404
             # 上报腿不依赖助手开关：关掉助手也照样能进链路
             assert (
                 await client.post("/api/v1/reports", json={"reporter": "村民", "region_code": "540121", "note": REPORT_NOTE})
             ).status_code == 200
     finally:
         await container.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_意图解构无LLM时如实返回空计划(container: PlatformContainer) -> None:
+    """§4.7 解构引擎的出口：未配 LLM 不臆造多步，200 空计划 + decided_by=none（对外可判"没接上"）。"""
+    async with _client(container) as client:
+        response = await client.post(
+            "/api/v1/assistant/plan", json={"message": "看看波密有没有风险，有的话准备演练", "region_code": "540121"}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["steps"] == []
+        assert body["decided_by"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_意图解构未装配时503(container: PlatformContainer) -> None:
+    container.assistant = None
+    async with _client(container) as client:
+        response = await client.post("/api/v1/assistant/plan", json={"message": "随便"})
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "E_ASSISTANT_UNAVAILABLE"
 
 
 @pytest.mark.asyncio
