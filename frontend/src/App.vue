@@ -196,11 +196,12 @@ const statusTitle = computed<string>(() =>
   position: sticky;
   top: 0;
   z-index: var(--aeg-z-header);
-  /* 三列网格：左右两列各取所需（auto），中间导航吃掉余量（1fr）。
-     旧写法左右都是 1fr 等宽——右列要装"胶囊+切换器"共 375px，左列品牌只要 ~200px，
-     等宽轨道等于逼着中间列按右列的胃口留地，页名就是这么被挤没的（@1440 轨道只剩 293px）。 */
+  /* 三列网格：左右两列等宽（1fr），中间列按内容——这是"页签必须压在中线"的构造性保证
+     （常驻判据实测偏离中线 >1px 就红）。代价是每一侧的轨道宽度必须装得下它自己的内容，
+     所以右列"状态胶囊+切换器"要 354px、比品牌那侧宽得多；窄档不收文字就会被挤瘦裁字。
+     收字点的断点因此定在 ≤1290（那里轨道 (1200−514)/2=343 已经小于 354），而不是原来的 ≤1140。 */
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: var(--aeg-space-s4);
   height: var(--aeg-header-height);
@@ -438,7 +439,7 @@ const statusTitle = computed<string>(() =>
     display: none;
   }
 }
-@media (max-width: 1140px) {
+@media (max-width: 1290px) {
   .status-pill__text {
     display: none;
   }
