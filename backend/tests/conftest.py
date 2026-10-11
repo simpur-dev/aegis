@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
@@ -11,11 +12,31 @@ import pytest
 from aegis.bus.gateway import AgentGateway, ContractRegistry
 from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.registry import AgentRegistry
-from aegis.config import Settings
+from aegis.config import Settings, get_settings
 from aegis.container import PlatformContainer, create_container
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, now_iso, utc_now
 from aegis.observability.tracer import Tracer
+
+# 测试进程一律不许吃本机 `.env`：那是部署面，里面可能有真密钥与真模型路由。
+# 光把 Settings 的 dotenv 源摘掉不够——实测 `graphiti_core` 在 import 时调 dotenv 的
+# `find_dotenv()`，它从 site-packages 一路向上摸到仓库根那一份，把 AEGIS_LLM_* 整批灌进
+# os.environ；此后任何 Settings 构造（连 `_env_file=None` 的也一样）都从进程环境读到它，
+# "内置默认值"的断言就随机器状态漂（本机实测：assess 路由 qwen-plus → deepseek-chat）。
+# 顺带这也挡住一件更贵的事：测试里谁要是构了一个不带假客户端的网关，泄漏进来的真 key
+# 会让它拨号出网、花真钱。
+Settings.model_config["env_file"] = None
+get_settings.cache_clear()
+# 只清 LLM/凭据面：CI 的 integration-nats 用 AEGIS_TEST_NATS_URL 传总线地址，那是夹具该留的。
+for _key in [k for k in os.environ if k.startswith("AEGIS_LLM_") or k == "AEGIS_SERVICE_TOKEN"]:
+    del os.environ[_key]
+try:  # 装法没有 dotenv 可选依赖时，上面的清理已经挡住了本批泄漏
+    import dotenv
+
+    dotenv.load_dotenv = lambda *args, **kwargs: False
+    dotenv.dotenv_values = lambda *args, **kwargs: {}
+except ImportError:  # pragma: no cover
+    pass
 
 REGION = "540121"
 
