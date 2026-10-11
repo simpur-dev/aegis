@@ -240,8 +240,27 @@ class TestModelInfo:
         info = g.model_info_for_task("assess")
         assert info["model"] == "qwen-plus"
         assert info["fallback_model"] == "qwen-max"
-        # 未登记版本化 prompt 时如实为 None，不臆造版本号。
-        assert info["prompt_version"] is None
+        # assess 已迁入版本化真源 → 有版本号；未迁入的（plan）如实为 None（见下条）。
+        assert info["prompt_version"] is not None
+
+    def test_model_info_for_unmigrated_task_has_no_prompt_version(self) -> None:
+        g, _ = gw("x")
+        assert g.model_info_for_task("plan")["prompt_version"] is None
+
+    async def test_prompt_key_composes_messages_and_records_version(self) -> None:
+        g, calls = gw('{"level": 3, "region": "540121", "confidence": 0.7}')
+        await g.chat_structured(
+            [],
+            schema=Verdict,
+            task="assess",
+            prompt_key="assess",
+            prompt_vars={"region": "540121", "hits": "R-1", "context": "", "arbitration": ""},
+        )
+        sent = calls.calls[0]["messages"]
+        assert sent[0]["role"] == "system" and "研判" in sent[0]["content"]
+        assert sent[1]["content"] == "区域：540121\n触发命中：R-1\n"
+        # 版本号来自注册表且随实际发送的提示词写入台账（可复现的前提，§4.1.6/D10）。
+        assert g.usage_records()[-1].prompt_version == "1.0.0"
 
 
 class TestUnconfigured:
@@ -255,8 +274,13 @@ class TestUnconfigured:
 
 
 class TestPromptRegistry:
+    def test_builtin_seeds_migrated_prompts(self) -> None:
+        reg = PromptRegistry.builtin()
+        assert reg.version_for_task("assess") == "1.0.0"
+        assert reg.version_for_task("plan") is None  # 未迁入不登记
+
     def test_version_for_task_none_when_unregistered(self) -> None:
-        assert PromptRegistry.builtin().version_for_task("assess") is None
+        assert PromptRegistry().version_for_task("assess") is None
 
     def test_build_and_version(self) -> None:
         reg = PromptRegistry([PromptTemplate(task="assess", version="1.2.0", system="研判", user="区域 {region}")])
@@ -267,7 +291,7 @@ class TestPromptRegistry:
 
     def test_build_unregistered_raises(self) -> None:
         with pytest.raises(KeyError):
-            PromptRegistry.builtin().build("assess")
+            PromptRegistry().build("assess")
 
     def test_missing_template_var_raises(self) -> None:
         reg = PromptRegistry([PromptTemplate(task="plan", version="1.0.0", system="s", user="{goal} 目标")])

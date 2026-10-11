@@ -23,8 +23,10 @@ class FakeGateway:
         self._q = list(verdicts)
         self.calls: list[dict[str, Any]] = []
 
-    async def chat_structured(self, messages, *, schema, task="default", agent_id=None, trace_id=None, **kw):
-        self.calls.append({"task": task, "messages": messages})
+    async def chat_structured(
+        self, messages, *, schema, task="default", agent_id=None, trace_id=None, prompt_key=None, prompt_vars=None, **kw
+    ):
+        self.calls.append({"task": task, "messages": messages, "prompt_key": prompt_key, "prompt_vars": prompt_vars})
         v = self._q.pop(0)
         if isinstance(v, Exception):
             raise v
@@ -76,6 +78,11 @@ class TestSingleAssessment:
         a, gw = agent(verdict(3))
         reply = await a.handle(_request())
         assert len(gw.calls) == 1, "非红橙级不应触发双盲（§8 成本对策）"
+        # 正文改由 PromptRegistry 装配：智能体只交 prompt_key + 变量，不再内联提示词（单一真源）。
+        assert gw.calls[0]["prompt_key"] == "assess"
+        assert gw.calls[0]["messages"] == []
+        assert gw.calls[0]["prompt_vars"]["region"] == "540121"
+        assert "R-DEBRIS-RAIN-1" in gw.calls[0]["prompt_vars"]["hits"]
         assert reply.payload["risk_level"] == 3
         assert reply.payload["assessed_by"] == "assess.real01"
         assert reply.payload["evidence_refs"] == ["R-DEBRIS-RAIN-1"]
@@ -112,8 +119,8 @@ class TestDoubleBlind:
         assert reply.disagreement is True
         assert reply.payload["risk_level"] == 2
         assert reply.payload["rationale"] == "仲裁橙"
-        # 仲裁轮的上下文里并入了两份分歧 rationale（可解释、可审计）。
-        assert "分歧" in gw.calls[2]["messages"][1]["content"]
+        # 仲裁轮把两份分歧交给注册表模板的 arbitration 变量（可解释、可审计）。
+        assert "分歧" in gw.calls[2]["prompt_vars"]["arbitration"]
 
     async def test_double_blind_can_be_disabled(self) -> None:
         a, gw = agent(verdict(1), double_blind=False)
@@ -138,5 +145,5 @@ class TestContextInjection:
         await a.handle(_request())
         assert seen["region"] == "540121"
         assert seen["hazard_hint"] == "debris_flow"
-        user = gw.calls[0]["messages"][1]["content"]
-        assert "retrieval 佐证" in user and "graph 佐证" in user
+        context = gw.calls[0]["prompt_vars"]["context"]
+        assert "retrieval 佐证" in context and "graph 佐证" in context

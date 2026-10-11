@@ -32,6 +32,22 @@ class PromptTemplate:
         return [{"role": "system", "content": self.system}, {"role": "user", "content": rendered}]
 
 
+#: 已迁入版本化真源的智能体提示词（单一真源）。迁入一个智能体才登记一个；
+#: 未迁入的（如 plan）不登记，其 model_info.prompt_version 如实为 None，避免假可复现。
+_BUILTIN_TEMPLATES: list[PromptTemplate] = [
+    PromptTemplate(
+        task="assess",
+        version="1.0.0",
+        system=(
+            "你是山地灾害风险研判专家。只输出一个 JSON 对象，字段为 risk_level(整数1-5，1最重5最轻)、"
+            "hazard_type、confidence(0-1)、rationale(中文，引用佐证不臆造数字)、evidence_refs(字符串数组)。"
+            "禁止发明任何未出现在佐证里的数字。"
+        ),
+        user="区域：{region}\n触发命中：{hits}\n{context}{arbitration}",
+    ),
+]
+
+
 class PromptRegistry:
     def __init__(self, templates: list[PromptTemplate] | None = None) -> None:
         self._by_task: dict[str, PromptTemplate] = {}
@@ -40,8 +56,13 @@ class PromptRegistry:
 
     @classmethod
     def builtin(cls) -> PromptRegistry:
-        """空注册表：真源在 `prompts/` 目录，内置不复制内联提示词（避免两张皮）。"""
-        return cls([])
+        """内置已迁入版本化真源的智能体提示词（单一真源：智能体不再内联这些文本）。
+
+        只登记【已迁入】的 task——未迁入的智能体 `version_for_task` 仍返回 None（诚实：没有
+        版本化 prompt 就说没有），避免"版本号来自注册表、实际正文却内联在别处"的假可复现。
+        操作员可用 `from_dir` 覆盖（部署时把 prompts/ 打进镜像）。
+        """
+        return cls(_BUILTIN_TEMPLATES)
 
     @classmethod
     def from_dir(cls, path: str | Path) -> PromptRegistry:

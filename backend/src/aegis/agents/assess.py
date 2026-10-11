@@ -64,9 +64,15 @@ class AssessAgent(AgentKit):
         if self.context is not None:
             ctx = await self.context.corroborate(region_code=region, hazard_hint=hazard_hint, hits=list(hits))
 
-        messages = self._build_messages(region=region, hits=hits, ctx=ctx)
+        base_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx)
         first = await self.llm.chat_structured(
-            messages, schema=AssessVerdict, task="assess", agent_id=self.agent_id, trace_id=request.trace_id
+            [],
+            schema=AssessVerdict,
+            task="assess",
+            prompt_key="assess",
+            prompt_vars=base_vars,
+            agent_id=self.agent_id,
+            trace_id=request.trace_id,
         )
 
         disagreement: bool | None = None
@@ -74,13 +80,22 @@ class AssessAgent(AgentKit):
         # 双盲只对高危（红=1/橙=2）触发（§8 成本对策）；一致则上调置信，分歧则第三 call 仲裁。
         if self.double_blind and int(first.risk_level) <= int(RiskLevel.ORANGE):
             second = await self.llm.chat_structured(
-                messages, schema=AssessVerdict, task="arbitration", agent_id=self.agent_id, trace_id=request.trace_id
+                [],
+                schema=AssessVerdict,
+                task="arbitration",
+                prompt_key="assess",
+                prompt_vars=base_vars,
+                agent_id=self.agent_id,
+                trace_id=request.trace_id,
             )
             if int(second.risk_level) != int(first.risk_level):
+                arb_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, divergence=(first, second))
                 arb = await self.llm.chat_structured(
-                    self._build_messages(region=region, hits=hits, ctx=ctx, arbitration=(first, second)),
+                    [],
                     schema=AssessVerdict,
                     task="arbitration",
+                    prompt_key="assess",
+                    prompt_vars=arb_vars,
                     agent_id=self.agent_id,
                     trace_id=request.trace_id,
                 )
@@ -116,25 +131,18 @@ class AssessAgent(AgentKit):
         info = getter("assess")
         return ModelInfo(model=info.get("model"), prompt_version=info.get("prompt_version"))
 
-    def _build_messages(
-        self, *, region: str, hits: list[Any], ctx: dict[str, Any], arbitration: tuple[AssessVerdict, AssessVerdict] | None = None
-    ) -> list[dict[str, str]]:
-        system = (
-            "你是山地灾害风险研判专家。只输出一个 JSON 对象，字段为 risk_level(整数1-5，1最重5最轻)、"
-            "hazard_type、confidence(0-1)、rationale(中文，引用佐证不臆造数字)、evidence_refs(字符串数组)。"
-            "禁止发明任何未出现在佐证里的数字。"
-        )
-        parts = [f"区域：{region}", f"触发命中：{hits[:8]}"]
-        for label in ("retrieval", "cases", "graph", "memory"):
-            if ctx.get(label):
-                parts.append(f"{label} 佐证：{ctx[label]}")
-        if arbitration is not None:
-            a, b = arbitration
-            parts.append(f"两次独立研判分歧：{int(a.risk_level)}级({a.rationale}) vs {int(b.risk_level)}级({b.rationale})，请仲裁其一。")
-        user = "\n".join(parts)
-        if arbitration is not None:
-            user += "\n请给出最终仲裁等级。"
-        return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    def _prompt_vars(
+        self, *, region: str, hits: list[Any], ctx: dict[str, Any], divergence: tuple[AssessVerdict, AssessVerdict] | None = None
+    ) -> dict[str, str]:
+        """把上下文压成 PromptRegistry `assess` 模板的填充变量（正文单一真源在注册表，§4.1.6）。"""
+        context = "".join(f"{label} 佐证：{ctx[label]}\n" for label in ("retrieval", "cases", "graph", "memory") if ctx.get(label))
+        arbitration = ""
+        if divergence is not None:
+            a, b = divergence
+            arbitration = (
+                f"两次独立研判分歧：{int(a.risk_level)}级({a.rationale}) vs {int(b.risk_level)}级({b.rationale})，请给出最终仲裁等级。\n"
+            )
+        return {"region": region, "hits": str(list(hits)[:8]), "context": context, "arbitration": arbitration}
 
     @staticmethod
     def _first_hazard(hits: list[Any]) -> str | None:

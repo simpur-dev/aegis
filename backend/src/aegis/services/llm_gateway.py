@@ -405,13 +405,20 @@ class LlmGateway:
         trace_id: str | None = None,
         agent_id: str | None = None,
         prompt_version: str | None = None,
+        prompt_key: str | None = None,
+        prompt_vars: dict[str, Any] | None = None,
     ) -> SchemaT:
         """结构化输出：json 模式产出 → Pydantic 严格校验 → 不合规一次修复重试 → 仍失败即抛错走降级。
 
         枚举/必填/类型越界一律拒收（如 1–5 之外的等级），绝不"就近夹取"糊弄下游——
         把非法结论伪装成合法是这一型平台最贵的事故。修复重试只重发一次，不无限重试。
+
+        `prompt_key` 给定则消息由 PromptRegistry 装配（§4.1.6）：正文与版本号同源，
+        写进 model_info 的 prompt_version 才真正描述实际发送的提示词（可复现的前提）。
         """
-        if prompt_version is None:
+        if prompt_key is not None:
+            messages, prompt_version = self._prompts.build(prompt_key, **(prompt_vars or {}))
+        elif prompt_version is None:
             prompt_version = self._prompts.version_for_task(task)
         current = list(messages)
         last_error: MalformedLlmOutputError | None = None
