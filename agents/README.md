@@ -6,6 +6,8 @@
 >
 > 唯一接口契约：[`contracts/AGENT_INTEGRATION_SPEC.v1.md`](../contracts/AGENT_INTEGRATION_SPEC.v1.md)
 > 消息 Schema：`contracts/agent_message.v1.schema.json`、`contracts/stu.v1.schema.json`
+> 外部交付未落地期间的**自建方案**（LLM 化改造、框架选型、验收重测，含平台侧配套）：
+> [`docs/课题6_架构升级方案.md`](../docs/课题6_架构升级方案.md)（决策记录：ADR-0007）
 
 ## 目录
 
