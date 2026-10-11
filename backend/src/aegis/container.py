@@ -13,7 +13,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+from aegis.agents.agentkit import AgentKit
 from aegis.agents.mock import MockAgent, start_mock_agents
+from aegis.agents.runtime import build_agent_runtime
 from aegis.bus.gateway import AgentGateway, ContractRegistry
 from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.registry import AgentRegistry
@@ -315,6 +317,9 @@ class PlatformContainer:
     rulebook_error: str | None = None
     rulebook_rejected: list[str] = field(default_factory=list)
     mock_agents: list[MockAgent] = field(default_factory=list)
+    real_agents: list[AgentKit] = field(default_factory=list)
+    #: 智能体运行时的实际形态（含互斥压制的事实），启动日志与状态面都要能看见
+    agent_runtime_state: str = ""
     _tasks: list[asyncio.Task[None]] = field(default_factory=list)
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _started: bool = False
@@ -361,8 +366,29 @@ class PlatformContainer:
         self.gateway.set_result_handler(self.chain.handle_agent_message)
         await self.registry.start_sweeper()
 
-        if with_mock_agents:
+        runtime = self.settings.agent_runtime
+        if runtime == "real":
+            # 真智能体与 mock 互斥：两副同挂 agent_in 会抢答同一批请求，"谁应答"变成随机数。
+            self.real_agents = build_agent_runtime(
+                self.transport,
+                rule_engine=self.rule_engine,
+                base_url=f"http://127.0.0.1:{self.settings.http_port}",
+                llm=self.llm_gateway,
+                parser=self.parser,
+                contracts=self.contracts,
+                service_token=self.settings.service_token,
+            )
+            for agent in self.real_agents:
+                await agent.start(heartbeat_interval=0.5)
+            self.agent_runtime_state = "real"
+            if with_mock_agents:
+                self.agent_runtime_state = "real（mock 按互斥压制，未启动）"
+                log.info("agent_runtime=real：mock 替身不启动，一个订阅面只留一副", extra={"bus": self.transport.name})
+        elif runtime == "mock" and with_mock_agents:
             self.mock_agents = await start_mock_agents(self.transport, heartbeat_interval=0.5)
+            self.agent_runtime_state = "mock"
+        else:
+            self.agent_runtime_state = "off" if runtime == "off" else "mock（未请求启动）"
 
         await register_builtin_templates(self.workflow)
         # 核签流程与灾种剧本分开注册：低置信度上报要能开出一张真人可签的工单
@@ -375,7 +401,15 @@ class PlatformContainer:
                 await self.ingest.run_loop(self._stop, interval_seconds=period)
 
             self._tasks.append(asyncio.create_task(_ingest_forever(), name="ingest-loop"))
-        log.info("平台已启动", extra={"bus": self.transport.name, "mock_agents": len(self.mock_agents)})
+        log.info(
+            "平台已启动",
+            extra={
+                "bus": self.transport.name,
+                "mock_agents": len(self.mock_agents),
+                "real_agents": len(self.real_agents),
+                "agent_runtime": self.agent_runtime_state,
+            },
+        )
 
     async def _load_rulebook(self) -> None:
         """从规则库装配当前生效的阈值集（批次 C2）。
@@ -416,6 +450,9 @@ class PlatformContainer:
         for agent in self.mock_agents:
             await agent.stop()
         self.mock_agents = []
+        for kit in self.real_agents:
+            await kit.stop()
+        self.real_agents = []
         if self.mqtt is not None:
             # 订阅腿停在摄取循环之后：摄取任务已取消，没有人再取缓冲，继续收只会攒成一堆过期读数
             await self.mqtt.stop()

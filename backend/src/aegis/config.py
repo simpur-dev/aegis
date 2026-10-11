@@ -141,6 +141,15 @@ class Settings(BaseSettings):
     # 空 = 不校验（默认，向后兼容内部装配/演练调用）；非空 = 读数据端点须带 X-Aegis-Token，常量时间比对。
     service_token: str = ""
 
+    # §3/§6 MA 智能体运行时三态（互斥，只留一个订阅面）：
+    #   real = 真智能体内环上总线（`agents/runtime.py` 装配：越限回规则引擎、漂移走 EWMA、
+    #            语义腿委派三路融合解析器、佐证经 REST 取数）；此时【不起】mock，避免两副
+    #            同挂 agent_in 抢答同一批请求。
+    #   mock = 平台侧联调替身（升级前行为，默认）。
+    #   off  = 两副都不起（纯规则链路）。
+    # 真模式下缺 LLM/解析器等依赖由内环自己如实降级，装配点不塞会谎报的替身。
+    agent_runtime: Literal["mock", "real", "off"] = "mock"
+
     # 案例知识层：默认纯内存提供者（零外部依赖，16 条内置预案模板，性质见 knowledge/cases.py）。
     # 给了 graphiti URI 才走图谱主路径，并在图谱不可用时自动回落到内存（降级链由 provider 保证）。
     knowledge_graphiti_uri: str = ""
