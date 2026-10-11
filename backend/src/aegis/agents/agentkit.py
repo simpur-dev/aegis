@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
@@ -65,6 +66,8 @@ class AgentKit:
     dedup_capacity: int = 4_096
 
     _seen: OrderedDict[str, None] = field(default_factory=OrderedDict, repr=False)
+    #: 请求到达时刻（msg_id → perf_counter）：预算闸与网关必须看同一只表
+    _arrivals: dict[str, float] = field(default_factory=dict, repr=False)
     _subs: list[Any] = field(default_factory=list, repr=False)
     _hb_task: asyncio.Task[None] | None = field(default=None, repr=False)
     handled: int = 0
@@ -129,6 +132,11 @@ class AgentKit:
 
     # ---------- 请求处理：幂等 + 限时 + 降级/错误（规范 §1/§2/§5） ----------
 
+    def elapsed_ms(self, request: AgentMessage) -> float:
+        """这条请求从到达至今过了多久（ms）。没有到达记录（直接调 handle 的单测）就当 0。"""
+        arrival = self._arrivals.get(request.msg_id)
+        return 0.0 if arrival is None else (time.perf_counter() - arrival) * 1000
+
     async def _on_request(self, request: AgentMessage) -> None:
         if request.msg_id in self._seen:
             self.duplicates_skipped += 1
@@ -139,9 +147,15 @@ class AgentKit:
 
         self.handled += 1
         reply_subject = request.reply_to or subjects.agent_out(self.agent_type)
+        # 到达时刻才是预算的起跑线：网关也是从这里开始等回执。内环自己另起一只表会把排队时间
+        # 当免费——真栈实测"看起来还有钱"而网关到点就砍。
+        self._arrivals[request.msg_id] = time.perf_counter()
 
         timeout: float | None = None
         if request.deadline_ms:
+            # 这里减的是"内环自己的墙钟"，不含总线排队：网关从发出那一刻起等，排队发生在投递之前，
+            # 本层看不见（实测：消息一到就进 _on_request，elapsed 在此处≈0）。所以超时的最终裁量
+            # 权在网关侧的 deadline 上，内环的 elapsed_ms 只用于"还要不要再花一次模型调用"的自算。
             timeout = max(0.0, (request.deadline_ms - self.deadline_margin_ms) / 1000.0)
         try:
             if timeout is None:
@@ -176,6 +190,9 @@ class AgentKit:
                 ),
             )
             return
+        finally:
+            # 到达记录只为本次处理存在：不清就是按消息数无界增长（长跑班次必漏）
+            self._arrivals.pop(request.msg_id, None)
 
         reply = outcome if isinstance(outcome, Reply) else Reply(payload=outcome)
         message = make_response(request, source=self.agent_id, payload=reply.payload)

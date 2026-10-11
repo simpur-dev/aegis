@@ -442,8 +442,9 @@ def register_sla_budgets(
     budgets: dict[str, float] = {
         # 多节点数据共享同步时延 ≤3s
         "sync_agent_to_gateway_ms": float(settings.sla_sync_ms),
-        # 一次协同事务（发出→收到响应）沿用重调度口径 ≤10s
-        "collab_txn": float(settings.sla_reschedule_ms),
+        # 一次协同事务（发出→收到响应）：LLM 在场时它就是含模型调用的往返，挂 LLM 档（§5 A 案）。
+        # ≤10s 那条考核改由 workflow_reschedule_ms 代表（重调度禁入 LLM，§3.3），两条互不掩盖。
+        "collab_txn": float(settings.sla_agent_txn_ms),
         # 常规任务调度响应时延 ≤2s（节点"就绪→开始执行"）
         "workflow_schedule_ms": float(settings.sla_schedule_ms),
         "workflow_node_ms": float(settings.sla_schedule_ms),

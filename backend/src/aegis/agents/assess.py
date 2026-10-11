@@ -79,8 +79,8 @@ class AssessAgent(AgentKit):
     async def handle(self, request: AgentMessage) -> Reply:
         if self.llm is None:
             raise RuntimeError("assess 内环需要 LLM 网关（缺位由平台规则降级轨接管）")
-        # perf_counter 而非 utc_now：时钟被同步一步就会把负数夹成 0，预算判断跟着失真
-        started_at = time.perf_counter()
+        # 预算与网关同锚：从请求到达算起，不是从 handle 开始算（排队时间不是免费的）
+        started_at = time.perf_counter() - self.elapsed_ms(request) / 1000
         payload = request.payload or {}
         region = str(payload.get("region_code", ""))
         hits = payload.get("hits") or []

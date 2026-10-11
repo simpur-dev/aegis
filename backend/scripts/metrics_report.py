@@ -40,11 +40,32 @@ TYPE_ACCURACY_INDICATOR = "5 类灾种触发条件识别准确率"
 #: 唯一的登记处是 `instrumentation.register_sla_budgets`。此前这份副本按"毫秒"写死，
 #: 秒制那两条只能另开一支循环处理（`INGEST_INDICATOR` / `REPORT_INTAKE_INDICATOR`），
 #: 而"另开一支"正是当年把秒值拿去比毫秒阈值、永远绿的源头。
+#: 每个量测点属于哪一口径（§5 A 案三档）：调度档 / LLM 档 / 接入档 / 端到端档
+TIER_OF_METRIC: dict[str, str] = {
+    "workflow_schedule_ms": "调度档",
+    "workflow_node_ms": "调度档",
+    "workflow_reschedule_ms": "调度档",
+    "collab_txn": "LLM 档",
+    "stage_assess_ms": "LLM 档",
+    "stage_execute_ms": "LLM 档",
+    "stage_feedback_ms": "LLM 档",
+    "stage_plan_ms": "LLM 档（诊断）",
+    "stage_perceive_ms": "LLM 档（诊断）",
+    "llm_call_ms": "LLM 档（单次调用）",
+    "warning_generation_ms": "端到端档",
+    "warning_reach_ms": "端到端档",
+    "assistant_reply_ms": "端到端档",
+    "ingest_end_to_end_seconds": "接入档",
+    "report_intake_seconds": "接入档",
+}
+
 INDICATORS: dict[str, str] = {
     "sync_agent_to_gateway_ms": "多节点数据共享同步时延 ≤3s",
     # 语义交互与数据共享同属考核指标 3 的 ≤3s 一档（`services/assistant.py` 唯一的记账点）
     "assistant_reply_ms": "语义交互一轮响应 ≤3s",
-    "collab_txn": "异常工况识别与重调度响应 ≤10s（事务口径）",
+    "collab_txn": "协同事务响应 ≤60s（LLM 档：含模型往返）",
+    # ≤10s 那条考核由调度口径代表（重调度禁入 LLM，§3.3 / §5 A 案）；跑不到样本就如实"未测得"
+    "workflow_reschedule_ms": "异常工况识别与重调度响应 ≤10s（调度口径）",
     # ≤2s 这条考核项的定义量测点是"节点就绪→开始执行"（见 `workflow/engine.py:5` 与
     # `instrumentation.register_sla_budgets`），所以表里代表它的那一行必须是 workflow_schedule_ms。
     # 链路阶段时延沿用同一档预算，但只作诊断行：把"研判耗时"挂成"调度响应"来判达标，
@@ -155,7 +176,7 @@ def _table(latency: dict[str, Any], collaboration: dict[str, Any]) -> list[dict[
     for name, description in INDICATORS.items():
         unit = unit_of_metric(name)
         stats = metrics.get(name)
-        row: dict[str, Any] = {"指标": description, "样本": 0, "单位": unit}
+        row: dict[str, Any] = {"指标": description, "口径档": TIER_OF_METRIC.get(name, "未归档"), "样本": 0, "单位": unit}
         for key in ("P50", "P95", "最大"):
             row[f"{key}_{unit}"] = None
         if stats is not None and stats.get("unit", unit) != unit:
@@ -181,6 +202,8 @@ def _table(latency: dict[str, Any], collaboration: dict[str, Any]) -> list[dict[
     rows.append(
         {
             "指标": "多智能体协同联动成功率 ≥90%",
+            # 成功率与 LLM 档时延必须并排看：分母就是这些事务，超时预算给 10s 还是 60s 直接决定它
+            "口径档": "LLM 档",
             "样本": collaboration["transactions"],
             "成功率": rate,
             "判定": ("达标" if rate is not None and rate >= collaboration["target"] else "未达标")

@@ -176,3 +176,44 @@ class TestDeadlineDegradation:
         assert message.payload["code"] == "E_TIMEOUT"
         assert message.payload["retryable"] is True
         assert kit.degraded == 1
+
+
+class TestArrivalAnchor:
+    """内环预算与网关同锚：锚点是"这条请求到达本体的时刻"。
+
+    实测边界写清楚：总线投递之前的排队在这一层看不见（网关从发出起计时），所以这一锚
+    管的是"到达之后我还能花几次模型调用"，不是事务总时限——别把它当成超时的最终裁量者。
+    """
+
+    async def test_elapsed_ms_从到达时刻起算且不为未知请求编数(self) -> None:
+        published: list[tuple[str, AgentMessage]] = []
+
+        class RecordingTransport:
+            name = "recording"
+
+            async def publish(self, subject: str, message: AgentMessage) -> None:
+                published.append((subject, message))
+
+            async def subscribe(self, *a: object, **k: object):  # pragma: no cover
+                raise AssertionError("直接驱动 _on_request，不该订阅")
+
+            async def connect(self) -> None: ...
+            async def close(self) -> None: ...
+
+        kit = EchoAssess(
+            transport=RecordingTransport(), agent_type=AgentType.ASSESS, agent_id="assess.anchor", capabilities=["risk_assess"]
+        )
+        request = make_request(
+            source="platform.gateway",
+            target="assess.anchor",
+            action=Action.ASSESS_HAZARD.value,
+            payload={"hits": []},
+            trace_id=TRACE,
+            reply_to="reply.gw00000009.inbox",
+            deadline_ms=1000,
+        )
+        assert kit.elapsed_ms(request) == 0.0, "没到达过的请求不能凭空报已耗时"
+        await kit._on_request(request)
+        assert kit.elapsed_ms(request) >= 0.0
+        # 到达记录按 msg_id 记账，处理完即清：不然长跑会攒成无界字典
+        assert request.msg_id not in kit._arrivals, "完成后可达记录要清掉"

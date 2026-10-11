@@ -389,6 +389,17 @@ class HazardResponseChain:
             self._tracer.record("perceive_agent_hit_ms", 0.0, trace_id=trace, outcome="agent")
         return merged, len(agent_hits)
 
+    @property
+    def _agent_txn_ms(self) -> int:
+        """LLM 段事务的预算（§5 A 案）：与段预算同一档，不用两个数互相打脸。"""
+        return int(self._settings.sla_agent_txn_ms)
+
+    @property
+    def _agent_txn_ttl_ms(self) -> int:
+        # TTL 必须宽于预算：默认 30s 的 TTL 会在投递前就把 60s 事务判成"超期丢弃"，
+        # 等于让一个传输层默认值偷偷改小业务预算。留 5s 给排队与回程。
+        return int(self._settings.sla_agent_txn_ms) + 5_000
+
     async def _assess(
         self,
         hits: list[TriggerHit],
@@ -417,10 +428,10 @@ class HazardResponseChain:
                 },
                 trace_id=trace,
                 capability="risk_assess",
-                # 事务预算走平台默认 deadline（`default_request_deadline_ms`，与 `collab_txn` 登记的
-                # ≤10s 同一档）；此前这里传的是 `llm_timeout_seconds`——那是**单次 HTTP 调用**的超时，
-                # 拿它当整笔协同事务的预算，等于允许研判合法地跑到 20s（真栈实测 19.1s，事务口径 10s 超标），
-                # 双盲增强腿的预算闸也因此几乎不会被触发。
+                # 事务预算 = LLM 档（§5 A 案）：与 `stage_*_ms` 同档同钟；
+                # 不再用 `llm_timeout_seconds`（单次 HTTP 超时），也不蹭 ≤10s 调度档。
+                deadline_ms=self._agent_txn_ms,
+                ttl_ms=self._agent_txn_ttl_ms,
                 priority=1,
             )
         except AegisError as exc:
@@ -475,6 +486,10 @@ class HazardResponseChain:
                 },
                 trace_id=trace,
                 capability="task_decompose",
+                # 事务预算 = LLM 档（§5 A 案）：与 `stage_*_ms` 同档同钟；
+                # 不再用 `llm_timeout_seconds`（单次 HTTP 超时），也不蹭 ≤10s 调度档。
+                deadline_ms=self._agent_txn_ms,
+                ttl_ms=self._agent_txn_ttl_ms,
                 priority=1,
             )
         except AegisError as exc:
@@ -596,6 +611,10 @@ class HazardResponseChain:
                     },
                     trace_id=trace,
                     capability="warn_publish",
+                    # 事务预算 = LLM 档（§5 A 案）：与 `stage_*_ms` 同档同钟；
+                    # 不再用 `llm_timeout_seconds`（单次 HTTP 超时），也不蹭 ≤10s 调度档。
+                    deadline_ms=self._agent_txn_ms,
+                    ttl_ms=self._agent_txn_ttl_ms,
                     priority=1,
                 )
                 used_agent = True

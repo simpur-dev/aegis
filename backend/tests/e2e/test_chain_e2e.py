@@ -219,20 +219,22 @@ class TestFatalDeliveryFailure:
 
 
 class TestTransactionDeadline:
-    """协同事务的预算必须来自平台默认 deadline（与 `collab_txn` 登记的 ≤10s 同一档）。
+    """LLM 段事务的预算必须与段预算同一档（§5 A 案），且 TTL 不得比预算更紧。
 
-    真栈实测的教训：chain 曾把 `llm_timeout_seconds`（单次 HTTP 调用的超时）当研判事务的
-    deadline 传下去，于是研判合法地跑到 19.1s——而 `collab_txn` 判的是 ≤10s，双盲增强腿的
-    预算闸也因此永远等不到"预算不够"的那一刻。两个不同层的时限被当成同一个用。
+    实测教训有两层：① chain 曾拿 `llm_timeout_seconds`（单次 HTTP 超时）当业务预算，于是
+    "19.1s 的事务"在协议上合法、在 ≤10s 指标上超标；② 后来把预算收到平台默认 10s，深言下
+    双盲 2–3 条串行腿装不下，只剩 4/7 事件超时降级、成功率 0.81。现在两件事同源于
+    `sla_agent_txn_ms`：研判/决策/执行三类的 deadline 与段预算同档，TTL 再宽 5s。
+    ≤10s 那条考核由 `workflow_reschedule_ms`（调度口径）代表，`plan.reschedule` 不在此列。
     """
 
-    async def test_研判事务不再自带比SLA更宽的deadline(self, settings: Settings) -> None:
-        container = await build_container(settings.model_copy(update={"llm_timeout_seconds": 60.0}))
-        seen: list[tuple[str, Any]] = []
+    async def test_三类LLM事务按A案挂档且TTL宽于预算(self, settings: Settings) -> None:
+        container = await build_container(settings.model_copy(update={"llm_timeout_seconds": 5.0}))
+        seen: list[tuple[str, Any, Any]] = []
         original = container.gateway.dispatch
 
         async def spy(agent_type: object, action: object, payload: dict, **kw: Any) -> Any:
-            seen.append((str(agent_type), kw.get("deadline_ms")))
+            seen.append((str(action), kw.get("deadline_ms"), kw.get("ttl_ms")))
             return await original(agent_type, action, payload, **kw)  # type: ignore[arg-type]
 
         container.gateway.dispatch = spy  # type: ignore[method-assign]
@@ -245,12 +247,17 @@ class TestTransactionDeadline:
         finally:
             await container.shutdown()
 
-        assess_deadlines = [deadline for name, deadline in seen if "ASSESS" in name.upper()]
-        assert assess_deadlines, "研判段应向总线派发过请求"
-        assert all(deadline is None for deadline in assess_deadlines), (
-            f"研判事务把 HTTP 单次超时({assess_deadlines})当成了业务预算；应交回网关默认 deadline"
-        )
-        assert container.settings.default_request_deadline_ms == settings.default_request_deadline_ms
+        by_action = {action: (deadline, ttl) for action, deadline, ttl in seen}
+        tier = settings.sla_agent_txn_ms
+        for action in ("assess.hazard", "plan.stu", "execute.warn"):
+            assert action in by_action, f"没抓到 {action} 的派发"
+            deadline, ttl = by_action[action]
+            assert deadline == tier, f"{action} 的事务预算应为 LLM 档（{tier}ms），实为 {deadline}"
+            assert ttl is not None and ttl > deadline, (
+                f"{action} 的 TTL({ttl}) 不得比预算({deadline})更紧，否则 30s 默认值会先把它判成超期丢弃"
+            )
+        # HTTP 超时与事务预算解耦：单次超时调小不该动事务档
+        assert tier != int(5.0 * 1000)
 
 
 class TestMetricEvidence:

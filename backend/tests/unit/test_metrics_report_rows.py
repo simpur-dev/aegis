@@ -112,3 +112,19 @@ def test_每个考核指标都必须在报表里出现() -> None:
     listed = {row["指标"] for row in rows}
     assert listed.issuperset(INDICATORS.values())
     assert len(rows) == len(INDICATORS) + 1, "多出来的一行是协同成功率"
+
+
+def test_每行都标出口径档且10s由调度口径代表() -> None:
+    """§5 A 案三档必须并排在同一张表里：评审问任何一个数，都要能顺着"档"找到它的出处。
+
+    尤其 `collab_txn`（含模型往返）不再挂 ≤10s——那条考核由 `workflow_reschedule_ms` 代表，
+    两者若混在同一档，就会出现"段预算 60s 达标、事务 10s 超标"这种自己打自己的表。
+    """
+    rows = _table(_latency({}, {"collab_txn": 60_000.0, "workflow_reschedule_ms": 10_000.0}), COLLAB)
+    tiers = {row["指标"]: row["口径档"] for row in rows}
+    assert tiers["常规任务调度响应时延 ≤2s"] == "调度档"
+    assert tiers["协同事务响应 ≤60s（LLM 档：含模型往返）"] == "LLM 档"
+    assert tiers["异常工况识别与重调度响应 ≤10s（调度口径）"] == "调度档"
+    assert tiers["预警信息生成时间 ≤3min"] == "端到端档"
+    assert tiers["多智能体协同联动成功率 ≥90%"] == "LLM 档", "成功率的分母就是这些事务，必须同档并排"
+    assert all("口径档" in row for row in rows), "没有一行可以不带档"

@@ -207,6 +207,10 @@ class Settings(BaseSettings):
     # §5 口径分档：≤2s/≤10s 是"调度口径"（节点就绪→开始），LLM 工作发生在节点执行内部、不进那两个量测点；
     # 段端到端（研判/执行/反馈）另设这一档，并卷入"预警生成 ≤3min"的端到端约束。
     sla_agent_stage_ms: int = 60_000
+    # A 案口径（§5）：LLM 段的**协同事务**预算与段预算同档，避免"段按 60s 判、事务按 10s 砍"
+    # 这种自相矛盾——实测深言下单次 1.5–3.3s、双盲要 2–3 条串行腿，10s 装不下就只会不断降级。
+    # ≤2s/≤10s 仍由调度口径代表（workflow_schedule_ms / workflow_reschedule_ms），不因本档松动。
+    sla_agent_txn_ms: int = 60_000
     sla_ingest_seconds: float = 300.0
     sla_warning_gen_seconds: float = 180.0
     sla_reach_seconds: float = 1_200.0
