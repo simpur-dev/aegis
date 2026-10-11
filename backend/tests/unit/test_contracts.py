@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from aegis.bus.gateway import ContractRegistry
 from aegis.domain.enums import Action, MessageKind
-from aegis.domain.messages import AgentMessage, StandardizedTaskUnit, make_request
+from aegis.domain.messages import AgentMessage, ModelInfo, StandardizedTaskUnit, make_request
 from aegis.errors import ErrorCode, SchemaInvalidError
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "contracts"
@@ -195,3 +195,53 @@ def test_stu_errors_reports_index_and_path(contracts: ContractRegistry, valid_st
 def test_contracts_dir_missing_raises() -> None:
     with pytest.raises(FileNotFoundError):
         ContractRegistry(Path("/nonexistent/contracts-dir"))
+
+
+class TestD10ModelProvenance:
+    """D10（ADR-0007）：response 类增可选字段 model_info / disagreement，只增可选、不破既有语义。"""
+
+    def test_absent_fields_still_validate(self, contracts: ContractRegistry, valid_message_payload: dict) -> None:
+        """不带新字段的历史消息必须照常通过——小版本不要求任何旧生产者改动。"""
+        contracts.validate_message(dict(valid_message_payload))
+
+    def test_response_with_model_info_and_disagreement_passes(self, contracts: ContractRegistry, valid_message_payload: dict) -> None:
+        payload = dict(valid_message_payload)
+        payload["model_info"] = {"model": "qwen-plus", "prompt_version": "1.2.0"}
+        payload["disagreement"] = True
+        contracts.validate_message(payload)
+
+    def test_model_info_rejects_unknown_subkey(self, contracts: ContractRegistry, valid_message_payload: dict) -> None:
+        payload = dict(valid_message_payload)
+        payload["model_info"] = {"model": "qwen-plus", "sneaky": 1}
+        with pytest.raises(SchemaInvalidError, match="Additional properties"):
+            contracts.validate_message(payload)
+
+    def test_disagreement_must_be_boolean(self, contracts: ContractRegistry, valid_message_payload: dict) -> None:
+        payload = dict(valid_message_payload)
+        payload["disagreement"] = "yes"
+        with pytest.raises(SchemaInvalidError):
+            contracts.validate_message(payload)
+
+    def test_domain_model_round_trips_provenance(self, contracts: ContractRegistry) -> None:
+        """平台能收发携带 model_info 的响应：decode 不炸、encode 排除空字段、schema 认可。"""
+        message = AgentMessage(
+            source="assess.test01",
+            target="platform.gateway",
+            kind=MessageKind.RESPONSE,
+            action=Action.ASSESS_HAZARD.value,
+            causation_id="msg_" + "c" * 16,
+            payload={"risk_level": 2},
+            model_info=ModelInfo(model="qwen-plus", prompt_version="1.2.0"),
+            disagreement=True,
+        )
+        encoded = message.encode()
+        assert "model_info" in encoded.decode()
+        assert "model_version" not in encoded.decode()  # 未设置即不序列化（exclude_none）
+        contracts.validate_message(json.loads(encoded))
+        restored = AgentMessage.decode(encoded)
+        assert restored.model_info is not None and restored.model_info.model == "qwen-plus"
+        assert restored.disagreement is True
+
+    def test_model_info_rejects_extra_on_pydantic_side(self) -> None:
+        with pytest.raises(ValidationError):
+            ModelInfo(model="qwen-plus", bogus_field="x")

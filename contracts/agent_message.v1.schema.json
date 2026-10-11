@@ -100,6 +100,20 @@
       "minimum": 100,
       "maximum": 600000,
       "description": "request 必填：本次协同事务的完成期限，超期计为失败事务（影响协同成功率）。"
+    },
+    "model_info": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "D10（ADR-0007）：response 类结论的可复现凭证——模型/版本/prompt 版本，由智能体经网关 v2 写入。可选字段，缺省即无（规范 §9 只增可选字段）。",
+      "properties": {
+        "model": { "type": "string", "maxLength": 128 },
+        "model_version": { "type": "string", "maxLength": 128 },
+        "prompt_version": { "type": "string", "maxLength": 64 }
+      }
+    },
+    "disagreement": {
+      "type": "boolean",
+      "description": "D10（ADR-0007）：assess 双盲交叉验证的分歧标志（方案 §3.2）。可选，缺省即未启用或未分歧，不改变既有语义。"
     }
   },
   "allOf": [

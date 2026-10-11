@@ -72,6 +72,16 @@ class Ref(BaseModel):
     note: str | None = Field(default=None, max_length=256)
 
 
+class ModelInfo(BaseModel):
+    """D10（ADR-0007）：LLM 结论的可复现凭证。子字段皆可选，缺省即未知——不臆造模型/版本。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str | None = Field(default=None, max_length=128)
+    model_version: str | None = Field(default=None, max_length=128)
+    prompt_version: str | None = Field(default=None, max_length=64)
+
+
 class AgentMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -91,6 +101,9 @@ class AgentMessage(BaseModel):
     refs: list[Ref] = Field(default_factory=list)
     reply_to: str | None = None
     deadline_ms: int | None = Field(default=None, ge=100, le=600_000)
+    # D10（ADR-0007）只增可选字段：response 类结论携带 model_info / disagreement，缺省不序列化（向后兼容）。
+    model_info: ModelInfo | None = None
+    disagreement: bool | None = None
 
     @model_validator(mode="after")
     def _kind_semantics(self) -> AgentMessage:
