@@ -221,21 +221,52 @@ def resolve_settings(
     )
 
 
-def measurement_environment(settings: Settings, *, llm_configured: bool, real_agents: int, mock_agents: int) -> dict[str, Any]:
+def mixed_registrations(snapshot: Sequence[Mapping[str, Any]]) -> list[str]:
+    """找出"同一类型既有 mock 替身又有真内环在册"的类型——两副身子会抢答同一批请求。
+
+    实测踩过的那次：后端容器没设 AEGIS_AGENT_RUNTIME（默认 mock）与主机 `--runtime real` 连着
+    同一条 JetStream，于是 assess/plan 被容器里的 mock 毫秒级应答，主机的真内环同时也收到并在
+    烧 token——报表里 `mode=agent` 与段时延两边都不代表"agent 模式"的真实口径。
+    进程内的互斥开关看不见这一幕，所以判据必须落在总线视角的在册表上。
+    识别用的是 id 后缀约定（`*.mock01` / `*.real01`，平台两侧的默认命名）；认不出来就当作无风险
+    也不误判达标——最坏的漏判由"可作出口数字"的另一半（真内环计数）兜住。
+    """
+    kinds: dict[str, set[str]] = {}
+    for entry in snapshot:
+        agent_id = str(entry.get("agent_id") or "")
+        agent_type = str(entry.get("agent_type") or "")
+        suffix = agent_id.partition(".")[2].lower()
+        kind = "mock" if "mock" in suffix else "real" if "real" in suffix else ""
+        if agent_type and kind:
+            kinds.setdefault(agent_type, set()).add(kind)
+    return sorted(agent_type for agent_type, seen in kinds.items() if len(seen) > 1)
+
+
+def measurement_environment(
+    settings: Settings,
+    *,
+    llm_configured: bool,
+    real_agents: int,
+    mock_agents: int,
+    registry_snapshot: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
     """报表出口必须自带"这数是在什么上量出来的"，否则内存跑的数与真栈跑的数长得一模一样。"""
     full_stack = settings.bus_backend == "nats" and settings.store_backend == "postgres"
+    contested = mixed_registrations(registry_snapshot)
     return {
         "总线": settings.bus_backend,
         "存储": settings.store_backend,
         "智能体运行时": settings.agent_runtime,
         "交付模式": settings.delivery_mode,
         "LLM 网关": "已配（时延含真模型调用）" if llm_configured else "未配（内环走降级轨，时延不代表真模型）",
-        "在册智能体": {"真内环": real_agents, "mock 替身": mock_agents},
-        "可作出口数字": bool(full_stack and settings.agent_runtime == "real" and llm_configured),
+        "在册智能体": {"真内环": real_agents, "mock 替身": mock_agents, "总线视角总数": len(registry_snapshot)},
+        "抢答风险": contested,
+        "可作出口数字": bool(full_stack and settings.agent_runtime == "real" and llm_configured and not contested),
         "口径提醒": (
-            "本行数出自真栈（NATS + PostgreSQL + real 运行时 + 已配 LLM），可按 §6 口径引用"
-            if full_stack and settings.agent_runtime == "real" and llm_configured
-            else "本行数【不可】当作 §6 出口数字：需 --bus nats --store postgres --runtime real 且 LLM 已配"
+            "本行数出自真栈（NATS + PostgreSQL + real 运行时 + 已配 LLM，且总线只有一副身子），可按 §6 口径引用"
+            if full_stack and settings.agent_runtime == "real" and llm_configured and not contested
+            else "本行数【不可】当作 §6 出口数字：需 --bus nats --store postgres --runtime real、LLM 已配，"
+            "且总线上不得 mock 与 real 并存在抢答"
         ),
     }
 
@@ -345,6 +376,7 @@ async def run(
             llm_configured=container.llm_gateway is not None,
             real_agents=len(container.real_agents),
             mock_agents=len(container.mock_agents),
+            registry_snapshot=container.registry.snapshot(),
         )
     finally:
         await container.shutdown()

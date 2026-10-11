@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import pytest
-from scripts.metrics_report import measurement_environment, resolve_settings, workflow_leg
+from scripts.metrics_report import measurement_environment, mixed_registrations, resolve_settings, workflow_leg
 
 
 def test_默认口径是内存世界() -> None:
@@ -53,7 +53,7 @@ def test_内存世界明说不可作出口数字() -> None:
     block = measurement_environment(settings, llm_configured=False, real_agents=0, mock_agents=4)
     assert block["可作出口数字"] is False
     assert "【不可】" in block["口径提醒"]
-    assert block["在册智能体"] == {"真内环": 0, "mock 替身": 4}
+    assert block["在册智能体"] == {"真内环": 0, "mock 替身": 4, "总线视角总数": 0}
 
 
 def test_真内环跑在没有key的降级轨上也不算出口数字() -> None:
@@ -117,3 +117,44 @@ async def test_关掉的腿与缺模板都要留话(container) -> None:
     assert empty["实例"] == 0 and "没有可用模板名" in empty["说明"]
     broken = await workflow_leg(container, rounds=1, names=["这套剧本不存在"])
     assert broken["实例"] == 0 and "工作流腿中断" in broken["说明"], "模板缺位不能静默，也不许把整张报表带崩"
+
+
+def test_总线里mock与real并存就是抢答风险() -> None:
+    """实测踩过：后端容器（默认 mock）与主机 --runtime real 连着同一条 JetStream，
+    assess/plan 被 mock 毫秒级应答，真内环同时也在跑并烧 token——两侧都不是"agent 模式"的口径。"""
+    snapshot = [
+        {"agent_id": "assess.mock01", "agent_type": "assess"},
+        {"agent_id": "assess.real01", "agent_type": "assess"},
+        {"agent_id": "plan.real01", "agent_type": "plan"},
+    ]
+    assert mixed_registrations(snapshot) == ["assess"]
+
+
+def test_单一副身子不算风险() -> None:
+    assert mixed_registrations([{"agent_id": "assess.real01", "agent_type": "assess"}]) == []
+    assert mixed_registrations([{"agent_id": "assess.mock01", "agent_type": "assess"}]) == []
+    assert mixed_registrations([{"agent_id": "odd", "agent_type": "assess"}]) == [], "认不出后缀就不下断言"
+
+
+def test_抢答时真栈也不给亮绿灯() -> None:
+    settings = resolve_settings(
+        bus_backend="nats",
+        store_backend="postgres",
+        agent_runtime="real",
+        seed=1,
+        environ={"AEGIS_NATS_URL": "nats://x:4222", "AEGIS_PG_DSN": "postgresql://y"},
+    )
+    contested = [{"agent_id": "plan.mock01", "agent_type": "plan"}, {"agent_id": "plan.real01", "agent_type": "plan"}]
+    block = measurement_environment(settings, llm_configured=True, real_agents=5, mock_agents=0, registry_snapshot=contested)
+    assert block["抢答风险"] == ["plan"]
+    assert block["可作出口数字"] is False, "环境齐了但有人在抢答，数仍不可引用"
+    assert "抢答" in block["口径提醒"]
+    clean = measurement_environment(
+        settings,
+        llm_configured=True,
+        real_agents=5,
+        mock_agents=0,
+        registry_snapshot=[{"agent_id": f"{t}.real01", "agent_type": t} for t in ("perceive", "assess", "plan", "execute", "feedback")],
+    )
+    assert clean["可作出口数字"] is True
+    assert clean["在册智能体"]["总线视角总数"] == 5
