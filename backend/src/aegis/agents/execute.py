@@ -89,7 +89,7 @@ class ExecuteAgent(AgentKit):
             trace_id=request.trace_id,
         )
         branches, rejected = self._gate(result.branches, facts)
-        body_bo, translation_pending = await self._translate(branches.get(self.body_role, base_zh), base_bo)
+        body_bo, translation_pending = await self._translate(branches.get(self.body_role, base_zh), base_bo, request.trace_id)
         return Reply(
             payload={
                 "warning_id": payload.get("warning_id", ""),
@@ -118,7 +118,7 @@ class ExecuteAgent(AgentKit):
             kept[role] = text
         return kept, rejected
 
-    async def _translate(self, source: str, existing: Any) -> tuple[str | None, bool]:
+    async def _translate(self, source: str, existing: Any, trace_id: str | None = None) -> tuple[str | None, bool]:
         """藏文腿：已有译文就沿用；否则请网关翻译，翻不出来就如实标 pending（不空串冒充）。"""
         if isinstance(existing, str) and existing.strip():
             return existing, False
@@ -126,7 +126,7 @@ class ExecuteAgent(AgentKit):
             return None, True
         gateway = self.llm
         try:
-            translated = await gateway.translate(source)
+            translated = await gateway.translate(source, agent_id=self.agent_id, trace_id=trace_id)
         except Exception:
             return None, True
         text = str(translated or "").strip()

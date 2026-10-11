@@ -577,15 +577,26 @@ class LlmGateway:
 
     # ---------- 既有平台用途：翻译 / 润色（保持逐字行为） ----------
 
-    async def translate(self, text: str, *, target_language: str = "藏语（卫藏方言，书面语）") -> str:
-        """翻译预警正文。失败即抛错，由 WarningService 降级为纯中文并标记待译——不伪造译文。"""
+    async def translate(
+        self,
+        text: str,
+        *,
+        target_language: str = "藏语（卫藏方言，书面语）",
+        agent_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> str:
+        """翻译预警正文。失败即抛错，由调用方降级为纯中文并标记待译——不伪造译文。
+
+        `agent_id` 要一路带到用量账本：藏文腿是 execute 在调，token 记在 None 名下会让
+        按智能体的预算（§4.8.3）少算这一路。
+        """
         if not text.strip():
             raise MalformedLlmOutputError("待译文本为空")
         messages = [
             {"role": "system", "content": "你是应急管理的多语翻译，译文必须忠实、简洁、无添加信息，只输出译文本身。"},
             {"role": "user", "content": f"把下面的中文预警翻译成{target_language}：\n{text}"},
         ]
-        return (await self.chat(messages, temperature=0.0)).strip()
+        return (await self.chat(messages, temperature=0.0, agent_id=agent_id, trace_id=trace_id)).strip()
 
     async def polish_warning(self, title: str, body: str) -> dict[str, str]:
         """把预警正文压成面向公众的简短表述，输出 JSON：{title, body}。"""

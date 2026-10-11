@@ -227,6 +227,18 @@ class TestObservability:
         assert row["validation"]["ok"] == 1
         assert row["total_tokens"] == 18  # FakeUsage 11+7
 
+    async def test_translate_leg_carries_agent_attribution(self) -> None:
+        """藏文腿是 execute 在调：token 记到 None 名下，按智能体的预算就会少算这一路（§4.8.3）。"""
+        g, _ = gw("ཁྱབ་བསྒྲགས")
+        assert await g.translate("短雨 32 毫米", agent_id="execute.live01", trace_id="trc_0000000000000002") == "ཁྱབ་བསྒྲགས"
+        row = g.usage_snapshot()["by_agent_model"][0]
+        assert row["agent_id"] == "execute.live01" and row["calls"] == 1
+
+    async def test_translate_without_agent_records_none_rather_than_guessing(self) -> None:
+        g, _ = gw("译文")
+        await g.translate("正文")
+        assert g.usage_snapshot()["by_agent_model"][0]["agent_id"] is None, "没人认领就是 None，不替调用方编一个"
+
     async def test_empty_output_marked_malformed(self) -> None:
         g, _ = gw("   ")
         with pytest.raises(MalformedLlmOutputError):

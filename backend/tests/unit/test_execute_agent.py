@@ -36,13 +36,22 @@ class FakeGateway:
         self.translate_error = translate_error
         self.calls: list[dict[str, Any]] = []
         self.translate_calls: list[str] = []
+        self.translate_agent_id: Any = None
 
     async def chat_structured(self, messages: list[dict[str, str]], **kwargs: Any) -> ExecuteBranches:
         self.calls.append(kwargs)
         return self.result
 
-    async def translate(self, text: str, *, target_language: str = "藏语（卫藏方言，书面语）") -> str:
+    async def translate(
+        self,
+        text: str,
+        *,
+        target_language: str = "藏语（卫藏方言，书面语）",
+        agent_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> str:
         self.translate_calls.append(text)
+        self.translate_agent_id = agent_id
         if self.translate_error is not None:
             raise self.translate_error
         return self.translated
@@ -163,6 +172,7 @@ async def test_翻译腿成功则补上藏文() -> None:
     assert reply.payload["body_bo"] == "བོད་ཡིག་ཁྱབ་བསྒྲགས།"
     assert reply.payload["translation_pending"] is False
     assert gateway.translate_calls == ["短雨 32 毫米，立即避险"], "翻的是采纳后的民众分支，不是被拒的草稿"
+    assert gateway.translate_agent_id == "execute.t01", "藏文腿的 token 必须记在 execute 名下（§4.8.3 按智能体预算）"
 
 
 @pytest.mark.parametrize("boom", [RuntimeError("网关超时"), ValueError("bad")])
