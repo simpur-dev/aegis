@@ -65,3 +65,6 @@ frontend/playwright-install.log
 # 浏览器巡检的现场留档（截图、临时探针脚本）：只在本地用作证据，不入库
 frontend/.tmp-verify/
 backend/.tmp-verify/
+
+# 根目录下的临时证据目录（曾用来放 482MB 的 nats 状态拷贝）：临时产物一律不入库
+/.tmp-verify/
