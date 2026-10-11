@@ -7,6 +7,11 @@
   同步异常 → 聚合成一条更强的 `perceive.trigger_hit`（弱信号增强），evidence_refs 溯源到各站点读数。
 - 聚集参数（最少站数、每站增益、时间窗）为**未实测初值**，联调后按真数据标定，不据此声称达标。
 
+快腿的第二判据 `EwmaDriftDetector`（§3.1 的"EWMA 越限"位）在本模块内实现：它抓的是
+"还没到硬阈值、但已偏离该站点自身常态"的弱信号，与绝对阈值越限互补而不另立判据——
+灾种归属从注入的规则表里读，规则表若把同一指标指向多个灾种就不猜（详见该类 docstring）。
+装配现状：`start_real_agents` 尚无生产调用点（MA 上总线属集成步），本判据目前只由单测覆盖。
+
 产出与平台消费口径一致：`detect()` 返回的每条命中都是 `TriggerHit` 可校验的 dict
 （链路的 handle_agent_message 正用 `TriggerHit.model_validate(payload)` 收 trigger_hit 事件）。
 作为独立内环实现，经 emit_event 挂总线、被 _drain_agent_hits 合并的集成属 MB。
@@ -14,12 +19,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 from aegis.agents.agentkit import AgentKit, Reply
 from aegis.domain.messages import AgentMessage, parse_iso
+from aegis.services.trigger_rules import Rule
 
 
 @dataclass(slots=True)
@@ -109,6 +117,104 @@ class PerceiveAgent(AgentKit):
             return parse_iso(ts)
         except Exception:
             return None
+
+
+@dataclass(slots=True)
+class _EwmaState:
+    """单站点单指标的指数加权基线。"""
+
+    mean: float
+    var: float
+    samples: int
+
+
+def _advance(state: _EwmaState | None, value: float, alpha: float) -> _EwmaState:
+    if state is None:
+        return _EwmaState(mean=value, var=0.0, samples=1)
+    delta = value - state.mean
+    return _EwmaState(
+        mean=state.mean + alpha * delta,
+        var=state.var + alpha * (delta * delta - state.var),
+        samples=state.samples + 1,
+    )
+
+
+@dataclass
+class EwmaDriftDetector:
+    """快腿第二判据（§3.1"EWMA/分位数越限"里的 EWMA 位）：偏离站点【自身常态】即弱信号异常。
+
+    与绝对阈值越限的分工：那条抓"读数超过硬阈值"，这条抓"还没到阈值，但该站点已经不像它自己"
+    ——持续降雨后位移从 2mm 缓涨到 6mm，阈值可能还没碰，而自身基线已经漂出 k 倍标准差。
+
+    不另立真源：
+    - 判据只用该站点自身的历史基线（指数加权均值/方差），不看任何阈值表；
+    - 灾种归属【从注入的规则表里读】（`trigger_rules` 是单一真源）。规则表把同一指标指向
+      【多个】灾种时（内置规则表里 `rain_cumulative_24h` 就同时指向泥石流与滑坡），本判据
+      如实不报这个指标——宁可少一路弱信号，也不替指挥员猜灾种；消歧属装配点决策，不在此处臆造。
+    - 指标压根不在规则表里 → 同样不报（没有灾种，就没有可交给下游研判的命中）。
+
+    参数 `alpha` / `sigma_k` / `min_samples` 为**未实测初值**（对齐 §3.1 的标注纪律），
+    联调后按真数据标定；预热不足 `min_samples` 个点时只积累基线、不出异常。
+    """
+
+    alpha: float = 0.3
+    sigma_k: float = 3.0
+    min_samples: int = 5
+    #: 平台规则表（注入）：只用来把 metric 归到唯一灾种，不参与阈值判定。
+    rules: Sequence[Rule] = ()
+    _states: dict[tuple[str, str], _EwmaState] = field(default_factory=dict)
+
+    def flag(self, reading: dict[str, Any]) -> StationAnomaly | None:
+        station = str(reading.get("station_id") or "")
+        metric = str(reading.get("metric") or "")
+        value = reading.get("value")
+        observed_at = str(reading.get("observed_at") or "")
+        if not station or not metric or not observed_at or not isinstance(value, (int, float)):
+            return None
+        hazard = self._hazard_of(metric)
+        previous = self._states.get((station, metric))
+        self._states[(station, metric)] = _advance(previous, float(value), self.alpha)
+        if hazard is None or previous is None or previous.samples < self.min_samples:
+            return None
+
+        # 用【更新前】的基线判偏离：当前点若先并进基线，会把自身的偏离摊薄掉。
+        deviation = abs(float(value) - previous.mean)
+        limit = self.sigma_k * math.sqrt(max(previous.var, 0.0))
+        if limit <= 0.0:
+            # 一路常数（方差为零）后出现任何变化都是偏离自身常态；分数封顶 0.95，不自称满格。
+            if deviation <= 0.0:
+                return None
+            score = 0.95
+        else:
+            if deviation <= limit:
+                return None
+            score = min(0.95, 0.5 + 0.5 * (deviation / limit - 1.0))
+        return StationAnomaly(
+            station_id=station,
+            region_code=str(reading.get("region_code") or ""),
+            hazard_type=hazard,
+            value=float(value),
+            unit=str(reading.get("unit") or ""),
+            observed_at=observed_at,
+            base_score=round(score, 4),
+        )
+
+    def baseline_for(self, station_id: str, metric: str) -> tuple[float, float, int] | None:
+        """把某站某指标的当前基线原样交出去（联调与报表要看得到"它自己认为常态是多少"）。"""
+        state = self._states.get((station_id, metric))
+        return None if state is None else (state.mean, state.var, state.samples)
+
+    def _hazard_of(self, metric: str) -> str | None:
+        hazards = {
+            rule.hazard_type.value
+            for rule in self.rules
+            if rule.status == "active"
+            for condition in rule.conditions
+            if condition.metric == metric
+        }
+        if len(hazards) != 1:
+            return None
+        return next(iter(hazards))
 
 
 _EPOCH = datetime.fromtimestamp(0)
