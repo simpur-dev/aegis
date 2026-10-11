@@ -96,6 +96,24 @@ class TestOpsEndpoints:
     async def test_simulation_rejects_unknown_playbook(self, client: httpx.AsyncClient) -> None:
         assert (await client.post("/api/v1/simulation/run", json={"playbook": "躺平"})).status_code == 422
 
+    async def test_data_api_open_when_service_token_unset(self, client: httpx.AsyncClient) -> None:
+        # 默认 service_token="" → 数据 API 不校验（向后兼容内部装配/演练/前端调用）。
+        assert (await client.get("/api/v1/telemetry")).status_code == 200
+
+    async def test_data_api_requires_service_token_when_configured(self) -> None:
+        cfg = Settings(
+            env="test", bus_backend="memory", store_backend="memory", simulator_enabled=False, delivery_mode="mock", service_token="s3cr3t"
+        )
+        ctn = create_container(cfg, with_simulator=False)
+        await ctn.start()
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(cfg, container=ctn)), base_url=BASE) as c:
+                assert (await c.get("/api/v1/telemetry")).status_code == 401
+                assert (await c.get("/api/v1/telemetry", headers={"X-Aegis-Token": "wrong"})).status_code == 401
+                assert (await c.get("/api/v1/telemetry", headers={"X-Aegis-Token": "s3cr3t"})).status_code == 200
+        finally:
+            await ctn.shutdown()
+
     async def test_readyz_reports_state(self, client: httpx.AsyncClient) -> None:
         response = await client.get("/readyz")
         assert response.status_code == 200

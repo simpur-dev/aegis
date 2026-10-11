@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     # 容器于是去找源码树相对路径的 contracts，镜像里没有，就在启动期炸成"契约目录不存在"。
     contracts_dir: str = ""
 
+    # §4.8.1 数据 API 服务令牌（智能体经数据 API / 未来 MCP 工具取数共用的鉴权面）。
+    # 空 = 不校验（默认，向后兼容内部装配/演练调用）；非空 = 读数据端点须带 X-Aegis-Token，常量时间比对。
+    service_token: str = ""
+
     # 案例知识层：默认纯内存提供者（零外部依赖，16 条内置预案模板，性质见 knowledge/cases.py）。
     # 给了 graphiti URI 才走图谱主路径，并在图谱不可用时自动回落到内存（降级链由 provider 保证）。
     knowledge_graphiti_uri: str = ""

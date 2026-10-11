@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -160,6 +161,16 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
+
+    def require_data_token(request: Request) -> None:
+        """§4.8.1 数据 API 服务令牌：配了才校验（常量时间比对），未配则开放——不破坏既有装配/演练/前端调用。
+        智能体经数据 API（及未来 MCP 工具）取数共用这一鉴权面。"""
+        token = cfg.service_token
+        if not token:
+            return
+        presented = request.headers.get("x-aegis-token", "")
+        if not secrets.compare_digest(presented, token):
+            raise HTTPException(status_code=401, detail={"code": "E_UNAUTHORIZED", "message": "数据 API 需要有效服务令牌（X-Aegis-Token）"})
 
     @app.get("/healthz", tags=["ops"])
     async def healthz() -> dict[str, Any]:
@@ -319,7 +330,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             **report.as_dict(),
         }
 
-    @app.get("/api/v1/stations", tags=["data"])
+    @app.get("/api/v1/stations", tags=["data"], dependencies=[Depends(require_data_token)])
     async def list_stations(
         ctn: PlatformContainer = Depends(get_container),
         region_code: str | None = Query(default=None, pattern=r"^[0-9A-Z]{6,24}$"),
@@ -335,7 +346,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         rows = await ctn.store.list_stations(region_code=region_code, limit=limit)
         return {"count": len(rows), "items": rows}
 
-    @app.get("/api/v1/geo/stations-within", tags=["data"])
+    @app.get("/api/v1/geo/stations-within", tags=["data"], dependencies=[Depends(require_data_token)])
     async def geo_stations_within(
         ctn: PlatformContainer = Depends(get_container),
         lon: float = Query(..., ge=-180.0, le=180.0),
@@ -357,7 +368,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         query = {"lon": lon, "lat": lat, "radius_m": radius, "limit": limit}
         return {"driver": "postgis", "query": query, "count": len(items), "items": items}
 
-    @app.get("/api/v1/geo/stations-in-polygon", tags=["data"])
+    @app.get("/api/v1/geo/stations-in-polygon", tags=["data"], dependencies=[Depends(require_data_token)])
     async def geo_stations_in_polygon(
         ctn: PlatformContainer = Depends(get_container),
         polygon: str = Query(..., min_length=14, description="POLYGON/MULTIPOLYGON 的 WKT（SRID=4326，经度在前）"),
@@ -378,7 +389,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "items": items,
         }
 
-    @app.get("/api/v1/geo/hazard-trace", tags=["data"])
+    @app.get("/api/v1/geo/hazard-trace", tags=["data"], dependencies=[Depends(require_data_token)])
     async def geo_hazard_trace(
         ctn: PlatformContainer = Depends(get_container),
         polygon: str = Query(..., min_length=14),
@@ -473,7 +484,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "off_bookrule_hits": {key: value for key, value in hits.items() if ctn.rule_engine.rule_by_id(key) is None},
         }
 
-    @app.get("/api/v1/telemetry", tags=["data"])
+    @app.get("/api/v1/telemetry", tags=["data"], dependencies=[Depends(require_data_token)])
     async def list_telemetry(
         ctn: PlatformContainer = Depends(get_container),
         station_id: str | None = None,
