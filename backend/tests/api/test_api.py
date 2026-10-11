@@ -76,6 +76,26 @@ class TestOpsEndpoints:
         for card in body["cards"]:
             assert card["trained_dataset"] is None and card["eval_score"] is None and card["measured"] is False
 
+    async def test_simulation_run_is_deterministic_and_shape_correct(self, client: httpx.AsyncClient) -> None:
+        body = {"rain_base_mm": 60, "rain_spread_mm": 20, "scenarios": 6, "rounds": 4, "playbook": "转移", "seed": 42}
+        first = await client.post("/api/v1/simulation/run", json=body)
+        second = await client.post("/api/v1/simulation/run", json=body)
+        assert first.status_code == 200 and second.status_code == 200
+        a, b = first.json(), second.json()
+        assert a == b, "同参同种子必须逐字节可复现（§3.6 数字冻结自遥测、确定性）"
+        assert a["mode"] == "demo_sandbox"
+        assert {"probability_matrix", "timeline", "playbook_comparison"} <= set(a)
+        assert {row["playbook"] for row in a["playbook_comparison"]} == {"转移", "封路", "不行动"}
+
+    async def test_simulation_cost_cap_downscales_scenarios(self, client: httpx.AsyncClient) -> None:
+        body = {"scenarios": 64, "rounds": 24, "token_budget": 100, "playbook": "转移", "seed": 7}
+        data = (await client.post("/api/v1/simulation/run", json=body)).json()
+        assert data["cost"]["downscaled"] is True
+        assert 1 <= data["cost"]["effective_scenarios"] < 64
+
+    async def test_simulation_rejects_unknown_playbook(self, client: httpx.AsyncClient) -> None:
+        assert (await client.post("/api/v1/simulation/run", json={"playbook": "躺平"})).status_code == 422
+
     async def test_readyz_reports_state(self, client: httpx.AsyncClient) -> None:
         response = await client.get("/readyz")
         assert response.status_code == 200

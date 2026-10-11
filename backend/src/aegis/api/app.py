@@ -52,6 +52,18 @@ class DrillRequest(BaseModel):
     region_code: str | None = Field(default=None, pattern=r"^[0-9A-Z]{6,24}$")
 
 
+class SimulationRequest(BaseModel):
+    """泥石流次生灾害推演入参：情景由调用方给（画布/演练），不臆造锚定遥测的默认。"""
+
+    rain_base_mm: float = Field(default=40.0, ge=0, le=500)
+    rain_spread_mm: float = Field(default=25.0, ge=0, le=200)
+    scenarios: int = Field(default=8, ge=1, le=64)
+    rounds: int = Field(default=5, ge=1, le=24)
+    playbook: str = Field(default="转移", pattern="^(转移|封路|不行动)$")
+    token_budget: int = Field(default=200_000, ge=1, le=10_000_000)
+    seed: int = Field(default=20261011)
+
+
 class ReportIn(BaseModel):
     """群防群治/巡查上报（Web 表单）。文本由平台结构化后进规则引擎。"""
 
@@ -578,6 +590,29 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "llm_configured": ctn.llm_gateway is not None and ctn.llm_gateway.available,
             "note": "模型/版本来自真实路由配置与已迁入的版本化 prompt；训练集与评测分未做即 None，不冒充达标。",
         }
+
+    @app.post("/api/v1/simulation/run", tags=["simulation"])
+    async def simulation_run(payload: SimulationRequest) -> dict[str, Any]:
+        """泥石流次生灾害推演沙盒（§3.6/§4.4）：确定性数值模型 → 概率矩阵/预案对比/时间线。
+
+        演示/演练口径，不进任何 SLA 热路径；情景参数由调用方给定（画布/演练），概率/缓解系数为未实测初值，
+        只保证模型单调与可复现，不声称现场达标。
+        """
+        from aegis.services.simulation import Sandbox, SimConfig
+
+        cfg = SimConfig(
+            scenarios=payload.scenarios,
+            rounds=payload.rounds,
+            rain_base_mm=payload.rain_base_mm,
+            rain_spread_mm=payload.rain_spread_mm,
+            playbook=payload.playbook,
+            token_budget=payload.token_budget,
+            seed=payload.seed,
+        )
+        out = Sandbox().run(cfg).as_dict()
+        out["mode"] = "demo_sandbox"
+        out["note"] = "概率/暴露/缓解系数为未实测初值；情景参数由调用方给定，不声称现场达标。"
+        return out
 
     @app.get("/api/v1/metrics/latency", tags=["metrics"])
     async def latency(ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
