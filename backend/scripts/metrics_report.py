@@ -19,7 +19,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -180,6 +182,55 @@ def _table(latency: dict[str, Any], collaboration: dict[str, Any]) -> list[dict[
     return rows
 
 
+def resolve_settings(
+    *,
+    bus_backend: str,
+    store_backend: str,
+    agent_runtime: str,
+    seed: int,
+    environ: Mapping[str, str] | None = None,
+) -> Settings:
+    """把"在哪种环境上量"落成配置。缺凭据就当场炸，绝不静默退回内存。
+
+    内存总线 + 内存视图 + mock 替身跑出来的数只能做回归对照；把它们当成 §6 的出口数字，
+    是这批报表最容易犯、也最难事后发现的一种假话。
+    """
+    env = os.environ if environ is None else environ
+    if bus_backend == "nats" and not (env.get("AEGIS_NATS_URL") or "").strip():
+        raise ValueError("--bus nats 需要 AEGIS_NATS_URL（服务地址见 deploy/docker-compose.yml）")
+    if store_backend == "postgres" and not (env.get("AEGIS_PG_DSN") or "").strip():
+        raise ValueError("--store postgres 需要 AEGIS_PG_DSN（指向 compose 暴露的 127.0.0.1:5432）")
+    return Settings(
+        env="dev",
+        bus_backend=bus_backend,
+        store_backend=store_backend,
+        agent_runtime=agent_runtime,
+        delivery_mode="mock",
+        simulator_seed=seed,
+        nats_url=(env.get("AEGIS_NATS_URL") or "").strip(),
+        pg_dsn=(env.get("AEGIS_PG_DSN") or "").strip(),
+    )
+
+
+def measurement_environment(settings: Settings, *, llm_configured: bool, real_agents: int, mock_agents: int) -> dict[str, Any]:
+    """报表出口必须自带"这数是在什么上量出来的"，否则内存跑的数与真栈跑的数长得一模一样。"""
+    full_stack = settings.bus_backend == "nats" and settings.store_backend == "postgres"
+    return {
+        "总线": settings.bus_backend,
+        "存储": settings.store_backend,
+        "智能体运行时": settings.agent_runtime,
+        "交付模式": settings.delivery_mode,
+        "LLM 网关": "已配（时延含真模型调用）" if llm_configured else "未配（内环走降级轨，时延不代表真模型）",
+        "在册智能体": {"真内环": real_agents, "mock 替身": mock_agents},
+        "可作出口数字": bool(full_stack and settings.agent_runtime == "real" and llm_configured),
+        "口径提醒": (
+            "本行数出自真栈（NATS + PostgreSQL + real 运行时 + 已配 LLM），可按 §6 口径引用"
+            if full_stack and settings.agent_runtime == "real" and llm_configured
+            else "本行数【不可】当作 §6 出口数字：需 --bus nats --store postgres --runtime real 且 LLM 已配"
+        ),
+    }
+
+
 async def run(
     *,
     rounds: int,
@@ -189,9 +240,13 @@ async def run(
     out: Path | None,
     dataset: Path | None = None,
     accuracy_target: float | None = None,
+    bus_backend: str = "memory",
+    store_backend: str = "memory",
+    agent_runtime: str = "mock",
 ) -> int:
-    settings = Settings(env="dev", bus_backend="memory", delivery_mode="mock", simulator_seed=seed)
+    settings = resolve_settings(bus_backend=bus_backend, store_backend=store_backend, agent_runtime=agent_runtime, seed=seed)
     container = create_container(settings, with_simulator=False)
+    # real 与 mock 互斥由容器保证；这里仍按开关请求，好让"开了真没起替身"这件事在容器里留下事实
     await container.start(with_mock_agents=with_agents)
     await asyncio.sleep(0.1)
 
@@ -229,6 +284,12 @@ async def run(
                     pass
                 assistant_rounds += 1
         latency = container.latency_report()
+        env_block = measurement_environment(
+            settings,
+            llm_configured=container.llm_gateway is not None,
+            real_agents=len(container.real_agents),
+            mock_agents=len(container.mock_agents),
+        )
     finally:
         await container.shutdown()
 
@@ -243,6 +304,7 @@ async def run(
 
     report = {
         "运行参数": {"rounds": rounds, "with_mock_agents": with_agents, "seed": seed, "事件产出": acted, "致命错误": fatal},
+        "测量环境": env_block,
         "人工上报腿": {
             "受理": submitted,
             "产出预警": with_warning,
@@ -276,7 +338,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="AEGIS 考核指标实测报告")
     parser.add_argument("--rounds", type=int, default=10)
     parser.add_argument("--reports", type=int, default=2, help="人工上报腿的样本条数（0 即不测这条腿，报表会写「未测得」）")
-    parser.add_argument("--agents", action="store_true", help="使用 Mock 智能体（否则测平台降级路径）")
+    parser.add_argument(
+        "--agents", action="store_true", help="起 Mock 智能体（否则测平台降级路径；--runtime real 时容器会按互斥压制 mock）"
+    )
+    parser.add_argument("--bus", choices=("memory", "nats"), default="memory", help="总线：nats 需 AEGIS_NATS_URL")
+    parser.add_argument("--store", choices=("memory", "postgres"), default="memory", help="存储视图：postgres 需 AEGIS_PG_DSN")
+    parser.add_argument(
+        "--runtime",
+        choices=("mock", "real", "off"),
+        default=None,
+        help="智能体运行时（缺省沿用 .env 的 AEGIS_AGENT_RUNTIME）；real=真内环上总线（只产文案，不持发送权）",
+    )
     parser.add_argument("--seed", type=int, default=202_609)
     parser.add_argument("--out", type=Path, default=None, help="同时把报告写入 JSON 文件")
     parser.add_argument("--dataset", type=Path, default=None, help="预警准确率回放数据集（JSONL，口径见 persistence/replay.py）")
@@ -284,8 +356,9 @@ def main() -> int:
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error("--rounds 必须 ≥ 1")
-    if args.dataset is not None and not args.dataset.is_file():
+    if args.dataset is not None and args.dataset.is_file() is False:
         parser.error(f"--dataset 文件不存在：{args.dataset}")
+    runtime = args.runtime or Settings(env="dev").agent_runtime
     return asyncio.run(
         run(
             rounds=args.rounds,
@@ -295,6 +368,9 @@ def main() -> int:
             out=args.out,
             dataset=args.dataset,
             accuracy_target=args.accuracy_target,
+            bus_backend=args.bus,
+            store_backend=args.store,
+            agent_runtime=runtime,
         )
     )
 
