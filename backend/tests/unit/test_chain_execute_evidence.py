@@ -163,3 +163,5 @@ async def test_智能体什么都不报时也不会补出一条送达(payload: d
     adopted, res = adopt(payload)
     assert adopted.deliveries == []
     assert adopted.released_at is None
+    # 自报有内容才需要留"未采信"的事实行；空 ack 不该凭空多出一行解释
+    assert any("未采信" in note for note in res.degradations) is bool(payload.get("channel_results"))
