@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from aegis.agents.assess import AssessAgent
+from aegis.agents.execute import ExecuteAgent
 from aegis.agents.perceive import PerceiveAgent
 from aegis.agents.rest_context import RestAssessContext
 from aegis.agents.runtime import RuleEngineDetector, build_agent_runtime
@@ -142,7 +143,8 @@ def test_装配点把三条腿各就各位() -> None:
     agents = build_agent_runtime(
         _NullTransport(), rule_engine=engine, base_url="http://aegis.internal/", parser=parser, service_token="tok"
     )
-    assert {a.agent_type.value for a in agents} == {"perceive", "assess", "plan", "feedback"}, "execute 未获发送权，不装配"
+    assert {a.agent_type.value for a in agents} == {"perceive", "assess", "plan", "execute", "feedback"}
+    assert isinstance(next(a for a in agents if a.agent_type is AgentType.EXECUTE), ExecuteAgent), "execute 装的是只产文案的内环"
     perceive = next(a for a in agents if isinstance(a, PerceiveAgent))
     assess = next(a for a in agents if isinstance(a, AssessAgent))
     assert perceive.detector is not None and perceive.detector.drift.rules == engine.rules  # type: ignore[union-attr]

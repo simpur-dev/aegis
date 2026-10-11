@@ -32,17 +32,16 @@ class FakeLLM:
         return {"model": "qwen-plus", "fallback_model": "", "task": task, "prompt_version": "1.0.0"}
 
 
-async def test_four_real_agents_register_and_assess_serves(bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry) -> None:
+async def test_five_real_agents_register_and_assess_serves(bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry) -> None:
     await gateway.start()
     agents = await start_real_agents(bus, llm=FakeLLM(), heartbeat_interval=0.05)
     await bus.idle()
     await asyncio.sleep(0.02)
     await bus.idle()
 
-    assert registry.online_count == 4, "perceive/assess/plan/feedback 四个真内环都应在册"
-    for agent_id in ("perceive.real01", "assess.real01", "plan.real01", "feedback.real01"):
+    assert registry.online_count == 5, "五个真内环都应在册（execute 只产文案，不带发送权）"
+    for agent_id in ("perceive.real01", "assess.real01", "plan.real01", "feedback.real01", "execute.real01"):
         assert registry.get(agent_id) is not None, agent_id
-    assert registry.get("execute.real01") is None, "execute 有意缺席（发送权未决），不得被装配"
 
     reply = await gateway.dispatch(
         AgentType.ASSESS,
@@ -62,6 +61,6 @@ async def test_four_real_agents_register_and_assess_serves(bus: InMemoryBus, gat
 
 async def test_build_without_start_registers_nobody(bus: InMemoryBus, registry: AgentRegistry) -> None:
     agents = build_real_agents(bus, llm=FakeLLM())
-    assert len(agents) == 4
-    assert {a.agent_type.value for a in agents} == {"perceive", "assess", "plan", "feedback"}
+    assert len(agents) == 5
+    assert {a.agent_type.value for a in agents} == {"perceive", "assess", "plan", "execute", "feedback"}
     assert registry.online_count == 0, "只构造不启动，不该有人在册"

@@ -27,8 +27,8 @@ async def test_real模式压下mock且四副真内环上总线(settings: Any) ->
     container = await boot(settings.model_copy(update={"agent_runtime": "real"}), with_mock_agents=True)
     try:
         assert container.mock_agents == [], "real 与 mock 同挂 agent_in 会抢答同一批请求"
-        assert len(container.real_agents) == 4
-        assert typed(container.real_agents) == {"perceive", "assess", "plan", "feedback"}
+        assert len(container.real_agents) == 5
+        assert typed(container.real_agents) == {"perceive", "assess", "plan", "execute", "feedback"}
         assert "real" in container.agent_runtime_state and "mock" in container.agent_runtime_state
     finally:
         await container.shutdown()
@@ -38,7 +38,7 @@ async def test_real模式不写压制话术当调用方本就没要mock(settings
     container = await boot(settings.model_copy(update={"agent_runtime": "real"}))
     try:
         assert container.agent_runtime_state == "real"
-        assert container.mock_agents == [] and len(container.real_agents) == 4
+        assert container.mock_agents == [] and len(container.real_agents) == 5
     finally:
         await container.shutdown()
 
@@ -65,7 +65,7 @@ async def test_off模式两副都不起(settings: Any) -> None:
 
 async def test_停止后不留悬挂的智能体(settings: Any) -> None:
     container = await boot(settings.model_copy(update={"agent_runtime": "real"}))
-    assert len(container.real_agents) == 4
+    assert len(container.real_agents) == 5
     await container.shutdown()
     assert container.real_agents == [], "实例清单没清就等于心跳还在总线上飘"
     await container.shutdown()  # 重复 stop 必须幂等：shutdown 路径上会被叫两次

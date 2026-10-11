@@ -4,8 +4,8 @@
 快腿越限用平台规则引擎（阈值单一真源）、快腿漂移用规则表反查灾种的 EWMA、语义腿委派平台
 三路融合解析器、研判佐证走 REST。缺哪个依赖就【如实缺位】（内环自己降级），不塞会谎报的替身。
 
-execute 仍不在这里：现 chain._execute 直信 execute agent 的 channel_results 作触达证据，而自建
-agent 无 sanctioned 发送通道——硬装配=伪造触达（违铁律 7），发送权归属未决（见进度看板 task #3）。
+execute 只产文案：装配进来的 execute 内环不持发送权，触达证据由平台交付腿的真回执唯一提供
+（§3.4/铁律 7）。构造的是五个内环，不是四个。
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def build_agent_runtime(
     service_token: str = "",
     id_suffix: str = "real01",
 ) -> list[Any]:
-    """构造四智能体运行时（不启动；启动交给 `factory.start_real_agents`）。"""
+    """构造五智能体运行时（不启动；启动交给 `factory.start_real_agents`）。"""
     ewma = EwmaDriftDetector(rules=rule_engine.rules)
     perceive_detector = _CompositeDetector(RuleEngineDetector(rule_engine), ewma)
     return build_real_agents(

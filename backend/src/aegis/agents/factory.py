@@ -3,9 +3,9 @@
 对标既有 `start_mock_agents`（mock 是平台侧联调替身）；这里拉起【真】智能体内环：同一个 LLM 网关
 实例（可选）、共享记忆门面、注入的 detector、可选契约自证。缺哪个依赖就如实降级，不塞会谎报的替身。
 
-execute 暂不装配：现 chain._execute 直信 execute agent 的 channel_results 作触达证据、而自建 agent
-无 sanctioned 发送通道——硬装配=伪造触达（违铁律7），发送权归属未决（见进度看板 task #3）。宁可少一个，
-不造一个会说谎的。
+execute 已装配，但它【只产文案】：链路的触达证据只认平台 DeliveryDispatcher 的真回执，
+智能体自报的 channel_results 一律不采信（§3.4/铁律7，见 `pipeline.chain._execute`）。
+装配它不再等于把发送权交给智能体——这是当初扣着不装的那个理由，如今由证据规则而不是缺席来保证。
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from aegis.agents.assess import AssessAgent, AssessContextProvider
+from aegis.agents.execute import ExecuteAgent
 from aegis.agents.feedback import FeedbackAgent
 from aegis.agents.perceive import AnomalyDetector, PerceiveAgent, SemanticParser
 from aegis.agents.plan import PlanAgent
@@ -31,7 +32,7 @@ def build_real_agents(
     contracts: Any | None = None,
     id_suffix: str = "real01",
 ) -> list[Any]:
-    """按共享依赖构造四个真智能体内环（不启动）。execute 见模块 docstring 的装配缺口说明。"""
+    """按共享依赖构造五个真智能体内环（不启动）。execute 只产文案，不持发送权。"""
     return [
         PerceiveAgent(
             transport=transport,
@@ -40,6 +41,13 @@ def build_real_agents(
             capabilities=["anomaly_detect", "trigger_recognize"],
             detector=detector,
             semantic=semantic,
+            llm=llm,
+        ),
+        ExecuteAgent(
+            transport=transport,
+            agent_type=AgentType.EXECUTE,
+            agent_id=f"execute.{id_suffix}",
+            capabilities=["warn_publish"],
             llm=llm,
         ),
         AssessAgent(

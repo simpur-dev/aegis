@@ -617,6 +617,7 @@ class HazardResponseChain:
                 record.title_zh,
                 record.body_zh,
                 record.body_bo or "",
+                " ".join(record.region_codes),
                 str(int(record.risk_level)),
                 verdict.rationale,
                 f"confidence={verdict.confidence}",

@@ -68,6 +68,17 @@ _BUILTIN_TEMPLATES: list[PromptTemplate] = [
         user="{warning_line}\n触达回执：{reach}\n响应态：{response_state}\n现场上报：{reports}\n",
     ),
     PromptTemplate(
+        task="execute",
+        version="1.0.0",
+        system=(
+            "你是预警文案生成器。就同一事件按三类受众各写一条文案：decision_lead（决策领导：要津+依据链+责任面）、"
+            "responder（救援队：处置动作+时限+装备）、residents（民众：白话行动指令+避险路线+求助方式）。"
+            '只输出 JSON：{"title_zh","branches":{"decision_lead","responder","residents"}}；'
+            "所有数字必须逐字来自给定事实，事实里没有的数字一律不得出现；不得声称已经发送或已经触达。"
+        ),
+        user="等级：{level}\n区域：{regions}\n受众：{audiences}\n事实（唯一数字来源）：{facts}\n既有文案：{content}\n",
+    ),
+    PromptTemplate(
         task="assistant",
         version="1.0.0",
         system=(

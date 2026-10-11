@@ -278,8 +278,10 @@ class TestModelInfo:
 
     def test_model_info_for_unmigrated_task_has_no_prompt_version(self) -> None:
         g, _ = gw("x")
-        # execute/perceive 尚未迁入版本化真源 → 如实 None（不臆造版本号）。
-        assert g.model_info_for_task("execute")["prompt_version"] is None
+        # perceive 的文本线索腿仍走委派、自身没有版本化提示词 → 如实 None（不臆造版本号）。
+        assert g.model_info_for_task("perceive")["prompt_version"] is None
+        # execute 已迁入版本化真源（三分支文案）→ 该有版本号了。
+        assert g.model_info_for_task("execute")["prompt_version"] == "1.0.0"
 
     async def test_prompt_key_composes_messages_and_records_version(self) -> None:
         g, calls = gw('{"level": 3, "region": "540121", "confidence": 0.7}')
@@ -313,7 +315,8 @@ class TestPromptRegistry:
         assert reg.version_for_task("assess") == "1.0.0"
         assert reg.version_for_task("plan") == "1.0.0"
         assert reg.version_for_task("feedback") == "1.0.0"
-        assert reg.version_for_task("execute") is None  # 未迁入不登记
+        assert reg.version_for_task("execute") == "1.0.0"  # 三分支文案已迁入版本化真源
+        assert reg.version_for_task("perceive") is None  # 未迁入不登记
 
     def test_version_for_task_none_when_unregistered(self) -> None:
         assert PromptRegistry().version_for_task("assess") is None
