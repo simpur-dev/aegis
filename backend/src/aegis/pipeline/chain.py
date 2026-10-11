@@ -25,7 +25,6 @@ from aegis.config import Settings, get_settings
 from aegis.domain.enums import Action, AgentType, HazardType, RiskLevel
 from aegis.domain.messages import (
     AgentMessage,
-    DeliveryAttempt,
     StandardizedTaskUnit,
     TelemetryReading,
     TriggerHit,
@@ -34,8 +33,6 @@ from aegis.domain.messages import (
     new_event_id,
     new_trace_id,
     now_iso,
-    parse_iso,
-    utc_now,
 )
 from aegis.errors import AegisError
 from aegis.knowledge.provider import CaseMatch, KnowledgeProvider
@@ -44,6 +41,7 @@ from aegis.observability.tracer import Tracer
 from aegis.services.delivery import AllChannelsFailedError, DeliveryDispatcher
 from aegis.services.risk_engine import RiskEngine, RiskVerdict
 from aegis.services.task_parser import TaskParser
+from aegis.services.text_guard import invented_numbers
 from aegis.services.trigger_rules import RuleEngine
 from aegis.services.warning_service import WarningService
 
@@ -566,6 +564,14 @@ class HazardResponseChain:
         *,
         started_at: float | None = None,
     ) -> tuple[WarningRecord | None, bool]:
+        """出文案与发预警是两件事：智能体只产文案，发送与回执永远属于平台交付腿。
+
+        升级前这里是这么写的：注册了 execute 智能体，就把它 ack 里的 `channel_results`
+        直接当触达证据（`_parse_ack`），没给就替每条通道造一条 `status="delivered"` 的回执。
+        那等于"谁来答这一跳，谁就能自己宣布送达"——≤20min 触达指标与 `warning_reach_ms`
+        会跟着一起变成编的。现在：智能体的自报通道结果一律不采信（只留一行可见事实），
+        触达记录只能来自 `DeliveryDispatcher.dispatch()` 的真回执。
+        """
         draft = await self._warning_service.generate(verdict, event_id=result.event_id, trace_id=trace, started_at=started_at)
         record = draft.record
         used_agent = False
@@ -581,31 +587,65 @@ class HazardResponseChain:
                         "audiences": record.audiences,
                         "content": {"zh": record.body_zh, "bo": record.body_bo},
                         "channels": record.channels,
+                        # 文案里的数字必须有出处可查：把预警事实的引用交给智能体，
+                        # 回收时再拿同一批事实做防幻觉闸（§3.4 护栏）。
+                        "content_refs": self._copy_facts(record, verdict),
                     },
                     trace_id=trace,
                     capability="warn_publish",
                     priority=1,
                 )
-                record.released_at = now_iso()
-                record.deliveries = self._parse_ack(response.payload, record)
                 used_agent = True
-                self._record_agent_reach(record, trace, response.source)
+                record = self._adopt_agent_copy(record, response.payload, result, verdict=verdict)
             except AegisError as exc:
-                result.degradations.append(f"执行智能体失败，转平台直发: {exc.message}")
-                dispatched = await self._direct_dispatch(record, result)
-                if dispatched is None:
-                    return None, used_agent
-                record = dispatched
-        else:
-            dispatched = await self._direct_dispatch(record, result)
-            if dispatched is None:
-                return None, False
-            record = dispatched
-
-        if record is None:
+                result.degradations.append(f"执行智能体失败，文案回落平台模板: {exc.message}")
+        dispatched = await self._direct_dispatch(record, result)
+        if dispatched is None:
             return None, used_agent
-        await self._broadcast(record, trace)
-        return record, used_agent
+        await self._broadcast(dispatched, trace)
+        return dispatched, used_agent
+
+    @staticmethod
+    def _copy_facts(record: WarningRecord, verdict: RiskVerdict) -> str:
+        """给文案防幻觉闸用的事实池：平台已产出的预警正文 + 定级依据与证据引用。
+
+        只做拼接、不改数值——数字口径的唯一真源仍是 record 与 verdict，智能体不能往里加东西。
+        """
+        refs = [f"{hit.rule_id}={hit.score}" for hit in verdict.hits]
+        return " ".join(
+            [
+                record.title_zh,
+                record.body_zh,
+                record.body_bo or "",
+                str(int(record.risk_level)),
+                verdict.rationale,
+                f"confidence={verdict.confidence}",
+                *refs,
+            ]
+        )
+
+    @staticmethod
+    def _adopt_agent_copy(record: WarningRecord, payload: dict[str, Any], result: ChainResult, *, verdict: RiskVerdict) -> WarningRecord:
+        """采纳智能体的文案，但采纳的是【文字】不是送达：数字必须都在事实池里，否则整段弃用。"""
+        claims = payload.get("channel_results")
+        if isinstance(claims, list) and claims:
+            result.degradations.append(f"执行智能体自报 {len(claims)} 条通道结果未采信（无 dispatcher 凭证）：触达证据只认平台交付腿回执")
+        facts = HazardResponseChain._copy_facts(record, verdict)
+        update: dict[str, Any] = {}
+        for slot in ("title_zh", "body_zh", "body_bo"):
+            value = payload.get(slot)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            invented = sorted(invented_numbers(value, facts))
+            if invented:
+                result.degradations.append(f"执行智能体文案含预警事实之外的数字 {invented}，该字段弃用，保留平台模板")
+                continue
+            update[slot] = value
+        if not update:
+            return record
+        adopted = record.model_copy(update=update)
+        result.degradations.append("预警文案取自执行智能体（送达记录仍由平台交付腿产生）")
+        return adopted
 
     async def _direct_dispatch(self, record: WarningRecord, result: ChainResult) -> WarningRecord | None:
         if self._dispatcher is None:
@@ -616,38 +656,6 @@ class HazardResponseChain:
         except AllChannelsFailedError as exc:
             result.errors.append(f"全部通道失败: {exc.message}")
             return None
-
-    @staticmethod
-    def _parse_ack(payload: dict[str, Any], record: WarningRecord) -> list[DeliveryAttempt]:
-        attempts: list[DeliveryAttempt] = []
-        for item in payload.get("channel_results", []):
-            if not isinstance(item, dict):
-                continue
-            try:
-                status = str(item.get("status", "delivered"))
-                attempts.append(
-                    DeliveryAttempt(
-                        channel=str(item["channel"]),
-                        audience_count=int(item.get("audience_count", 0)),
-                        status=status,
-                        receipt_at=item.get("receipt_at") or (now_iso() if status == "delivered" else None),
-                        provider_msg_id=item.get("provider_msg_id"),
-                    )
-                )
-            except (KeyError, ValueError, TypeError):
-                continue
-        return attempts or [
-            DeliveryAttempt(channel=c, audience_count=len(record.audiences), status="delivered", receipt_at=now_iso())
-            for c in record.channels
-        ]
-
-    def _record_agent_reach(self, record: WarningRecord, trace: str, agent_id: str) -> None:
-        """智能体代发时的触达时延：以回执时间为证据，无回执时用 ack 到达时刻兜底。"""
-        reach = record.reach_seconds()
-        if reach is None:
-            anchor = record.released_at or record.generated_at
-            reach = max((utc_now() - parse_iso(anchor)).total_seconds(), 0.0)
-        self._tracer.record("warning_reach_ms", max(reach, 0.0) * 1000, trace_id=trace, agent_id=agent_id)
 
     async def _broadcast(self, record: WarningRecord, trace: str) -> None:
         event = make_event(
