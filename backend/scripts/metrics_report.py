@@ -45,8 +45,13 @@ INDICATORS: dict[str, str] = {
     # 语义交互与数据共享同属考核指标 3 的 ≤3s 一档（`services/assistant.py` 唯一的记账点）
     "assistant_reply_ms": "语义交互一轮响应 ≤3s",
     "collab_txn": "异常工况识别与重调度响应 ≤10s（事务口径）",
-    "stage_assess_ms": "常规任务调度响应时延 ≤2s",
-    "stage_plan_ms": "常规任务调度响应时延 ≤2s",
+    # ≤2s 这条考核项的定义量测点是"节点就绪→开始执行"（见 `workflow/engine.py:5` 与
+    # `instrumentation.register_sla_budgets`），所以表里代表它的那一行必须是 workflow_schedule_ms。
+    # 链路阶段时延沿用同一档预算，但只作诊断行：把"研判耗时"挂成"调度响应"来判达标，
+    # 审的人按定义一问就穿（真 LLM 跑一次还出现过两行同名、判定相反的表）。
+    "workflow_schedule_ms": "常规任务调度响应时延 ≤2s",
+    "stage_assess_ms": "研判阶段时延（诊断行，预算沿用 ≤2s）",
+    "stage_plan_ms": "决策阶段时延（诊断行，预算沿用 ≤2s）",
     "warning_generation_ms": "预警信息生成时间 ≤3min",
     "warning_reach_ms": "预警信息靶向触达 ≤20min",
     "ingest_end_to_end_seconds": "多源数据接入时延 ≤5分钟",
