@@ -278,3 +278,81 @@ async def test_取消归档遇到不存在的定义给404(container: PlatformCon
         assert response.status_code == 404, response.text
         # 404 而不是 400：前端按"这条不在了、去刷新列表"处理，不该把它说成参数错
         assert "不存在" in response.json()["detail"]
+
+
+DECLARED_ONLY = "发生泥石流，请求红色预警"
+
+
+async def _open_review_ticket(client: httpx.AsyncClient, region_code: str) -> dict[str, Any]:
+    """走真接入口开一张核签工单：标注池的标记只有 `submit_report` 这条路会打，
+    测试自己拼 payload 就永远测不到"工单其实没带标记"这一种失败。"""
+    opened = await client.post("/api/v1/reports", json={"note": DECLARED_ONLY, "region_code": region_code, "reporter": "村民"})
+    assert opened.status_code == 200, opened.text
+    review = opened.json()["review"]
+    assert review is not None and review["pending_node"] == "review", f"低置信度上报要真开出工单：{opened.json()}"
+    return review
+
+
+@pytest.mark.asyncio
+async def test_签完工单要当面对签字人说清这一票落没落进真值表(container: PlatformContainer) -> None:
+    """数据飞轮（D9）的接口出口：回给签字人的不是"签好了"三个字，而是这一票的去向。
+
+    默认装配是 `store_backend=memory`，没有标注面可写，所以这里成立的事实是"如实说未沉淀 +
+    附上样本"。伪造一个"已沉淀"、或干脆不带这个键，症状都是现场以为飞轮在转而真值表始终为零。
+    样本能不能真写进 `warning_truth_labels`，由 unit 用例对着持久层那个真裁判函数钉。
+    """
+    async with _client(container) as client:
+        review = await _open_review_ticket(client, "540200")
+        instance = (await client.get(f"/api/v1/workflow/instances/{review['instance_id']}")).json()["payload"]
+
+        signed = await client.post(
+            f"/api/v1/workflow/instances/{review['instance_id']}/nodes/review/decision",
+            json={"choice": "approve", "by": "值班员普赤"},
+        )
+        assert signed.status_code == 200, signed.text
+        captured = signed.json()["标注沉淀"]
+        assert captured["status"] == "未沉淀" and "memory" in captured["原因"], captured
+        sample = captured["样本"]
+        assert sample["case_id"] == instance["event_id"], "幂等键必须是这个事件，而不是每次签单新生成一个"
+        assert sample["truth_level"] == instance["risk_level"], "批准就是把工单上那个等级确认为真值，不另算一套"
+        assert sample["labelled_by"] == "值班员普赤"
+        assert container.labels is not None and container.labels.stats["未沉淀"] == 1
+
+
+@pytest.mark.asyncio
+async def test_改判带等级才成真值缺等级只记账不替人编(container: PlatformContainer) -> None:
+    async with _client(container) as client:
+        blank = await _open_review_ticket(client, "540300")
+        refused = await client.post(
+            f"/api/v1/workflow/instances/{blank['instance_id']}/nodes/review/decision",
+            json={"choice": "adjust", "by": "值班员普赤"},
+        )
+        assert refused.status_code == 200, "改判缺等级不该让签字本身失败——那一票已经签了，只是成不了真值"
+        captured = refused.json()["标注沉淀"]
+        assert captured["status"] == "未沉淀" and "level" in captured["原因"], captured
+        assert "样本" not in captured
+        assert container.labels is not None and container.labels.stats == {"已沉淀": 0, "未沉淀": 0, "映射失败": 1}
+
+        revised = await _open_review_ticket(client, "540400")
+        signed = await client.post(
+            f"/api/v1/workflow/instances/{revised['instance_id']}/nodes/review/decision",
+            json={"choice": "adjust", "by": "值班员普赤", "level": 5},
+        )
+        assert signed.status_code == 200, signed.text
+        assert signed.json()["标注沉淀"]["样本"]["truth_level"] == 5, "改判到红色却落原等级，等于把这一笔改判抹掉了"
+
+
+@pytest.mark.asyncio
+async def test_没有结论裁决标记的会签不进标注池(container: PlatformContainer) -> None:
+    """演练放行、画布上手工起的那类会签，判的不是"某条结论成不成立"。
+    把它们也当真值喂进真值表，准确率就成了自证——所以标记缺失时必须完全不碰标注面。"""
+    async with _client(container) as client:
+        started = await client.post("/api/v1/workflow/instances", json={"workflow_name": "人工上报核签流程", "payload": {}})
+        instance_id = started.json()["instance_id"]
+        signed = await client.post(
+            f"/api/v1/workflow/instances/{instance_id}/nodes/review/decision",
+            json={"choice": "approve", "by": "值班员普赤"},
+        )
+        assert signed.status_code == 200, signed.text
+        assert "标注沉淀" not in signed.json(), signed.json()
+        assert container.labels is not None and sum(container.labels.stats.values()) == 0, "没标记就不该有任何一条账"

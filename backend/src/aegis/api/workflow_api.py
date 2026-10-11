@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aegis.container import PlatformContainer
 from aegis.domain.messages import new_trace_id
+from aegis.services.label_flywheel import CAPTURE_MARKER
 from aegis.workflow.engine import WorkflowEngine, WorkflowValidationError
 from aegis.workflow.model import RetryPolicy
 
@@ -94,6 +95,8 @@ class DecisionInput(BaseModel):
     choice: str = Field(min_length=1, max_length=32)
     by: str = Field(default="unknown", max_length=64)
     comment: str = Field(default="", max_length=512)
+    #: 改判(adjust)时给出改写后的等级；缺它就不能生成标注样本——不替人编真值等级
+    level: int | None = Field(default=None, ge=1, le=5)
 
 
 class ConfigPatch(BaseModel):
@@ -249,14 +252,17 @@ def build_router() -> APIRouter:
         payload: DecisionInput,
         container: PlatformContainer = Depends(get_container),
     ) -> dict[str, Any]:
+        decision = {"choice": payload.choice, "by": payload.by, "comment": payload.comment, "level": payload.level}
         try:
-            return await engine_of(container).resume(
-                instance_id,
-                node_id=node_id,
-                decision={"choice": payload.choice, "by": payload.by, "comment": payload.comment},
-            )
+            detail = await engine_of(container).resume(instance_id, node_id=node_id, decision=decision)
         except WorkflowValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # 数据飞轮（D9）：这一单裁决的是"某条结论成不成立"，签完就地沉淀成标注样本；
+        # 落没落地直接回给签字的人——静默丢弃就是"飞轮在转"的假象。
+        instance_payload = detail.get("payload") or {}
+        if instance_payload.get("capture_label") == CAPTURE_MARKER and container.labels is not None:
+            detail["标注沉淀"] = await container.labels.record_review(instance_payload=instance_payload, decision=decision)
+        return detail
 
     @router.patch("/instances/{instance_id}/nodes/{node_id}")
     async def patch_node_config(

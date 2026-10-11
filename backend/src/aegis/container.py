@@ -26,7 +26,7 @@ from aegis.connectors.mqtt import MqttSource
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.connectors.weather_api import WeatherApiSource
 from aegis.domain.enums import Channel
-from aegis.domain.messages import TelemetryReading, TriggerHit
+from aegis.domain.messages import TelemetryReading, TriggerHit, now_iso
 from aegis.integrations import (
     AnalyticsRecorder,
     IntegrationState,
@@ -57,6 +57,7 @@ from aegis.services.delivery import (
     normalize_gateway_target,
     parse_delivery_channels,
 )
+from aegis.services.label_flywheel import CAPTURE_MARKER, LabelFlywheel
 from aegis.services.llm_gateway import LlmGateway, build_gateway_if_configured
 from aegis.services.risk_engine import RiskEngine
 from aegis.services.semantic_parser import DisasterTextParser, EvidenceNote, ParsedDisaster
@@ -306,6 +307,8 @@ class PlatformContainer:
     simulator: HazardScenarioSimulator | None = None
     parser: DisasterTextParser | None = None
     assistant: AssistantService | None = None
+    #: 数据飞轮（D9）：人工核签 → `warning_truth_labels` 的投递面；存储没有标注面时如实"未沉淀"
+    labels: LabelFlywheel | None = None
     delivery_client: Any | None = None
     _owns_delivery_client: bool = False
     #: 人工上报这条腿的账：受理数、阈值命中所得数、转人工核签数。
@@ -722,6 +725,10 @@ class PlatformContainer:
             definition.workflow_id,
             trace_id=result.trace_id,
             payload={
+                # 这两项是给数据飞轮用的：`capture_label` 声明"这一单裁决的是某条结论成不成立"，
+                # `observed_at` 给出真值的观测时刻（工单就在处理该上报的时刻开出，即上报处理时刻）
+                "capture_label": CAPTURE_MARKER,
+                "observed_at": now_iso(),
                 "region_code": region,
                 "reporter": reporter,
                 "note": parsed.text[:500],
@@ -896,6 +903,7 @@ def create_container(
         weather=weather_source,
         weather_state=weather_state,
         outbound=outbound,
+        labels=LabelFlywheel(store),
         simulator=simulator,
         parser=parser,
         llm_gateway=gateway_llm,

@@ -1330,10 +1330,20 @@ dashboard：getAnimations 里还有 9 条 running
    `truth_warning/predicted_warning` 的口径导入，且总案例数须 ≥ `MIN_FIELD_CASES`（30），
    否则报表判"样本不足"——这一条同样是机器拦住的，不靠人记得。
 
-9. **准确率回放：库侧通路与 HTTP 出口都已就位，缺的只是真实标注**：真值表（`004_accuracy_labels.sql`）、
+9. **准确率回放：库侧通路、HTTP 出口、以及"人签的那一票自动进真值表"都在了，缺的仍是真实标注**：真值表（`004_accuracy_labels.sql`）、
    与落库 `warnings` 的配对 SQL、`GET /api/v1/accuracy/replay` 都在（取证见对应行），判定仍只在
-   `persistence/replay.py` 一处。剩下的是数据侧：仓库里没有真实现场标注（也不该造一个），
-   所以"≥80%"这项在真实数据上照旧是 `not_measured`。
+   `persistence/replay.py` 一处。2026-10-11 补上飞轮的采集侧（D9）：低置信度上报开出的核签工单带上
+   `capture_label`+`observed_at`，签字出口把这一票翻译成一行真值投给存储的 `put_warning_labels`，
+   并当场回一个 `标注沉淀`——内存存储没有标注面，回的就是"未沉淀 + 原因 + 样本"而不是谎报成功；
+   改判必须带 `level`，缺等级只记一笔"映射失败"、不产标注（不替现场编真值等级）。
+   证据档位说清楚：投递行的列名与类型是拿持久层那个真裁判函数 `normalize_label` 直接验的（用例见
+   `tests/unit/test_label_flywheel.py`），接口侧三条用例走真 HTTP 出口；2026-10-11 在本机
+   `aegis-postgres` 上实跑过一遍投递面（脚本用完即删，只删它自己插的那条合成 case_id，收尾行数与基线相等）：
+   一行真值真写进 `warning_truth_labels`（`observed_at` 落成 timestamptz、`truth_level=3` 原样回来），
+   同工单再改判 5 级后**仍是同一行**且等级变成 5（`ON CONFLICT (case_id)` 生效，没有攒出第二条矛盾真值），
+   缺 `level` 的那一票当场回"未沉淀"、库里没多任何东西。未接的仍是两条：助手确认与演练——
+   它们的裁决目前不进标注池。
+   仓库里没有任何真实现场标注（也不该造一个），所以"≥80%"这项在真实数据上照旧是 `not_measured`。
 10. **图谱写路径的"真图"证据仍缺第二档**：`learn()` / `prepare_schema()` 现在都有生产调用方了
     （`POST /api/v1/knowledge/cases` + 启动期索引初始化，见上一节新增行），但"写进去之后真图上
     确实能召回"这件事还是只有替身级证据——`AEGIS_LLM_API_KEY` 为空，`-m slow` 的第二档照旧 skip。
