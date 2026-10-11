@@ -459,12 +459,67 @@ describe('stores/workflow 运行中操作', () => {
     ])
   })
 
+  /**
+   * 数据飞轮（D9）：后端只在签字那一次的响应里说这一票有没有变成真值行，实例快照不带它。
+   * 前端不接这句话，"签了"和"进了真值表"在页面上就是同一件事——而它们不是同一件事。
+   */
+  it('改判把选定的等级发出去；没选等级就一个 level 键都不发', async () => {
+    const withLevel = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
+    expect(await withLevel.submitDecision('review_1', 'adjust', '改判红色', '巡护员扎西', 1)).toBe(true)
+    expect(firstCall(client, 'submitDecision')[2]).toEqual({ choice: 'adjust', by: '巡护员扎西', comment: '改判红色', level: 1 })
+
+    const withoutLevel = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
+    await withoutLevel.submitDecision('review_1', 'adjust', '只更正灾种', '巡护员扎西')
+    expect(firstCall(client, 'submitDecision')[2], '前端不许替值班员填等级：填下去就是往真值表里写一句没人说过的话').not.toHaveProperty('level')
+  })
+
+  it('后端说已沉淀，页面就说清了进了哪一行', async () => {
+    const store = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
+    vi.mocked(client.submitDecision).mockResolvedValueOnce({
+      ...detail('running', [nodeRun('review_1', 'succeeded')]),
+      标注沉淀: { status: '已沉淀', case_id: 'evt_9c1', 真值: '报=True 等级=5' },
+    })
+    await store.submitDecision('review_1', 'adjust', '改判红色', '扎西', 5)
+    expect(store.captureFor('review_1')).toEqual({ text: '这一票已进真值表：报=True 等级=5（事件 evt_9c1）', landed: true })
+  })
+
+  it('后端说没落进真值表时，不许长得像一句成功', async () => {
+    const store = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
+    vi.mocked(client.submitDecision).mockResolvedValueOnce({
+      ...detail('running', [nodeRun('review_1', 'succeeded')]),
+      标注沉淀: { status: '未沉淀', 原因: '当前存储视图没有标注面（store_backend=memory）；换成 postgres 才会落库' },
+    })
+    await store.submitDecision('review_1', 'approve', '', '扎西')
+    const note = store.captureFor('review_1')
+    expect(note?.landed).toBe(false)
+    expect(note?.text).toContain('没进真值表')
+    expect(note?.text).toContain('store_backend=memory')
+  })
+
+  it('响应里没有这一格：这一单本来就不进标注池，别说成丢了', async () => {
+    const store = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
+    await store.submitDecision('review_1', 'approve', '', '扎西')
+    expect(store.captureFor('review_1')?.text).toContain('没有"结论裁决"标记')
+  })
+
+  it('换到别的实例，不许把上一条单的账挂过来', async () => {
+    const store = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
+    vi.mocked(client.submitDecision).mockResolvedValueOnce({
+      ...detail('running', [nodeRun('review_1', 'succeeded')]),
+      标注沉淀: { status: '已沉淀', case_id: 'evt_9c1', 真值: '报=True 等级=3' },
+    })
+    await store.submitDecision('review_1', 'approve', '', '扎西')
+    expect(store.captureFor('review_1')?.landed).toBe(true)
+    vi.mocked(client.instance).mockResolvedValue({ ...detail('waiting', [nodeRun('review_1', 'awaiting_human')]), instance_id: 'wfi_another' })
+    await store.focusInstance('wfi_another')
+    expect(store.captureFor('review_1'), '账跟着单走：换了实例还不清，下一张单就顶着别人家的"已进真值表"').toBeNull()
+  })
+
   it('非 awaiting_human 节点不可核签（engine.py:515）', async () => {
     const store = await storeWithInstance([nodeRun('review_1', 'pending')])
     expect(store.canDecideNode('review_1')).toBe(false)
     expect(store.awaitingNodes).toEqual([])
   })
-
   it('插入节点走 insert 接口并重拉实例快照（engine.py:569 不回快照）', async () => {
     const store = await storeWithInstance([nodeRun('fetch_1', 'succeeded')])
     await store.insertRuntimeNode('fetch_1', createNodeDef('notify', 'notify_9'))

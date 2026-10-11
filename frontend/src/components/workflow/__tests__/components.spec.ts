@@ -494,7 +494,100 @@ describe('检查器与运行中操作', () => {
     expect(adjust).toBeDefined()
     expect(adjust?.attributes('disabled')).toBeUndefined()
     await adjust?.trigger('click')
-    expect(vi.mocked(submit).mock.calls).toEqual([['review_1', 'adjust', '', '']])
+    // 第五个参数是改判等级：没选就是 null（前端不发 level 键），不是 0，也不是替人填一个等级
+    expect(vi.mocked(submit).mock.calls).toEqual([['review_1', 'adjust', '', '', null]])
+    submit.mockRestore()
+  })
+
+  /**
+   * 改判要能当场录等级。
+   *
+   * 后端缺 `level` 就产不出标注样本（它不替人编真值等级），而这件事此前只在接口响应里说、
+   * 页面上一个字都不提：值班员签完一张"核签更正"，真值表里一行没多，谁也不知道。
+   * 现在两头发都钉住：选了等级就带下去，没选就明确是 null，并且这个旋钮只在有 adjust 候选时出现。
+   */
+  it('核签更正当场能选改判等级，选了才带下去', async () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust', 'reject'] } }
+    store.addNode(review)
+    store.select('review_1')
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'waiting',
+      error: null,
+      nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
+    }
+    const submit = vi.spyOn(store, 'submitDecision').mockResolvedValue(true)
+    const wrapper = mount(RuntimeActions, { props: { node: review } })
+    const level = wrapper.find('[data-testid="decision-level"]')
+    expect(level.exists(), '有 adjust 候选却没有等级旋钮，这一票注定进不了真值表').toBe(true)
+    await level.setValue('1')
+    await wrapper.findAll('button').find((button) => button.text() === '核签更正（adjust）')?.trigger('click')
+    expect(vi.mocked(submit).mock.calls.at(-1)).toEqual(['review_1', 'adjust', '', '', 1])
+
+    await wrapper.find('[data-testid="decision-level"]').setValue('5')
+    await wrapper.findAll('button').find((button) => button.text() === '核签通过（approve）')?.trigger('click')
+    expect(vi.mocked(submit).mock.calls.at(-1), 'approve 用系统给的等级，不该把改判旋钮上的值顺手发出去').toEqual(['review_1', 'approve', '', '', null])
+    submit.mockRestore()
+  })
+
+  it('没有改判候选的节点不给等级旋钮', () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const review = { ...createNodeDef('human_review', 'review_2'), config: { prompt: '失败接管', options: ['approve', 'reject'] } }
+    store.addNode(review)
+    store.select('review_2')
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'waiting',
+      error: null,
+      nodes: [{ node_id: 'review_2', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
+    }
+    expect(mount(RuntimeActions, { props: { node: review } }).find('[data-testid="decision-level"]').exists()).toBe(false)
+  })
+
+  /**
+   * 这一票的去向必须出现在签单的那个人脸上。
+   *
+   * 后端只在那一次响应里回 `标注沉淀`，实例快照不带它——前端不显示，"签了"和"进了真值表"
+   * 在页面上就成了同一件事，而内存部署下它从来没进过。
+   */
+  it('签完把"这一票进没进真值表"显示出来，没进的那句不许长得像成功', async () => {
+    const store = useWorkflowStore()
+    store.resetDefinition('链路')
+    const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust'] } }
+    store.addNode(review)
+    store.select('review_1')
+    store.instance = {
+      instance_id: 'wfi_0123456789ab',
+      workflow_id: 'wf_0123456ab',
+      workflow_version: 1,
+      trace_id: 't-1',
+      status: 'waiting',
+      error: null,
+      nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
+    }
+    const shown = vi.spyOn(store, 'captureFor').mockReturnValue({ text: '这一票没进真值表：改判(adjust)必须同时给出 level', landed: false })
+    const wrapper = mount(RuntimeActions, { props: { node: review } })
+    const note = wrapper.find('[data-testid="label-capture"]')
+    expect(note.text()).toContain('没进真值表')
+    expect(note.classes()).toContain('is-missing')
+
+    shown.mockReturnValue({ text: '这一票已进真值表：报=True 等级=5（事件 evt_9c1）', landed: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="label-capture"]').classes()).toContain('is-landed')
+
+    shown.mockReturnValue(null)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="label-capture"]').exists(), '这张单没这一格就别凭空造一行账').toBe(false)
+    shown.mockRestore()
   })
 
   /**

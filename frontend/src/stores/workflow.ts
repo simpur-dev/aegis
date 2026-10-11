@@ -16,9 +16,11 @@ import {
   describeDetail,
   toNodeInputs,
   workflowApi,
+  type DecisionInput,
   type DefinitionSummary,
   type InstanceDetail,
   type InstanceNodeRun,
+  type LabelCapture,
   type NodeTypeEntry,
   type WorkflowClient,
 } from '@/api/workflow'
@@ -63,6 +65,21 @@ const POLL_INTERVAL_MS = 1_500
  */
 const QUEUE_POLL_INTERVAL_MS = 15_000
 
+/**
+ * 把接口回的那一格 `标注沉淀` 翻成一句给值班员看的话（D9 数据飞轮）。
+ *
+ * 只转述、不判定：落没落地是后端算的，这里再算一遍就是第二个"预警准确率"口径。
+ */
+function describeCapture(raw: LabelCapture | undefined): { text: string; landed: boolean } {
+  if (raw === undefined) {
+    return { text: '这一单没有"结论裁决"标记，后端不收进标注池（画布上手工起的实例就是这种）', landed: false }
+  }
+  if (raw.status === '已沉淀') {
+    return { text: `这一票已进真值表：${raw.真值 ?? ''}（事件 ${raw.case_id ?? '未知'}）`, landed: true }
+  }
+  return { text: `这一票没进真值表：${raw.原因 ?? '后端没说明原因'}`, landed: false }
+}
+
 /** 客户端以参数注入：生产用默认实例，测试注入桩适配器，避免真实网络。 */
 export function createWorkflowStore(client: WorkflowClient = workflowApi) {
   return defineStore('workflow', () => {
@@ -79,6 +96,14 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
     const instance = ref<InstanceDetail | null>(null)
     const loading = ref(false)
     const error = ref<string | null>(null)
+    /**
+     * 这一票落进真值表没有（D9 数据飞轮）。
+     *
+     * 后端把这件事只回在**那一次响应**里，不进实例快照，所以前端不显示就等于没发生：
+     * 值班员签完一张"改判"，台账看着签好了，真值表里其实一行都没有。
+     * 这里连着 instanceId + nodeId 一起存——换一张单不许把上一条的账挂到它脸上。
+     */
+    const capture = ref<{ instanceId: string; nodeId: string; text: string; landed: boolean } | null>(null)
     const polling = ref(false)
     /**
      * 上一次"画布内容与服务端一致"的快照。
@@ -606,16 +631,31 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       defTimer = null
     }
 
-    async function submitDecision(nodeId: string, choice: string, comment = '', by = ''): Promise<boolean> {
+    async function submitDecision(nodeId: string, choice: string, comment = '', by = '', level: number | null = null): Promise<boolean> {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return false
       return runAction(async () => {
         // 平台没有登录态：签字人是谁只能由签的人自己写。留空时不发 by 这个键，
         // 让服务端按它的默认记成 unknown——把"值班指挥员"当成默认值等于替人签名。
-        const payload = by === '' ? { choice, comment } : { choice, by, comment }
-        applyInstanceSnapshot(instanceId, await client.submitDecision(instanceId, nodeId, payload))
+        const payload: DecisionInput = by === '' ? { choice, comment } : { choice, by, comment }
+        // 同样地，没选等级就不发 level：后端缺这一格不产标注样本，前端替它填一个就是编真值
+        if (level !== null) payload.level = level
+        const detail = await client.submitDecision(instanceId, nodeId, payload)
+        capture.value = { instanceId, nodeId, ...describeCapture(detail.标注沉淀) }
+        applyInstanceSnapshot(instanceId, detail)
         await syncInstancesQuietly()
       }, '提交人工核签失败')
+    }
+
+    /**
+     * 这张单的这一票，落进真值表没有。
+     *
+     * 只认"当前实例 + 当前节点"的那一次回执：换单、换节点都不许把上一条的账挂过来。
+     */
+    function captureFor(nodeId: string): { text: string; landed: boolean } | null {
+      const record = capture.value
+      if (record === null || record.nodeId !== nodeId || record.instanceId !== instance.value?.instance_id) return null
+      return { text: record.text, landed: record.landed }
     }
 
     async function patchRuntimeConfig(nodeId: string, config: Record<string, JsonValue>): Promise<boolean> {
@@ -726,6 +766,7 @@ export function createWorkflowStore(client: WorkflowClient = workflowApi) {
       canBypassNode,
       canDecideNode,
       decisionOptions,
+      captureFor,
       resetDefinition,
       autoLayout,
       select,

@@ -6,6 +6,7 @@
 import { message } from 'ant-design-vue'
 import { computed, ref } from 'vue'
 
+import { RISK_LABELS } from '@/api/types'
 import { useWorkflowStore } from '@/stores/workflow'
 import { MAX_CHOICE_CHARS, MAX_DECISION_COMMENT_CHARS, MAX_SIGNER_CHARS, decisionLabel, nextAvailableId, stateStyle, type NodeDef, type NodeType } from '@/utils/graph'
 
@@ -26,6 +27,11 @@ const customChoice = ref('')
 const insertType = ref<NodeType>('notify')
 /** 签字人：平台没有登录态，只能由签的人自己写；留空就不发这个键（见 store.submitDecision）。 */
 const signer = ref('')
+/**
+ * 改判后的等级。0 是"没选"——不发 `level` 这个键，于是后端照签、但不产标注样本。
+ * 这里不替值班员填一个默认等级：那一格填错就是往真值表里写了一条没人说过的话。
+ */
+const adjustLevel = ref(0)
 
 /**
  * 签完之后的留痕。
@@ -48,8 +54,15 @@ const signed = computed(() => {
   }
 })
 
+/**
+ * 这一票的去向（D9 数据飞轮）：后端只在签字那一次的响应里说，实例快照里没有，
+ * 所以页面上不说就等于没说——签单人以为自己给真值表添了一行，其实一行都没进。
+ */
+const capture = computed(() => store.captureFor(props.node.node_id))
+
 function submit(choice: string): void {
-  void store.submitDecision(props.node.node_id, choice, comment.value, signer.value)
+  const level = choice === 'adjust' && adjustLevel.value > 0 ? adjustLevel.value : null
+  void store.submitDecision(props.node.node_id, choice, comment.value, signer.value, level)
   comment.value = ''
 }
 
@@ -98,6 +111,17 @@ async function insertAfter(): Promise<void> {
       已签：{{ decisionLabel(signed.choice) }} ｜ 签字人 {{ signed.who }} ｜ 批注 {{ signed.note }}
     </p>
 
+    <!-- 这一票有没有变成真值：接口只在签字那一次响应里回，实例快照不带它，
+         所以这一行不显示，就等于页面上从来没发生过"没落库"这件事。 -->
+    <p
+      v-if="capture !== null"
+      class="wf-runtime__capture"
+      :class="capture.landed ? 'is-landed' : 'is-missing'"
+      data-testid="label-capture"
+    >
+      {{ capture.text }}
+    </p>
+
     <!-- 签字的控件排最前：值班员在这一页的任务就是签单，改参/旁路/插入是少数人才用的。
          真机量过：决策按钮排在三道控件与长说明之后，落在 1440×900 首屏之外（y≈976），
          打开第一张单后还得在右栏里滚一段才够得着「核签通过」。 -->
@@ -113,6 +137,14 @@ async function insertAfter(): Promise<void> {
     </div>
     <div class="wf-runtime__row">
       <input v-model="comment" class="wf-runtime__input" type="text" placeholder="核签意见（可选）" :maxlength="MAX_DECISION_COMMENT_CHARS" />
+    </div>
+    <!-- 改判要给等级：后端缺这一格不产标注样本（不替人编真值等级），所以这里把代价写在选项上，
+         而不是让人签完才知道白签了。 -->
+    <div v-if="options.includes('adjust')" class="wf-runtime__row">
+      <select v-model="adjustLevel" class="wf-runtime__input" data-testid="decision-level">
+        <option :value="0">改判等级：未选（单能签，但这一票进不了真值表）</option>
+        <option v-for="(label, value) in RISK_LABELS" :key="value" :value="Number(value)">{{ value }} · {{ label }}</option>
+      </select>
     </div>
     <div v-if="options.length > 0" class="wf-runtime__decisions">
       <button
@@ -203,6 +235,20 @@ async function insertAfter(): Promise<void> {
   margin: 0;
   color: #237804;
   font-size: 11px;
+}
+.wf-runtime__capture {
+  margin: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.wf-runtime__capture.is-landed {
+  color: #135200;
+  background: #f6ffed;
+}
+.wf-runtime__capture.is-missing {
+  color: #873800;
+  background: #fff7e6;
 }
 .wf-runtime__error {
   color: #cf1322;

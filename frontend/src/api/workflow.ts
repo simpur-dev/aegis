@@ -126,6 +126,10 @@ export interface DecisionInput {
    *  所以"没填"应当是不发这个键，而不是前端替人填一个角色名。 */
   by?: string
   comment: string
+  /** 改判（adjust）要给出的改判后等级（1=红色…5=无风险，与 `RISK_LABELS` 同源）。
+   *  不发这一格照样签得下去，但后端不产标注样本——它不替人编真值等级，
+   *  所以界面上必须把"没选等级"的代价说清，而不是静默发一张缺等级的改判单。 */
+  level?: number
 }
 
 export interface InsertNodeInput {
@@ -223,6 +227,23 @@ export interface InstancesResponse {
 /** POST /instances 在实例详情上多带了 trace_id，但 InstanceDetail 本就含同名字段，故同构。 */
 export type StartResult = InstanceDetail
 
+/**
+ * 数据飞轮（D9）的去向回执：后端只在**这次响应**里给，不进实例快照
+ * （`workflow_api.py:263-264`——落没落进 `warning_truth_labels` 是这一票的事实，不是流程的状态）。
+ * 所以前端要么把它显示出来，要么这件事就只存在于控制台里。
+ */
+export interface LabelCapture {
+  status: string
+  原因?: string
+  case_id?: string
+  真值?: string
+  样本?: Record<string, JsonValue | null>
+}
+
+export interface DecisionResult extends InstanceDetail {
+  标注沉淀?: LabelCapture
+}
+
 export interface NodeConfigResult {
   node_id: string
   config: Record<string, JsonValue>
@@ -282,9 +303,9 @@ export function createWorkflowClient(instance: AxiosInstance) {
     instance: (instanceId: string) =>
       request<InstanceDetail>({ url: `${BASE}/instances/${encodeURIComponent(instanceId)}` }),
 
-    /** 人工核签：choice 必须落在节点登记的 options 内。 */
+    /** 人工核签：choice 必须落在节点登记的 options 内；改判要带 `level` 才产标注样本。 */
     submitDecision: (instanceId: string, nodeId: string, payload: DecisionInput) =>
-      request<StartResult>({
+      request<DecisionResult>({
         url: `${BASE}/instances/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/decision`,
         method: 'POST',
         data: payload,
