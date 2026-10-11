@@ -1381,3 +1381,66 @@ dashboard：getAnimations 里还有 9 条 running
     现状唯一的真实防线是脱敏：凭据只进请求头、外呼与触达目标只报 `scheme://host`、案例出处逐条外显。
 
 上述各项补完后把命令、日期和输出摘要追加到上一节，并删掉对应条目。
+
+---
+
+## 真栈 agent 模式三档实测（2026-10-11，NATS JetStream + PostgreSQL + real 运行时 + 已配 LLM）
+
+第一次在**真总线 + 真库 + 五副真智能体 + 真模型**上批量出数。命令与口径全部照抄，样本量到位
+（协同事务 111 笔，三位数）。
+
+- 机器/环境：本机 Windows + Docker Desktop（引擎 29.8.1），只起 `aegis-nats` + `aegis-postgres`
+  （compose 的 `postgres` 走 build，离线时 apt-get 失败，改 `docker tag aegis-pg:local aegis-postgres`
+  + `--no-build` 复用既有镜像；observability profile 未起，2881 那条腿未参与）。
+- 配置：`--bus nats --store postgres --runtime real --delivery mock`；LLM = DeepSeek
+  `deepseek-chat`，key 与 DSN 走**一次性环境变量**（README 纪律，不写进 `.env`）。
+- 命令：`python -m scripts.metrics_report --rounds 12 --reports 4 --workflow-rounds 4 --bus nats --store postgres --runtime real`
+- 规模：35 个事件产出预警、37 条预警记录、174 个任务单元；网关入向 111 / 出向 188，
+  `rejected 0 / duplicate 0 / dropped_ttl 0 / no_agent 0`，致命错误 0；
+  出口块 `抢答风险 []`、`可作出口数字 true`（在册只有 5 副真内环，无 mock 并存）。
+
+### 三档并排（口径档由报表 `口径档` 列直接给出）
+
+| 档 | 指标 | 阈值 | n | P50 | P95 | 越限 | 判定 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 调度档 | 常规任务调度响应（`workflow_schedule_ms`） | ≤2s | 13 | 0.041ms | 0.809ms | 0 | 达标 |
+| 共享档 | 多节点数据共享同步（`sync_agent_to_gateway_ms`） | ≤3s | 111 | 7.06ms | 104.0ms | 0 | 达标 |
+| LLM 档 | 协同事务（`collab_txn`，含模型往返） | ≤60s | 111 | 1.77s | 19.15s | 0 | 达标 |
+| LLM 档 | 协同联动成功率 | ≥90% | 111 | 1.0 | — | — | 达标 |
+| LLM 档 | 研判段端到端（`stage_assess_ms`） | ≤60s | 37 | 11.35s | 19.88s | 0 | 达标 |
+| LLM 档 | 执行段端到端（`stage_execute_ms`，三分支+翻译） | ≤60s | 37 | 6.55s | 8.27s | 0 | 达标 |
+| LLM 档 | 反馈段端到端（`stage_feedback_ms`） | ≤60s | 37 | 2.7ms | 6.4ms | 0 | 达标 |
+| LLM 档（诊断） | 决策段时延（`stage_plan_ms`，缺网关走本地剧本故不设档） | 未设阈值 | 37 | 1.48s | 1.78s | — | 未设阈值 |
+| LLM 档（诊断） | 感知段时延（`stage_perceive_ms`，语义腿为委派） | 未设阈值 | 40 | 0.14ms | 0.27ms | — | 未设阈值 |
+| 端到端档 | 预警信息生成时间 | ≤3min | 37 | 16.26s | 25.85s | 0 | 达标 |
+| 端到端档 | 预警信息靶向触达 | ≤20min | 37 | 1.211s | 1.240s | 0 | 达标（mock 通道的 1.2s 是模拟链路耗时） |
+| 端到端档 | 语义交互一轮响应 | ≤3s | 4 | 1.204s | 1.254s | 0 | 达标 |
+| 接入档 | 人工上报接入（第四条腿） | ≤5min | 4 | 7.30ms | 14.28ms | 0 | 达标 |
+| 调度档 | 异常工况识别与重调度（`workflow_reschedule_ms`） | ≤10s | 0 | — | — | — | **未测得** |
+| 接入档 | 多源数据接入端到端 | ≤5min | 0 | — | — | — | **未测得** |
+
+单次模型调用（`llm_call_ms`，39 次样本，同批）：P50 1.45s / P95 3.92s / 最大 5.66s——研判段
+11–20s 就是"双盲红/橙两级 + 可能仲裁"的 2–3 条串行腿乘出来的，不是单点抖动。
+
+### 这批数之前的两次退步（同一台机器、同一 seed，作为对照留下）
+
+| 状态 | 协同成功率 | 事务 P95 | 备注 |
+| --- | --- | --- | --- |
+| plan 提示词无 task_type 白名单 | 0.8095（17/21） | 19.3s（按 ≤10s 判超标） | 模型交回"交通管制"这类中文标签 → 3 笔 `MalformedLlmOutputError` 决策降级；真模型返回体已留证 |
+| 事务预算被收到 10s（过渡态） | 0.8095 | 10.02s | 10s 装不下双盲 2–3 条串行腿：4/7 事件"研判降级: 事务超期" |
+| A 案落地（本轮） | **1.0（111 笔）** | **19.15s（LLM 档内，越限 0）** | 段预算与事务预算同档，成功率与时延并排同档 |
+
+对应改动：`be00db5`（白名单）、`726a2d4`（双盲按真实单次耗时收腿）、`d7a80c7`+`0c2637b`
+（事务 deadline 与 TTL 归位）、`a7aca17`（每行归档）、`510acec`（总线视角抢答守卫）、
+`7e7145e`+`8a6e224`（nats/postgres/real 通路与工作流腿）。
+
+### 门禁与还没测到的
+
+- 本轮门禁：`ruff format --check` / `ruff check` / `mypy src`（115 文件）全绿；
+  `pytest tests/unit tests/contract tests/api tests/e2e` junitxml 计数 **2644 passed / 0 failed / 0 skipped**
+  （这是这四个目录的数，不是全库总数——全库还含 integration/load/perf 与 markers，未在本轮跑）。
+- 仍未测得，不当达标处理：`workflow_reschedule_ms`（重调度 ≤10s，本脚本不制造重调度事件）、
+  `ingest_end_to_end_seconds`（多源接入 ≤5min，本脚本不跑摄取循环）、质量四表里的
+  触发 F1 / 定级一致率 / 文案裁判分（缺金标集与裁判模型凭据，CI 基线里三列仍为 null）、
+  §4.6 编排归一与 MC 微调（未开工）。
+- 换供应商、换模型或调档，本表全部需重测：数字里含 DeepSeek 的实测时延与 mock 通道的模拟耗时。
