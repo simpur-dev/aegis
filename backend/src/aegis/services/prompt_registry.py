@@ -45,6 +45,16 @@ _BUILTIN_TEMPLATES: list[PromptTemplate] = [
         ),
         user="区域：{region}\n触发命中：{hits}\n{context}{arbitration}",
     ),
+    PromptTemplate(
+        task="plan",
+        version="1.0.0",
+        system=(
+            "你是应急任务规划专家。基于风险定级、参考案例与检索上下文，对给定的标准处置步骤提出精修建议。"
+            '只输出 JSON：{"adjustments":[{"task_type","objective","priority(1-5)","sla_seconds"}]}；'
+            "task_type 取平台处置步骤枚举之一，不得发明步骤之外的资源或数字。"
+        ),
+        user="{verdict_line}\n目标：{objective}\n约束：{constraints}\n{cases}{context}",
+    ),
 ]
 
 

@@ -40,8 +40,10 @@ class FakePlanGateway:
         self.calls: list[str] = []
         self.available = True
 
-    async def chat_structured(self, messages, *, schema, task="default", agent_id=None, trace_id=None, **kw):
-        self.calls.append(task)
+    async def chat_structured(
+        self, messages, *, schema, task="default", agent_id=None, trace_id=None, prompt_key=None, prompt_vars=None, **kw
+    ):
+        self.calls.append({"task": task, "messages": messages, "prompt_key": prompt_key, "prompt_vars": prompt_vars})
         return self._refinement
 
     def model_info_for_task(self, task):
@@ -96,6 +98,10 @@ class TestRefinement:
         reply = await agent(gw, contracts=contracts).handle(_request("plan.stu"))
         units = reply.payload["task_units"]
         assert units, "必须产出 STU"
+        # 正文走 PromptRegistry（单一真源）：交 prompt_key + 变量，不内联提示词。
+        assert gw.calls[0]["prompt_key"] == "plan"
+        assert gw.calls[0]["messages"] == []
+        assert "灾种：debris_flow" in gw.calls[0]["prompt_vars"]["verdict_line"]
         assert contracts.stu_errors(units) == [], "交付的每个 STU 必须 100% 合法"
         assert reply.payload["llm_decided"] is True
         assert reply.payload["source"] == "llm_refined"

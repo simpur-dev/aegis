@@ -101,8 +101,15 @@ class PlanAgent(AgentKit):
         llm = self.llm
         if llm is None:  # handle() 已在调用前挡住无 LLM 路径；这里为 mypy 收窄类型
             raise RuntimeError("plan 精修需要 LLM 网关")
-        messages = self._build_messages(payload, verdict)
-        return await llm.chat_structured(messages, schema=PlanRefinement, task="plan", agent_id=self.agent_id, trace_id=request.trace_id)
+        return await llm.chat_structured(
+            [],
+            schema=PlanRefinement,
+            task="plan",
+            prompt_key="plan",
+            prompt_vars=self._prompt_vars(payload, verdict),
+            agent_id=self.agent_id,
+            trace_id=request.trace_id,
+        )
 
     def _apply(self, baseline: list[Any], refinement: PlanRefinement) -> tuple[list[Any], list[str]]:
         by_task = {a.task_type: a for a in refinement.adjustments}
@@ -117,25 +124,17 @@ class PlanAgent(AgentKit):
         deviations = [f"LLM 建议了基线外 task_type：{t}（未采纳，保持本地剧本覆盖）" for t in sorted(set(by_task) - baseline_types)]
         return units, deviations
 
-    def _build_messages(self, payload: dict[str, Any], verdict: RiskVerdict) -> list[dict[str, str]]:
-        system = (
-            "你是应急任务规划专家。基于风险定级、参考案例与检索上下文，对给定的标准处置步骤提出精修建议。"
-            '只输出 JSON：{"adjustments":[{"task_type","objective","priority(1-5)","sla_seconds"}]}；'
-            f"task_type 仅限：{sorted(_VALID_TASK_TYPES)}。不得发明数字或步骤之外的资源。"
-        )
-        parts = [
-            f"灾种：{verdict.hazard_type.value} 等级：{int(verdict.risk_level)} 区域：{verdict.region_code}",
-            f"目标：{payload.get('objective', '')}",
-            f"约束：{payload.get('constraints', {})}",
-            f"可精修的 task_type：{sorted(_VALID_TASK_TYPES)}",
-        ]
+    def _prompt_vars(self, payload: dict[str, Any], verdict: RiskVerdict) -> dict[str, str]:
+        """填充 PromptRegistry `plan` 模板的变量（正文单一真源在注册表，§4.1.6）。"""
         cases = payload.get("reference_cases") or []
-        if cases:
-            parts.append(f"参考案例：{cases[:5]}")
         ctx = payload.get("retrieved_context") or []
-        if ctx:
-            parts.append(f"检索佐证：{ctx[:5]}")
-        return [{"role": "system", "content": system}, {"role": "user", "content": "\n".join(parts)}]
+        return {
+            "verdict_line": f"灾种：{verdict.hazard_type.value} 等级：{int(verdict.risk_level)} 区域：{verdict.region_code}",
+            "objective": str(payload.get("objective", "")),
+            "constraints": str(payload.get("constraints", {})),
+            "cases": f"参考案例：{list(cases)[:5]}\n" if cases else "",
+            "context": f"检索佐证：{list(ctx)[:5]}\n" if ctx else "",
+        }
 
     @staticmethod
     def _verdict_from_risk(risk: dict[str, Any]) -> RiskVerdict:

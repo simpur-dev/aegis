@@ -245,7 +245,8 @@ class TestModelInfo:
 
     def test_model_info_for_unmigrated_task_has_no_prompt_version(self) -> None:
         g, _ = gw("x")
-        assert g.model_info_for_task("plan")["prompt_version"] is None
+        # execute/feedback 尚未迁入版本化真源 → 如实 None（不臆造版本号）。
+        assert g.model_info_for_task("feedback")["prompt_version"] is None
 
     async def test_prompt_key_composes_messages_and_records_version(self) -> None:
         g, calls = gw('{"level": 3, "region": "540121", "confidence": 0.7}')
@@ -277,7 +278,8 @@ class TestPromptRegistry:
     def test_builtin_seeds_migrated_prompts(self) -> None:
         reg = PromptRegistry.builtin()
         assert reg.version_for_task("assess") == "1.0.0"
-        assert reg.version_for_task("plan") is None  # 未迁入不登记
+        assert reg.version_for_task("plan") == "1.0.0"
+        assert reg.version_for_task("feedback") is None  # 未迁入不登记
 
     def test_version_for_task_none_when_unregistered(self) -> None:
         assert PromptRegistry().version_for_task("assess") is None
