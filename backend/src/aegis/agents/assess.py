@@ -58,6 +58,8 @@ class AssessAgent(AgentKit):
     #: 双盲分歧仲裁：初值未实测（联调回填）。一致时置信度上调的幅度同样未实测。
     confidence_floor: float = 0.6
     confidence_boost: float = 0.1
+    #: 双盲预算门槛（未实测初值）：deadline 低于此就不跑第二/三次评估——它是增强腿、非关键路径（§3.2）。
+    double_blind_min_deadline_ms: int = 800
 
     async def handle(self, request: AgentMessage) -> Reply:
         if self.llm is None:
@@ -93,35 +95,44 @@ class AssessAgent(AgentKit):
 
         disagreement: bool | None = None
         final = first
+        blind_status = "not_applicable"
         # 双盲只对高危（红=1/橙=2）触发（§8 成本对策）；一致则上调置信，分歧则第三 call 仲裁。
         if self.double_blind and int(first.risk_level) <= int(RiskLevel.ORANGE):
-            second = await self.llm.chat_structured(
-                [],
-                schema=AssessVerdict,
-                task="arbitration",
-                prompt_key="assess",
-                prompt_vars=base_vars,
-                agent_id=self.agent_id,
-                trace_id=request.trace_id,
-            )
-            if int(second.risk_level) != int(first.risk_level):
-                arb_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, divergence=(first, second))
-                arb = await self.llm.chat_structured(
+            deadline = request.deadline_ms
+            if deadline is not None and deadline < self.double_blind_min_deadline_ms:
+                # §3.2：双盲是增强腿、非关键路径——deadline 紧张时跳过并留痕，不冒超期风险。
+                blind_status = "skipped_deadline"
+            else:
+                second = await self.llm.chat_structured(
                     [],
                     schema=AssessVerdict,
                     task="arbitration",
                     prompt_key="assess",
-                    prompt_vars=arb_vars,
+                    prompt_vars=base_vars,
                     agent_id=self.agent_id,
                     trace_id=request.trace_id,
                 )
-                final = arb
-                disagreement = True
-            else:
-                final = first.model_copy(update={"confidence": min(0.99, first.confidence + self.confidence_boost)})
-                disagreement = False
+                if int(second.risk_level) != int(first.risk_level):
+                    arb_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, divergence=(first, second))
+                    arb = await self.llm.chat_structured(
+                        [],
+                        schema=AssessVerdict,
+                        task="arbitration",
+                        prompt_key="assess",
+                        prompt_vars=arb_vars,
+                        agent_id=self.agent_id,
+                        trace_id=request.trace_id,
+                    )
+                    final = arb
+                    disagreement = True
+                    blind_status = "arbitrated"
+                else:
+                    final = first.model_copy(update={"confidence": min(0.99, first.confidence + self.confidence_boost)})
+                    disagreement = False
+                    blind_status = "agreed"
 
         result_payload = self._to_chain_payload(final, region=region, hits=hits)
+        result_payload["double_blind"] = blind_status  # §3.2 双盲状态如实留痕（agreed/arbitrated/skipped_deadline/not_applicable）
 
         if self.memory is not None:
             try:

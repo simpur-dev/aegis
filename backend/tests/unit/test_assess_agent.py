@@ -56,7 +56,7 @@ class _NullTransport:
     async def publish(self, *a: object, **k: object) -> None: ...
 
 
-def _request() -> Any:
+def _request(deadline_ms: int = 5000) -> Any:
     return make_request(
         source="platform.gateway",
         target="assess.real01",
@@ -64,7 +64,7 @@ def _request() -> Any:
         payload=REQUEST_PAYLOAD,
         trace_id=TRACE,
         reply_to="reply.gw0000000a.inbox",
-        deadline_ms=5000,
+        deadline_ms=deadline_ms,
     )
 
 
@@ -149,6 +149,29 @@ class TestContextInjection:
         context = gw.calls[0]["prompt_vars"]["context"]
         assert "retrieval 佐证" in context and "graph 佐证" in context
         assert "AEGIS_DATA" in context  # 外部佐证文本已进提示注入围栏（§4.8.2）
+
+
+class TestDoubleBlindDeadline:
+    """§3.2：双盲是增强腿非关键路径，deadline 紧则跳过并留痕，不冒超期风险。"""
+
+    async def test_tight_deadline_skips_double_blind_and_traces(self) -> None:
+        a, gw = agent(verdict(2))  # 只提供一份结论：若仍跑双盲会因缺第二次输出而炸
+        reply = await a.handle(_request(deadline_ms=200))  # 200 < double_blind_min_deadline_ms(800)
+        assert len(gw.calls) == 1, "预算紧时不跑第二评估"
+        assert reply.payload["double_blind"] == "skipped_deadline"
+        assert reply.payload["risk_level"] == 2  # 结论照发（漏报代价高于误报）
+
+    async def test_generous_deadline_runs_double_blind_agreed(self) -> None:
+        a, gw = agent(verdict(2, confidence=0.8), verdict(2, confidence=0.8))
+        reply = await a.handle(_request(deadline_ms=3000))
+        assert reply.payload["double_blind"] == "agreed"
+        assert len(gw.calls) == 2
+
+    async def test_non_severe_not_applicable(self) -> None:
+        a, gw = agent(verdict(4))
+        reply = await a.handle(_request(deadline_ms=3000))
+        assert reply.payload["double_blind"] == "not_applicable"
+        assert len(gw.calls) == 1
 
 
 class TestAssessMemory:
