@@ -14,7 +14,7 @@ from typing import Any
 
 from aegis.agents.assess import AssessAgent, AssessContextProvider
 from aegis.agents.feedback import FeedbackAgent
-from aegis.agents.perceive import AnomalyDetector, PerceiveAgent
+from aegis.agents.perceive import AnomalyDetector, PerceiveAgent, SemanticParser
 from aegis.agents.plan import PlanAgent
 from aegis.bus.transport import BusTransport
 from aegis.domain.enums import AgentType
@@ -27,6 +27,7 @@ def build_real_agents(
     memory: Any | None = None,
     context: AssessContextProvider | None = None,
     detector: AnomalyDetector | None = None,
+    semantic: SemanticParser | None = None,
     contracts: Any | None = None,
     id_suffix: str = "real01",
 ) -> list[Any]:
@@ -38,6 +39,7 @@ def build_real_agents(
             agent_id=f"perceive.{id_suffix}",
             capabilities=["anomaly_detect", "trigger_recognize"],
             detector=detector,
+            semantic=semantic,
             llm=llm,
         ),
         AssessAgent(
@@ -75,13 +77,21 @@ async def start_real_agents(
     memory: Any | None = None,
     context: AssessContextProvider | None = None,
     detector: AnomalyDetector | None = None,
+    semantic: SemanticParser | None = None,
     contracts: Any | None = None,
     heartbeat_interval: float = 0.5,
     id_suffix: str = "real01",
 ) -> list[Any]:
     """构造并启动真智能体集：注册 + 心跳 + 订阅 agent_in。返回实例（调用方负责 stop）。"""
     agents = build_real_agents(
-        transport, llm=llm, memory=memory, context=context, detector=detector, contracts=contracts, id_suffix=id_suffix
+        transport,
+        llm=llm,
+        memory=memory,
+        context=context,
+        detector=detector,
+        semantic=semantic,
+        contracts=contracts,
+        id_suffix=id_suffix,
     )
     for agent in agents:
         await agent.start(heartbeat_interval=heartbeat_interval)

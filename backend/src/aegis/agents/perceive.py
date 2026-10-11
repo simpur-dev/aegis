@@ -10,7 +10,9 @@
 快腿的第二判据 `EwmaDriftDetector`（§3.1 的"EWMA 越限"位）在本模块内实现：它抓的是
 "还没到硬阈值、但已偏离该站点自身常态"的弱信号，与绝对阈值越限互补而不另立判据——
 灾种归属从注入的规则表里读，规则表若把同一指标指向多个灾种就不猜（详见该类 docstring）。
-装配现状：`start_real_agents` 尚无生产调用点（MA 上总线属集成步），本判据目前只由单测覆盖。
+语义腿（§3.1 的文本线索）经注入的 `SemanticParser` 委派给平台自己的三路融合解析器，
+本内环不复做融合；缺解析器或解析器异常都如实降级并把"建议人工核签"外显，不拿猜测冒充抽取。
+装配现状：`start_real_agents` 尚无生产调用点（MA 上总线属集成步），本内环目前只由单测覆盖。
 
 产出与平台消费口径一致：`detect()` 返回的每条命中都是 `TriggerHit` 可校验的 dict
 （链路的 handle_agent_message 正用 `TriggerHit.model_validate(payload)` 收 trigger_hit 事件）。
@@ -48,18 +50,68 @@ class AnomalyDetector(Protocol):
     def flag(self, reading: dict[str, Any]) -> StationAnomaly | None: ...
 
 
+@runtime_checkable
+class SemanticParser(Protocol):
+    """语义腿的窄接口——生产注入平台自己的 `services.semantic_parser.DisasterTextParser`。
+
+    §3.1 要的是"上报文本/图像的灾种线索抽取，低置信走平台三路融合口径"。三路融合（规则/案例/
+    LLM 与证据腿）已经在 `DisasterTextParser` 里实现并被 `submit_report` 链路使用，智能体内环
+    【不另立一套融合】——否则同一份文本会有两套结论，正是"两张皮"。这里只做委派与如实外显：
+    把解析结果的 `decided_by`/`confidence`/`needs_review`/`degradations` 原样带下去。
+    """
+
+    async def parse(self, text: str, *, region_code: str | None = None, hazard_hint: str | None = None) -> Any: ...
+
+
 @dataclass
 class PerceiveAgent(AgentKit):
     detector: AnomalyDetector | None = None
+    semantic: SemanticParser | None = None
     #: 时空聚集参数（未实测初值，联调标定）：最少几个同步站点算聚集、每多一站增益、判定同窗的秒数。
     min_stations: int = 2
     gain_per_station: float = 0.1
     window_seconds: int = 600
+    #: 语义腿置信度低于此值就建议人工核签（§3.2 门限初值，未实测）。
+    human_review_below: float = 0.6
 
     async def handle(self, request: AgentMessage) -> Reply:
         readings = request.payload.get("readings") or []
-        hits = self.detect(list(readings))
-        return Reply(payload={"anomaly_count": len(hits), "trigger_hits": hits})
+        fast_hits = self.detect(list(readings))
+        semantic = await self._semantic_leg(request.payload)
+        hits = [*fast_hits, *semantic.pop("hits")]
+        return Reply(payload={"anomaly_count": len(fast_hits), "trigger_hits": hits, "semantic": semantic})
+
+    async def _semantic_leg(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """文本线索腿：委派给注入的融合解析器；缺位或异常都【显式降级】，不拿猜测冒充抽取结果。
+
+        图像线索未实现且不声称：平台暂无视觉腿，`image_ref` 只作为证据引用带下去（见 refs）。
+        """
+        text = str(payload.get("text") or payload.get("note") or "").strip()
+        if not text:
+            return {"status": "no_text", "hits": [], "human_review_suggested": False}
+        if self.semantic is None:
+            return {"status": "skipped_no_parser", "hits": [], "human_review_suggested": True}
+        try:
+            parsed = await self.semantic.parse(text, region_code=payload.get("region_code"), hazard_hint=payload.get("hazard_hint"))
+        except Exception as exc:  # 语义腿失败不能带走快腿的命中：降级要可见，链路不能断
+            return {
+                "status": "degraded",
+                "hits": [],
+                "reason": f"{type(exc).__name__}: {exc}",
+                "human_review_suggested": True,
+            }
+        hits = [hit.model_dump() if hasattr(hit, "model_dump") else dict(hit) for hit in (getattr(parsed, "hits", ()) or ())]
+        confidence = float(getattr(parsed, "confidence", 0.0) or 0.0)
+        needs_review = bool(getattr(parsed, "needs_review", False))
+        return {
+            "status": "ok",
+            "hits": hits,
+            "decided_by": str(getattr(parsed, "decided_by", "") or ""),
+            "confidence": round(confidence, 4),
+            "needs_review": needs_review,
+            "human_review_suggested": needs_review or confidence < self.human_review_below,
+            "degradations": [str(item) for item in (getattr(parsed, "degradations", ()) or ())],
+        }
 
     def detect(self, readings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """逐站点越限（复用 detector）→ 按 (区域, 灾种) 时空聚集 → 产出 TriggerHit 兼容命中。"""
