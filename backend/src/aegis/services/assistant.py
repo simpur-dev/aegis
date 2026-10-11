@@ -28,6 +28,7 @@ from aegis.domain.enums import HazardType
 from aegis.observability.tracer import Tracer
 from aegis.services.semantic_parser import DisasterTextParser, detect_hazard, extract_region
 from aegis.services.task_parser import PLAYBOOKS
+from aegis.services.text_guard import number_tokens
 
 _MAX_SESSIONS = 200
 _MAX_TURNS = 20
@@ -870,7 +871,8 @@ def _trim_metrics(report: dict[str, Any]) -> dict[str, Any]:
 
 
 def _numbers(text: str) -> set[str]:
-    return set(re.findall(r"\d+(?:\.\d+)?", text))
+    # 数字判定单一真源见 services/text_guard（与 execute/推演文案的防幻觉闸共用）。
+    return number_tokens(text)
 
 
 async def _call(fn: Callable[..., Any] | None, *args: Any, **kwargs: Any) -> Any:
