@@ -32,6 +32,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from aegis.config import LlmModelRoute, Settings, get_settings
+from aegis.domain.messages import now_iso
 from aegis.errors import AegisError, ErrorCode
 from aegis.observability.tracer import Tracer, percentile
 from aegis.services.prompt_registry import PromptRegistry
@@ -70,6 +71,7 @@ class LlmCallRecord:
     trace_id: str | None
     agent_id: str | None
     error: str | None = None
+    at: str = ""  # UTC ISO，成本按月归因用（§4.8.3）
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +88,7 @@ class LlmCallRecord:
             "trace_id": self.trace_id,
             "agent_id": self.agent_id,
             "error": self.error,
+            "at": self.at,
         }
 
 
@@ -184,6 +187,37 @@ class LlmGateway:
     def usage_records(self) -> list[LlmCallRecord]:
         return list(self._usage)
 
+    def current_month(self) -> str:
+        return now_iso()[:7]  # "YYYY-MM"
+
+    def monthly_token_usage_by_agent(self, month: str) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for rec in self._usage:
+            if rec.agent_id and rec.at[:7] == month:
+                out[rec.agent_id] = out.get(rec.agent_id, 0) + rec.total_tokens
+        return out
+
+    def budget_alerts(self, month: str) -> list[dict[str, Any]]:
+        """§4.8.3 成本治理：按 agent_id 月度预算，超限【只告警、绝不熔断】（熔断给故障，不给钱）。"""
+        budget = self._settings.llm_monthly_token_budget_default
+        if budget <= 0:
+            return []
+        alerts: list[dict[str, Any]] = []
+        for agent_id, tokens in sorted(self.monthly_token_usage_by_agent(month).items()):
+            if tokens > budget:
+                alerts.append(
+                    {
+                        "agent_id": agent_id,
+                        "month": month,
+                        "tokens": tokens,
+                        "budget": budget,
+                        "over_by": tokens - budget,
+                        "action": "alert_only",
+                        "note": "超限只告警不熔断：钱的问题交预算/审批，不给假故障。",
+                    }
+                )
+        return alerts
+
     def usage_snapshot(self) -> dict[str, Any]:
         """按 (agent_id, model) 归因的用量聚合：成本/时延的治理出口（§4.1.4 / §4.8.3）。
 
@@ -218,7 +252,8 @@ class LlmGateway:
                 }
             )
         rows.sort(key=lambda r: (r["agent_id"] or "", r["model"]))
-        return {"by_agent_model": rows, "total_calls": len(self._usage)}
+        month = self.current_month()
+        return {"by_agent_model": rows, "total_calls": len(self._usage), "month": month, "budget_alerts": self.budget_alerts(month)}
 
     def model_info_for_task(self, task: str) -> dict[str, Any]:
         """D10：结论侧写进 `model_info` 的可复现凭证（模型/路由/prompt 版本口径）。"""
@@ -292,6 +327,7 @@ class LlmGateway:
                         validation="transport_error",
                         trace_id=trace_id,
                         agent_id=agent_id,
+                        at=now_iso(),
                         error=f"{type(exc).__name__}: {str(exc)[:180]}",
                     )
                 )
@@ -313,6 +349,7 @@ class LlmGateway:
                     validation="ok",
                     trace_id=trace_id,
                     agent_id=agent_id,
+                    at=now_iso(),
                 )
             )
             return "", response, model_name
@@ -514,6 +551,7 @@ class LlmGateway:
                     validation="transport_error",
                     trace_id=trace_id,
                     agent_id=agent_id,
+                    at=now_iso(),
                     error=f"{type(exc).__name__}: {str(exc)[:180]}",
                 )
             )
@@ -533,6 +571,7 @@ class LlmGateway:
                 validation="streamed",
                 trace_id=trace_id,
                 agent_id=agent_id,
+                at=now_iso(),
             )
         )
 

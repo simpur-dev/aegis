@@ -234,6 +234,39 @@ class TestObservability:
         assert g.usage_records()[-1].validation == "malformed"
 
 
+class TestCostGovernance:
+    async def test_over_monthly_budget_alerts_but_does_not_block(self) -> None:
+        # FakeUsage 固定 18 tokens/次；预算设 10 → 一次调用即超。
+        g, _ = gw("结论", "结论2", settings=Settings(env="test", llm_monthly_token_budget_default=10))
+        await g.chat([{"role": "user", "content": "x"}], task="assess", agent_id="assess.a1")
+        alerts = g.budget_alerts(g.current_month())
+        assert len(alerts) == 1
+        assert alerts[0]["agent_id"] == "assess.a1"
+        assert alerts[0]["action"] == "alert_only"
+        assert alerts[0]["over_by"] == alerts[0]["tokens"] - 10
+        # 关键：告警不改可用性/不熔断——钱的问题不给假故障。
+        assert g.available is True
+        assert g._open.get("qwen-plus") is None
+
+    async def test_within_budget_no_alert(self) -> None:
+        g, _ = gw("结论", settings=Settings(env="test", llm_monthly_token_budget_default=1000))
+        await g.chat([{"role": "user", "content": "x"}], task="assess", agent_id="assess.a1")
+        assert g.budget_alerts(g.current_month()) == []
+
+    async def test_budget_zero_disables_governance(self) -> None:
+        g, _ = gw("结论", settings=Settings(env="test", llm_monthly_token_budget_default=0))
+        await g.chat([{"role": "user", "content": "x"}], agent_id="assess.a1")
+        assert g.budget_alerts(g.current_month()) == []
+        assert g.usage_snapshot()["budget_alerts"] == []
+
+    async def test_monthly_usage_attributes_by_agent(self) -> None:
+        g, _ = gw("结论", "结论2", settings=Settings(env="test", llm_monthly_token_budget_default=0))
+        await g.chat([{"role": "user", "content": "x"}], agent_id="assess.a1")
+        await g.chat([{"role": "user", "content": "y"}], agent_id="feedback.b1")
+        usage = g.monthly_token_usage_by_agent(g.current_month())
+        assert usage == {"assess.a1": 18, "feedback.b1": 18}
+
+
 class TestModelInfo:
     def test_model_info_for_task_reflects_route(self) -> None:
         g, _ = gw("x")

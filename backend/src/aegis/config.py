@@ -116,6 +116,9 @@ class Settings(BaseSettings):
     llm_breaker_fail_threshold: int = 3
     # 用量台账环形上限：成本/时延按 agent×model 归因的数据源，满了丢最旧、绝不无界吃内存。
     llm_usage_ledger_limit: int = 10_000
+    # 每个 agent_id 的月度 token 预算（§4.8.3）。超限【只告警、不熔断】——熔断给故障不给钱。
+    # 0 = 不设预算（不控成本，budget_alerts 恒空）。
+    llm_monthly_token_budget_default: int = 0
 
     # 语义交互（完善计划批次 B）：关掉就是"这个出口不存在"（路由一律 503），
     # 不是"看着能用其实不能用"——路由与配置面必须给外部同一个事实。
