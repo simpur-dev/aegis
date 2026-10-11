@@ -238,17 +238,17 @@ async function insertAfter(): Promise<void> {
 }
 .wf-runtime__capture {
   margin: 0;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding-left: 6px;
+  border-left: 2px solid var(--aeg-color-text-muted);
   font-size: 11px;
 }
 .wf-runtime__capture.is-landed {
-  color: #135200;
-  background: #f6ffed;
+  color: var(--aeg-color-status-success);
+  border-left-color: var(--aeg-color-status-success);
 }
 .wf-runtime__capture.is-missing {
-  color: #873800;
-  background: #fff7e6;
+  color: var(--aeg-color-status-warning);
+  border-left-color: var(--aeg-color-status-warning);
 }
 .wf-runtime__error {
   color: #cf1322;
