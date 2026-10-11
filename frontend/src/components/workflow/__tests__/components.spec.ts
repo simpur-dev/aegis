@@ -559,7 +559,7 @@ describe('检查器与运行中操作', () => {
    * 后端只在那一次响应里回 `标注沉淀`，实例快照不带它——前端不显示，"签了"和"进了真值表"
    * 在页面上就成了同一件事，而内存部署下它从来没进过。
    */
-  it('签完把"这一票进没进真值表"显示出来，没进的那句不许长得像成功', async () => {
+  it('签完把"这一票进没进真值表"显示出来：落地的说落地，没落的说没落，没这一格就不说', () => {
     const store = useWorkflowStore()
     store.resetDefinition('链路')
     const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust'] } }
@@ -574,19 +574,21 @@ describe('检查器与运行中操作', () => {
       error: null,
       nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
     }
-    const shown = vi.spyOn(store, 'captureFor').mockReturnValue({ text: '这一票没进真值表：改判(adjust)必须同时给出 level', landed: false })
-    const wrapper = mount(RuntimeActions, { props: { node: review } })
-    const note = wrapper.find('[data-testid="label-capture"]')
-    expect(note.text()).toContain('没进真值表')
-    expect(note.classes()).toContain('is-missing')
+    /** 每次挂载前设好回执再挂：`captureFor` 是普通函数不是响应式源，同一个 wrapper 里改它不会自己重算。 */
+    const shown = vi.spyOn(store, 'captureFor')
+
+    shown.mockReturnValue({ text: '这一票没进真值表：改判(adjust)必须同时给出 level，否则无法确定真值等级', landed: false })
+    const missing = mount(RuntimeActions, { props: { node: review } }).find('[data-testid="label-capture"]')
+    expect(missing.text()).toContain('没进真值表')
+    expect(missing.classes()).toContain('is-missing')
 
     shown.mockReturnValue({ text: '这一票已进真值表：报=True 等级=5（事件 evt_9c1）', landed: true })
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="label-capture"]').classes()).toContain('is-landed')
+    const landed = mount(RuntimeActions, { props: { node: review } }).find('[data-testid="label-capture"]')
+    expect(landed.text()).toContain('已进真值表')
+    expect(landed.classes()).toContain('is-landed')
 
     shown.mockReturnValue(null)
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="label-capture"]').exists(), '这张单没这一格就别凭空造一行账').toBe(false)
+    expect(mount(RuntimeActions, { props: { node: review } }).find('[data-testid="label-capture"]').exists(), '这张单没这一格就别凭空造一行账').toBe(false)
     shown.mockRestore()
   })
 
@@ -682,7 +684,7 @@ describe('检查器与运行中操作', () => {
     expect(wrapper.find('[data-testid="decision-trace"]').exists(), '还没签，不该凭空冒出一行留痕').toBe(false)
     await wrapper.find('[data-testid="decision-signer"]').setValue('值班员李四')
     await wrapper.findAll('button').find((b) => b.text() === '核签通过（approve）')?.trigger('click')
-    expect(submitted.mock.calls).toEqual([['review_1', 'approve', '', '值班员李四']])
+    expect(submitted.mock.calls).toEqual([['review_1', 'approve', '', '值班员李四', null]])
     submitted.mockRestore()
   })
 

@@ -463,14 +463,16 @@ describe('stores/workflow 运行中操作', () => {
    * 数据飞轮（D9）：后端只在签字那一次的响应里说这一票有没有变成真值行，实例快照不带它。
    * 前端不接这句话，"签了"和"进了真值表"在页面上就是同一件事——而它们不是同一件事。
    */
-  it('改判把选定的等级发出去；没选等级就一个 level 键都不发', async () => {
-    const withLevel = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
-    expect(await withLevel.submitDecision('review_1', 'adjust', '改判红色', '巡护员扎西', 1)).toBe(true)
+  it('改判把选定的等级发出去', async () => {
+    const store = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
+    expect(await store.submitDecision('review_1', 'adjust', '改判红色', '巡护员扎西', 1)).toBe(true)
     expect(firstCall(client, 'submitDecision')[2]).toEqual({ choice: 'adjust', by: '巡护员扎西', comment: '改判红色', level: 1 })
+  })
 
-    const withoutLevel = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
-    await withoutLevel.submitDecision('review_1', 'adjust', '只更正灾种', '巡护员扎西')
-    expect(firstCall(client, 'submitDecision')[2], '前端不许替值班员填等级：填下去就是往真值表里写一句没人说过的话').not.toHaveProperty('level')
+  it('没选等级时不发 level 键——前端不许替值班员填一个等级', async () => {
+    const store = await storeWithInstance([nodeRun('review_1', 'awaiting_human')])
+    expect(await store.submitDecision('review_1', 'adjust', '只更正灾种', '巡护员扎西')).toBe(true)
+    expect(firstCall(client, 'submitDecision')[2], '填下去就是往真值表里写一句没人说过的话').not.toHaveProperty('level')
   })
 
   it('后端说已沉淀，页面就说清了进了哪一行', async () => {
