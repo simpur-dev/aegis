@@ -1,12 +1,21 @@
-"""LLM 网关（参考 NexusMind `backend/app/utils/llm_client.py` 改造为异步）。
+"""LLM 网关 v2（§4.1 / D3）：MA 阶段一切 LLM 环节的地基。
 
-与基线项目的差异是刻意的：
-1. 全异步（AsyncOpenAI），不再阻塞 Web 框架的事件循环；
-2. 未配置密钥时 `available=False` 而不是抛异常——调用方据此走规则降级；
-3. 输出异常（非法 JSON、空白返回、被截断）抛类型化错误，由上层决定降级，不静默兜底。
+在升级前的 129 行单模型网关之上补齐六项能力，同时**逐字保留**旧对外口径
+（`chat`/`chat_json`/`translate`/`polish_warning`/`available`/`model`/`build_gateway_if_configured`），
+让既有消费方（WarningService 翻译腿、DisasterTextParser 语义腿、AssistantService）零改动。
 
-当前平台侧用途：预警文案润色与藏汉双语翻译（注入 `WarningService` 的 translator）。
-研判/拆解的智能部分属于智能体方，不在平台侧调用 LLM，避免职责越界。
+1. 多模型路由：按 task key 从 `Settings.llm_models` 选模型与生成参数；未配的 task 继承全局 `llm_model`。
+2. 结构化输出：`chat_structured(messages, schema)` —— json 模式 + Pydantic 校验 + 一次修复重试，
+   仍不合规即抛 `MalformedLlmOutputError`，交由调用方走既有降级轨（能力首过率由评测服务盯，D8）。
+3. 流式：`chat_stream` 异步产出增量文本（assistant token 帧 / execute 文案进度用，可选）。
+4. 可观测：每次调用记进 Tracer 时延账本（`llm_call_ms`，按 trace_id/agent_id 归因，直通 /metrics），
+   并落一份用量台账（模型/prompt版本/token/校验态），成本与时延按 agent×model 归因。
+5. 熔断与降级链：provider 连续失败达阈值即判定该模型熔断并切备用模型；整链不可用抛
+   `LlmUnavailableError`——LLM 不可用 ≠ 平台不可用（消费方据此走确定性降级）。
+6. Prompt 注册表：`prompt_key` 经 `PromptRegistry` 装配消息并把版本号写进用量台账，保证结论可复现（D10）。
+
+纪律：本文件所有路由模型/预算数字来自方案 §3.0 表，均为**未实测**初值，不据此声称达标；
+未配置密钥时 `available=False`，绝不用假数据把"没接上"读成"能跑"。
 """
 
 from __future__ import annotations
@@ -14,16 +23,26 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+import time
+from collections import deque
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any, TypeVar
 
-from aegis.config import Settings, get_settings
+from pydantic import BaseModel, ValidationError
+
+from aegis.config import LlmModelRoute, Settings, get_settings
 from aegis.errors import AegisError, ErrorCode
+from aegis.observability.tracer import Tracer, percentile
+from aegis.services.prompt_registry import PromptRegistry
 
 log = logging.getLogger("aegis.services.llm")
 
 _FENCE_OPEN = re.compile(r"^```(?:json)?\s*\n?", re.IGNORECASE)
 _FENCE_CLOSE = re.compile(r"\n?```\s*$")
 _THINK_BLOCK = re.compile(r"<think>[\s\S]*?</think>")
+
+SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
 
 class LlmUnavailableError(AegisError):
@@ -32,6 +51,42 @@ class LlmUnavailableError(AegisError):
 
 class MalformedLlmOutputError(AegisError):
     code = ErrorCode.INTERNAL
+
+
+@dataclass(slots=True)
+class LlmCallRecord:
+    """一次调用的可审计事实（对齐 D1"可审计"：模型/prompt版本/token/时延/校验态）。"""
+
+    task: str
+    model: str
+    prompt_version: str | None
+    temperature: float
+    max_tokens: int
+    latency_ms: float
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    validation: str  # ok | malformed | unavailable | transport_error
+    trace_id: str | None
+    agent_id: str | None
+    error: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "task": self.task,
+            "model": self.model,
+            "prompt_version": self.prompt_version,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "latency_ms": round(self.latency_ms, 3),
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "validation": self.validation,
+            "trace_id": self.trace_id,
+            "agent_id": self.agent_id,
+            "error": self.error,
+        }
 
 
 class LlmGateway:
@@ -43,21 +98,37 @@ class LlmGateway:
         model: str | None = None,
         client: Any | None = None,
         timeout_seconds: float | None = None,
-        max_tokens: int = 2_048,
+        max_tokens: int | None = None,
         settings: Settings | None = None,
+        tracer: Tracer | None = None,
+        prompts: PromptRegistry | None = None,
+        routes: dict[str, LlmModelRoute] | None = None,
     ) -> None:
         cfg = settings or get_settings()
+        self._settings = cfg
         self._api_key = api_key if api_key is not None else cfg.llm_api_key
         self._base_url = base_url or cfg.llm_base_url
+        # 全局默认模型：既是 `.model` 属性的口径，也是未配路由 task 的继承源（保持旧单模型行为）。
         self._model = model or cfg.llm_model
         self._timeout = timeout_seconds if timeout_seconds is not None else cfg.llm_timeout_seconds
-        self._max_tokens = max_tokens
+        self._max_tokens = max_tokens  # None 表示不覆盖，交给路由与 task 决定
+        self._tracer = tracer
+        self._prompts = prompts if prompts is not None else PromptRegistry.builtin()
+        self._routes: dict[str, LlmModelRoute] = dict(routes) if routes is not None else dict(cfg.llm_models)
         self._client = client
 
         if self._client is None and self._api_key:
             from openai import AsyncOpenAI
 
             self._client = AsyncOpenAI(api_key=self._api_key, base_url=self._base_url, timeout=self._timeout)
+
+        # provider 级熔断账：连续失败计数与开闸标记按模型名分列。
+        self._breaker_threshold = max(1, cfg.llm_breaker_fail_threshold)
+        self._failures: dict[str, int] = {}
+        self._open: dict[str, bool] = {}
+        self._usage: deque[LlmCallRecord] = deque(maxlen=max(16, cfg.llm_usage_ledger_limit))
+
+    # ---------- 对外口径（与升级前逐字一致） ----------
 
     @property
     def available(self) -> bool:
@@ -67,36 +138,398 @@ class LlmGateway:
     def model(self) -> str:
         return self._model
 
-    async def chat(self, messages: list[dict[str, str]], *, temperature: float = 0.3, max_tokens: int | None = None) -> str:
+    # ---------- 路由解析 ----------
+
+    def _route_for(self, task: str) -> LlmModelRoute:
+        route = self._routes.get(task)
+        if route is not None:
+            return route
+        # 未登记的 task：回落到 default 的参数，但模型仍继承全局（不臆造模型名）。
+        return self._routes.get("default") or LlmModelRoute()
+
+    def _primary_model(self, task: str) -> str:
+        route = self._route_for(task)
+        return route.model or self._model
+
+    def _candidates(self, task: str) -> list[str]:
+        route = self._route_for(task)
+        primary = self._primary_model(task)
+        out = [primary]
+        if route.fallback_model and route.fallback_model != primary:
+            out.append(route.fallback_model)
+        return out
+
+    def _breaker_open(self, model_name: str) -> bool:
+        return bool(self._open.get(model_name))
+
+    def _note_failure(self, model_name: str) -> None:
+        self._failures[model_name] = self._failures.get(model_name, 0) + 1
+        if self._failures[model_name] >= self._breaker_threshold:
+            self._open[model_name] = True
+            log.warning("LLM 模型熔断", extra={"model": model_name, "failures": self._failures[model_name]})
+
+    def _note_success(self, model_name: str) -> None:
+        if model_name in self._failures:
+            self._failures.pop(model_name, None)
+        if self._open.get(model_name):
+            self._open[model_name] = False
+
+    # ---------- 可观测与用量 ----------
+
+    def _record(self, rec: LlmCallRecord) -> None:
+        self._usage.append(rec)
+        if self._tracer is not None:
+            self._tracer.record("llm_call_ms", rec.latency_ms, trace_id=rec.trace_id, agent_id=rec.agent_id)
+
+    def usage_records(self) -> list[LlmCallRecord]:
+        return list(self._usage)
+
+    def usage_snapshot(self) -> dict[str, Any]:
+        """按 (agent_id, model) 归因的用量聚合：成本/时延的治理出口（§4.1.4 / §4.8.3）。
+
+        聚合自真实调用台账，不二次采样——报表与验收同源（架构铁律 7）。
+        """
+        buckets: dict[tuple[str | None, str], dict[str, Any]] = {}
+        for rec in self._usage:
+            key = (rec.agent_id, rec.model)
+            b = buckets.get(key)
+            if b is None:
+                b = {"calls": 0, "total_tokens": 0, "validation": {}, "latency": []}
+                buckets[key] = b
+            b["calls"] += 1
+            b["total_tokens"] += rec.total_tokens
+            b["validation"][rec.validation] = b["validation"].get(rec.validation, 0) + 1
+            b["latency"].append(rec.latency_ms)
+        rows = []
+        for (agent_id, model_name), b in buckets.items():
+            lat = sorted(b["latency"])
+            rows.append(
+                {
+                    "agent_id": agent_id,
+                    "model": model_name,
+                    "calls": b["calls"],
+                    "total_tokens": b["total_tokens"],
+                    "validation": dict(b["validation"]),
+                    "latency_ms": {
+                        "p50": round(percentile(lat, 50), 3),
+                        "p95": round(percentile(lat, 95), 3),
+                        "max": round(lat[-1], 3) if lat else 0.0,
+                    },
+                }
+            )
+        rows.sort(key=lambda r: (r["agent_id"] or "", r["model"]))
+        return {"by_agent_model": rows, "total_calls": len(self._usage)}
+
+    def model_info_for_task(self, task: str) -> dict[str, Any]:
+        """D10：结论侧写进 `model_info` 的可复现凭证（模型/路由/prompt 版本口径）。"""
+        route = self._route_for(task)
+        prompt_version = self._prompts.version_for_task(task)
+        return {
+            "model": route.model or self._model,
+            "fallback_model": route.fallback_model,
+            "task": task,
+            "prompt_version": prompt_version,
+        }
+
+    # ---------- 调用主通道：路由 + 熔断 + 用量，一切 LLM 请求的唯一出口 ----------
+
+    async def _complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        task: str,
+        temperature: float | None,
+        max_tokens: int | None,
+        response_format: dict[str, Any] | None,
+        trace_id: str | None,
+        agent_id: str | None,
+        prompt_version: str | None,
+        stream: bool = False,
+    ) -> tuple[str, Any, str]:
+        """返回 (content, response_obj_or_None, model_used)。非流式一次性返回正文；流式由 chat_stream 直接用。
+
+        这里做三件事：候选模型（主+备）逐个尝试、provider 级熔断切备、调用落用量与时延。
+        所有候选都失败（或全熔断开闸）时抛 `LlmUnavailableError`——调用方据此走确定性降级。
+        """
         if not self.available or self._client is None:
             raise LlmUnavailableError("LLM 未配置（缺少 api key 或 client）")
-        client = self._client
-        response = await client.chat.completions.create(
-            model=self._model,
-            messages=messages,
+        route = self._route_for(task)
+        eff_temperature = route.temperature if temperature is None else temperature
+        eff_max_tokens = max_tokens if max_tokens is not None else (self._max_tokens if self._max_tokens is not None else route.max_tokens)
+        candidates = self._candidates(task)
+        actionable = [m for m in candidates if not self._breaker_open(m)]
+        if not actionable:
+            raise LlmUnavailableError("LLM 全部候选模型处于熔断状态", detail={"task": task, "candidates": candidates})
+
+        last_error: Exception | None = None
+        for model_name in actionable:
+            started = time.perf_counter()
+            kwargs: dict[str, Any] = {
+                "model": model_name,
+                "messages": messages,
+                "temperature": eff_temperature,
+                "max_tokens": eff_max_tokens,
+            }
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+            try:
+                response = await self._client.chat.completions.create(**kwargs)
+            except Exception as exc:  # provider/传输故障：计入熔断，切备用模型
+                latency_ms = (time.perf_counter() - started) * 1000
+                self._note_failure(model_name)
+                last_error = exc
+                self._record(
+                    LlmCallRecord(
+                        task=task,
+                        model=model_name,
+                        prompt_version=prompt_version,
+                        temperature=eff_temperature,
+                        max_tokens=eff_max_tokens,
+                        latency_ms=latency_ms,
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        total_tokens=0,
+                        validation="transport_error",
+                        trace_id=trace_id,
+                        agent_id=agent_id,
+                        error=f"{type(exc).__name__}: {str(exc)[:180]}",
+                    )
+                )
+                continue
+            latency_ms = (time.perf_counter() - started) * 1000
+            self._note_success(model_name)
+            usage = getattr(response, "usage", None)
+            self._record(
+                LlmCallRecord(
+                    task=task,
+                    model=model_name,
+                    prompt_version=prompt_version,
+                    temperature=eff_temperature,
+                    max_tokens=eff_max_tokens,
+                    latency_ms=latency_ms,
+                    prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+                    completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+                    total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
+                    validation="ok",
+                    trace_id=trace_id,
+                    agent_id=agent_id,
+                )
+            )
+            return "", response, model_name
+        # 所有可尝试候选都失败：抛出最后一个传输异常，保持旧"错误传播"语义（调用方降级）。
+        assert last_error is not None
+        raise last_error
+
+    async def _chat_raw(self, messages, *, task, temperature, max_tokens, response_format, trace_id, agent_id, prompt_version) -> str:
+        _, response, model_used = await self._complete(
+            messages,
+            task=task,
             temperature=temperature,
-            max_tokens=max_tokens or self._max_tokens,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            trace_id=trace_id,
+            agent_id=agent_id,
+            prompt_version=prompt_version,
         )
         content = (response.choices[0].message.content or "").strip()
-        # 部分供应商会把思考过程混在正文里，必须清掉再交给下游
         content = _THINK_BLOCK.sub("", content).strip()
         if not content:
-            raise MalformedLlmOutputError("LLM 返回空内容", detail={"model": self._model})
+            # 空内容：把刚记录的用量标记为 malformed，方便评测/审计把这算一次不达标首过。
+            self._mark_last_malformed("空内容")
+            raise MalformedLlmOutputError("LLM 返回空内容", detail={"model": model_used})
         return content
 
-    async def chat_json(self, messages: list[dict[str, str]], *, temperature: float = 0.1) -> dict[str, Any]:
-        raw = await self.chat(messages, temperature=temperature, max_tokens=self._max_tokens)
-        cleaned = _FENCE_CLOSE.sub("", _FENCE_OPEN.sub("", raw.strip())).strip()
+    def _mark_last_malformed(self, reason: str) -> None:
+        if not self._usage:
+            return
+        last = self._usage[-1]
+        last.validation = "malformed"
+        last.error = reason[:180]
+
+    # ---------- 公开方法 ----------
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.3,
+        max_tokens: int | None = None,
+        task: str = "default",
+        trace_id: str | None = None,
+        agent_id: str | None = None,
+        prompt_version: str | None = None,
+    ) -> str:
+        # temperature 保留旧默认 0.3；调用方显式传值优先，未传时按 task 路由的 temperature。
+        eff_temperature = None if temperature == 0.3 and task != "default" else temperature
+        return await self._chat_raw(
+            messages,
+            task=task,
+            temperature=eff_temperature,
+            max_tokens=max_tokens,
+            response_format=None,
+            trace_id=trace_id,
+            agent_id=agent_id,
+            prompt_version=prompt_version,
+        )
+
+    async def chat_json(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.1,
+        task: str = "default",
+        trace_id: str | None = None,
+        agent_id: str | None = None,
+        prompt_version: str | None = None,
+    ) -> dict[str, Any]:
+        raw = await self._chat_raw(
+            messages,
+            task=task,
+            temperature=temperature,
+            max_tokens=None,
+            response_format=None,
+            trace_id=trace_id,
+            agent_id=agent_id,
+            prompt_version=prompt_version,
+        )
+        return self._parse_json_object(raw)
+
+    async def chat_structured(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        schema: type[SchemaT],
+        task: str = "default",
+        temperature: float = 0.1,
+        repair: int = 1,
+        trace_id: str | None = None,
+        agent_id: str | None = None,
+        prompt_version: str | None = None,
+    ) -> SchemaT:
+        """结构化输出：json 模式产出 → Pydantic 严格校验 → 不合规一次修复重试 → 仍失败即抛错走降级。
+
+        枚举/必填/类型越界一律拒收（如 1–5 之外的等级），绝不"就近夹取"糊弄下游——
+        把非法结论伪装成合法是这一型平台最贵的事故。修复重试只重发一次，不无限重试。
+        """
+        if prompt_version is None:
+            prompt_version = self._prompts.version_for_task(task)
+        current = list(messages)
+        last_error: MalformedLlmOutputError | None = None
+        for attempt in range(repair + 1):
+            raw = await self._chat_raw(
+                current,
+                task=task,
+                temperature=temperature,
+                max_tokens=None,
+                response_format={"type": "json_object"},
+                trace_id=trace_id,
+                agent_id=agent_id,
+                prompt_version=prompt_version,
+            )
+            try:
+                parsed = self._parse_json_object(raw)
+                return schema.model_validate(parsed)
+            except (MalformedLlmOutputError, ValidationError) as exc:
+                reason = str(exc)
+                self._mark_last_malformed(reason[:180])
+                last_error = MalformedLlmOutputError(
+                    "LLM 结构化输出不合规" if attempt < repair else "LLM 结构化输出多次不合规，降级",
+                    detail={"task": task, "reason": reason[:200], "attempt": attempt},
+                )
+                if attempt >= repair:
+                    break
+                # 修复轮：把上一次的非法输出原样带回，要求只按 schema 纠正格式，不改事实。
+                current = [
+                    *messages,
+                    {"role": "assistant", "content": raw[:4_000]},
+                    {
+                        "role": "user",
+                        "content": (
+                            "上一条输出不符合要求的 JSON schema。请只修正格式与缺失字段，"
+                            "不得新增或改动事实，重新输出且仅输出一个合法 JSON 对象。"
+                        ),
+                    },
+                ]
+        assert last_error is not None
+        raise last_error
+
+    async def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.3,
+        max_tokens: int | None = None,
+        task: str = "default",
+        trace_id: str | None = None,
+        agent_id: str | None = None,
+        prompt_version: str | None = None,
+    ) -> AsyncIterator[str]:
+        """流式产出增量文本；整段用量在生成结束后落一条台账（validation=ok/streamed）。
+
+        流式是可选增强，不改变任何过程帧契约；未配 client 时同样抛 LlmUnavailableError 由上层降级。
+        """
+        if not self.available or self._client is None:
+            raise LlmUnavailableError("LLM 未配置（缺少 api key 或 client）")
+        route = self._route_for(task)
+        eff_temperature = temperature if temperature != 0.3 or task == "default" else route.temperature
+        eff_max_tokens = max_tokens if max_tokens is not None else (self._max_tokens if self._max_tokens is not None else route.max_tokens)
+        model_name = self._primary_model(task)
+        if self._breaker_open(model_name):
+            raise LlmUnavailableError("LLM 流式模型处于熔断状态", detail={"task": task, "model": model_name})
+        started = time.perf_counter()
+        total_chars = 0
         try:
-            parsed = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            raise MalformedLlmOutputError(
-                "LLM 返回的 JSON 无法解析",
-                detail={"reason": str(exc), "excerpt": cleaned[:200]},
-            ) from exc
-        if not isinstance(parsed, dict):
-            raise MalformedLlmOutputError("LLM 返回的 JSON 顶层不是对象", detail={"type": type(parsed).__name__})
-        return parsed
+            stream = await self._client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                temperature=eff_temperature,
+                max_tokens=eff_max_tokens,
+                stream=True,
+            )
+            async for chunk in stream:
+                piece = _stream_piece(chunk)
+                if piece:
+                    total_chars += len(piece)
+                    yield piece
+        except Exception as exc:
+            self._note_failure(model_name)
+            self._record(
+                LlmCallRecord(
+                    task=task,
+                    model=model_name,
+                    prompt_version=prompt_version,
+                    temperature=eff_temperature,
+                    max_tokens=eff_max_tokens,
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    validation="transport_error",
+                    trace_id=trace_id,
+                    agent_id=agent_id,
+                    error=f"{type(exc).__name__}: {str(exc)[:180]}",
+                )
+            )
+            raise
+        self._note_success(model_name)
+        self._record(
+            LlmCallRecord(
+                task=task,
+                model=model_name,
+                prompt_version=prompt_version,
+                temperature=eff_temperature,
+                max_tokens=eff_max_tokens,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                prompt_tokens=0,
+                completion_tokens=max(0, total_chars // 4),  # 无 usage 帧时的粗估，仅用于相对趋势，不当达标依据
+                total_tokens=max(0, total_chars // 4),
+                validation="streamed",
+                trace_id=trace_id,
+                agent_id=agent_id,
+            )
+        )
+
+    # ---------- 既有平台用途：翻译 / 润色（保持逐字行为） ----------
 
     async def translate(self, text: str, *, target_language: str = "藏语（卫藏方言，书面语）") -> str:
         """翻译预警正文。失败即抛错，由 WarningService 降级为纯中文并标记待译——不伪造译文。"""
@@ -120,10 +553,40 @@ class LlmGateway:
             raise MalformedLlmOutputError("润色结果缺少 title/body", detail={"keys": sorted(result)})
         return {"title": str(result["title"])[:120], "body": str(result["body"])[:2_000]}
 
+    # ---------- JSON 解析（与升级前同一口径：剥围栏、拒非对象、坏输入带片段） ----------
 
-def build_gateway_if_configured(settings: Settings | None = None) -> LlmGateway | None:
+    @staticmethod
+    def _parse_json_object(raw: str) -> dict[str, Any]:
+        cleaned = _FENCE_CLOSE.sub("", _FENCE_OPEN.sub("", raw.strip())).strip()
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise MalformedLlmOutputError(
+                "LLM 返回的 JSON 无法解析",
+                detail={"reason": str(exc), "excerpt": cleaned[:200]},
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise MalformedLlmOutputError("LLM 返回的 JSON 顶层不是对象", detail={"type": type(parsed).__name__})
+        return parsed
+
+
+def _stream_piece(chunk: Any) -> str:
+    """从流式分片里取增量文本，容错缺字段：delta 可能是 None 或没有 content。"""
+    choices = getattr(chunk, "choices", None)
+    if not choices:
+        return ""
+    delta = getattr(choices[0], "delta", None)
+    return (getattr(delta, "content", None) or "") if delta is not None else ""
+
+
+def build_gateway_if_configured(
+    settings: Settings | None = None,
+    *,
+    tracer: Tracer | None = None,
+    prompts: PromptRegistry | None = None,
+) -> LlmGateway | None:
     """配置了密钥才返回实例；否则返回 None，让平台走无 LLM 的确定性路径。"""
     cfg = settings or get_settings()
     if not cfg.llm_api_key:
         return None
-    return LlmGateway(settings=cfg)
+    return LlmGateway(settings=cfg, tracer=tracer, prompts=prompts)

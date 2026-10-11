@@ -5,12 +5,44 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BusBackend = Literal["memory", "nats"]
 StoreBackend = Literal["memory", "postgres"]
 AnalyticsBackend = Literal["off", "clickhouse", "duckdb"]
 RetrievalIndexBackend = Literal["local", "seekdb"]
+
+
+class LlmModelRoute(BaseModel):
+    """单个 LLM 用途（task key）的路由配置：网关 v2 按 task 选模型与生成参数（§4.1 / D3）。
+
+    `model` 留空表示继承全局 `llm_model`（兼容旧的单模型口径）；`fallback_model` 非空时
+    主模型连续失败达阈值即切到备用模型——熔断只处理故障，不处理成本（成本走预算告警，§4.8.3）。
+    """
+
+    model: str = ""
+    fallback_model: str = ""
+    temperature: float = 0.3
+    max_tokens: int = 2_048
+
+
+def _default_llm_routes() -> dict[str, LlmModelRoute]:
+    """模型路由初值（对齐方案 §3.0 表）——全部**未实测**，联调后回填，不据此声称达标。
+
+    "default" 不写模型名，继承 `llm_model`：没配路由的部署行为与升级前逐字节一致。
+    """
+    return {
+        "default": LlmModelRoute(temperature=0.3, max_tokens=2_048),
+        "assess": LlmModelRoute(model="qwen-plus", fallback_model="qwen-max", temperature=0.1, max_tokens=1_024),
+        "arbitration": LlmModelRoute(model="qwen-max", temperature=0.0, max_tokens=1_024),
+        "perceive": LlmModelRoute(model="qwen-turbo", temperature=0.2, max_tokens=512),
+        "feedback": LlmModelRoute(model="qwen-turbo", temperature=0.2, max_tokens=1_024),
+        "plan": LlmModelRoute(model="qwen-plus", temperature=0.2, max_tokens=2_048),
+        "execute": LlmModelRoute(model="qwen-plus", temperature=0.4, max_tokens=2_048),
+        "assistant": LlmModelRoute(model="qwen-plus", temperature=0.1, max_tokens=512),
+        "simulation": LlmModelRoute(model="qwen-turbo", temperature=0.5, max_tokens=512),
+    }
 
 
 class Settings(BaseSettings):
@@ -77,6 +109,13 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     llm_model: str = "qwen-plus"
     llm_timeout_seconds: float = 20.0
+    # 网关 v2（§4.1 / D3）：按 task key 的多模型路由表。用 JSON 覆盖
+    # （AEGIS_LLM_MODELS='{"assess":{"model":"qwen-max"}}'）；未配的 task 继承全局 llm_model。
+    llm_models: dict[str, LlmModelRoute] = Field(default_factory=_default_llm_routes)
+    # provider 连续失败到该次数即判定熔断、切备用模型（§4.1.5）。达阈值只处理故障不处理成本。
+    llm_breaker_fail_threshold: int = 3
+    # 用量台账环形上限：成本/时延按 agent×model 归因的数据源，满了丢最旧、绝不无界吃内存。
+    llm_usage_ledger_limit: int = 10_000
 
     # 语义交互（完善计划批次 B）：关掉就是"这个出口不存在"（路由一律 503），
     # 不是"看着能用其实不能用"——路由与配置面必须给外部同一个事实。

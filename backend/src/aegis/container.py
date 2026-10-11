@@ -295,6 +295,7 @@ class PlatformContainer:
     knowledge_state: IntegrationState | None = None
     retrieval: HybridRetrievalService | None = None
     retrieval_state: IntegrationState | None = None
+    llm_gateway: LlmGateway | None = None
     mqtt: MqttSource | None = None
     mqtt_state: IntegrationState | None = None
     weather: WeatherApiSource | None = None
@@ -555,6 +556,12 @@ class PlatformContainer:
             },
             "violations": violations,
             "gateway_counters": dict(self.gateway.counters),
+            # 网关 v2 用量：LLM 成本/时延按 agent×model 归因的出口（§4.1.4/§4.8.3）。
+            # 未配 LLM 时如实给 configured=False，而不是空表读成"零成本"。
+            "llm": {
+                "configured": self.llm_gateway is not None,
+                **(self.llm_gateway.usage_snapshot() if self.llm_gateway is not None else {"by_agent_model": [], "total_calls": 0}),
+            },
             "reports": dict(self.report_stats),
             # 触达口径必须自带身份：mock 通道的 1.2s 与真实网关的送达时间是两回事，
             # 分开报才不至于让"≤20min 触达"这项在演练数字上被读成达成（铁律 7）。
@@ -728,11 +735,11 @@ def create_container(
     生产留空由装配点自建并负责关闭。注入 `channels` 时整段自建逻辑跳过（不建也不关连接池）。
     """
     cfg = settings or get_settings()
-    gateway_llm = llm_gateway if llm_gateway is not None else build_gateway_if_configured(cfg)
+    tracer = Tracer()
+    gateway_llm = llm_gateway if llm_gateway is not None else build_gateway_if_configured(cfg, tracer=tracer)
     bus = transport or build_transport(cfg)
     registry = AgentRegistry(cfg)
     contracts = ContractRegistry(contracts_dir or cfg.contracts_dir)
-    tracer = Tracer()
     gateway = AgentGateway(
         bus,
         registry,
@@ -854,6 +861,7 @@ def create_container(
         outbound=outbound,
         simulator=simulator,
         parser=parser,
+        llm_gateway=gateway_llm,
         delivery_client=resolved_delivery_client,
         _owns_delivery_client=owns_delivery_client,
     )
