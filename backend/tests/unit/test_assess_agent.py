@@ -12,7 +12,8 @@ import pytest
 
 from aegis.agents.assess import AssessAgent, AssessVerdict
 from aegis.domain.enums import AgentType
-from aegis.domain.messages import make_request
+from aegis.domain.messages import make_request, now_iso
+from aegis.services.memory import InMemoryAgentMemory, MemoryService, new_memory_record_id
 
 TRACE = "trc_" + "7" * 16
 REQUEST_PAYLOAD = {"region_code": "540121", "hits": [{"rule_id": "R-DEBRIS-RAIN-1", "hazard_type": "debris_flow", "score": 0.9}]}
@@ -147,3 +148,49 @@ class TestContextInjection:
         assert seen["hazard_hint"] == "debris_flow"
         context = gw.calls[0]["prompt_vars"]["context"]
         assert "retrieval 佐证" in context and "graph 佐证" in context
+
+
+class TestAssessMemory:
+    """§3.2 读同区域历史研判回注上下文 + §4.3 把本次结论写回共享命名空间；读写失败只降级。"""
+
+    async def test_prior_assessment_recalled_and_new_verdict_written(self) -> None:
+        svc = MemoryService(InMemoryAgentMemory())
+        await svc.write_shared(
+            kind="assessment",
+            agent_id="assess.other",
+            record_id=new_memory_record_id(),
+            content="上一次 3 级 debris_flow 强降雨",
+            region_code="540121",
+            valid_at=now_iso(),
+        )
+        a, gw = agent(verdict(3), memory=svc)
+        await a.handle(_request())
+        context = gw.calls[0]["prompt_vars"]["context"]
+        assert "memory 佐证" in context and "上一次 3 级" in context
+        rows = await svc.read_shared(kind="assessment", region_code="540121")
+        assert len(rows) == 2, "本次结论应写回，与历史同区研判并存"
+        assert "3级/debris_flow" in rows[0].content  # 新在前
+
+    async def test_verdict_recorded_even_without_history(self) -> None:
+        svc = MemoryService(InMemoryAgentMemory())
+        a, _ = agent(verdict(4), memory=svc)
+        await a.handle(_request())
+        rows = await svc.read_shared(kind="assessment")
+        assert len(rows) == 1
+        assert rows[0].agent_id == "assess.real01"
+
+    async def test_memory_failure_degrades_without_breaking_assessment(self) -> None:
+        class BrokenStore:
+            async def write(self, record):
+                raise RuntimeError("记忆存储不可用")
+
+            async def search(self, **kw):
+                raise RuntimeError("记忆存储不可用")
+
+            async def delete(self, record_id):
+                raise RuntimeError("记忆存储不可用")
+
+        svc = MemoryService(BrokenStore())
+        a, _ = agent(verdict(3), memory=svc)
+        reply = await a.handle(_request())  # 读召回与写回都抛错，但研判照常产出
+        assert reply.payload["risk_level"] == 3

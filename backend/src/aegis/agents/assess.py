@@ -8,6 +8,7 @@ R1/R8/R11 的落点：定级由 `chat_structured`（1–5 枚举强约束，越�
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -15,7 +16,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from aegis.agents.agentkit import AgentKit, Reply
 from aegis.domain.enums import HazardType, RiskLevel
-from aegis.domain.messages import AgentMessage, ModelInfo
+from aegis.domain.messages import AgentMessage, ModelInfo, now_iso
+from aegis.services.memory import MemoryService, new_memory_record_id
+
+log = logging.getLogger("aegis.agents.assess")
 
 
 class AssessVerdict(BaseModel):
@@ -47,6 +51,8 @@ class AssessContextProvider(Protocol):
 @dataclass
 class AssessAgent(AgentKit):
     context: AssessContextProvider | None = None
+    #: 群体认知记忆门面（§4.3）：在场则读同区域历史研判进上下文、并把本次结论写回共享命名空间。
+    memory: MemoryService | None = None
     double_blind: bool = True
     #: 双盲分歧仲裁：初值未实测（联调回填）。一致时置信度上调的幅度同样未实测。
     confidence_floor: float = 0.6
@@ -63,6 +69,15 @@ class AssessAgent(AgentKit):
         ctx: dict[str, Any] = {}
         if self.context is not None:
             ctx = await self.context.corroborate(region_code=region, hazard_hint=hazard_hint, hits=list(hits))
+
+        # §3.2：同区域历史研判经共享记忆命名空间回注上下文（跨事件的经验闭环）。缺位/失败只降级不阻断。
+        if self.memory is not None:
+            try:
+                prior = await self.memory.read_shared(kind="assessment", region_code=region or None, limit=3)
+                if prior:
+                    ctx = {**ctx, "memory": [record.content for record in prior]}
+            except Exception as exc:
+                log.warning("assess 历史研判召回降级", extra={"err": type(exc).__name__})
 
         base_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx)
         first = await self.llm.chat_structured(
@@ -106,6 +121,22 @@ class AssessAgent(AgentKit):
                 disagreement = False
 
         result_payload = self._to_chain_payload(final, region=region, hits=hits)
+
+        if self.memory is not None:
+            try:
+                await self.memory.write_shared(
+                    kind="assessment",
+                    agent_id=self.agent_id,
+                    record_id=new_memory_record_id(),
+                    content=f"{int(final.risk_level)}级/{final.hazard_type}：{final.rationale[:180]}",
+                    region_code=region or None,
+                    refs=[str(e) for e in (result_payload.get("evidence_refs") or [])][:8],
+                    disagreement=bool(disagreement),
+                    valid_at=now_iso(),
+                )
+            except Exception as exc:
+                log.warning("assess 研判写记忆降级", extra={"err": type(exc).__name__})
+
         return Reply(payload=result_payload, model_info=self._provenance(), disagreement=disagreement)
 
     def _to_chain_payload(self, verdict: AssessVerdict, *, region: str, hits: list[Any]) -> dict[str, Any]:
