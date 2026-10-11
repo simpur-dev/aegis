@@ -44,12 +44,19 @@ jobs:
       - name: 指标实测冒烟（Mock 智能体）
         run: uv run python -m scripts.metrics_report --rounds 6 --agents --out reports/ci-metrics.json
 
+      - name: 质量四表回归门禁（§4.5 / D8：任一回退即不过）
+        # 基线档由 `--write-baseline` 生成后入库；四列里只有 STU合法率能离线实算，
+        # 其余三列在基线里是 null——不参与判定，既不会谎报达标也不会谎报退步。
+        run: uv run python -m scripts.quality_gate --baseline baselines/quality_baseline.json --json reports/ci-quality.json
+
       - name: 上传指标报告
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: metrics-report
-          path: backend/reports/ci-metrics.json
+          path: |
+            backend/reports/ci-metrics.json
+            backend/reports/ci-quality.json
           if-no-files-found: ignore
 
   frontend:
