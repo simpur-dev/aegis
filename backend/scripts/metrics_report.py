@@ -21,7 +21,7 @@ import asyncio
 import json
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -236,6 +236,51 @@ def measurement_environment(settings: Settings, *, llm_configured: bool, real_ag
     }
 
 
+async def workflow_leg(container: Any, *, rounds: int, names: Sequence[str] | None = None) -> dict[str, Any]:
+    """工作流腿：让 `workflow_schedule_ms`（节点就绪→开始执行）真出样本——那是 ≤2s 考核项的定义量测点。
+
+    为什么放在这里而不是 drill：批量口径要的是"seed 固定、轮次可控、JSON 出口"的可复现形态，
+    drill 是场景演示工具，让它兼职产数会把两件事搞混（用户定的口径）。
+
+    两条如实交代：
+    - 灾种剧本以"指挥员核签"收尾。脚本代不了真人签字，这里用一条**显式标注 actor=metrics_report**
+      的 approve 决策把这条腿跑到终态，并在报表里单列"脚本代签核签"计数——不加计数就等于把
+      "无人签字的演练"读成"指挥员签过了"。
+    - 模板没注册（部署面缺内置剧本）时不静默：把原因写进 `说明`，那一行考核项继续显示"未测得"。
+    """
+    from aegis.domain.messages import new_trace_id
+    from aegis.workflow.templates import BUILTIN_TEMPLATES
+
+    block: dict[str, Any] = {"实例": 0, "脚本代签核签": 0, "终态": {}, "说明": ""}
+    if rounds <= 0:
+        block["说明"] = "工作流腿未开（--workflow-rounds 0）"
+        return block
+    # None=用内置剧本；显式传空列表是"点名要跑但没有剧本"，必须如实停，不能悄悄换成内置清单跑两轮
+    cycle = list(names) if names is not None else [str(template["name"]) for template in BUILTIN_TEMPLATES]
+    if not cycle:
+        block["说明"] = "没有可用模板名，工作流腿未跑"
+        return block
+    try:
+        for index in range(rounds):
+            detail = await container.workflow.start_from_name(
+                cycle[index % len(cycle)], trace_id=new_trace_id(), payload={"source": "metrics_report"}
+            )
+            block["实例"] += 1
+            pending = [node["node_id"] for node in detail.get("nodes", []) if node.get("state") == "awaiting_human"]
+            if pending:
+                detail = await container.workflow.resume(
+                    detail["instance_id"],
+                    node_id=str(pending[0]),
+                    decision={"choice": "approve", "actor": "metrics_report", "reason": "批量口径脚本代签（非真人核签）"},
+                )
+                block["脚本代签核签"] += 1
+            status = str(detail.get("status", "unknown"))
+            block["终态"][status] = block["终态"].get(status, 0) + 1
+    except Exception as exc:
+        block["说明"] = f"工作流腿中断：{type(exc).__name__}: {exc}"
+    return block
+
+
 async def run(
     *,
     rounds: int,
@@ -248,6 +293,7 @@ async def run(
     bus_backend: str = "memory",
     store_backend: str = "memory",
     agent_runtime: str = "mock",
+    workflow_rounds: int | None = None,
 ) -> int:
     settings = resolve_settings(bus_backend=bus_backend, store_backend=store_backend, agent_runtime=agent_runtime, seed=seed)
     container = create_container(settings, with_simulator=False)
@@ -288,6 +334,7 @@ async def run(
                 async for _ in assistant.respond("查一下 540121 的预警", session_id=f"metrics-report-{index}"):
                     pass
                 assistant_rounds += 1
+        wf_block = await workflow_leg(container, rounds=rounds if workflow_rounds is None else workflow_rounds)
         latency = container.latency_report()
         env_block = measurement_environment(
             settings,
@@ -310,6 +357,7 @@ async def run(
     report = {
         "运行参数": {"rounds": rounds, "with_mock_agents": with_agents, "seed": seed, "事件产出": acted, "致命错误": fatal},
         "测量环境": env_block,
+        "工作流腿": wf_block,
         "人工上报腿": {
             "受理": submitted,
             "产出预警": with_warning,
@@ -355,12 +403,20 @@ def main() -> int:
         help="智能体运行时（缺省沿用 .env 的 AEGIS_AGENT_RUNTIME）；real=真内环上总线（只产文案，不持发送权）",
     )
     parser.add_argument("--seed", type=int, default=202_609)
+    parser.add_argument(
+        "--workflow-rounds",
+        type=int,
+        default=None,
+        help="工作流腿实例数（≤2s 考核项的定义量测点在此）；缺省跟 --rounds 同数，0 即关闭",
+    )
     parser.add_argument("--out", type=Path, default=None, help="同时把报告写入 JSON 文件")
     parser.add_argument("--dataset", type=Path, default=None, help="预警准确率回放数据集（JSONL，口径见 persistence/replay.py）")
     parser.add_argument("--accuracy-target", type=float, default=None, help="覆盖配置里的准确率阈值（0—1]，仅影响判定行")
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error("--rounds 必须 ≥ 1")
+    if args.workflow_rounds is not None and args.workflow_rounds < 0:
+        parser.error("--workflow-rounds 不得为负（要关闭请给 0）")
     if args.dataset is not None and args.dataset.is_file() is False:
         parser.error(f"--dataset 文件不存在：{args.dataset}")
     runtime = args.runtime or Settings(env="dev").agent_runtime
@@ -376,6 +432,7 @@ def main() -> int:
             bus_backend=args.bus,
             store_backend=args.store,
             agent_runtime=runtime,
+            workflow_rounds=args.workflow_rounds,
         )
     )
 

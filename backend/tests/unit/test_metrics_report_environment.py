@@ -1,16 +1,19 @@
-"""批量口径工具的"测量环境"出口：报表必须自己说清这数是在什么上量出来的。
+"""批量口径工具的两条硬口径：环境块 + 工作流腿。
 
-`metrics_report` 以前把 `bus_backend="memory"` 写死在 `run()` 里，于是它只能量"内存总线 + 内存
+一、`metrics_report` 以前把 `bus_backend="memory"` 写死在 `run()` 里，于是它只能量"内存总线 + 内存
 视图 + 降级轨"这一种世界——而 §6 要的出口数字属于真栈（NATS + PostgreSQL + real 运行时）。
-两种世界的 JSON 长得一模一样，读的人分不出来，这是最省事也最危险的假话。
-所以这里钉两件事：① 缺凭据时【当场炸】，不静默退回内存；② 出口布尔只在全真栈 + real + LLM 已配
-时才为真——真内环跑在没有 key 的降级轨上同样不算出口数字。
+两种世界的 JSON 长得一模一样，读的人分不出来，这是最省事也最危险的假话。所以钉两件事：
+① 缺凭据时【当场炸】，不静默退回内存；② 出口布尔只在全真栈 + real + LLM 已配时才为真——
+真内环跑在没有 key 的降级轨上同样不算出口数字。
+
+二、≤2s 那条考核项的定义量测点是 `workflow_schedule_ms`（节点就绪→开始执行）。报表必须有一条
+工作流腿真跑实例，否则那一行永远"未测得"，等于考核项没人量。
 """
 
 from __future__ import annotations
 
 import pytest
-from scripts.metrics_report import measurement_environment, resolve_settings
+from scripts.metrics_report import measurement_environment, resolve_settings, workflow_leg
 
 
 def test_默认口径是内存世界() -> None:
@@ -79,3 +82,38 @@ def test_全真栈且LLM已配才亮绿灯() -> None:
     assert block["可作出口数字"] is True
     assert "可按 §6" in block["口径提醒"]
     assert (block["总线"], block["存储"], block["智能体运行时"]) == ("nats", "postgres", "real")
+
+
+async def test_工作流腿把2s考核项的样本跑出来(container) -> None:
+    """≤2s 的定义量测点是 workflow_schedule_ms；这条腿不跑，报表那一行就永远"未测得"。"""
+    from scripts.metrics_report import _table
+
+    block = await workflow_leg(container, rounds=3)
+    assert block["实例"] == 3
+    assert sum(block["终态"].values()) == 3, "每个实例都要落到一个可归因的终态"
+    stats = container.tracer.ledger.stats("workflow_schedule_ms")
+    assert stats.count > 0, "节点就绪→开始执行必须真落账"
+    row = next(
+        r
+        for r in _table(container.latency_report(), container.latency_report()["collaboration"])
+        if r["指标"] == "常规任务调度响应时延 ≤2s"
+    )
+    assert row["样本"] == stats.count and row["判定"] != "未测得（账本里没有这条指标的样本）"
+
+
+async def test_脚本代签核签必须单独计数(container) -> None:
+    """灾种剧本以指挥员核签收尾：脚本签的就写成脚本签的，别让"无人签字"读成"签过了"。"""
+    from aegis.workflow.templates import REPORT_REVIEW_TEMPLATE
+
+    block = await workflow_leg(container, rounds=2, names=[REPORT_REVIEW_TEMPLATE["name"]])
+    assert block["实例"] == 2
+    assert block["脚本代签核签"] == 2, "核签流程每个实例都会停一次，代签数要与实例数对齐"
+
+
+async def test_关掉的腿与缺模板都要留话(container) -> None:
+    off = await workflow_leg(container, rounds=0)
+    assert off["实例"] == 0 and "未开" in off["说明"]
+    empty = await workflow_leg(container, rounds=2, names=[])
+    assert empty["实例"] == 0 and "没有可用模板名" in empty["说明"]
+    broken = await workflow_leg(container, rounds=1, names=["这套剧本不存在"])
+    assert broken["实例"] == 0 and "工作流腿中断" in broken["说明"], "模板缺位不能静默，也不许把整张报表带崩"
