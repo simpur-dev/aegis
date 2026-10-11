@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from scripts.metrics_report import INDICATORS, _table
+from scripts.metrics_report import INDICATORS, TIER_OF_METRIC, _table
 
 from aegis.observability.tracer import LatencyLedger
 
@@ -128,3 +128,8 @@ def test_每行都标出口径档且10s由调度口径代表() -> None:
     assert tiers["预警信息生成时间 ≤3min"] == "端到端档"
     assert tiers["多智能体协同联动成功率 ≥90%"] == "LLM 档", "成功率的分母就是这些事务，必须同档并排"
     assert all("口径档" in row for row in rows), "没有一行可以不带档"
+
+
+def test_每个登记的量测点都归了档() -> None:
+    """漏归档就是一只"口径档=未归档"的行走进报表——评审照着"档"找出处时会断链。"""
+    assert set(INDICATORS) <= set(TIER_OF_METRIC), f"未归档：{sorted(set(INDICATORS) - set(TIER_OF_METRIC))}"

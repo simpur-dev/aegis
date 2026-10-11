@@ -42,6 +42,7 @@ TYPE_ACCURACY_INDICATOR = "5 类灾种触发条件识别准确率"
 #: 而"另开一支"正是当年把秒值拿去比毫秒阈值、永远绿的源头。
 #: 每个量测点属于哪一口径（§5 A 案三档）：调度档 / LLM 档 / 接入档 / 端到端档
 TIER_OF_METRIC: dict[str, str] = {
+    "sync_agent_to_gateway_ms": "共享档",
     "workflow_schedule_ms": "调度档",
     "workflow_node_ms": "调度档",
     "workflow_reschedule_ms": "调度档",
