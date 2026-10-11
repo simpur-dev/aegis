@@ -133,6 +133,8 @@ class AssessAgent(AgentKit):
 
         result_payload = self._to_chain_payload(final, region=region, hits=hits)
         result_payload["double_blind"] = blind_status  # §3.2 双盲状态如实留痕（agreed/arbitrated/skipped_deadline/not_applicable）
+        # 取数哪条腿没拿到（REST 503/超时/连不上）必须看得见，否则"没有佐证"会读成"佐证就是这些"。
+        result_payload["context_degraded"] = list(ctx.get("degraded") or [])
 
         if self.memory is not None:
             try:
