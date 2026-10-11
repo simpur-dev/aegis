@@ -55,6 +55,18 @@ _BUILTIN_TEMPLATES: list[PromptTemplate] = [
         ),
         user="{verdict_line}\n目标：{objective}\n约束：{constraints}\n{cases}{context}",
     ),
+    PromptTemplate(
+        task="feedback",
+        version="1.0.0",
+        system=(
+            "你是预警反馈归因专家。基于触达回执、响应态与现场上报，分析哪类受众未触达、响应迟滞在哪一环节，"
+            "给出效果评估依据、阈值修正【建议】(仅建议、不落地，落地走人工确认)，并总结一条可复用经验教训。"
+            '只输出 JSON：{"attribution","unreached_audiences"(数组),"lag_stage"(可为空串),'
+            '"effect_basis","threshold_suggestion"(可为空串),"lesson"}。'
+            "不得发明回执与上报里没有的数字或事实。"
+        ),
+        user="{warning_line}\n触达回执：{reach}\n响应态：{response_state}\n现场上报：{reports}\n",
+    ),
 ]
 
 
