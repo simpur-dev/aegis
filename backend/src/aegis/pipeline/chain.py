@@ -417,7 +417,10 @@ class HazardResponseChain:
                 },
                 trace_id=trace,
                 capability="risk_assess",
-                deadline_ms=int(self._settings.llm_timeout_seconds * 1000),
+                # 事务预算走平台默认 deadline（`default_request_deadline_ms`，与 `collab_txn` 登记的
+                # ≤10s 同一档）；此前这里传的是 `llm_timeout_seconds`——那是**单次 HTTP 调用**的超时，
+                # 拿它当整笔协同事务的预算，等于允许研判合法地跑到 20s（真栈实测 19.1s，事务口径 10s 超标），
+                # 双盲增强腿的预算闸也因此几乎不会被触发。
                 priority=1,
             )
         except AegisError as exc:

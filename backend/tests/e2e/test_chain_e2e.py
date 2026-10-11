@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -215,6 +216,41 @@ class TestFatalDeliveryFailure:
                 assert result.warning is None
         finally:
             await container.shutdown()
+
+
+class TestTransactionDeadline:
+    """协同事务的预算必须来自平台默认 deadline（与 `collab_txn` 登记的 ≤10s 同一档）。
+
+    真栈实测的教训：chain 曾把 `llm_timeout_seconds`（单次 HTTP 调用的超时）当研判事务的
+    deadline 传下去，于是研判合法地跑到 19.1s——而 `collab_txn` 判的是 ≤10s，双盲增强腿的
+    预算闸也因此永远等不到"预算不够"的那一刻。两个不同层的时限被当成同一个用。
+    """
+
+    async def test_研判事务不再自带比SLA更宽的deadline(self, settings: Settings) -> None:
+        container = await build_container(settings.model_copy(update={"llm_timeout_seconds": 60.0}))
+        seen: list[tuple[str, Any]] = []
+        original = container.gateway.dispatch
+
+        async def spy(agent_type: object, action: object, payload: dict, **kw: Any) -> Any:
+            seen.append((str(agent_type), kw.get("deadline_ms")))
+            return await original(agent_type, action, payload, **kw)  # type: ignore[arg-type]
+
+        container.gateway.dispatch = spy  # type: ignore[method-assign]
+        try:
+            await start_mock_agents(container.transport, latency_ms=2.0, heartbeat_interval=0.05)
+            await asyncio.sleep(0.05)
+            await container.transport.idle()
+            results = await container.chain.process_many(group(surge_readings()))
+            assert any(r.acted for r in results)
+        finally:
+            await container.shutdown()
+
+        assess_deadlines = [deadline for name, deadline in seen if "ASSESS" in name.upper()]
+        assert assess_deadlines, "研判段应向总线派发过请求"
+        assert all(deadline is None for deadline in assess_deadlines), (
+            f"研判事务把 HTTP 单次超时({assess_deadlines})当成了业务预算；应交回网关默认 deadline"
+        )
+        assert container.settings.default_request_deadline_ms == settings.default_request_deadline_ms
 
 
 class TestMetricEvidence:
