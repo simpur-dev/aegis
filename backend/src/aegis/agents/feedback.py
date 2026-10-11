@@ -23,6 +23,7 @@ from aegis.agents.agentkit import AgentKit, Reply
 from aegis.domain.messages import AgentMessage, ModelInfo, now_iso
 from aegis.errors import AegisError
 from aegis.services.memory import MemoryService, new_memory_record_id
+from aegis.services.prompt_guard import fence_untrusted
 
 log = logging.getLogger("aegis.agents.feedback")
 
@@ -120,7 +121,7 @@ class FeedbackAgent(AgentKit):
                         "warning_line": f"预警：{warning_id} 触达 {delivered}/{total} 响应态 {response_state}",
                         "reach": str({"delivered": delivered, "total": total}),
                         "response_state": response_state,
-                        "reports": str(list(reports)[:5]),
+                        "reports": fence_untrusted("现场上报", str(list(reports)[:5])),
                     },
                     agent_id=self.agent_id,
                     trace_id=request.trace_id,

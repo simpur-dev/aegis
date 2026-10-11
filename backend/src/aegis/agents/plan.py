@@ -21,6 +21,7 @@ from aegis.agents.agentkit import AgentKit, Reply
 from aegis.bus.gateway import ContractRegistry
 from aegis.domain.enums import Action, HazardType, RiskLevel, TaskType
 from aegis.domain.messages import AgentMessage, ModelInfo, TriggerHit
+from aegis.services.prompt_guard import fence_untrusted
 from aegis.services.risk_engine import RiskVerdict
 from aegis.services.task_parser import TaskParser
 
@@ -125,15 +126,18 @@ class PlanAgent(AgentKit):
         return units, deviations
 
     def _prompt_vars(self, payload: dict[str, Any], verdict: RiskVerdict) -> dict[str, str]:
-        """填充 PromptRegistry `plan` 模板的变量（正文单一真源在注册表，§4.1.6）。"""
+        """填充 PromptRegistry `plan` 模板的变量（正文单一真源在注册表，§4.1.6）。
+
+        目标（用户指令）、参考案例、检索上下文都是外部文本 → 过提示注入围栏（§4.8.2）。
+        """
         cases = payload.get("reference_cases") or []
         ctx = payload.get("retrieved_context") or []
         return {
             "verdict_line": f"灾种：{verdict.hazard_type.value} 等级：{int(verdict.risk_level)} 区域：{verdict.region_code}",
-            "objective": str(payload.get("objective", "")),
+            "objective": fence_untrusted("目标", str(payload.get("objective", ""))),
             "constraints": str(payload.get("constraints", {})),
-            "cases": f"参考案例：{list(cases)[:5]}\n" if cases else "",
-            "context": f"检索佐证：{list(ctx)[:5]}\n" if ctx else "",
+            "cases": fence_untrusted("参考案例", str(list(cases)[:5])) + "\n" if cases else "",
+            "context": fence_untrusted("检索佐证", str(list(ctx)[:5])) + "\n" if ctx else "",
         }
 
     @staticmethod

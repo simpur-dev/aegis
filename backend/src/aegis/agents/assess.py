@@ -18,6 +18,7 @@ from aegis.agents.agentkit import AgentKit, Reply
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import AgentMessage, ModelInfo, now_iso
 from aegis.services.memory import MemoryService, new_memory_record_id
+from aegis.services.prompt_guard import fence_untrusted
 
 log = logging.getLogger("aegis.agents.assess")
 
@@ -173,7 +174,13 @@ class AssessAgent(AgentKit):
             arbitration = (
                 f"两次独立研判分歧：{int(a.risk_level)}级({a.rationale}) vs {int(b.risk_level)}级({b.rationale})，请给出最终仲裁等级。\n"
             )
-        return {"region": region, "hits": str(list(hits)[:8]), "context": context, "arbitration": arbitration}
+        # 外部文本（触发命中携带的站点串、检索/案例/图谱/记忆佐证、分歧 rationale）过提示注入围栏（§4.8.2）。
+        return {
+            "region": region,
+            "hits": fence_untrusted("触发命中", str(list(hits)[:8])),
+            "context": fence_untrusted("外部佐证", context) if context else "",
+            "arbitration": fence_untrusted("分歧", arbitration) if arbitration else "",
+        }
 
     @staticmethod
     def _first_hazard(hits: list[Any]) -> str | None:

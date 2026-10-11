@@ -148,6 +148,7 @@ class TestContextInjection:
         assert seen["hazard_hint"] == "debris_flow"
         context = gw.calls[0]["prompt_vars"]["context"]
         assert "retrieval 佐证" in context and "graph 佐证" in context
+        assert "AEGIS_DATA" in context  # 外部佐证文本已进提示注入围栏（§4.8.2）
 
 
 class TestAssessMemory:
