@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -54,6 +55,20 @@ class _NullTransport:
     name = "null"
 
     async def publish(self, *a: object, **k: object) -> None: ...
+
+
+class SlowGateway(FakeGateway):
+    """给每次调用注入真实墙钟耗时：预算闸看的必须是实际花掉的时间，不是配置里的假设值。"""
+
+    def __init__(self, *verdicts: Any, delays: list[float] | None = None) -> None:
+        super().__init__(*verdicts)
+        self._delays = list(delays or [])
+
+    async def chat_structured(self, messages, **kw: Any) -> Any:
+        delay = self._delays.pop(0) if self._delays else 0.0
+        if delay:
+            await asyncio.sleep(delay)
+        return await super().chat_structured(messages, **kw)
 
 
 def _request(deadline_ms: int = 5000) -> Any:
@@ -218,3 +233,55 @@ class TestAssessMemory:
         a, _ = agent(verdict(3), memory=svc)
         reply = await a.handle(_request())  # 读召回与写回都抛错，但研判照常产出
         assert reply.payload["risk_level"] == 3
+
+
+class TestBlindBudget:
+    """双盲是增强腿：慢模型下要按已观测的真实耗时收腿，而不是把事务拖到撞死在 deadline 上。
+
+    真机实测：深言并发下单次调用 1.3–5.6s，串行 2–3 次把研判推到 19.5s，
+    协同成功率因此掉到 0.81——收腿比"永远跑满三条腿"更对得起那个 ≤10s 的事务口径。
+    """
+
+    async def test_慢首轮把预算吃紧时第二腿不跑(self) -> None:
+        gw = SlowGateway(verdict(1), verdict(2), delays=[0.60])
+        a = AssessAgent(
+            transport=_NullTransport(),
+            agent_type=AgentType.ASSESS,
+            agent_id="assess.real01",
+            capabilities=["risk_assess"],
+            llm=gw,
+        )  # type: ignore[arg-type]
+        # deadline 高于 double_blind_min_deadline_ms(800)，跳过原因必须是"预算不足"而不是"deadline 太紧"
+        reply = await a.handle(_request(deadline_ms=1000))
+        assert len(gw.calls) == 1, "剩余 ~400ms 不够再跑一次 600ms 量级的调用"
+        assert reply.payload["double_blind"] == "skipped_budget"
+        assert reply.payload["risk_level"] == 1, "第一条结论照常交付，收的只是增强腿"
+
+    async def test_快模型下双照常跑不被这条改动削弱(self) -> None:
+        gw = SlowGateway(verdict(1), verdict(1), delays=[0.001, 0.001])
+        a = AssessAgent(
+            transport=_NullTransport(),
+            agent_type=AgentType.ASSESS,
+            agent_id="assess.real01",
+            capabilities=["risk_assess"],
+            llm=gw,
+        )  # type: ignore[arg-type]
+        reply = await a.handle(_request(deadline_ms=5000))
+        assert len(gw.calls) == 2
+        assert reply.payload["double_blind"] == "agreed"
+        assert reply.payload["confidence"] > 0.8, "一致时置信度上调照常"
+
+    async def test_分歧但没时间仲裁时取更保守的一档并留痕(self) -> None:
+        gw = SlowGateway(verdict(1), verdict(3), delays=[0.05, 0.90])
+        a = AssessAgent(
+            transport=_NullTransport(),
+            agent_type=AgentType.ASSESS,
+            agent_id="assess.real01",
+            capabilities=["risk_assess"],
+            llm=gw,
+        )  # type: ignore[arg-type]
+        reply = await a.handle(_request(deadline_ms=2000))
+        assert len(gw.calls) == 2, "第三腿（仲裁）被预算挡下"
+        assert reply.payload["double_blind"] == "arbitrated_skipped_budget"
+        assert reply.payload["risk_level"] == 1, "红色(1)与黄色(3)分歧时取更重的等级，不取较轻的那条"
+        assert reply.payload.get("disagreement") is True or reply.disagreement is True

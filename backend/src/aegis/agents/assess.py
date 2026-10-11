@@ -9,6 +9,7 @@ R1/R8/R11 的落点：定级由 `chat_structured`（1–5 枚举强约束，越�
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -60,10 +61,26 @@ class AssessAgent(AgentKit):
     confidence_boost: float = 0.1
     #: 双盲预算门槛（未实测初值）：deadline 低于此就不跑第二/三次评估——它是增强腿、非关键路径（§3.2）。
     double_blind_min_deadline_ms: int = 800
+    #: 增强腿的预算倍数（未实测初值）：跑下一条腿前，要求剩余预算 ≥ 此倍 × 上一次真实调用耗时。
+    #: 真机实测教训：只看请求 deadline（20s）等于永远不跳过——深言并发下单次 1.3–5.6s，
+    #: 串行 2–3 次就把事务拖到 19.5s 撞死在 deadline 上（协同成功率因此掉到 0.81）。
+    #: 用"已观测到的真实耗时"做门槛，慢的时候主动少跑增强腿并留痕，快的时候双盲照跑。
+    blind_budget_factor: float = 1.5
+
+    def _budget_left(self, request: AgentMessage, started_at: float) -> float:
+        """剩余预算（ms）：请求 deadline 减去本次内环已花掉的时间；没给 deadline 就当宽裕。
+
+        只用来决定要不要再花一次模型调用——增强腿可以少跑，关键路径（第一条结论）不能没有。
+        """
+        if request.deadline_ms is None:
+            return float("inf")
+        return request.deadline_ms - (time.perf_counter() - started_at) * 1000
 
     async def handle(self, request: AgentMessage) -> Reply:
         if self.llm is None:
             raise RuntimeError("assess 内环需要 LLM 网关（缺位由平台规则降级轨接管）")
+        # perf_counter 而非 utc_now：时钟被同步一步就会把负数夹成 0，预算判断跟着失真
+        started_at = time.perf_counter()
         payload = request.payload or {}
         region = str(payload.get("region_code", ""))
         hits = payload.get("hits") or []
@@ -83,6 +100,7 @@ class AssessAgent(AgentKit):
                 log.warning("assess 历史研判召回降级", extra={"err": type(exc).__name__})
 
         base_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx)
+        first_started_at = time.perf_counter()
         first = await self.llm.chat_structured(
             [],
             schema=AssessVerdict,
@@ -92,6 +110,7 @@ class AssessAgent(AgentKit):
             agent_id=self.agent_id,
             trace_id=request.trace_id,
         )
+        first_ms = (time.perf_counter() - first_started_at) * 1000
 
         disagreement: bool | None = None
         final = first
@@ -102,7 +121,14 @@ class AssessAgent(AgentKit):
             if deadline is not None and deadline < self.double_blind_min_deadline_ms:
                 # §3.2：双盲是增强腿、非关键路径——deadline 紧张时跳过并留痕，不冒超期风险。
                 blind_status = "skipped_deadline"
+            elif self._budget_left(request, started_at) < self.blind_budget_factor * first_ms:
+                blind_status = "skipped_budget"
+                log.info(
+                    f"研判双盲增强腿跳过：剩余预算不足上一次调用的 {self.blind_budget_factor:.1f} 倍",
+                    extra={"first_ms": round(first_ms, 1)},
+                )
             else:
+                second_started_at = time.perf_counter()
                 second = await self.llm.chat_structured(
                     [],
                     schema=AssessVerdict,
@@ -112,27 +138,36 @@ class AssessAgent(AgentKit):
                     agent_id=self.agent_id,
                     trace_id=request.trace_id,
                 )
+                second_ms = (time.perf_counter() - second_started_at) * 1000
                 if int(second.risk_level) != int(first.risk_level):
                     arb_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, divergence=(first, second))
-                    arb = await self.llm.chat_structured(
-                        [],
-                        schema=AssessVerdict,
-                        task="arbitration",
-                        prompt_key="assess",
-                        prompt_vars=arb_vars,
-                        agent_id=self.agent_id,
-                        trace_id=request.trace_id,
-                    )
-                    final = arb
-                    disagreement = True
-                    blind_status = "arbitrated"
+                    if self._budget_left(request, started_at) < self.blind_budget_factor * max(first_ms, second_ms):
+                        # 分歧已经发生却没时间仲裁：取更保守（等级更高=数字更小）的一条，并留痕
+                        final = first if int(first.risk_level) <= int(second.risk_level) else second
+                        disagreement = True
+                        blind_status = "arbitrated_skipped_budget"
+                    else:
+                        arb = await self.llm.chat_structured(
+                            [],
+                            schema=AssessVerdict,
+                            task="arbitration",
+                            prompt_key="assess",
+                            prompt_vars=arb_vars,
+                            agent_id=self.agent_id,
+                            trace_id=request.trace_id,
+                        )
+                        final = arb
+                        disagreement = True
+                        blind_status = "arbitrated"
                 else:
                     final = first.model_copy(update={"confidence": min(0.99, first.confidence + self.confidence_boost)})
                     disagreement = False
                     blind_status = "agreed"
 
         result_payload = self._to_chain_payload(final, region=region, hits=hits)
-        result_payload["double_blind"] = blind_status  # §3.2 双盲状态如实留痕（agreed/arbitrated/skipped_deadline/not_applicable）
+        # §3.2 双盲状态如实留痕：agreed / arbitrated / skipped_deadline / skipped_budget /
+        # arbitrated_skipped_budget / not_applicable —— 收腿这件事必须看得见，不能伪装成"跑了且一致"
+        result_payload["double_blind"] = blind_status
         # 取数哪条腿没拿到（REST 503/超时/连不上）必须看得见，否则"没有佐证"会读成"佐证就是这些"。
         result_payload["context_degraded"] = list(ctx.get("degraded") or [])
 
