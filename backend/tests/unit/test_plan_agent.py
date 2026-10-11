@@ -13,8 +13,9 @@ from pydantic import ValidationError
 
 from aegis.agents.plan import PlanAdjustment, PlanAgent, PlanRefinement
 from aegis.bus.gateway import ContractRegistry
-from aegis.domain.enums import AgentType
+from aegis.domain.enums import AgentType, TaskType
 from aegis.domain.messages import make_request
+from aegis.services.prompt_registry import PromptRegistry, PromptTemplate
 
 TRACE = "trc_" + "6" * 16
 EVENT = "evt_" + "a" * 12
@@ -152,3 +153,27 @@ class TestNoLLMPaths:
         reply = await agent(gw, contracts=contracts).handle(_request("plan.stu"))
         assert gw.calls == []
         assert reply.payload["source"] == "local_playbook"
+
+
+async def test_提示词里给出本次可精修的task_type白名单() -> None:
+    """只说"取枚举之一"而不给清单，模型会交回"交通管制"这类中文标签，schema 整批拒收
+    （真机实测 3 次 MalformedLlmOutputError → 决策降级）。白名单还给窄不给宽：
+    只列本地剧本这次真产出的类型，不诱导模型去精修一条本次不存在的步骤。"""
+    gateway = FakePlanGateway(PlanRefinement(adjustments=[]))
+    await agent(gateway, contracts=ContractRegistry()).handle(_request("plan.stu"))
+    variables = gateway.calls[0]["prompt_vars"]
+    whitelist = variables["task_types"]
+    assert whitelist, "白名单槽位必须是实数，不能是空串"
+    tokens = [t.strip() for t in whitelist.replace(",", "、").split("、") if t.strip()]
+    assert tokens, f"白名单解析不出任何类型：{whitelist!r}"
+    assert set(tokens) <= set(TaskType._value2member_map_), f"白名单里出现了枚举之外的名称：{tokens}"
+
+
+def test_模板正文必须留白名单槽位() -> None:
+    """正文单一真源在注册表：槽位漏了就等于把那条腿退回"靠模型猜枚举"的不可用状态。"""
+    template = PromptRegistry.builtin()._by_task["plan"]
+    assert "{task_types}" in template.user
+    assert "逐字取自给定白名单" in template.system
+    assert template.version == "1.1.0", "提示词正文变了就必须换版本号（D10：结论里的 prompt_version 要能对上正文）"
+    with pytest.raises(ValueError):
+        PromptRegistry([PromptTemplate(task="plan", version="9.9.9", system="s", user="白名单：{task_types}")]).build("plan")

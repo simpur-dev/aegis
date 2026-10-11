@@ -325,7 +325,7 @@ class TestPromptRegistry:
     def test_builtin_seeds_migrated_prompts(self) -> None:
         reg = PromptRegistry.builtin()
         assert reg.version_for_task("assess") == "1.0.0"
-        assert reg.version_for_task("plan") == "1.0.0"
+        assert reg.version_for_task("plan") == "1.1.0"  # 白名单进提示词 → 正文变了就得换版本号
         assert reg.version_for_task("feedback") == "1.0.0"
         assert reg.version_for_task("execute") == "1.0.0"  # 三分支文案已迁入版本化真源
         assert reg.version_for_task("perceive") is None  # 未迁入不登记

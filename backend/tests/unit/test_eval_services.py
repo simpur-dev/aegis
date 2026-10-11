@@ -48,7 +48,7 @@ class TestModelCards:
         by = {c["agent"]: c for c in cards}
         # 已迁入版本化真源的 task → 有 prompt_version；未迁入如实 None。
         assert by["assess"]["prompt_version"] == "1.0.0"
-        assert by["plan"]["prompt_version"] == "1.0.0"
+        assert by["plan"]["prompt_version"] == "1.1.0"  # 白名单进正文时换的号；正文再变必须再换，否则模型卡片会撒谎
         assert by["execute"]["prompt_version"] == "1.0.0"  # execute 已迁入，不再是留白
         assert by["perceive"]["prompt_version"] is None
         # 模型来自真实路由配置。

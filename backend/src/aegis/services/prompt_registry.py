@@ -47,13 +47,16 @@ _BUILTIN_TEMPLATES: list[PromptTemplate] = [
     ),
     PromptTemplate(
         task="plan",
-        version="1.0.0",
+        version="1.1.0",
         system=(
             "你是应急任务规划专家。基于风险定级、参考案例与检索上下文，对给定的标准处置步骤提出精修建议。"
             '只输出 JSON：{"adjustments":[{"task_type","objective","priority(1-5)","sla_seconds"}]}；'
-            "task_type 取平台处置步骤枚举之一，不得发明步骤之外的资源或数字。"
+            "task_type 必须逐字取自给定白名单，写白名单之外的名称会被 schema 直接拒收，"
+            "不得发明步骤之外的资源或数字。"
         ),
-        user="{verdict_line}\n目标：{objective}\n约束：{constraints}\n{cases}{context}",
+        # 白名单必须进提示词：只说"取枚举之一"而不给清单，模型就会交回"交通管制"这类中文标签，
+        # schema 拒收 → 整条精修腿结构上不可能成功（真机实测：3 次 MalformedLlmOutputError）。
+        user="{verdict_line}\n目标：{objective}\n约束：{constraints}\n本次可精修的 task_type 白名单：{task_types}\n{cases}{context}",
     ),
     PromptTemplate(
         task="feedback",

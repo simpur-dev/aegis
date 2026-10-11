@@ -73,7 +73,7 @@ class PlanAgent(AgentKit):
             units = [self._stamp(u) for u in baseline]
             return Reply(payload={"task_units": self._to_payloads(units), "source": "local_playbook", "llm_decided": False})
 
-        adjustment_reply = await self._refine(request, payload, verdict)
+        adjustment_reply = await self._refine(request, payload, verdict, baseline)
         applied, deviations = self._apply(baseline, adjustment_reply)
         units = [self._stamp(u) for u in applied]
 
@@ -98,7 +98,7 @@ class PlanAgent(AgentKit):
             model_info=self._provenance(),
         )
 
-    async def _refine(self, request: AgentMessage, payload: dict[str, Any], verdict: RiskVerdict) -> PlanRefinement:
+    async def _refine(self, request: AgentMessage, payload: dict[str, Any], verdict: RiskVerdict, baseline: list[Any]) -> PlanRefinement:
         llm = self.llm
         if llm is None:  # handle() 已在调用前挡住无 LLM 路径；这里为 mypy 收窄类型
             raise RuntimeError("plan 精修需要 LLM 网关")
@@ -107,7 +107,7 @@ class PlanAgent(AgentKit):
             schema=PlanRefinement,
             task="plan",
             prompt_key="plan",
-            prompt_vars=self._prompt_vars(payload, verdict),
+            prompt_vars=self._prompt_vars(payload, verdict, baseline),
             agent_id=self.agent_id,
             trace_id=request.trace_id,
         )
@@ -125,14 +125,19 @@ class PlanAgent(AgentKit):
         deviations = [f"LLM 建议了基线外 task_type：{t}（未采纳，保持本地剧本覆盖）" for t in sorted(set(by_task) - baseline_types)]
         return units, deviations
 
-    def _prompt_vars(self, payload: dict[str, Any], verdict: RiskVerdict) -> dict[str, str]:
+    def _prompt_vars(self, payload: dict[str, Any], verdict: RiskVerdict, baseline: list[Any]) -> dict[str, str]:
         """填充 PromptRegistry `plan` 模板的变量（正文单一真源在注册表，§4.1.6）。
 
         目标（用户指令）、参考案例、检索上下文都是外部文本 → 过提示注入围栏（§4.8.2）。
+        `task_types` 用本地剧本这次真的产出的类型：白名单给窄不给宽，既让模型有据可选
+        （只说"取枚举之一"时它会交回"交通管制"这类中文标签而被 schema 整批拒收），
+        也不会诱导它去精修一条本次不存在的步骤。
         """
         cases = payload.get("reference_cases") or []
         ctx = payload.get("retrieved_context") or []
+        whitelist = sorted({str(unit.task_type.value) for unit in baseline}) or sorted(_VALID_TASK_TYPES)
         return {
+            "task_types": "、".join(whitelist),
             "verdict_line": f"灾种：{verdict.hazard_type.value} 等级：{int(verdict.risk_level)} 区域：{verdict.region_code}",
             "objective": fence_untrusted("目标", str(payload.get("objective", ""))),
             "constraints": str(payload.get("constraints", {})),
