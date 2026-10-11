@@ -87,6 +87,7 @@ WARNING_COLUMNS = (
     "audiences",
     "channels",
     "translation_pending",
+    "audience_copies",
     "generated_at",
     "released_at",
     "delivered_at",
@@ -362,6 +363,16 @@ def reach_seconds(record: WarningRecord) -> float | None:
     return None if raw is None else max(0.0, raw)
 
 
+def copies_payload(record: WarningRecord) -> dict[str, str]:
+    """分受众文案的落库形状：键与值都必须是非空文本，脏数据在这里挡，不进库。"""
+    copies: dict[str, str] = {}
+    for role, text in (record.audience_copies or {}).items():
+        if not isinstance(role, str) or not isinstance(text, str) or not role.strip() or not text.strip():
+            raise MappingError("audience_copies 的键与值都必须是非空文本")
+        copies[role.strip()] = text.strip()
+    return copies
+
+
 def warning_params(record: WarningRecord) -> tuple[Any, ...]:
     if not record.region_codes:
         raise MappingError("region_codes 不得为空")
@@ -380,6 +391,7 @@ def warning_params(record: WarningRecord) -> tuple[Any, ...]:
         list(record.audiences),
         list(record.channels),
         bool(record.translation_pending),
+        check_json(copies_payload(record), field="audience_copies"),
         to_moment(record.generated_at),
         optional_moment(record.released_at),
         delivered_at(record),
@@ -416,6 +428,7 @@ def warning_from_row(row: Mapping[str, Any], receipts: Sequence[Mapping[str, Any
         audiences=list(row["audiences"]),
         channels=list(row["channels"]),
         translation_pending=bool(row["translation_pending"]),
+        audience_copies=dict(row.get("audience_copies") or {}),
         generated_at=to_iso(row["generated_at"]),
         released_at=None if row["released_at"] is None else to_iso(row["released_at"]),
         deliveries=[

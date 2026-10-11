@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from aegis.domain.enums import OwnerRole, RefType, RiskLevel, TaskType
 from aegis.domain.messages import (
@@ -27,7 +28,7 @@ from aegis.persistence.errors import MappingError
 from aegis.pipeline.chain import ChainResult, StageResult
 from aegis.workflow.model import EdgeDef, InstanceStatus, NodeDef, NodeRun, NodeState, RetryPolicy, WorkflowDef, WorkflowInstance
 
-# 与 002_schema.sql 的建表列一致（不含生成列/默认列），用于 arity 对照断言
+# 与建表列一致（002_schema.sql + 006 增列；不含生成列/默认列），用于 arity 对照断言
 TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "monitoring_stations": rows.STATION_COLUMNS,
     "telemetry_readings": rows.TELEMETRY_COLUMNS,
@@ -324,6 +325,30 @@ class TestWarningRoundTrip:
         row = as_row(rows.WARNING_COLUMNS, rows.warning_params(original))
         receipts = [as_row(rows.RECEIPT_COLUMNS, params) for params in rows.receipt_params(original)]
         assert rows.warning_from_row(row, receipts) == original
+
+    def test_audience_copies_round_trip(self) -> None:
+        """三分支文案要真进库、真读回：列名/写/读三处任漏一处，这里就拿到空字典。"""
+        original = warning(audience_copies={"decision_lead": "依据链：短雨 32 毫米", "residents": "沿高地路线撤离"})
+        row = as_row(rows.WARNING_COLUMNS, rows.warning_params(original))
+        assert row["audience_copies"] == original.audience_copies
+        receipts = [as_row(rows.RECEIPT_COLUMNS, params) for params in rows.receipt_params(original)]
+        assert rows.warning_from_row(row, receipts) == original
+
+    def test_audience_copies_rejects_blank_entries(self) -> None:
+        for bad in ({"": "有内容"}, {"residents": "   "}):
+            with pytest.raises(MappingError, match="非空文本"):
+                rows.warning_params(warning(audience_copies=bad))
+
+    def test_audience_copies_rejects_non_text_values_before_the_row_layer(self) -> None:
+        """类型在模型层就挡住（dict[str,str]），行层只管空白/超长——两道闸别混成一件事。"""
+        with pytest.raises(ValidationError, match="audience_copies"):
+            WarningRecord(audience_copies={"residents": 1})  # type: ignore[dict-item]
+
+    def test_row_predating_the_column_reads_as_empty_not_missing(self) -> None:
+        """006 之前的旧行没有这一列：读侧必须给空字典，而不是 KeyError 或"文案丢了"。"""
+        row = as_row(rows.WARNING_COLUMNS, rows.warning_params(warning()))
+        row.pop("audience_copies")
+        assert rows.warning_from_row(row).audience_copies == {}
 
     def test_derived_columns(self) -> None:
         row = as_row(rows.WARNING_COLUMNS, rows.warning_params(warning()))

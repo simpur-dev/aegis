@@ -255,6 +255,9 @@ class WarningRecord(BaseModel):
     audiences: list[str] = Field(default_factory=list)
     channels: list[str] = Field(default_factory=list)
     translation_pending: bool = False
+    #: 分受众文案（§3.4 三分支：decision_lead/responder/residents）。D10 只增可选字段：
+    #: 空对象的含义是"没生成分支文案"，与"发过没发过"无关——送达只看 deliveries 的真回执。
+    audience_copies: dict[str, str] = Field(default_factory=dict)
     generated_at: str = Field(default_factory=now_iso)
     released_at: str | None = None
     deliveries: list[DeliveryAttempt] = Field(default_factory=list)

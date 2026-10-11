@@ -145,6 +145,7 @@ class TestMigrations:
             "003_indexes.sql",
             "004_accuracy_labels.sql",
             "005_trigger_rules.sql",
+            "006_warning_audience_copies.sql",
         ]
 
 

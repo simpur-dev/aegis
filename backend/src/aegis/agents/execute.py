@@ -11,9 +11,10 @@
 - **不自称送达**：本体内环的输出里没有 `channel_results`，也不写 `released_at`——链路的
   触达证据只认 `DeliveryDispatcher` 的真回执（§3.4/铁律 7，见 `pipeline.chain._execute`）。
 
-已知边界（不粉饰）：`WarningRecord` 目前没有承载"按受众分文案"的字段，所以链路只采纳
-`body_zh`（取民众分支，它是公共触达面的正文），其余分支随 `audience_copies` 回给调用方但
-【不入库】。要落库需要先定 WarningRecord/持久面 schema，属未决设计项，不在这里塞临时列。
+受众文案的落库口径：`WarningRecord.audience_copies`（D10 只增的可选字段，`006_warning_audience_copies.sql`
+加列）承载三分支；链路只采纳【过了数字闸】的分支（`chain._adopt_agent_copy` 逐条再验一遍——
+它是信任边界，不假定智能体已经检过）。`body_zh` 取民众分支作为公共触达面正文，另两支只进
+`audience_copies`，不改公共正文。
 """
 
 from __future__ import annotations

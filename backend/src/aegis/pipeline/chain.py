@@ -642,6 +642,22 @@ class HazardResponseChain:
                 result.degradations.append(f"执行智能体文案含预警事实之外的数字 {invented}，该字段弃用，保留平台模板")
                 continue
             update[slot] = value
+        copies = payload.get("audience_copies")
+        if isinstance(copies, dict):
+            kept: dict[str, str] = {}
+            dropped: list[str] = []
+            for role, text in copies.items():
+                if not isinstance(role, str) or not isinstance(text, str) or not text.strip():
+                    continue
+                bad = sorted(invented_numbers(text, facts))
+                if bad:
+                    dropped.append(role)
+                else:
+                    kept[role.strip()] = text.strip()
+            if dropped:
+                result.degradations.append(f"执行智能体受众分支 {sorted(dropped)} 含预警事实之外的数字，不入库")
+            if kept:
+                update["audience_copies"] = kept
         if not update:
             return record
         adopted = record.model_copy(update=update)

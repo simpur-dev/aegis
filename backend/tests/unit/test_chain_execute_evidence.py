@@ -129,6 +129,7 @@ async def test_真链路里回执来自交付腿而不是应答的智能体(cont
             assert modes["execute"] == "agent", "智能体仍在这一跳应答，只是它的自报不再当证据"
             warning = res.warning
             assert warning is not None and warning.deliveries, "平台交付腿必须真发过"
+            assert warning.audience_copies == {}, "mock 不产文案，就不该有分受众文案"
             for attempt in warning.deliveries:
                 assert attempt.provider_msg_id and "execute." not in attempt.provider_msg_id
                 assert attempt.status in ("delivered", "retried", "pending", "failed")
@@ -136,6 +137,35 @@ async def test_真链路里回执来自交付腿而不是应答的智能体(cont
     finally:
         for agent in agents:
             await agent.stop()
+
+
+def test_受众分支逐条过闸后才写进记录() -> None:
+    adopted, res = adopt(
+        {
+            "body_zh": "短雨 32 毫米，立即避险",
+            "audience_copies": {
+                "residents": "沿高地路线撤离（短雨 32 毫米）",
+                "decision_lead": "预计 88.8 毫米，请启动响应",
+                "responder": "",
+            },
+        }
+    )
+    assert adopted.audience_copies == {"residents": "沿高地路线撤离（短雨 32 毫米）"}
+    assert any("decision_lead" in note and "不入库" in note for note in res.degradations), res.degradations
+
+
+def test_三分支都合规就都进记录() -> None:
+    adopted, _ = adopt(
+        {
+            "audience_copies": {
+                "decision_lead": "依据 32 毫米短雨与泥位 1.4 米，责任面在 540121",
+                "responder": "按处置预案时限到位",
+                "residents": "立即避险",
+            }
+        }
+    )
+    assert set(adopted.audience_copies) == {"decision_lead", "responder", "residents"}
+    assert adopted.body_zh == record().body_zh, "只给分支没给正文时，公共正文仍是平台模板"
 
 
 async def test_交付腿缺位时是released而不是造出来的delivered(container: Any) -> None:
