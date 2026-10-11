@@ -7,9 +7,11 @@
 构建"感知—研判—决策—执行—反馈"全链条协同调控平台。
 
 - 应用形态：**纯 Web 平台**（响应式，不含原生移动端）
-- 分工边界：**平台侧**（L1 接入 / L2 数据 / L4 服务 / L5 应用 / 基座）由本仓库承载；
-  **L3 五大智能体**由智能体方按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入，交付落点在 `agents/`
-- 架构依据：《课题6_项目架构设计》五层+一基座，融合"一张图 + 一总线 + 四预"扩展
+- 分工边界：**平台侧**（L1 接入 / L2 数据 / L4 服务 / L5 应用 / 基座）与 **L3 五大智能体本体**
+  均由本仓库承载——智能体自建于 `backend/src/aegis/agents/`（agentkit 契约壳 + LLM 内环），
+  按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入总线；外部团队的实现按同一契约接入，`agents/` 是交付落点
+- 架构依据：五层+一基座（实现态见 `docs/architecture.md`），融合"一张图 + 一总线 + 四预"扩展；
+  LLM 智能体化升级（对齐 MA-RIAEW）见 `docs/课题6_架构升级方案.md`，决策记录 `docs/adr/0007`
 - 理论框架：MA-RIAEW（多智能体协同赋能的突发事件风险情报感知及预警模式）
 - 所有验收数字与"还没测到的"都记在 `docs/REPORT.md`（含可复跑的取证命令），不写进本文件
 
@@ -23,7 +25,7 @@ aegis/
 │   ├── agent_message.v1.schema.json
 │   ├── stu.v1.schema.json
 │   └── AGENT_INTEGRATION_SPEC.v1.md
-├── agents/                    # L3 五大智能体的交付落点（外部团队实现；接入总览见 agents/README.md）
+├── agents/                    # L3 智能体的交付落点与接入指引（外部实现按契约接入；自建本体在 backend/src/aegis/agents/）
 ├── backend/
 │   ├── src/aegis/
 │   │   ├── config.py          # 运行配置与考核指标阈值口径（唯一配置面）
@@ -40,18 +42,18 @@ aegis/
 │   │   ├── knowledge/         # 预案案例库 + Graphiti 时序图谱（读路径不含 LLM）
 │   │   ├── retrieval/         # 混合检索：bge-m3 + reranker（ONNX int8 CPU），缺权重时按腿降级
 │   │   ├── pipeline/          # 灾害响应链路（智能体优先、平台降级）
-│   │   ├── services/          # 触发规则与规则库装配、风险定级、任务拆解、三路融合解析、语义交互（助手）、预警生成、靶向触达（mock/真实 HTTP 通道）、阈值标定、解析评测、LLM 网关
+│   │   ├── services/          # 触发规则、风险定级、任务拆解、三路融合解析、语义交互（助手，含意图解构）、预警生成、靶向触达、阈值标定；LLM 网关 v2（多模型路由/结构化输出/用量账本/Prompt 注册表）、记忆服务、推演沙盒、提示注入围栏、数字防幻觉闸、质量评测与模型卡片、数据飞轮
 │   │   ├── workflow/          # 自研 DAG 引擎（16 类节点）与 5 灾种内置模板（含案例驱动推演节点）
 │   │   ├── edge/              # 站端↔网关弱网链路（Eclipse Zenoh POC：有界缓冲 + 按序重放）
 │   │   ├── observability/     # 时延账本、OpenTelemetry 埋点与导出、Prometheus 导出
-│   │   ├── agents/            # 参考智能体（开发与门禁用）
+│   │   ├── agents/            # 五大智能体本体：agentkit 契约壳 + LLM 内环 + 三态运行时（real 与 mock 互斥）；mock 留作契约门禁对照
 │   │   └── api/               # FastAPI HTTP/SSE 接口、工作流接口、语义交互（助手 SSE + 人工确认）
-│   ├── scripts/               # drill / metrics_report / accuracy_replay / eval_report_parsing / load_curve / zenoh_poc / import_stations / ingest_cases
+│   ├── scripts/               # drill / metrics_report / accuracy_replay / eval_report_parsing / quality_gate / emit_model_cards / load_curve / zenoh_poc / import_stations / ingest_cases
 │   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
 │   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / dev
 ├── frontend/                  # Vue 3 + Vite；Cesium 一张图、Vue Flow 编排画布
 ├── deploy/                    # docker-compose（含 profile）、镜像构建、Prometheus/Alertmanager 配置
-├── docs/                      # 架构说明、ADR、实测记录（REPORT.md）、选型与许可证清单
+├── docs/                      # 实现态架构、架构升级方案（MA-RIAEW 对齐）、ADR、实测记录（REPORT.md）、选型与许可证清单
 └── scripts/                   # 检索权重预置脚本（内网/离线部署前跑一次）
 ```
 
@@ -82,6 +84,11 @@ cd .. && npm run dev              # API http://127.0.0.1:8000/docs ｜ Web http:
 #    "看着起来了"而前端全是 404），两个变量必须一起改，它们只有一个真源：
 #      cd backend  && AEGIS_HTTP_PORT=8321 uv run python -m aegis.main
 #      cd frontend && AEGIS_API_TARGET=http://127.0.0.1:8321 npm run dev
+
+# 6) L3 智能体运行时三态：AEGIS_AGENT_RUNTIME = mock（默认，演练/压测对照）| real | off。
+#    real 需配 LLM key，且与 mock 互斥——一个订阅面只挂一副，杜绝双跑抢答。
+#    含 LLM 的协同事务走 LLM 档 deadline（AEGIS_SLA_AGENT_TXN_MS，默认 60s），
+#    与调度档 ≤2s/≤10s（工作流量测点，禁入 LLM）分档并报表，见《课题6_架构升级方案》§5。
 ```
 
 需要真实基础设施时按 profile 起（`observability` 先起，应用才不会把跨度只留在本地）：
@@ -124,7 +131,7 @@ python scripts/fetch_retrieval_models.py
 | 预警发布 | `/warnings` | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |
 | 流程编排 | `/workflow` | Vue Flow 画布：16 类节点（每一类都有引擎级分派证据，见 `tests/unit/test_workflow_node_dispatch_matrix.py`）、版本化定义与实例运行、人工决策/改参/旁路。配置里点名的 `upstream` 必须是画布上的连线，定义期就校验 |
 | 指标量测 | `/metrics` | 运行时埋点的 P50/P95/最大时延 vs 阈值判定、协同成功率、越限项 |
-| 智能助手 | `/assistant` | 语义交互：四类任务（查询 / 预案问答 / 演练 / 上报）、流式过程帧、**执行类动作必须人工确认**（越权指令一律拒绝并留痕）；未配 LLM 时页面如实显示"语义服务未配置"而不是装可用 |
+| 智能助手 | `/assistant` | 语义交互：四类任务（查询 / 预案问答 / 演练 / 上报）、意图解构引擎（模糊指令 → 白名单动作链，LLM 只有规划权没有执行权）、流式过程帧、**执行类动作必须人工确认**（越权指令一律拒绝并留痕）；未配 LLM 时页面如实显示"语义服务未配置"而不是装可用 |
 
 ## 3. 可选子系统：接得上、退得掉、看得见
 
@@ -134,6 +141,7 @@ python scripts/fetch_retrieval_models.py
 
 | 腿 | 驱动取值 | 关闭 / 降级时的行为 |
 | --- | --- | --- |
+| `agents` | `mock` \| `real` \| `off` | `real` 需 LLM 网关可用且与 mock 互斥（同一订阅面只挂一副）；智能体缺位/超时/产出不合契约时按段降级规则轨并写入 `degradations`；`off` 时五段全部走平台降级轨 |
 | `store` | `memory` \| `postgres` | 落库失败不换实现：内存读视图照常服务，写侧进有界缓冲重试并按计数暴露 |
 | `analytics` | `off` \| `clickhouse` \| `duckdb` | `off` 时链路里根本不出现 OLAP 代码路径；启用时只 write-behind 入队，热路径永不等 OLAP |
 | `knowledge` | `in_memory` \| `graphiti` | 图谱缺位时召回自动落到内置预案库（性质与逐条出处随召回结果一起外显），预案生成照旧完成。写入侧有生产调用点：单条 `POST /api/v1/knowledge/cases` 与整批 `scripts.ingest_cases`，两者响应里的 `driver/degraded/reason` 说清这条案例究竟落在图谱还是只在内存；启动期建一次图谱索引（失败作为 `schema_error`），停服期关一次图谱连接（关不上作为 `close_error`），两件事都出现在这一行 |
@@ -183,6 +191,8 @@ uv run python -m scripts.metrics_report             # 打印时延/成功率实�
 uv run python -m scripts.zenoh_poc                  # 站端↔网关弱网链路 POC（需要 zenoh 与本机端口）
 uv run python -m scripts.load_curve --levels 1,10,30,60 --duration 25s
                                                     # 并发曲线：自己起服务、按梯度跑 Locust、报出拐点
+uv run python -m scripts.emit_model_cards          # 各智能体模型卡片（模型/Prompt 版本/评测分；未评测如实 None）
+uv run python -m scripts.quality_gate              # 质量四表回归门禁：任一指标较基线回退即红（CI 同款）
 AEGIS_PG_DSN=postgresql://<user>:<password>@127.0.0.1:5432/<db> \
 uv run python -m scripts.load_curve --profile deployed --levels 1,10,30,60 --duration 25s
                                                     # 同一套曲线换到真 NATS JetStream + 真 PostgreSQL 上量。
@@ -209,6 +219,9 @@ curl -s 'http://localhost:8000/api/v1/accuracy/replay?since=2026-09-01T00:00:00Z
 | --- | --- |
 | 契约先行 | 智能体只经 NATS 总线与 `AgentMessage v1` 交互，不共享代码、不直连数据库 |
 | 智能体优先、平台降级 | 每段链路在智能体缺位/超时/产出不合契约时自动回退规则引擎与本地剧本，链路不中断 |
+| LLM 五条安全性质 | LLM 可进关键路径，但每步**可降级**（deadline 到即走规则轨）、**可审计**（模型与 Prompt 版本随结论入库 `model_info`）、**可解释**（`rationale`+`evidence_refs` 必填）、**限时**（LLM 档 `sla_agent_txn_ms`，与调度档 ≤2s/≤10s 分档并报表）、**有栅栏**（动作白名单、等级枚举冻结、数字防幻觉闸） |
+| 发送权归属平台 | execute 智能体只产受众差异化文案；真实触达只经平台交付腿（DeliveryDispatcher），回执证据只认交付腿 receipt——智能体自报送达不采信（铁律 7：指标必须实测） |
+| 外部文本必过围栏 | 上报/案例/检索片段/回执进 prompt 前包进不可伪造的分隔围栏（提示注入防线）：内容原样保留，但只是数据、不再是指令 |
 | 指标必须实测 | `latency_report()` 输出运行时埋点的分位数与 SLA 判定，验收数字全部可追溯到样本 |
 | 降级留痕 | 降级写入 `ChainResult.degradations`（可归因），致命错误写入 `errors`（判失败） |
 | 双语不伪造 | 未接入可信翻译能力时预警仅中文并标记 `translation_pending`，不生成未经审核的藏语文本 |
