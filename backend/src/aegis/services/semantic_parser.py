@@ -25,6 +25,7 @@ from typing import Any, Protocol
 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, TriggerHit
+from aegis.services.prompt_guard import fence_untrusted
 from aegis.services.risk_engine import RiskEngine, RiskVerdict
 from aegis.services.trigger_rules import RuleEngine
 
@@ -521,7 +522,9 @@ class DisasterTextParser:
                     "不得新增文本里没有的事实、地点或数字。"
                 ),
             },
-            {"role": "user", "content": f"区划码：{region or '未给出'}\n灾情文本：{text[:1_000]}"},
+            # 区划码是校验过的平台值、留在围栏外；上报正文是现场写的原话，属外部数据，必须围起来。
+            # §4.8.2：这条通道此前裸拼——"防注入用例过"只覆盖了围栏原语，没覆盖任何一条真实通道。
+            {"role": "user", "content": f"区划码：{region or '未给出'}\n{fence_untrusted('上报原文', text[:1_000])}"},
         ]
         try:
             raw = await self._llm.chat_json(messages)
