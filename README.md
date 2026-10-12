@@ -199,6 +199,7 @@ docker compose --env-file .env -f deploy/docker-compose.yml exec backend python 
 | `delivery` / `tracing` 行 | `mock` / `local` | 这两条默认就不是真的；触达时间与链路取证都属于演练口径 |
 | psql 扩展 | `postgis 3.5.2`、`vector 0.8.6` | 报 `extension not available` ⇒ 镜像不是本仓 `deploy/postgres` 构建出来的（2.3 第 5 条） |
 | 链路各段 mode | 容器内 `POST /api/v1/reports` 实测：`assess/plan/execute = agent`（53/1903/3313ms），`perceive/feedback = local` | 全 `local` 而 `/api/v1/agents` 又 `online=0` ⇒ 智能体没注册或已停跳（看下一行） |
+| `mcp` 行 | 模板默认 `AEGIS_MCP_ENABLED=false` ⇒ `driver=disabled`，此时 `/mcp/` 是 404（这一格读的是模板与装配代码，容器形态本轮未重测） | 改成 true 后这一行应为 `streamable-http`；读到 `absent` ⇒ 镜像里的 extras 少了 `mcp`（`deploy/Dockerfile` 那行 `uv sync` 会整表替换 extras，列漏一个就静默降级） |
 | 智能体注册 | `GET /api/v1/agents` 实测回 `online=5`、id 是 `assess.mock01` 等五条 | 后缀就是档位：`.mock01` 是替身、`.real01` 是真内环；`online=0` 而 items 仍有五条 ⇒ 心跳停更但条目在册（见 2.3 第 8 条） |
 
 容器里的智能体档由**仓库根 `.env`** 的 `AEGIS_AGENT_RUNTIME` 决定（模板给的是 `mock`，所以实测那五条是
@@ -250,19 +251,31 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
    而 `items` 里 `assess.real01` 等五条仍在册（`healthy=false`、`idle_seconds≈7255`、`served=1`、`failed=1`），
    同时 `gateway_counters.no_agent` 仍是 0——"这副耳朵已经不跳了"与"请求被派给了谁"没对上。
    判读时把 `healthy`/`idle_seconds`/`served` 一起看，别只拿 `online` 当在线证明（已单列待修）。
+9. **`uv sync` 的 `--extra` 是整表替换，不是增量**。本机实测：在已装齐 extras 的虚拟环境上跑
+   `uv sync --extra dev --extra mcp`，它把没点名的 `postgres/iot/analytics/graph/retrieval` 一并**卸掉**了，
+   并在删除被运行中进程占用的 `.pyd` 时中断，留下一个 `import asyncpg` 直接崩的半残环境。
+   加一条腿要把已点名的 extras 一起写上（`--extra dev --extra postgres --extra iot ... --extra mcp`），
+   改完用 `python -c "import asyncpg"` 这类真导入确认，而不是只看命令退出码 0。
+10. **MCP 握手 URL 要带尾斜杠**（`/mcp/`）：`/mcp` 由框架发 307，是否跟随由客户端决定，配错的表现代码是"连上了但没回应"。
+    另外这一面读到的数与 REST 同源，也**继承同一个待修缺陷**：新起的进程 `telemetry.query` 回 `count=0`
+    （第 7 条那个"读视图不回填"；同一进程、同一参数的 `GET /api/v1/telemetry` 也回 0，而库里 `telemetry_readings` 有 453628 行），
+    所以别把工具面的 0 读成"MCP 没接上库"。
 
 ### 2.4 出口一览
 
 接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`
 装配事实（哪条腿在跑、哪条腿是瘸的）`http://localhost:8000/api/v1/integrations`——`/dashboard` 页底有同源面板
 告警链路取证口径 `deploy/observability/README.md`
+MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必需的**（`/mcp` 由框架发 307，是否跟随由客户端决定）；
+开启要两步：装可选依赖 `uv sync --extra dev --extra mcp`（extras 整表替换，已有的要列全）+ `AEGIS_MCP_ENABLED=true`。配了 `AEGIS_SERVICE_TOKEN` 时这一面与数据 API
+共用同一个令牌，`X-Aegis-Token` 与 `Authorization: Bearer` 两种头都认。
 
 
 ### Web 页面（纯 Web，响应式，无原生移动端）
 
 | 页面 | 路由 | 内容 |
 | --- | --- | --- |
-| 态势总览 | `/dashboard` | KPI、风险区域网格、链路各段执行方式（agent/local）、智能体在线状态、SSE 实时事件、页底七条可选腿的三态面板 |
+| 态势总览 | `/dashboard` | KPI、风险区域网格、链路各段执行方式（agent/local）、智能体在线状态、SSE 实时事件、页底各条可选腿的三态面板（腿名与后端装配面严格同名，多一条腿没登记标签就会被前端门禁挡住） |
 | 一张图 | `/map` | Cesium 三维 + 站点/预警点位；底图 PMTiles、地形自建 quantized-mesh，零 Ion/谷歌依赖；缺瓦片时如实降级为"无底图 + 椭球地形" |
 | 监测预警 | `/monitor` | 遥测明细与时序曲线、劣化读数缺口显示、一键发起激增/背景演练；**人工上报入口**（群防群治表单 → 三路解析 → 同一条链路，回显等级/置信/`decided_by`/是否转人工核签与三腿留痕；低置信度由平台自动开出 `human_review` 核签工单，回执带回实例号与待签节点） |
 | 预警发布 | `/warnings` | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |
@@ -287,6 +300,7 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
 | `weather` | `off` \| `http` | 拉取腿未配 base_url 时完全不存在；启用时按源隔离失败，轮次/条数/失败次数进状态行 |
 | `outbound` | `off` \| `http` | 工作流外呼（`api_call` / `device_control` 的出口）：主机白名单为空时整条不接入，节点按"缺少依赖服务"响亮失败；开着时调用/拒发/失败三个计数与 `last_error` 全进状态行，白名单命中的拒发会把这条腿标成降级运行 |
 | `tracing` | `local` \| `otlp` | 无 OTLP 端点时跨度只落本地——这一行必须说真话，否则"接了 Jaeger"是假的 |
+| `mcp` | `disabled` \| `absent` \| `streamable-http` | 标准 MCP 工具面（§4.2，官方 SDK 的 streamable HTTP）。关着时 `/mcp` 这条路径**不存在**（404），而不是"在但一律 503"；开着但没装可选依赖时路径在、一律 503，且这一行读成 `driver=absent` 并附那条 `--extra mcp` 安装提示——两种"没有工具面"必须能被分辨。装配起来后 `detail` 里同时给 `exposed_tools` 与 `absent_tools`：某条腿没装配（如检索关）时对应工具**不注册**而记入缺席，不留一个"列得到却调不动"的假工具。调用数/失败数/`last_error` 每次读这一行时从运行期台账重取（读数由 `tests/api/test_mcp_api.py::test_腿断了过线报工具错误并把成因带进状态行` 断言：一次失败调用后 `calls={"telemetry.query":1}`、`failures` 同值、成因原样带出） |
 
 案例入库有两条入口，走的是同一个装配点：单条 `POST /api/v1/knowledge/cases`，整批
 `uv run python -m scripts.ingest_cases`（内置 16 条预案模板，或 `--source cases.json` 换外部库）。

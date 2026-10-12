@@ -1687,3 +1687,100 @@ dashboard：getAnimations 里还有 9 条 running
   `structured_first_pass` 在 `frontend/src` 里 0 处引用），所以这一列目前只在后端出口与门禁里可见。
 
 
+
+
+## MB-5 MCP 工具层阶段 1：把平台既有能力换一个标准协议面出去（2026-10-12，官方 SDK + 本机真 PostgreSQL 取证）
+
+### 这一步在方案里是哪一块、本批划在哪里
+
+《课题6_架构升级方案》§4.2 / D4。决定按方案 A 完整实现 = 服务端与取数两侧都做。**本批只做阶段 1（服务端与闸）**：
+清单、装配、挂载、鉴权、状态面、部署面与文档；阶段 2（assess 取数从 REST 临时面切到 MCP，REST 留兼容面）
+单列为任务，切完之后才谈得上方案里那条过门标准"MCP 切换后门禁复绿"。
+
+### 落地形态（每条都有对应用例，不是"看着对"）
+
+- 清单是单一真源：`mcp_tools/manifest.py` 一条记录里放【名称/摘要/只读性/复用哪条既有端口/参数表/默认值/是否默认暴露】，
+  注册、状态行、用例都从它出发。共 6 项，默认暴露 4 项且全部只读。
+- 清单里没有 `graph.search`：knowledge provider 只有 `recall`/`learn`，图谱与内置预案走的是同一条 recall，
+  没有独立的"图谱只读面"可暴露——宁可不做，也不做一个名不副实的工具让外部客户端以为能绕过案例库。
+- 写工具两把钥匙：`memory.write` 既要在 `AEGIS_MCP_TOOLS` 里点名，又要 `AEGIS_MCP_ALLOW_WRITE_TOOLS=true`；
+  `record_id` 与 `valid_at` 由服务端生成（客户端能指定就能伪造时间线）。
+- 三态分开记：`disabled`（配置关，`/mcp` 这条路径**不存在**，404）/ `absent`（没装可选依赖，路径在、一律 503 并说清
+  缺什么与"这期间取数走 REST 兼容面"）/ `streamable-http`（装配起来）。某条腿没接上时对应工具【不注册】而进
+  `absent_tools`，不注册一个回空表的假工具。
+- 鉴权与数据 API 是同一个面、同一个函数：`_presented_token` 认 `X-Aegis-Token` 与 `Authorization: Bearer` 两种头。
+  这条是 #15 那次对盘的直接产物——头名不一致会让"配了令牌"与"真的在拦"脱钩。
+- 失败发协议层 `ToolError`（映射成 `isError=true`），不是往正文塞 `ok=false` 让外部客户端自己猜。
+- 状态行的调用数/失败数/成因每次从运行期台账重取（与 mqtt 腿同一口径），不是装配快照。
+
+### 真栈取证（有档：`.tmp-verify/probe_mcp_real_stack.log`）
+
+形态：本机另起 8322 一台，`store=postgres(127.0.0.1:5432)`、`bus=memory`、模拟器关、`agent_runtime=off`、
+令牌一次性随机（不落 .env、不打印）。为什么另起：8000 那台带着 NATS + real 运行时，再起一副同流订阅就是
+"两副抢答同一批请求"的老坑；这台只做只读取数，除启动期读之外不往库里写。
+
+- 握手：协议 `2025-11-25`，服务端名 `aegis`；工具面 3 项 `cases.search / memory.search / telemetry.query`，
+  三项 `read_only_hint` 都是 True；`absent_tools=['retrieval.search']`（这台没开检索，如实缺席而不是回空表）。
+- `memory.search kind=assessment` → `count=3`，首行 `agent_id='assess.real01'`、`region='540121'`、
+  `valid_at='2026-10-12T05:01:42.756Z'`。**这是本批最值钱的一格**：MA 真智能体写进 `agent_memory` 的那批研判，
+  现在被一个标准 MCP 客户端直接读走了——§4.3 的共享记忆第一次有了平台之外的消费者。
+- `cases.search query=泥石流` → `count=3`、`degraded_count=0`、`budget_ms=400.0`。
+- `telemetry.query region=540121 limit=3` → `count=0`；**同一进程、同一参数的 `GET /api/v1/telemetry` 也回 0**
+  （探针里专门留了这行对照），而同一个库 `select count(*) from telemetry_readings` = **453628**。
+  归因是已单列的待修缺陷 #26"读视图启动时不从库回填"，不是工具面没接上库；这条已写进 README 2.3 第 10 条，
+  免得下一个人把 0 读成"MCP 坏了"。
+- 不带令牌 `POST /mcp/` → **401**（真 HTTP 出口，不是进程内 ASGI）。
+- 默认面上调 `memory.write` → `isError=True`，正文 `Unknown tool: memory.write`（协议层拒，与"注册了但回假数据"不同）。
+- 三次调用之后状态行：`calls={'telemetry.query': 1, 'memory.search': 1, 'cases.search': 1}`、`failures={}`、`last_error=''`。
+
+### 三条只有跑才知道的事（本批的取证副产品）
+
+1. **SDK 客户端不能在 httpx 的 ASGITransport 上握手**：服务端与客户端被塞进同一个任务，退出时 anyio 抛
+   `Attempted to exit a cancel scope that isn't the current task's current cancel scope`。同一份装配代码起真 uvicorn
+   之后握手、调用、关闭全部正常（`.tmp-verify/probe_mcp_server.py`）。所以那是测试传输的形态问题而非挂载问题，
+   但用它做握手断言等于断言一个不存在的生产形态——握手用例已改成真 uvicorn（与 SSE 那批同一结论）。
+   顺带一条 SDK 形状：`streamable_http_client` 在这里 yield **两个**流（不是三个），`InitializeResult` 的字段是
+   `protocol_version` 而非 `protocolVersion`。
+2. **`AEGIS_MCP_TOOLS` 不能是 `list[str]`**：pydantic-settings 对复杂类型先做 JSON 解码，实测
+   `AEGIS_MCP_TOOLS=telemetry.query,cases.search` 当场 `SettingsError: error parsing value for field "mcp_tools"`，
+   而部署里最自然的写法就是逗号分隔。改成 `str` + 装配点拆分（与 `delivery_http_channels` 同形），
+   用例从真 env 进（`Settings(_env_file=None)`）而不是直接构造对象，否则键形选错只在部署当天暴露。
+3. **前端那条"腿名与后端严格同名"的漂移门禁在本批之前就是红的**：memory 腿落地时没登记中文标签，
+   钉死的腿数也停在 9。本批补 `memory`/`mcp` 两个标签、把名单更新成 11 条并在用例注释里记下这条门禁
+   实际抓到过一次缺口——它不是摆设。
+
+### 对盘（承诺 vs 实现）抓出并当轮换掉的三处
+
+- `ToolAnnotations(description=…)`：这个字段在 2.3.0 的模型里不存在，pydantic 默认 `extra=ignore` 于是**静默丢掉**，
+  测试全绿而参数根本没生效。已删（工具级 `description` 本来就传了）。这条是 mypy 抓到的而不是用例抓到的——
+  "写了没生效"这类事静态面比断言灵。
+- 状态行 detail 用的是装配快照：`calls`/`failures` 永远读成 0、`last_error` 永远是空串，
+  等于在对外面面上把"这一小时没人调过、也没失败过"当成实测结论说。改为每次从运行期台账重取。
+- 我自己写的 `assert set(exposed) | set(absent) == set(known) or exposed` 是条**永真断言**（后半截 `or exposed`
+  让它形同不存在，而且前半截本身口径就错——known 含非默认项）。改成与 `exposed_names()` 严格相等。
+
+### 门禁与证据分档
+
+- 后端：`ruff format --check` / `ruff check src tests scripts` / `mypy src`(120 files) 全绿；
+  全量 `pytest tests/unit tests/contract tests/api tests/e2e` **2767 passed / 0 failed / 0 errors**
+  （MB-4 那批 2733 + 本批新增 34：清单与注册 22 条 / HTTP 与握手 12 条），junit 档案 `.tmp-verify/junit_mcp_stage1_final.xml`。
+- 前端：`vue-tsc --noEmit` 通过，`vitest run` **47 files / 816 tests 全绿**。
+- 变异 8 条逐条转红、空转 0、残留无，档案 `.tmp-verify/mutation_mcp_stage1.log`：关着的腿不该留路径、
+  工具面不许漏令牌、状态行不许回到冻结快照、失败不许伪装成成功正文、未注入实现不许注册成假工具、
+  写工具不许一把钥匙就放行、挂载点形状闸、`Bearer` 支持——各有一到五条用例当场红。
+- "没装可选腿"这一档是**实测过的两向**：把 venv 里 `site-packages/mcp` 目录改名后跑两个 MCP 文件得
+  `11 passed / 11 skipped`（跳过原因文案带着怎么装），改回之后同两条命令 34 条全绿。
+  跳过与失败在门禁里长得不一样，这里两边都看过而不是只跑一边。
+- 反假绿一条：原先"本仓确实装了 mcp"那条断言在没装 extra 的机器上是必然红、在装了的机器上永远真，
+  两边都管不住真正会出事的那一刻。换成查部署面（CI 与 `deploy/Dockerfile` 的 extras 里必须有 `--extra mcp`），
+  漏装才会红。
+
+### 这一批**没**证明到的事（不当达标处理）
+
+- **容器形态未重测**：只做到 `deploy/Dockerfile` 与 CI 的 extras 一致、compose 能解析；重建后端镜像（本机实测约 13 分钟）
+  后在容器里握手与调用没做，所以 README 2.2 的 `mcp` 那一格标的是"读模板与装配代码，容器本轮未重测"。
+- 对接实现只有官方 SDK 客户端这一种；第三方 MCP 客户端（桌面端、其它语言 SDK）没互测过。
+- 工具调用的时延、并发与超时没量（`knowledge_recall_budget_ms` 只是透传进结果，不是这一面的预算执行点）。
+- 写工具 `memory.write` 在真协议面上没调过：默认面不含它，两把钥匙只在装配层与列表层验过。
+- 阶段 2 未启动，因此"智能体取数走 MCP"这句话现在还是假的，`.env.example` 与状态行的 `reason` 都写的是
+  "未装期间走 REST 兼容面（语义不变）"，不留歧义。
