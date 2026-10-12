@@ -130,7 +130,7 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 
 | 阶段项 | 状态 | 证据 / 缺什么 |
 | --- | --- | --- |
-| §4.1 LLM 网关 v2（路由/结构化输出/用量账本/Prompt 注册表） | 已落地 | `services/llm_gateway.py`、`services/prompt_registry.py`；prompt 版本进 `model_info` |
+| §4.1 LLM 网关 v2（路由/结构化输出/用量账本/Prompt 注册表） | 已落地 | `services/llm_gateway.py`、`services/prompt_registry.py`；prompt 版本进 `model_info`，并由链路**逐段转记**到 `chain_runs.stages[].model_info`（2026-10-12 补齐：此前凭证只活在总线信封里，全仓 0 处读取，README 那句"随结论入库"是空的）。口径：智能体不声明就没有这个键（`exclude_none`，平台不代填 "unknown"），execute 段只在【文案真的进了预警】时记——被数字闸全拦回的那一程产出的是平台模板。读面：`GET /api/v1/audit/chain/{trace_id}` 直读库，实测重启后 `/api/v1/events` 读 0 条而它仍 `found=true` |
 | §3 五智能体上总线（agentkit + 三态运行时） | 已落地 | `agents/`、`AEGIS_AGENT_RUNTIME=mock\|real\|off`，real 与 mock 互斥 |
 | §5 验收口径分档（调度档 / LLM 档 / 端到端） | 已落地 | `sla_agent_txn_ms`，报表带 `口径档` 列；数见 REPORT |
 | §4.5 D9 数据飞轮（采集侧） | 部分落地 | `human_review` 一条已通（核签→真值行，真库验过）；**助手确认、演练两条没接** |
@@ -140,14 +140,14 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 | §3.4 execute 三分支文案 | 已落地 | `audience_copies` 入库（`006` 迁移）；发送权仍在平台交付腿 |
 | §3.6/§4.4 推演沙盒 | 部分落地 | `services/simulation.py` 有 K×T/概率矩阵/超限降 K；**角色只是四个字符串、无 LLM**，DAG 节点未换成沙盒，前端无报告页 |
 | §4.7 assistant 意图解构 | 部分落地 | 多步分解在 `/assistant/plan`；`/chat` 仍是词表优先，前端没调 plan |
-| §4.8.1 服务令牌 | 部分落地 | `require_data_token` 默认关；智能体真正用的端点没挂，且客户端发 `authorization: Bearer` 而服务端校 `x-aegis-token` |
+| §4.8.1 服务令牌 | 已落地（默认关是配置项，不是缺口） | 数据 API 与 MCP 工具面共用同一个 `_presented_token`，认 `X-Aegis-Token` 与 `Authorization: Bearer` 两种头（头名不一致曾让"配了令牌"与"真的在拦"脱钩，那正是这一节的原始事故）；**智能体真在请求的读端点也进了闸**（`/api/v1/cases/recall`、`/api/v1/retrieval/search`、`/api/v1/memory/shared` 读写删、新增的审计直读面），11 条变异逐条证明"摘掉任一端点的鉴权都会红"。仍欠一件：Web 端不携凭据，所以开令牌的部署里数据面板会 401（README 2.3 第 11 条） |
 | §4.5 评测服务与金标集 | 部分落地 | 门禁与出口在（`scripts/quality_gate.py`，`ci.yml` 跑）；表已加第五列**结构化输出首过率**并用真 DeepSeek 实测入基线（0.7838，按 task 分开看才是能行动的那张表）；**另三列仍为 null**：无 `eval/judge.py`、无金标数据 |
 | §4.6 D7 编排归一（chain 退役） | 未开工 | `pipeline/chain.py` 738 行仍在，无"标准五段"模板、无 parity harness；触达段两处实现口径不一 |
 | MC 模型线（QLoRA/GPTQ/训练集导出/对照实验/论文专利） | 未开工 | 无任何落点 |
 
 一句话（口径与上表逐行对齐，不另算一套）：**MA 已收口**（欠的那个"结构化输出首过率"于 2026-10-12 实测补齐，
-并顺带抓出空内容绕过修复轮的真缺陷）；**MB 八项 = 1 整 + 7 部分**：execute 三分支文案已落地，
-记忆/双盲/推演/评测/assistant/服务令牌六项各差后半截，MCP 工具层已从"整项未开工"做到 v1 主体（服务端 + 研判取数已切，
+并顺带抓出空内容绕过修复轮的真缺陷）；**MB 八项 = 2 整 + 6 部分**：execute 三分支文案、服务令牌鉴权面已落地（后者今日补齐了"智能体自己用的那两个读端点没挂闸"这一半，见 §4.8.1 那一行），
+记忆/双盲/推演/评测/assistant 五项各差后半截，MCP 工具层已从"整项未开工"做到 v1 主体（服务端 + 研判取数已切，
 方案消费方表里 perceive/plan/沙盒那几路还没接，2026-10-12）；
 围栏补齐与 D9 采集侧属于 §4.8/§4.5 的账，不在这八项内。**MC 未动**。
 MB 四条过门标准目前：**防注入用例过 = 已达**（通道级 6 条 + 变异 8 条）；质量表首批基线 = 半条

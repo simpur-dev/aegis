@@ -260,6 +260,14 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
     另外这一面读到的数与 REST 同源，也**继承同一个待修缺陷**：新起的进程 `telemetry.query` 回 `count=0`
     （第 7 条那个"读视图不回填"；同一进程、同一参数的 `GET /api/v1/telemetry` 也回 0，而库里 `telemetry_readings` 有 453628 行），
     所以别把工具面的 0 读成"MCP 没接上库"。
+11. **配了 `AEGIS_SERVICE_TOKEN` 之后，Web 端会开始吃 401**。鉴权面覆盖的是"取数与审计"这一整层：
+    `/api/v1/telemetry`、`/api/v1/stations`、三条 `/geo/*`、`/api/v1/cases/recall`、`/api/v1/retrieval/search`、
+    `/api/v1/memory/shared`（读写删）、`/api/v1/audit/chain/{trace_id}`，以及 MCP 工具面——两个面共用同一个令牌、
+    认 `X-Aegis-Token` 与 `Authorization: Bearer` 两种头。**前端目前没有带凭据的机制**，所以开令牌的部署里
+    地图/数据面板会空（这不是回归，是把"配了令牌"与"真的在拦"对齐的代价）；要么给前端配凭据，要么就别开。
+12. **重启后 `GET /api/v1/events` 是空的，但审计端点不是**：前者读进程内视图（第 7 条同源），后者
+    `GET /api/v1/audit/chain/{trace_id}` 直读 `chain_runs`。要查"这条预警当时是哪个模型、哪版 prompt 产的"，
+    用后者——2026-10-12 实测：重启后事件列表读到 0 条，同一 trace 经审计端点仍 `found=true` 且五段凭证齐全。
 
 ### 2.4 出口一览
 
@@ -373,7 +381,7 @@ curl -s 'http://localhost:8000/api/v1/accuracy/replay?since=2026-09-01T00:00:00Z
 | --- | --- |
 | 契约先行 | 智能体只经 NATS 总线与 `AgentMessage v1` 交互，不共享代码、不直连数据库 |
 | 智能体优先、平台降级 | 每段链路在智能体缺位/超时/产出不合契约时自动回退规则引擎与本地剧本，链路不中断 |
-| LLM 五条安全性质 | LLM 可进关键路径，但每步**可降级**（deadline 到即走规则轨）、**可审计**（模型与 Prompt 版本随结论入库 `model_info`）、**可解释**（`rationale`+`evidence_refs` 必填）、**限时**（LLM 档 `sla_agent_txn_ms`，与调度档 ≤2s/≤10s 分档并报表）、**有栅栏**（动作白名单、等级枚举冻结、数字防幻觉闸） |
+| LLM 五条安全性质 | LLM 可进关键路径，但每步**可降级**（deadline 到即走规则轨）、**可审计**（各段的模型与 Prompt 版本由智能体自己声明、链路只转记，落在 `chain_runs.stages[].model_info`；`GET /api/v1/audit/chain/{trace_id}` 直读库，重启后仍能查——本地降级腿【不带】这个键，缺席就是"这一程没有模型参与"，不是"走了没记名"）、**可解释**（`rationale`+`evidence_refs` 必填）、**限时**（LLM 档 `sla_agent_txn_ms`，与调度档 ≤2s/≤10s 分档并报表）、**有栅栏**（动作白名单、等级枚举冻结、数字防幻觉闸） |
 | 发送权归属平台 | execute 智能体只产受众差异化文案；真实触达只经平台交付腿（DeliveryDispatcher），回执证据只认交付腿 receipt——智能体自报送达不采信（铁律 7：指标必须实测） |
 | 外部文本必过围栏 | 上报/案例/检索片段/回执进 prompt 前包进不可伪造的分隔围栏（提示注入防线）：内容原样保留，但只是数据、不再是指令 |
 | 指标必须实测 | `latency_report()` 输出运行时埋点的分位数与 SLA 判定，验收数字全部可追溯到样本 |

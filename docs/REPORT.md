@@ -1878,3 +1878,79 @@ dashboard：getAnimations 里还有 9 条 running
 - 消费方只切了一段：方案 §4.2 那张表里 perceive/plan 也要经 `cases.search`、沙盒经 `simulation.run`，本批没做（任务 #30）。
 - 只切了 assess 一张门面：perceive/plan/execute/feedback 的取数仍走各自既有路径（plan 的 MCP cases 复用是下一步）。
 - 端到端时延两档各 1 个样本，不构成结论；要拿它当依据得先解决"只有第一条上报真走链路"的样本问题。
+
+## MB-7 两处"对外说的话与系统真相不一致"：D10 凭证入库 + 鉴权面补全（2026-10-12，实时读数驱动）
+
+### 为什么挑这两条
+
+都不是新功能，是**承诺兑现**：README 的"LLM 五条安全性质"里那句"可审计（模型与 Prompt 版本随结论入库 `model_info`）"，
+与 §4.8.1"数据 API 服务令牌"。两处的共同形状是：代码有测试、文档有句子，中间那一环（落库 / 挂闸）没人断言过——
+所以全绿门禁一直罩着它们。
+
+### 第一处：凭证只到总线信封，没到库
+
+起点是硬的：`grep -rn model_info src/aegis/persistence/ migrations/` **0 命中**，src 里那 30 处全在消息模型、内环与测试里。
+也就是说 `model_info` 只随响应消息传，从未落库、也从未被读过。
+
+- **落点选了已有的列**：`StageResult.model_info` 只在有值时进 `as_dict()`，于是它天然落在 `chain_runs.stages` 这个 jsonb 里。
+  没加新列——加列要给历史行做迁移，而 `stages` 本来就是"每一段的账"。
+- **谁声明**：assess/plan/feedback 内环本来就有 `_provenance()`；**execute 没有**。这不是读码读出来的，
+  是重启真栈跑一条上报读出来的：第一次五段里 `assess/plan` 带凭证，`mode=agent` 的 execute 段是空的。
+  补上 `_provenance()` 后同一段读数变成 `{agent: execute.real01, model: deepseek-chat, prompt_version: "1.0.0"}`
+  （execute 用的是自己的 prompt 模板，版本号与 assess/plan 的 1.1.0 不同，这正是要能区分的东西）。
+- **谁读**：新增 `GET /api/v1/audit/chain/{trace_id}`，直读 `chain_runs`。内存形态如实 503——那份台账随进程消失，
+  回一份空清单会被读成"这条 trace 没发生过"。
+- **三条口径各有一条用例**：本地段【不带键】而不是带 `null`（"没走模型"与"走了没记名"是两件事）；
+  智能体没声明就【不代填】（平台替它编一个模型名等于伪造审计证据）；execute 段只在【文字真进了预警】时记——
+  全被数字防幻觉闸拦回的那一程产出的是平台模板。中间那条判据（`record != pre_adopt`）与被它拦住的
+  "部分采纳仍记凭证"的行为，都是变异检查里单独一条摘掉守卫的用例钉住的。
+
+### 实时取证（真 DeepSeek + NATS + 本机 PostgreSQL 演示库，trace `trc_1e360ea1e011d455`）
+
+库里 jsonb 原样（`jsonb_pretty` 逐段查）：
+
+| 段 | mode | `model_info` |
+| --- | --- | --- |
+| perceive | local | 键不存在 |
+| assess | agent | `{"agent":"assess.real01","model":"deepseek-chat","prompt_version":"1.1.0"}` |
+| plan | agent | `{"agent":"plan.real01","model":"deepseek-chat","prompt_version":"1.1.0"}` |
+| execute | agent | `{"agent":"execute.real01","model":"deepseek-chat","prompt_version":"1.0.0"}` |
+| feedback | local | 键不存在 |
+
+**撑起"入库"两个字的是这一组对照**：再重启一次之后，`GET /api/v1/events`（进程内读视图）读到 0 条，
+而 `GET /api/v1/audit/chain/trc_1e360ea1e011d455` 仍回 `found=true` 且五段凭证齐全。顺带这也给待修缺陷
+#26 一条干净的量化：同一个 trace 在两个读面上的差别。
+
+### 第二处：智能体自己取数的端点没挂闸
+
+起点同样是硬的：`require_data_token` 只挂 7 个端点，而 `rest_context.py` 真正请求的
+`CASES_PATH=/api/v1/cases/recall`、`SEARCH_PATH=/api/v1/retrieval/search` 都不在其中，`GET /api/v1/memory/shared`
+也不在（它的写/删两侧早就挂了）。配了令牌时的表现是"客户端认真带 Bearer、服务端认真不校验"，
+而同一份数据经 MCP 工具面取时反倒被拦——**两个面两套口径**，正是 §4.8.1 原本要避免的形态。
+
+先让用例红（原始失败信息就是 `assert 200 == 401`），再挂 `dependencies`。挂完之后同一组用例还钉一件事：
+带对凭据不要求 200——这台没开检索，放行后是 503（腿没装配），那是一行事实，不该被断成鉴权失败。
+
+### 门禁与证据分档
+
+- 全量 `pytest tests/unit tests/contract tests/api tests/e2e`：**2821 passed / 0 failed**（上一批 2802 + 本批 19：
+  `test_chain_model_info.py` 11 / `test_execute_agent.py::TestProvenance` 2 / `test_api.py` 6），
+  junit `.tmp-verify/junit_p0_batch.xml`；`ruff format --check`、`ruff check`、`mypy src`(121) 全绿。
+- 真库档（`AEGIS_TEST_PG_DSN` 指向专用库 `aegis_itest`，演示库 `aegis` 只做只读核对）：
+  `tests/integration/test_persistence_postgres.py` **24 passed**，含本批新增两条：flush 之前 `chain_runs` 必须仍是
+  0 行（钉住"别把后台缓冲当已写"）、flush 之后按 trace 直读回凭证且本地段确实没有那个键。
+- 变异 11 条逐条转红、空转 0、残留无（`.tmp-verify/mutation_p0_batch.log`）。其中两条值得一提：
+  第一轮"研判段不再转记"报的是**锚点出现 2 次**（assess 与 execute 的条件行同形），拆长锚重跑；
+  改名 `draft → pre_adopt`（mypy 抓到它与既有变量 `draft: WarningDraft` 撞名）之后，
+  执行段那两条又按新锚点重跑过一遍——锚点必须跟着代码动，否则"红"是假的。
+- 文档同步三处：README 的安全性质行改成说清"落在哪、谁来读、缺席怎么读"；`docs/architecture.md` 的
+  §4.1/§4.8.1 两行按新事实改写（MB 汇总从"1 整 + 7 部分"进到"2 整 + 6 部分"）；README 2.3 新增第 11、12 条。
+
+### 这一批**没**证明到的事
+
+- 前端不携凭据：闸内端点已含 `/api/v1/stations`、三条 `/geo/*`、`/telemetry`、`/cases/recall`、
+  `/retrieval/search`、`/memory/shared`、`/audit/chain/{trace}`，所以开令牌的部署里地图与数据面板会 401
+  （已写进 README 2.3 第 11 条，凭据怎么进浏览器是个待决方案，任务 #31）。
+- 内存形态的审计面只覆盖了"如实 503"这一档，"内存台账随进程消失"本身没做量化。
+- perceive/feedback 两段不经模型，所以链路里没有它们的转记判据；若将来这两段引入模型，`stage_models` 要跟着加口径。
+- `model_info` 目前只有落库与直读两面，报表侧（`scripts/metrics_report.py`）与前端都还没有消费点。
