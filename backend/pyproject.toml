@@ -32,6 +32,9 @@ retrieval = ["onnxruntime>=1.30", "tokenizers>=0.21", "numpy>=1.26"]
 iot = ["aiomqtt>=2.2"]
 graph = ["neo4j>=5.26", "graphiti-core>=0.30"]
 objectstore = ["minio>=7.2"]
+# MCP 工具层（§4.2 / R3）：可选腿。没装这层时平台一律退回 REST 兼容面，语义不变——
+# 装不装只改变 /api/v1/integrations 里 `mcp` 那一行的 driver，不改变任何一条链路。
+mcp = ["mcp>=2.3"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",

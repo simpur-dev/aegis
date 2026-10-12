@@ -11,8 +11,8 @@ import asyncio
 import json
 import logging
 import secrets
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Mapping
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
 from typing import Any, Literal
 
@@ -126,6 +126,21 @@ def get_container(request: Request) -> PlatformContainer:
     return container
 
 
+def _presented_token(headers: Mapping[str, str]) -> str:
+    """从请求头取服务令牌：接受 `X-Aegis-Token` 与 `Authorization: Bearer` 两种写法，取到一个算一个。
+
+    为什么必须两个都认：只认一个头名时，"配了令牌"与"真的在拦"是两件事——本仓的智能体 REST 客户端
+    与通用 MCP 客户端发的都是 Bearer，而服务端只读 X-Aegis-Token，结果是配置打开后合法客户端被一律 401、
+    或者反过来（取决于谁先改）配了等于没配。两个面（数据 API 与 MCP 工具面）共用这一个函数，
+    免得它们各自演化出第二套口径。
+    """
+    direct = headers.get("x-aegis-token") or ""
+    if direct:
+        return direct
+    scheme, _, value = (headers.get("authorization") or "").partition(" ")
+    return value.strip() if scheme.lower() == "bearer" else ""
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
@@ -135,12 +150,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     container: PlatformContainer = getattr(app.state, "container", None) or create_container(settings)
     app.state.container = container
     await container.start(with_mock_agents=settings.env != "prod", with_ingest_loop=True)
-    try:
-        yield
-    finally:
-        await container.shutdown()
-        # 先停产生跨度的主体，再刷跨度：反了会把仍在生成的跨度丢在关闭之后
-        telemetry.shutdown_telemetry()
+    # MCP 会话管理器必须随进程跑起来：Starlette 的 Mount 不会替子应用执行 lifespan。
+    # 两条本机实测出来的坑，决定了这里为什么长这样：
+    # ① `session_manager` 只在 `streamable_http_app()` 被调用之后才存在，提前 .run() 直接 RuntimeError；
+    # ② 自己去 `async with server.session_manager.run()` 会撞上 anyio 的
+    #    "Attempted to exit a cancel scope that isn't the current task's current cancel scope"——
+    #    那个会话管理器要在【它自己子应用的 router lifespan】里生灭。所以这里跑子应用的 lifespan_context，
+    #    不去驱动它的内部对象。生命周期：跟着容器生，容器停完之后灭（在途工具调用不至于被抽走队列）。
+    async with AsyncExitStack() as stack:
+        if container.mcp_server is not None:
+            app.state.mcp_inner = container.mcp_server.streamable_http_app(streamable_http_path="/")
+            await stack.enter_async_context(app.state.mcp_inner.router.lifespan_context(app.state.mcp_inner))
+        try:
+            yield
+        finally:
+            await container.shutdown()
+            # 先停产生跨度的主体，再刷跨度：反了会把仍在生成的跨度丢在关闭之后
+            telemetry.shutdown_telemetry()
 
 
 def _geo_unavailable() -> HTTPException:
@@ -195,13 +221,16 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
 
     def require_data_token(request: Request) -> None:
         """§4.8.1 数据 API 服务令牌：配了才校验（常量时间比对），未配则开放——不破坏既有装配/演练/前端调用。
-        智能体经数据 API（及未来 MCP 工具）取数共用这一鉴权面。"""
+        智能体经数据 API 与 MCP 工具面取数共用这一鉴权面与同一个头名口径（`_presented_token`）。"""
         token = cfg.service_token
         if not token:
             return
-        presented = request.headers.get("x-aegis-token", "")
-        if not secrets.compare_digest(presented, token):
-            raise HTTPException(status_code=401, detail={"code": "E_UNAUTHORIZED", "message": "数据 API 需要有效服务令牌（X-Aegis-Token）"})
+        presented = _presented_token(request.headers)
+        if not presented or not secrets.compare_digest(presented, token):
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "E_UNAUTHORIZED", "message": "数据 API 需要有效服务令牌（X-Aegis-Token 或 Authorization: Bearer）"},
+            )
 
     @app.get("/healthz", tags=["ops"])
     async def healthz() -> dict[str, Any]:
@@ -815,6 +844,47 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             content=json.dumps({"error": "E_QUERY_ARGUMENT", "message": exc.message, "detail": exc.detail}),
             media_type="application/json",
         )
+
+    # MCP 工具面（§4.2 / D4）：配置关着就【不挂这条路径】（404 = 这条能力在此进程里不存在），
+    # 挂着但内层应用没建起来则 503 并说清缺什么——与几何查询同一套"路由在、能力不在"的口径。
+    # 内层 ASGI 应用由 lifespan 建（SDK 的会话管理器只能在 `streamable_http_app()` 之后运行），
+    # 所以这里只做分发与鉴权，不在请求路径上惰性造它。
+    if cfg.mcp_enabled:
+        # 挂载点必须是个非空的绝对路径：配成 "/" 会把整张 API 表挡在工具面后面，而表现是
+        # "所有端点突然要令牌"——这种错在启动期就能判死，不留到运行期靠人猜。
+        if not cfg.mcp_mount_path.startswith("/") or cfg.mcp_mount_path.strip("/") == "":
+            raise ValueError(f"AEGIS_MCP_MOUNT_PATH 要是一个非空的绝对路径（如 /mcp），收到 {cfg.mcp_mount_path!r}")
+
+        async def mcp_asgi(scope: Any, receive: Any, send: Any) -> None:
+            def _reject(status: int, code: str, message: str) -> Response:
+                return Response(
+                    status_code=status,
+                    content=json.dumps({"error": code, "message": message}, ensure_ascii=False),
+                    media_type="application/json",
+                )
+
+            if cfg.service_token:
+                headers = {str(key.decode("latin-1")).lower(): value.decode("latin-1") for key, value in scope.get("headers") or []}
+                presented = _presented_token(headers)
+                if not presented or not secrets.compare_digest(presented, cfg.service_token):
+                    await _reject(
+                        401,
+                        "E_UNAUTHORIZED",
+                        "MCP 工具面需要有效服务令牌（X-Aegis-Token 或 Authorization: Bearer），与数据 API 同一鉴权面",
+                    )(scope, receive, send)
+                    return
+            inner = getattr(app.state, "mcp_inner", None)
+            if inner is None:
+                await _reject(
+                    503,
+                    "E_MCP_UNAVAILABLE",
+                    "MCP 已启用但工具面没装配起来：需要可选依赖 mcp（本机 `uv sync --extra dev --extra mcp`，"
+                    "extras 是整表替换所以要列全；镜像里已含），且进程要走过 lifespan；未装期间智能体取数仍走 REST 兼容面",
+                )(scope, receive, send)
+                return
+            await inner(scope, receive, send)
+
+        app.mount(cfg.mcp_mount_path, mcp_asgi)
 
     return app
 

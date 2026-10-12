@@ -137,9 +137,27 @@ class Settings(BaseSettings):
     # 容器于是去找源码树相对路径的 contracts，镜像里没有，就在启动期炸成"契约目录不存在"。
     contracts_dir: str = ""
 
-    # §4.8.1 数据 API 服务令牌（智能体经数据 API / 未来 MCP 工具取数共用的鉴权面）。
-    # 空 = 不校验（默认，向后兼容内部装配/演练调用）；非空 = 读数据端点须带 X-Aegis-Token，常量时间比对。
+    # §4.8.1 数据 API 服务令牌（智能体经数据 API 与 MCP 工具取数【共用】的鉴权面）。
+    # 空 = 不校验（默认，向后兼容内部装配/演练调用）；非空 = 取数端点与 MCP 面都要带凭据，常量时间比对。
+    # 接受的头名有两个：`X-Aegis-Token`（本仓原生）与 `Authorization: Bearer`（智能体客户端与
+    # 通用 MCP 客户端实际发的那个）。头名不一致曾让"配了令牌"与"真的在校验"两件事脱钩，见 README 2.3。
     service_token: str = ""
+
+    # §4.2 / D4 / R3 MCP 工具层（可选腿）。两种"没有工具面"是分开的两件事，状态行与 HTTP 码都要能被分辨：
+    #   没开（默认）= `/mcp` 这条路径在本进程里不存在（404）；
+    #   开着但没装 `mcp` extra = 路径在、一律 503，且 `mcp` 行读成 `driver=absent`。
+    # 只暴露【清单里声明过的】能力：默认全是只读工具，写工具（memory.write）必须另开显式开关。
+    mcp_enabled: bool = False
+    mcp_mount_path: str = "/mcp"
+    #: 要暴露的工具名，逗号分隔（与 `delivery_http_channels` 同一形态）。空 = 用清单默认集合（只读那几个）。
+    #: 这里【故意】不用 `list[str]`：pydantic-settings 对复杂类型先做 JSON 解码，实测
+    #: `AEGIS_MCP_TOOLS=telemetry.query,cases.search` 会抛 SettingsError（"error parsing value for field"），
+    #: 而部署里最自然的写法就是逗号分隔——与本仓其它列表键保持一致，别让人去猜两种语法。
+    #: 写了不存在的名字会在装配期报错，而不是"配了却没生效"——那是本仓反复踩过的空旋钮形态。
+    mcp_tools: str = ""
+    #: 放行写工具（memory.write）。默认 False，且写工具是【两把钥匙】：既要开这个闸，还要在
+    #: mcp_tools 里点名——只开闸不会把写面暴露出去（§4.8.2"工具默认只读"那一层闸）。
+    mcp_allow_write_tools: bool = False
 
     # §3/§6 MA 智能体运行时三态（互斥，只留一个订阅面）：
     #   real = 真智能体内环上总线（`agents/runtime.py` 装配：越限回规则引擎、漂移走 EWMA、

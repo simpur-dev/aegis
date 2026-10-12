@@ -366,6 +366,7 @@ class TestContainerWiring:
             "outbound",
             "delivery",
             "tracing",
+            "mcp",
         }
         assert (status["store"].enabled, status["store"].driver) == (True, "memory")
         # 记忆门面默认就在（进程内那一档），但"在"不等于"共享得起来"：driver 必须说清它活到哪一步。
@@ -382,6 +383,9 @@ class TestContainerWiring:
         assert (status["outbound"].enabled, status["outbound"].driver) == (False, "off")
         # 没配 OTLP 端点时链路追踪只留本地：这一行必须说真话，否则"接了 Jaeger"是假的
         assert (status["tracing"].enabled, status["tracing"].driver) == (False, "local")
+        # MCP 工具面默认必须是"没开"这一档，而不是"装了依赖就等于开了"：`/mcp` 那条路径在关着时
+        # 根本不存在（404），状态行就得能被读成同一件事。
+        assert (status["mcp"].enabled, status["mcp"].driver) == (False, "disabled")
 
     def test_配了白名单后外呼成为一条可读的腿(self) -> None:
         ctn = create_container(base_settings(workflow_http_allowed_hosts="api.example.com, 10.0.0.9"), with_simulator=False)

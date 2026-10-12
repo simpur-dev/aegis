@@ -36,11 +36,13 @@ export const LEG_LABELS: Record<string, string> = {
   analytics: '分析旁路',
   knowledge: '案例知识层',
   retrieval: '混合检索',
+  memory: '共享记忆层',
   mqtt: 'MQTT 推送腿',
   weather: '气象拉取腿',
   outbound: '工作流外呼腿',
   delivery: '触达通道腿',
   tracing: '链路追踪',
+  mcp: 'MCP 工具面',
 }
 
 const SECRET_KEY = /(password|passwd|secret|token|api[_-]?key|dsn|uri|authorization)/i

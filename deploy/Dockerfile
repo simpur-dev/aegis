@@ -10,11 +10,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # 依赖层与源码层分离，便于镜像缓存
 # extras 必须覆盖平台侧全部可选子系统：少装一个，对应腿就在生产里静默降级
-# （analytics 缺 → 分钟物化不写；graph 缺 → 案例知识只有内存兜底；retrieval 缺 → 密集/重排腿不可用）。
+# （analytics 缺 → 分钟物化不写；graph 缺 → 案例知识只有内存兜底；retrieval 缺 → 密集/重排腿不可用；
+#  mcp 缺 → `/api/v1/integrations` 的 mcp 行读成 driver=absent，工具面只在 REST 兼容面上）。
 # edge（Zenoh）与 perf（locust/schemathesis）不在这里：前者跑在站端，后者只在 CI 里跑。
 COPY backend/pyproject.toml backend/uv.lock ./backend/
 RUN cd backend && uv sync --frozen --no-dev \
-    --extra postgres --extra iot --extra analytics --extra graph --extra retrieval
+    --extra postgres --extra iot --extra analytics --extra graph --extra retrieval --extra mcp
 
 COPY backend ./backend
 COPY contracts /contracts

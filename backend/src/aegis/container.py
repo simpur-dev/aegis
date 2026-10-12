@@ -33,6 +33,7 @@ from aegis.integrations import (
     StoreBundle,
     build_analytics,
     build_knowledge,
+    build_mcp,
     build_memory,
     build_mqtt,
     build_retrieval,
@@ -304,6 +305,13 @@ class PlatformContainer:
     #: 它的 `backend` 决定这句话是"存进了库"还是"只活到这个进程结束"，所以必须对外可见。
     memory: MemoryService | None = None
     memory_state: IntegrationState | None = None
+    #: MCP 工具层（§4.2）：server 与它的装配事实。没装可选腿/没开时 server=None 而状态行照出，
+    #: 这样"平台有没有对外暴露工具面"是一个能查的事实，不是要人去翻依赖清单。
+    #: `mcp_runtime` 是同一个装配的调用/失败台账引用：状态行每次从这里重读，
+    #: 不然 detail 里那两个计数会永远停在装配时刻的 0（把"这一小时没人调"当成实测结论）。
+    mcp_server: Any | None = None
+    mcp_state: IntegrationState | None = None
+    mcp_runtime: Any | None = None
     llm_gateway: LlmGateway | None = None
     mqtt: MqttSource | None = None
     mqtt_state: IntegrationState | None = None
@@ -532,6 +540,16 @@ class PlatformContainer:
             if memory_defects:
                 memory_state = replace(memory_state, detail={**memory_state.detail, **memory_defects})
             rows.append(memory_state)
+        # MCP 工具面这一行必须在"没开/没装"时也出现：外部要能分辨"平台没有工具面"与"有但没开"，
+        # 而智能体取数走的是 MCP 还是 REST 兼容面，是验收时会被问到的事实。
+        if self.mcp_state is None:
+            mcp_state = IntegrationState(name="mcp", enabled=False, driver="disabled", detail={"reason": "装配点未提供 mcp 状态"})
+        else:
+            mcp_state = self.mcp_state
+        if self.mcp_runtime is not None:
+            # 调用数/失败数/成因是运行期事实，装配快照会把它们永远说成 0 与空串——与 mqtt 腿同一口径每次重读
+            mcp_state = replace(mcp_state, detail={**mcp_state.detail, **self.mcp_runtime.as_dict()})
+        rows.append(mcp_state)
         # MQTT 腿把运行期计数一并带出来：broker 是否连着、收了多少条、被拒/溢出各多少，
         # 这些正是"站端在发但平台没数"时唯一能区分故障位置的证据。
         mqtt_state = self.mqtt_state or IntegrationState(name="mqtt", enabled=False, driver="off")
@@ -818,6 +836,14 @@ def create_container(
     knowledge, knowledge_state = build_knowledge(cfg, tracer)
     retrieval, retrieval_state = build_retrieval(cfg, tracer, store=bundle.durability)
     memory, memory_state = build_memory(store=bundle.store, retrieval=retrieval)
+    # MCP 工具层要在检索/知识/记忆都装配完之后再建：它只是把这些既有端口换个协议面暴露出去。
+    mcp = build_mcp(
+        settings=cfg,
+        store=bundle.store,
+        retrieval=retrieval,
+        knowledge=knowledge,
+        memory=memory,
+    )
     mqtt_source, mqtt_state = build_mqtt(cfg)
     weather_source, weather_state = build_weather(cfg, client=weather_client)
     outbound = OutboundCaller(OutboundPolicy.from_settings(cfg), client=outbound_client)
@@ -920,6 +946,9 @@ def create_container(
         retrieval_state=retrieval_state,
         memory=memory,
         memory_state=memory_state,
+        mcp_server=mcp.server,
+        mcp_state=mcp.state,
+        mcp_runtime=mcp.runtime,
         mqtt=mqtt_source,
         mqtt_state=mqtt_state,
         weather=weather_source,
