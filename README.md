@@ -57,7 +57,26 @@ aegis/
 └── scripts/                   # 检索权重预置脚本（内网/离线部署前跑一次）
 ```
 
-## 2. 快速开始
+## 2. 部署与运行
+
+两条互不依赖的路径，命令都在本机逐条跑过（2026-10-12，Windows 11 + Docker Desktop/WSL2）：
+
+- **路径 A · 本机进程**（日常开发、离线全测试、演练与报表）——不需要 Docker。
+- **路径 B · Docker 起后端与依赖**（真总线 + 真库 + 图谱 + 检索权重），**Web 端仍在宿主机跑**：
+  `deploy/docker-compose.yml` 里没有前端服务，容器只编排后端与其依赖（如实写清，见 2.2 末）。
+
+### 2.0 先决条件（本机实测版本）
+
+| 需要 | 实测到的版本 | 说明 |
+| --- | --- | --- |
+| `uv` | 0.12.19 | 后端唯一依赖管理器；它会自建虚拟环境，**不必**先装 Python |
+| Python | 虚拟环境里 3.12.13（`requires-python = ">=3.11"`） | 系统里那台 `python -V` 是 3.13.15，与项目无关，别用它跑 `uv run` |
+| `node` / `npm` | v24.11.1 / 11.6.2 | 前端与仓库根的 `npm run dev` 编排 |
+| `docker` + `docker compose` | 29.8.1 / v5.5.1 | 路径 B 才需要；compose 版本要支持 `--env-file` 与 `profiles` |
+| 磁盘 | 镜像合计 ~1.6GB（后端 688MB + postgres 892MB）＋检索权重 1.1GB | 权重不烧进镜像，靠只读卷挂进容器（见 2.2） |
+| 网络 | 构建期需要 pypi/apt 可达 | 内网/离线见 2.2 的"离线或内网"一段 |
+
+### 2.1 路径 A · 本机进程
 
 ```bash
 # 1) 配置：LLM 与图谱项可留空，平台按规则引擎与内存案例库降级运行
@@ -91,35 +110,153 @@ cd .. && npm run dev              # API http://127.0.0.1:8000/docs ｜ Web http:
 #    与调度档 ≤2s/≤10s（工作流量测点，禁入 LLM）分档并报表，见《课题6_架构升级方案》§5。
 ```
 
-需要真实基础设施时按 profile 起（`observability` 先起，应用才不会把跨度只留在本地）：
+跑起来后按这几条自查（都不需要额外工具）：
 
 ```bash
-# compose 的变量插值默认只在 compose 文件所在目录找 .env，
-# 而凭据模板在仓库根：不显式指过去，`up` 会在 POSTGRES_PASSWORD 这类必填项上直接失败。
-cp .env.example .env
-docker compose --env-file .env -f deploy/docker-compose.yml --profile observability up -d
-docker compose --env-file .env -f deploy/docker-compose.yml --profile app --profile iot up -d
-# 两份 .env 各有用途：仓库根这份给 compose 插值与容器 env_file，backend/.env 给本机直接跑进程；
-# 别把实验开关写进 backend/.env——pytest 也会读它（见上面"快速开始"里的提醒）。
-# 混合检索需要权重，先在能联网的机器上预置到 backend/data/models/（约 1.1GB，只读挂载进容器）
-python scripts/fetch_retrieval_models.py
-# 图谱腿起来之后把 16 条内置预案灌进去（容器 workdir 就是 /app/backend，脚本随镜像一起装好）；
-# 不灌这一句，召回照样有命中，但命中的全是容器里的内存兜底库，图谱那侧一条事实都没有。
-# 逐条落点由命令自己报（exit 3 = 有降级、4 = 写得进去却召回不到），别只看它有没有跑完：
-#   docker compose --env-file .env -f deploy/docker-compose.yml exec backend python -m scripts.ingest_cases
-# （上面这条 exec 命令本机原样跑过：compose 起的 backend 容器里 exit=3、
-#   `total 2 / landed 0 / degraded 2 / by_driver {in_memory: 2} / durable false`，
-#   理由就写在同一行输出里——缺模型凭据，图谱那条腿收不下案例。
-#   一个只有整栈跑才会露面的坑：`docker run` 起的依赖容器挂在默认 `bridge`，compose 把 backend
-#   放进 `<project>_default`，于是 backend 里 `nats`/`postgres`/`neo4j` 三个服务名全都解析不到，
-#   而每条腿仍然各自优雅降级——`/readyz` 200 会把"什么都没接上"读成"部署成功"。
-#   要么整个栈都用这一份 compose 起，要么先把依赖挂进同一网络：
-#   `docker network connect --alias nats <compose 网络> aegis-nats`（postgres/neo4j 同理）。）
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/healthz    # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/readyz     # 200
+curl -s http://127.0.0.1:8000/api/v1/integrations | head -c 400           # 每条腿的 driver，见 2.3
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5173/dashboard  # 200（vite 代理到后端）
 ```
+
+默认这份配置起来时是**纯离线形态**：`store=memory`、`bus=memory`、`retrieval=off`、`knowledge=in_memory`、
+`analytics=off`、`tracing=local`——链路照跑、报表照出，但这些腿都还没接上（`/api/v1/integrations`
+会把这一件件事如实写出来，别把"200"读成"接上了"）。
+
+### 2.2 路径 B · Docker：后端与依赖进容器（Web 端仍在宿主机）
+
+**先把形态说准**：`deploy/docker-compose.yml` 里**没有前端服务**——容器只编排后端与它依赖的中间件。
+Web 端沿用路径 A 的 `npm run dev`：vite 的代理默认就是 `http://127.0.0.1:8000`（`frontend/vite.config.ts`），
+而 compose 把后端发布在宿主机的同一个 8000 端口上，所以前端**不需要改任何参数**。
+本次实测到的是这条链的两端：容器 healthy 时宿主机 `curl :8000/readyz` 与 `:8000/api/v1/integrations` 都回 200；
+"本机 vite 转发到容器后端"这一档我**没有单独取证**（当时 5173 上配对的是本机后端）。
+要静态托管就 `npm run build`（实测 51.8s，产出 `frontend/dist` 约 50MB，含 Cesium/底图/地形资产），
+但得**自备反向代理**转发 `/api`、`/metrics`、`/healthz`、`/readyz` 四个前缀到后端——本仓不提供站点配置，
+`vite preview` 也不带代理（代理只配在 `server` 段），拿它当部署用会一路 404。
+
+profile 分层（本机实测：用模板作 `--env-file`、四条 profile 一起 `config --quiet` 通过；不带 `--env-file` 则当场报 5 个必填项，见 2.3 第 1 条）：
+
+| profile | 起什么 | 谁在用 |
+| --- | --- | --- |
+| 默认（不带 `--profile`） | `nats`、`postgres`、`neo4j` | 总线 / 关系+空间+向量主存 / 图谱腿 |
+| `app` | `backend` | 平台 API 与链路（`env_file: ../.env`，服务名走 compose 网络） |
+| `iot` | `emqx` | MQTT 推送腿；默认 `AEGIS_MQTT_ENABLED=false`，不开这条腿 |
+| `observability` | `prometheus`、`alertmanager`、`jaeger` | 指标抓取、告警链路、跨度取证（**先起它**，应用才不会把跨度只留在本地）。本轮重写文档时这一档只做到 `config` 解析通过，没有重新起栈取证；起过并量过的记录在 `deploy/observability/README.md` 与 `docs/REPORT.md` |
+| `reserved` | `minio`、`redis` | **目前没有消费方**（配置面没有对应键，代码里 0 处 import），所以移出默认档。移出还有一层硬原因：`minio/minio:latest` 已不可拉取（本机实测 `pull access denied`），留在默认档会让每个照文档做的人在 `up` 的第一条命令上失败 |
+
+```bash
+# 1) 配置落点：仓库根这份给 compose 插值与容器 env_file；backend/.env 只给本机直接跑的进程
+cp .env.example .env
+$EDITOR .env        # 上生产前逐个改掉占位口令；要真智能体再填 AEGIS_LLM_API_KEY 并把 AEGIS_AGENT_RUNTIME 改成 real
+#    注意 compose 会**整个文件**插值，不只你选中的 profile：实测只删掉 MINIO_ROOT_PASSWORD 一项，
+#    哪怕只带 `--profile app` 也会失败（`required variable MINIO_ROOT_PASSWORD is missing a value`）。
+#    模板里这四项都给了占位值——POSTGRES_PASSWORD / NEO4J_PASSWORD / MINIO_ROOT_PASSWORD /
+#    EMQX_DASHBOARD_PASSWORD——所以照上面 cp 完直接跑就能过解析，但别把占位值留到现场。
+#    两份 .env 各有用途，别把实验开关写进 backend/.env——pytest 也会读它（见 2.1 的提醒）。
+
+# 2) 先只解析不启动：这一步会把"必填变量没给"当场暴露出来
+docker compose --env-file .env -f deploy/docker-compose.yml --profile app --profile iot --profile observability config --quiet
+
+# 3) 可观测栈先起
+docker compose --env-file .env -f deploy/docker-compose.yml --profile observability up -d
+
+# 4) 应用栈：首次会构建镜像，再起容器。本机实测构建耗时——postgres `--no-cache` 冷构建 13.5s
+#    （基座镜像已在本地时；全新机器还要先拉 ~892MB 的 postgis 基座），backend 约 13 分钟（688MB，
+#    绝大部分时间在下依赖）。起好后用 ps 看 backend 到 healthy 再往下走，别只看 Started。
+docker compose --env-file .env -f deploy/docker-compose.yml --profile app up -d
+docker compose --env-file .env -f deploy/docker-compose.yml ps        # backend 的 STATUS 要读到 healthy
+```
+
+```bash
+# 5) 检索权重不烧进镜像（1.1GB）：在能联网的机器上预置到 backend/data/models/，compose 以只读卷挂进 /models
+python scripts/fetch_retrieval_models.py
+docker compose --env-file .env -f deploy/docker-compose.yml restart backend   # 挂上权重后重启，密集腿才换成真模型
+
+# 6) 图谱腿起来之后把 16 条内置预案灌进去（容器 workdir 就是 /app/backend，脚本随镜像一起装好）。
+#    不灌这一句，召回照样有命中，但命中的全是容器里的内存兜底库，图谱那侧一条事实都没有——
+#    实测到的表现场原文是链路里的这一行：`案例召回降级: NotFoundError`。
+#    逐条落点由命令自己报（exit 3 = 有降级、4 = 写得进去却召回不到），别只看它有没有跑完：
+docker compose --env-file .env -f deploy/docker-compose.yml exec backend python -m scripts.ingest_cases
+```
+
+起好之后按这几条判读，**不要只看 `/readyz`**（它 200 只说明进程活着）：
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/readyz
+curl -s http://127.0.0.1:8000/api/v1/integrations | python -m json.tool | head -40
+docker exec aegis-postgres psql -U aegis -d aegis -tAc \
+  "select extname, extversion from pg_extension where extname in ('postgis','vector');"
+docker compose --env-file .env -f deploy/docker-compose.yml exec backend python -m scripts.drill --scenario surge
+docker compose --env-file .env -f deploy/docker-compose.yml exec backend python -m scripts.metrics_report --rounds 5
+```
+
+| 看哪 | 本机实测读回的值 | 读到别的值意味着什么 |
+| --- | --- | --- |
+| `store` 行 | `driver=postgres`、`connected=true`、`target=postgres:5432/aegis` | 服务名解析不到 ⇒ 依赖容器与后端不在同一网络（2.3 第 2 条） |
+| `retrieval` 行 | `driver=bge-m3-int8`、`dense_leg=true`、`degraded=""` | `hashing-ngram-1024` ⇒ 权重没挂上，或被 `.env` 里的相对路径盖掉了 `AEGIS_RETRIEVAL_MODEL_DIR` |
+| `knowledge` 行 | `driver=graphiti`（neo4j 在栈里时） | `in_memory` ⇒ 图谱腿没连上（neo4j 未起 / 凭据不符 / 索引初始化超时） |
+| `memory` 行 | `driver=postgres` | `memory` ⇒ 共享记忆命名空间所在库没接上（007 迁移没跑到） |
+| `delivery` / `tracing` 行 | `mock` / `local` | 这两条默认就不是真的；触达时间与链路取证都属于演练口径 |
+| psql 扩展 | `postgis 3.5.2`、`vector 0.8.6` | 报 `extension not available` ⇒ 镜像不是本仓 `deploy/postgres` 构建出来的（2.3 第 5 条） |
+| 链路各段 mode | 容器内 `POST /api/v1/reports` 实测：`assess/plan/execute = agent`（53/1903/3313ms），`perceive/feedback = local` | 全 `local` 而 `/api/v1/agents` 又 `online=0` ⇒ 智能体没注册或已停跳（看下一行） |
+| 智能体注册 | `GET /api/v1/agents` 实测回 `online=5`、id 是 `assess.mock01` 等五条 | 后缀就是档位：`.mock01` 是替身、`.real01` 是真内环；`online=0` 而 items 仍有五条 ⇒ 心跳停更但条目在册（见 2.3 第 8 条） |
+
+容器里的智能体档由**仓库根 `.env`** 的 `AEGIS_AGENT_RUNTIME` 决定（模板给的是 `mock`，所以实测那五条是
+`*.mock01`）：要跑真智能体就改成 `real`，再
+`docker compose --env-file .env -f deploy/docker-compose.yml restart backend`；`real` 与 `mock` 互斥，
+一个订阅面只挂一副。注意容器读的是**仓库根那份 `.env`**（`env_file: ../.env`），
+改 `backend/.env` 对容器没有任何作用。
+
+停机与清数据（**只有 `-v` 会删数据**，这条差别值得写在这里）：
+
+```bash
+docker compose --env-file .env -f deploy/docker-compose.yml --profile app --profile observability down   # 删容器与网络，卷留着（pg_data 等原样保住）
+docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -v                          # 连卷一起删＝回到干净环境，重装前确认一遍
+```
+
+### 2.3 这几处会咬人（每一条都是本机撞到的）
+
+1. **省掉 `--env-file .env` 就起不来**。compose 的变量插值默认只去 compose 文件所在目录（`deploy/`）找 `.env`，
+   而模板在仓库根。实测原文报错：
+   `error while interpolating services.postgres.environment.POSTGRES_PASSWORD: required variable POSTGRES_PASSWORD is missing a value`
+   ——一次性报 5 个必填项（POSTGRES/NEO4J/MINIO/EMQX/AEGIS_NEO4J），所以每条 compose 命令都得带上这个开关。
+2. **`docker run` 起的依赖容器不在 compose 网络上**：backend 里 `nats`/`postgres`/`neo4j` 三个服务名全都解析不到，
+   而每条腿仍然各自优雅降级——`/readyz` 照旧 200，于是"什么都没接上"被读成"部署成功"。
+   要么整个栈都用这一份 compose 起，要么先把依赖挂进同一网络并带别名：
+   `docker network connect --alias nats <compose 网络> aegis-nats`（postgres/neo4j 同理）。
+   **反方向的坑也实测到了**：用 `docker compose up --no-deps backend` 去复用外来容器，服务名在启动窗口内可能还没就绪，
+   后端会卡在 `nats: no servers available for connection`（`NoServersError`）反复重试、`/healthz` 始终连接被拒——
+   别把这条捷径当文档路径。
+3. **外来容器的名字会挡 compose 的路**：
+   `Error response from daemon: Conflict. The container name "/aegis-neo4j" is already in use by container "4b32e2..."`。
+   先 `docker rename aegis-neo4j legacy-neo4j`（或删掉旧容器）再 `up`；改名是安全做法，数据卷不动。
+4. **`nats` 的 `-m 8222` 不是可选项**：它的 healthcheck 打的正是 8222，缺了它 backend 的
+   `depends_on: service_healthy` 永远不满足。`docker compose config` 查不出这种错（它只看语法）。
+5. **postgres 镜像的构建源已经换过位置**：基座 `postgis/postgis:17-3.5` 是 Debian 11(bullseye)，
+   而 PGDG 撤掉了 `bullseye-pgdg` 的当前发布目录（`dists/bullseye-pgdg/Release` 现在 404，apt 报
+   `does not have a Release file` ⇒ 构建退出码 100）。`deploy/postgres/Dockerfile` 现在把源指到
+   `apt-archive.postgresql.org`，**保住的是本仓量过的那一版数据面**（PostgreSQL 17.5 / PostGIS 3.5.2 / pgvector 0.8.6）；
+   归档源不再跟安全更新，这是明知故犯的取舍，升级条件与复跑清单写在那个文件的注释里。
+6. **权重目录要在 compose 里钉死成挂载点**：`environment`/`env_file` 的优先级高于镜像 `ENV`，
+   镜像里的 `AEGIS_RETRIEVAL_MODEL_DIR=/models` 会被 `.env` 的 `./data/models` 盖掉 ⇒ 容器去
+   `/app/backend/data/models` 找权重，找不到就把密集腿静默换成词面近似，状态行只剩一个不同的 `driver` 值。
+7. **重启以后列表页是空的，不代表数据丢了**。`store` 这条腿的读模型是进程内视图
+   （`persistence/postgres.py:271`，`self._read = read_model or PlatformStore()`），启动时不从库里回填。
+   实测一次重启后：`GET /api/v1/warnings` 回 `{"count":0,"items":[]}`、按 id 直查回 404，
+   而**同一个库**里 `select count(*) from warnings` 是 86。演示/验收前先跑一轮
+   `scripts.drill` 把数据写进当前进程，或用直查库的那批出口（`psql`、`/api/v1/geo/*`、
+   `scripts.accuracy_replay --from-store`）。这条已经单列为待修缺陷，别把它当部署失败去排查网络。
+8. **`/api/v1/agents` 的 `online` 与 `items` 可能各说各话**。本机跑了两小时后读到 `online=0`，
+   而 `items` 里 `assess.real01` 等五条仍在册（`healthy=false`、`idle_seconds≈7255`、`served=1`、`failed=1`），
+   同时 `gateway_counters.no_agent` 仍是 0——"这副耳朵已经不跳了"与"请求被派给了谁"没对上。
+   判读时把 `healthy`/`idle_seconds`/`served` 一起看，别只拿 `online` 当在线证明（已单列待修）。
+
+### 2.4 出口一览
 
 接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`
 装配事实（哪条腿在跑、哪条腿是瘸的）`http://localhost:8000/api/v1/integrations`——`/dashboard` 页底有同源面板
 告警链路取证口径 `deploy/observability/README.md`
+
 
 ### Web 页面（纯 Web，响应式，无原生移动端）
 
@@ -142,7 +279,7 @@ python scripts/fetch_retrieval_models.py
 | 腿 | 驱动取值 | 关闭 / 降级时的行为 |
 | --- | --- | --- |
 | `agents` | `mock` \| `real` \| `off` | `real` 需 LLM 网关可用且与 mock 互斥（同一订阅面只挂一副）；智能体缺位/超时/产出不合契约时按段降级规则轨并写入 `degradations`；`off` 时五段全部走平台降级轨 |
-| `store` | `memory` \| `postgres` | 落库失败不换实现：内存读视图照常服务，写侧进有界缓冲重试并按计数暴露 |
+| `store` | `memory` \| `postgres` | 落库失败不换实现：内存读视图照常服务，写侧进有界缓冲重试并按计数暴露。**读视图是进程内的、启动时不从库里回填**，所以重启后列表/详情端点看不见已落库的历史（2026-10-12 实测：列表 `count=0`、按 id 直查 404，而同库 `count(*)=86`）——这条不是"降级可见"而是待修缺陷，见 2.3 第 7 条 |
 | `analytics` | `off` \| `clickhouse` \| `duckdb` | `off` 时链路里根本不出现 OLAP 代码路径；启用时只 write-behind 入队，热路径永不等 OLAP |
 | `knowledge` | `in_memory` \| `graphiti` | 图谱缺位时召回自动落到内置预案库（性质与逐条出处随召回结果一起外显），预案生成照旧完成。写入侧有生产调用点：单条 `POST /api/v1/knowledge/cases` 与整批 `scripts.ingest_cases`，两者响应里的 `driver/degraded/reason` 说清这条案例究竟落在图谱还是只在内存；启动期建一次图谱索引（失败作为 `schema_error`），停服期关一次图谱连接（关不上作为 `close_error`），两件事都出现在这一行 |
 | `retrieval` | `off` \| `hybrid` | 权重缺失时稠密腿换确定性词面近似并在 `driver/degraded` 上标出；该分数不得进任何准确率汇报。索引引擎可切 `local`（pgvector + 进程内 BM25）或 `seekdb`（向量 ANN 与 ngram 中文全文同库），切换只改装配，两腿语义与凭证结构不变。**默认是 `local`**：2026-10-02 实测过 seekdb 的几何/约束/LATERAL 能力后，它仍只作为显式 POC 打开，`tests/unit/test_retrieval_wiring.py::TestSeekdbIsNotInTheDefaultShape` 用双向变异把"local 装配去碰 seekdb 代码路径"钉成红 |
