@@ -10,6 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+from aegis.agents.mcp_context import McpAssessContext
+from aegis.agents.rest_context import RestAssessContext
 from aegis.container import create_container
 
 
@@ -84,3 +88,50 @@ async def test_停止后不留悬挂的智能体(settings: Any) -> None:
     await container.shutdown()
     assert container.real_agents == [], "实例清单没清就等于心跳还在总线上飘"
     await container.shutdown()  # 重复 stop 必须幂等：shutdown 路径上会被叫两次
+
+
+async def test_装出工具面时取数自动切到mcp门面(settings: Any) -> None:
+    """§4.2 阶段 2 的正向档：`auto` 跟着部署形态走，不需要运维再把两处配置对齐。
+
+    状态行里那一格必须同步说出"取数当前走哪张面"——只报"工具面开着"会让人读成切换已完成。
+    """
+    pytest.importorskip("mcp", reason="未安装可选依赖 mcp（`uv sync --extra dev --extra mcp`）：这一档无从装配工具面")
+    container = await boot(settings.model_copy(update={"agent_runtime": "real", "mcp_enabled": True}))
+    try:
+        assert container.agent_context_face == "mcp"
+        assess = next(agent for agent in container.real_agents if agent.agent_type.value == "assess")
+        assert isinstance(assess.context, McpAssessContext), "工具面都装出来了还走 REST，就是切换没生效"
+        row = next(item.as_dict() for item in container.integration_status() if item.name == "mcp")
+        assert row["detail"]["agent_context_face"] == "mcp", row["detail"]
+    finally:
+        await container.shutdown()
+
+
+async def test_没装工具面时默认留在rest且状态面看得见(settings: Any) -> None:
+    container = await boot(settings.model_copy(update={"agent_runtime": "real"}))
+    try:
+        assert container.agent_context_face == "rest"
+        assess = next(agent for agent in container.real_agents if agent.agent_type.value == "assess")
+        assert isinstance(assess.context, RestAssessContext)
+        row = next(item.as_dict() for item in container.integration_status() if item.name == "mcp")
+        assert row["detail"]["agent_context_face"] == "rest"
+    finally:
+        await container.shutdown()
+
+
+async def test_显式rest时开着工具面也不切(settings: Any) -> None:
+    """留这条回退位是灰度与 A/B 对照的立足点：能一句配置把取数挪回 REST 兼容面。"""
+    pytest.importorskip("mcp", reason="未安装可选依赖 mcp：这一档测的是『开了面但选择不走』")
+    container = await boot(settings.model_copy(update={"agent_runtime": "real", "mcp_enabled": True, "agent_context_face": "rest"}))
+    try:
+        assert container.agent_context_face == "rest"
+        assess = next(agent for agent in container.real_agents if agent.agent_type.value == "assess")
+        assert isinstance(assess.context, RestAssessContext)
+    finally:
+        await container.shutdown()
+
+
+async def test_点名mcp却没有工具面时启动当场失败(settings: Any) -> None:
+    """静默退回 REST 就是"配了没生效"——这类旋钮本仓付过太多次学费，宁可起不来。"""
+    with pytest.raises(ValueError, match="AEGIS_AGENT_CONTEXT_FACE=mcp"):
+        await boot(settings.model_copy(update={"agent_runtime": "real", "agent_context_face": "mcp"}))

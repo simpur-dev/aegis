@@ -159,6 +159,13 @@ class Settings(BaseSettings):
     #: mcp_tools 里点名——只开闸不会把写面暴露出去（§4.8.2"工具默认只读"那一层闸）。
     mcp_allow_write_tools: bool = False
 
+    #: 智能体取数走哪张门面（§4.2 阶段 2 / D4"替换智能体内环裸调 REST 的临时做法"）：
+    #:   auto = 本进程装配出工具面就走 MCP，否则走 REST（默认：跟着部署形态走，不需要两处配置手动同步）；
+    #:   rest = 永远走 REST 兼容面（灰度回退与 A/B 对照都留这条）；
+    #:   mcp  = 必须走 MCP：工具面没开或可选依赖没装就在启动期 ValueError。
+    #:          配了 mcp 却静默走 REST，正是本仓最贵的那类错（"配了没生效"）。
+    agent_context_face: Literal["auto", "rest", "mcp"] = "auto"
+
     # §3/§6 MA 智能体运行时三态（互斥，只留一个订阅面）：
     #   real = 真智能体内环上总线（`agents/runtime.py` 装配：越限回规则引擎、漂移走 EWMA、
     #            语义腿委派三路融合解析器、佐证经 REST 取数）；此时【不起】mock，避免两副

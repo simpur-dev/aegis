@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -237,6 +238,20 @@ class TestHandshake:
             result = await session.call_tool("telemetry.query", {"region_code": "540121", "limit": 5})
             assert result.is_error is False
             assert '"ok": true' in result.content[0].text
+
+    async def test_只给灾种时案例召回按中文名问与REST同句回退(self) -> None:
+        """`GET /api/v1/cases/recall` 在 `q` 空时用灾种中文名去问 provider，工具面必须问同一次。
+
+        少这句的话，`cases.search(hazard_type=...)` 会拿空串去召回：外部客户端明明给了灾种，
+        读到的却是"没有相似案例"——同一个 provider 因为门面不同给出两个答案，正是最难查的那类分叉。
+        """
+        settings = _settings(mcp_enabled=True, mcp_tools="cases.search", http_port=_free_port())
+        async with _live_server(settings) as base_url, _mcp_session(base_url) as session:
+            by_hazard = await session.call_tool("cases.search", {"hazard_type": "debris_flow", "limit": 3})
+        assert by_hazard.is_error is False
+        body = json.loads(by_hazard.content[0].text)
+        assert body["count"] > 0, f"只给灾种也该召回内置预案：{body}"
+        assert any("泥石" in json.dumps(item, ensure_ascii=False) for item in body["items"]), body["items"]
 
     async def test_点名的非默认工具才出现在工具面上(self) -> None:
         """`mcp_tools` 是清单的子集选择器：点了 simulation.run 才有它，同时不再白送默认面。"""

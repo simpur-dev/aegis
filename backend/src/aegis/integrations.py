@@ -780,7 +780,10 @@ def _mcp_telemetry_source(store: object):
             metric=args.get("metric") or None,
             region_code=args.get("region_code") or None,
             since=args.get("since") or None,
-            limit=max(1, min(int(args.get("limit") or 200), 2_000)),
+            # 上下界与 `GET /api/v1/telemetry` 的 `limit: ge=1, le=5_000` 对齐：
+            # 这里另写一个更小的天花板（曾写 2_000）= 客户端要 3000 行而平台静默给 2000 行，
+            # 表现是"两张门面读数不一致"，而调用方看不出谁改了它的参数。
+            limit=max(1, min(int(args.get("limit") or 200), 5_000)),
         )
         return {"count": len(rows), "items": [row.model_dump(mode="json") for row in rows]}
 
@@ -804,9 +807,22 @@ def _mcp_retrieval_source(retrieval: object):
 
 def _mcp_knowledge_source(knowledge: object, settings: Settings):
     async def _call(args: dict[str, Any]) -> dict[str, Any]:
+        from aegis.domain.enums import HazardType
+
+        query = str(args.get("query") or "")
+        hazard = args.get("hazard_type") or None
+        if hazard is not None:
+            try:
+                hazard = HazardType(hazard).value
+            except ValueError:
+                raise ValueError(f"hazard_type 不在冻结枚举里，收到 {hazard!r}") from None
+            if not query:
+                # 与 `GET /api/v1/cases/recall` 同一句回退（那里是 `q or hazard_type.cn`）：
+                # 两条门面问的是同一个 provider，查询词不能一套有、一套空。
+                query = HazardType(hazard).cn
         matches = await knowledge.recall(  # type: ignore[attr-defined]
-            str(args.get("query") or ""),
-            hazard_type=args.get("hazard_type") or None,
+            query,
+            hazard_type=hazard,
             region_code=args.get("region_code") or None,
             limit=max(1, min(int(args.get("limit") or 3), 20)),
             budget_ms=settings.knowledge_recall_budget_ms,
@@ -830,7 +846,9 @@ def _mcp_memory_search_source(memory: object):
             kind=kind,
             agent_id=args.get("agent_id") or None,
             region_code=args.get("region_code") or None,
-            limit=max(1, min(int(args.get("limit") or 5), 50)),
+            # 上界与 `GET /api/v1/memory/shared` 的 `limit: le=100` 对齐（默认值这里给 5 是取数门面的常态，
+            # 但客户端要点更多时不许被静默截到一半——两张门面读同一个库，条数不一致没法解释）
+            limit=max(1, min(int(args.get("limit") or 5), 100)),
         )
         return {"count": len(rows), "items": [row.model_dump(mode="json") for row in rows]}
 

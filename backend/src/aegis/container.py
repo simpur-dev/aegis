@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from aegis.agents.agentkit import AgentKit
 from aegis.agents.mock import MockAgent, start_mock_agents
-from aegis.agents.runtime import build_agent_runtime
+from aegis.agents.runtime import build_agent_runtime, resolve_context_face
 from aegis.bus.gateway import AgentGateway, ContractRegistry
 from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.registry import AgentRegistry
@@ -337,6 +337,9 @@ class PlatformContainer:
     real_agents: list[AgentKit] = field(default_factory=list)
     #: 智能体运行时的实际形态（含互斥压制的事实），启动日志与状态面都要能看见
     agent_runtime_state: str = ""
+    #: 真智能体佐证取数当前走的门面（§4.2 阶段 2）：`mcp` / `rest` / "" = 还没起真运行时。
+    #: 单独一个字段而不是塞进 `agent_runtime_state` 那句话：这一件事决定了"佐证从哪来"，会被单独问到。
+    agent_context_face: str = ""
     _tasks: list[asyncio.Task[None]] = field(default_factory=list)
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _started: bool = False
@@ -386,6 +389,13 @@ class PlatformContainer:
         runtime = self.settings.agent_runtime
         if runtime == "real":
             # 真智能体与 mock 互斥：两副同挂 agent_in 会抢答同一批请求，"谁应答"变成随机数。
+            # 取数门面（§4.2 阶段 2）：本进程装出工具面才谈得上走 MCP，`mcp_url` 就是这个判据本身。
+            mcp_url = (
+                f"http://127.0.0.1:{self.settings.http_port}{self.settings.mcp_mount_path.rstrip('/')}/"
+                if self.mcp_server is not None
+                else ""
+            )
+            self.agent_context_face = resolve_context_face(self.settings.agent_context_face, mcp_url=mcp_url)
             self.real_agents = build_agent_runtime(
                 self.transport,
                 rule_engine=self.rule_engine,
@@ -395,6 +405,12 @@ class PlatformContainer:
                 contracts=self.contracts,
                 service_token=self.settings.service_token,
                 memory=self.memory,
+                mcp_url=mcp_url,
+                context_face=self.agent_context_face,
+            )
+            log.info(
+                f"真智能体佐证取数走 {self.agent_context_face} 门面",
+                extra={"agent_context_face": self.agent_context_face, "mcp_url": mcp_url or None},
             )
             for agent in self.real_agents:
                 await agent.start(heartbeat_interval=0.5)
@@ -546,9 +562,14 @@ class PlatformContainer:
             mcp_state = IntegrationState(name="mcp", enabled=False, driver="disabled", detail={"reason": "装配点未提供 mcp 状态"})
         else:
             mcp_state = self.mcp_state
+        # 取数门面当前走哪张（§4.2 阶段 2）：工具面在不在是一件事，智能体是否真的经它取数是另一件事。
+        # 只看前一件会把"面开着但取数还在 REST 兼容面上"读成切换完成，所以这一格在"没开/没装"时也要出现。
+        face_note = {"agent_context_face": self.agent_context_face or "未起真运行时"}
         if self.mcp_runtime is not None:
             # 调用数/失败数/成因是运行期事实，装配快照会把它们永远说成 0 与空串——与 mqtt 腿同一口径每次重读
-            mcp_state = replace(mcp_state, detail={**mcp_state.detail, **self.mcp_runtime.as_dict()})
+            mcp_state = replace(mcp_state, detail={**mcp_state.detail, **self.mcp_runtime.as_dict(), **face_note})
+        else:
+            mcp_state = replace(mcp_state, detail={**mcp_state.detail, **face_note})
         rows.append(mcp_state)
         # MQTT 腿把运行期计数一并带出来：broker 是否连着、收了多少条、被拒/溢出各多少，
         # 这些正是"站端在发但平台没数"时唯一能区分故障位置的证据。

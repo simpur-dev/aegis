@@ -15,11 +15,32 @@ from typing import Any
 from pydantic import ValidationError
 
 from aegis.agents.factory import build_real_agents
+from aegis.agents.mcp_context import McpAssessContext
 from aegis.agents.perceive import EwmaDriftDetector, StationAnomaly
 from aegis.agents.rest_context import RestAssessContext
 from aegis.bus.transport import BusTransport
 from aegis.domain.messages import TelemetryReading
 from aegis.services.trigger_rules import RuleEngine
+
+
+def resolve_context_face(requested: str, *, mcp_url: str) -> str:
+    """研判佐证走哪张门面，返回真正生效的那个值（"mcp" / "rest"）。
+
+    `auto` 是"跟着部署形态走"：本进程装配得出工具面就走 MCP，否则走 REST——两处配置要人手动
+    对齐，就会有一段时间"面开了但取数没切"或反过来，而这两件事在状态面上看起来都叫"正常"。
+    显式点 `mcp` 而工具面不在 → 当场失败。这一条不留退路：`mcp` 静默降级成 REST 就是"配了没生效"，
+    本仓为这类旋钮付过太多次学费。
+    """
+    if requested == "rest":
+        return "rest"
+    if mcp_url:
+        return "mcp"
+    if requested == "mcp":
+        raise ValueError(
+            "AEGIS_AGENT_CONTEXT_FACE=mcp 但本进程没有工具面：需要 AEGIS_MCP_ENABLED=true 且装好可选依赖 mcp；"
+            "要暂时回退 REST 兼容面就显式改成 rest"
+        )
+    return "rest"
 
 
 class RuleEngineDetector:
@@ -84,15 +105,24 @@ def build_agent_runtime(
     contracts: Any | None = None,
     service_token: str = "",
     id_suffix: str = "real01",
+    mcp_url: str = "",
+    context_face: str = "auto",
 ) -> list[Any]:
-    """构造五智能体运行时（不启动；启动交给 `factory.start_real_agents`）。"""
+    """构造五智能体运行时（不启动；启动交给 `factory.start_real_agents`）。
+
+    `mcp_url` 非空 = 本进程确实有工具面可走；`context_face` 决定用它还是用 REST（见 `resolve_context_face`）。
+    """
     ewma = EwmaDriftDetector(rules=rule_engine.rules)
     perceive_detector = _CompositeDetector(RuleEngineDetector(rule_engine), ewma)
+    face = resolve_context_face(context_face, mcp_url=mcp_url)
+    context: Any = (
+        McpAssessContext(url=mcp_url, token=service_token) if face == "mcp" else RestAssessContext(base_url=base_url, token=service_token)
+    )
     return build_real_agents(
         transport,
         llm=llm,
         memory=memory,
-        context=RestAssessContext(base_url=base_url, token=service_token),
+        context=context,
         detector=perceive_detector,
         semantic=parser,
         contracts=contracts,

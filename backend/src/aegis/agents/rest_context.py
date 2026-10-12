@@ -25,7 +25,7 @@ CASES_PATH = "/api/v1/cases/recall"
 SEARCH_PATH = "/api/v1/retrieval/search"
 
 
-def _first_hazard(hits: list[Any]) -> str:
+def first_hazard(hits: list[Any]) -> str:
     for hit in hits:
         hazard = hit.get("hazard_type") if isinstance(hit, dict) else getattr(hit, "hazard_type", None)
         if hazard:
@@ -39,7 +39,11 @@ def _unavailable(detail: Any) -> str:
 
 
 class RestAssessContext:
-    """`AssessContextProvider` 的 REST 实现：研判要的案例与检索佐证都从平台自己的 API 出口取。"""
+    """`AssessContextProvider` 的 REST 实现：研判要的案例与检索佐证都从平台自己的 API 出口取。
+
+    参数推导用模块级的 `first_hazard`/`hazard_param`——MCP 门面（`mcp_context.py`）复用同一份，
+    两条门面各写一遍"问什么词、发哪个灾种"迟早长出不一致的口径。
+    """
 
     def __init__(
         self,
@@ -62,13 +66,13 @@ class RestAssessContext:
         self._client_factory = client_factory or httpx.AsyncClient
 
     async def corroborate(self, *, region_code: str, hazard_hint: str | None, hits: list[Any]) -> dict[str, Any]:
-        query = (hazard_hint or _first_hazard(hits) or "").strip()
+        query = (hazard_hint or first_hazard(hits) or "").strip()
         params: dict[str, Any] = {}
         if region_code:
             params["region_code"] = region_code
         if query:
             params["q"] = query
-        hazard = _hazard_param(hazard_hint) or _hazard_param(_first_hazard(hits))
+        hazard = hazard_param(hazard_hint) or hazard_param(first_hazard(hits))
         if hazard:
             params["hazard_type"] = hazard
 
@@ -76,8 +80,14 @@ class RestAssessContext:
         degraded: list[str] = []
         cases = await self._get(CASES_PATH, {**params, "limit": self._case_limit})
         _merge(ctx, degraded, "cases", cases)
-        retrieval = await self._get(SEARCH_PATH, {**{k: v for k, v in params.items() if k != "hazard_type"}, "k": self._search_k})
-        _merge(ctx, degraded, "retrieval", retrieval)
+        if query:
+            retrieval = await self._get(SEARCH_PATH, {**{k: v for k, v in params.items() if k != "hazard_type"}, "k": self._search_k})
+            _merge(ctx, degraded, "retrieval", retrieval)
+        else:
+            # 与 `mcp_context` 同一口径：`q` 是这个路由的必填非空参数，没词硬发只换来一个 422。
+            # 记进 `degraded` 会把"这次没有可搜的词"说成故障——真链路里 hits 为空的事件（人工上报
+            # 未越限那种）本来就没词，一天里能把它刷成噪声，最后没人再看这条清单。
+            pass
         ctx["degraded"] = degraded
         return ctx
 
@@ -100,7 +110,7 @@ class RestAssessContext:
         return response.status_code, body
 
 
-def _hazard_param(value: str | None) -> str | None:
+def hazard_param(value: str | None) -> str | None:
     """只有落在灾种枚举里的值才发出去：接口对该参数做枚举校验，乱填会换来一个 422。"""
     if not value:
         return None

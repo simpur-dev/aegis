@@ -140,12 +140,12 @@ async def test_它是AssessContextProvider要的那个形状() -> None:
     assert isinstance(provider, AssessContextProvider), "装配点按协议注入，形状不认就是取数断链"
 
 
-def _request() -> Any:
+def _request(hits: list[Any] | None = None) -> Any:
     return make_request(
         source="platform.t01",
         target="assess.t01",
         action="assess.risk",
-        payload={"region_code": REGION, "hits": [], "observed_at": now_iso()},
+        payload={"region_code": REGION, "hits": hits or [], "observed_at": now_iso()},
         trace_id="trc_" + "0" * 16,
         reply_to="reply.t01.inbox",
         deadline_ms=3000,
@@ -188,7 +188,8 @@ async def test_assess把取数降级原样带到响应里() -> None:
 async def test_assess取数正常时响应里降级为空() -> None:
     provider, _ = subject({CASES_PATH: OK_CASES, SEARCH_PATH: OK_SEARCH})
     gateway = FakeGateway()
-    reply = await assess(provider, gateway).handle(_request())
+    # 带 hit 才有可搜的词：`hits=[]` 那档检索腿根本不问（见 `test_没有关键词时检索腿不发`）
+    reply = await assess(provider, gateway).handle(_request(hits=[{"hazard_type": "debris_flow", "rule_id": "R-DEBRIS-RAIN-1"}]))
     assert reply.payload["context_degraded"] == []
     joined = gateway.prompt_vars[0]["context"]
     assert "2024 河口泥石流" in joined and "应急预案第 3 节" in joined, "取到的佐证必须真的进提示词，否则取数白取"
@@ -200,3 +201,15 @@ async def test_服务端错误不会把上下文变成异常上抛(status: int) 
     provider, _ = subject({CASES_PATH: (status, {"detail": "boom"}), SEARCH_PATH: EMPTY})
     ctx = await provider.corroborate(region_code=REGION, hazard_hint="debris_flow", hits=[])
     assert ctx["degraded"] == [f"cases: HTTP {status}"]
+
+
+async def test_没有关键词时检索腿不发() -> None:
+    """`q` 是 `/api/v1/retrieval/search` 的必填非空参数：没词硬发只换来一个 422。
+
+    原来这条会被记成 `retrieval: HTTP 422` 进 `context_degraded`——把"这次没有可搜的词"说成故障，
+    而人工上报未越限那类事件本来就没词，清单会被刷成噪声。现在不发也不记。
+    """
+    provider, probe = subject({CASES_PATH: OK_CASES, SEARCH_PATH: OK_SEARCH})
+    ctx = await provider.corroborate(region_code=REGION, hazard_hint=None, hits=[])
+    assert [request.url.path for request in probe.requests] == [CASES_PATH]
+    assert ctx["cases"] == [CASE_ITEM] and "retrieval" not in ctx and ctx["degraded"] == []
