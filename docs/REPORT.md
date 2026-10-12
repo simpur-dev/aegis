@@ -1556,3 +1556,134 @@ dashboard：getAnimations 里还有 9 条 running
   没有生产调用方（只有两条单测在调），不构成活体通道。
 - 仍然缺的：`memory.search` 这类工具化入口（§4.2）落地时，检索片段/案例正文要走同一套通道用例，
   不然又会剩"原语有测试、通道没人测"这个形态。
+
+## MB-3 灾种收成枚举：一次"每条都通过、但其实没约束"的自纠（2026-10-12）
+
+上一轮真机探针逐条"通过"，我据此把研判那条腿记成结构化合规。这轮把 `AssessVerdict` 的字段逐条对盘后发现
+`hazard_type` 是**无约束 str**——那个"通过"根本不成立：模型交回什么中文描述都算合法产出。探针留下的实际值就是证据：
+`泥石流`、`降雨型山地灾害（滑坡、泥石流、崩塌）`、`暴雨诱发山洪、泥石流及滑坡`（三条都是同一批探针里出来的原值，
+当时逐条被当成合法结论打印出来）。
+
+坏口径的下游代价是可算的：`chain.py:450` 与 `services_bridge.py:322` 都做 `HazardType(payload["hazard_type"])`，
+所以合法率 1.0 的结论到了下游要么 `ValueError`、要么被读成 unknown——"定级一致率"这一列正好会被这种值抹平。
+
+- 收紧落点：`AssessVerdict` 加 `field_validator`，只收 `HazardType` 的 7 个逐字值（含 `unknown`）。
+  校验发生在 **schema 层**，于是走的是既有的"一次修复重试→仍不合规则整段降级"轨道，不是新机制。
+- 约束与提示词必须成对在位：`_prompt_vars` 新增 `hazards`，模板正文加"灾种（逐字取其一，勿用中文名称）：{hazards}"。
+  这是 plan 那条的复现——只说"取枚举之一"而不给清单，模型按中文名称回答，schema 拒收，
+  这条腿就**结构上不可能成功**（plan 当时真机 3 次 `MalformedLlmOutputError`）。
+- 模板版本 `assess` 1.0.0 → 1.1.0：正文变了就换版本号，否则 `model_info.prompt_version` 描述的不是实际发出去的提示词
+  （D10/可复现的前提）。三处把版本号钉成 `1.0.0` 的用例随之一起跑红（`test_llm_gateway_v2`/`test_eval_services`/`test_api`）——
+  **这是设计要的效果**：改 prompt 必须显式承认一次，不能悄悄改正文还挂着旧版本号。
+- 新用例 4 条（`tests/unit/test_assess_agent.py::TestHazardEnum`）：中文描述被拒 / 枚举每个值都合法 /
+  研判提示词逐字含全 7 个枚举值 / **经真网关**（非 FakeGateway）走一遍证明拒绝发生在 schema 层且修复轮真的重发了一次。
+- 变异 4 条全部转红、空转 0：枚举校验形同没写、提示词不再给清单、研判少交这个变量、清单被硬编码成子集。
+  最后一条是关键：`hazards` 由枚举本身生成，所以"枚举新增而提示词没跟上"这一类不会红（结构上不可能发生），
+  真正会红的是**生产侧把清单写死成子集或不交这个变量**——用例钉的是渲染后的实际文本。
+
+### 顺带查出、本批**没**修的一处两套口径
+
+`knowledge/data/hazard_cases.json` 里有 `snow_melt`、`ice_snow` 两个灾种 token，**不在 `HazardType` 里**。
+全库检索的准确说法：**生产代码 / SQL / 前端 0 处**，只有那份 json（6 处）与**测试**在用它们——
+`test_knowledge_cases.py:71,204,205`、`test_knowledge_graphiti.py:164,169`、`test_knowledge_memory.py:83,87`。
+其中 `test_knowledge_cases.py:204-205` 钉的正是 `hazard_labels` 回落成英文 token 那个行为，
+也就是说这处漂移已经被测试固化了一半。后果是确定性的——
+`Case.matches_hazard(枚举值)` 对这两类永远不匹配，界面上这两类的"灾种标签"就是英文 token。
+不在这批修的理由：把两个值加进 `HazardType` 是**契约语义变更**（D10 只允许加可选字段），且会同时改变研判可答集合与
+检索可匹配集合，需要单独定口径；记下它是为了让下一批不至于又从"枚举 = 全词表"这个假设出发。
+
+## MB-4 结构化输出首过率：一个数字抓出一条真缺陷（2026-10-12，真 DeepSeek + 真链路两档）
+
+### 为什么先补这个数字
+
+`llm_gateway.py` 文件头第 9 行早就写着"能力首过率由评测服务盯（D8）"，方案 §4.1.2 也标着"**能力未实测，MA 首周验证**"。
+对盘实测：那句是**空的**——台账每行只有 `validation`，首答与修复轮长得一模一样（都是 `ok`），
+所以"首过率"在结构上算不出来。缺的不是报表，是**每次尝试各落一条**这一格事实。
+
+- 落点：`LlmCallRecord` 增 `structured` / `attempt` 两格 → `structured_first_pass_rate()` 纯函数 →
+  质量表第五列（`QualityMetrics.structured_first_pass`）+ 网关出口 `first_pass_stats()`（随 `usage_snapshot()`
+  进 `latency_report` 的 `llm` 块）→ `scripts/quality_gate --usage <台账>`。
+- 口径三条硬事实，各配用例：**修复轮不另计一次调用**（只数 `attempt==0`）；**传输失败/熔断不进分母**
+  （另计数、绝不静默丢，否则"连不上模型"会被读成"模型格式能力退步"）；**一条可算首答都没有 = None**
+  （不冒 1.0，也不因"没数"谎报退步）。
+- 门禁形状：新增列一律走"基线缺列即 `ValueError`"的路子——加一列而基线没跟上，CI 当场红而不是静默读成 None
+  （这条守卫是上一批定的，本轮亲手撞了一次：`缺列 ['structured_first_pass']`）。
+- `--write-baseline` 加"抹数"守卫：`lost = 有数→None 的列`，非空即拒绝并退码 2，要清空得显式 `--allow-blank`。
+  理由：`None` 不参与退步判定，一次忘了带 `--usage` 的刷基线就能把已实测的列悄悄关掉，从此永远绿。
+
+### 两档实测（同一脚本、同 seed 99/100/101、同一台机器、只差代码）
+
+| 档 | 事件 | 台账行 | 可算首答 | 首过 | 需修复 | 总首过率 | 研判整段降级 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 修复前 | 9 | 45 | 36 | 31 | 5 | **0.8611** | **5/9** |
+| 修复后 | 9 | 54 | 37 | 29 | 8 | **0.7838** | **2/9** |
+
+按 task 分开（两档相同的部分）：`assess` / `plan` / `execute` 走 `deepseek-chat`，各 **9/9 首过 = 1.0**；
+`arbitration` 走 `deepseek-reasoner`，修复后 **2/10 = 0.2**。灾种值 9 个事件全部逐字落在枚举内
+（`debris_flow` / `lake_outburst` / `rockfall` / `avalanche`）——MB-3 那条枚举提示词在生产路径上是被证实的。
+
+### 这个数字抓出来的缺陷：空内容绕过了整个修复重试
+
+修复前那档的 45 行台账里 `attempt=1` **一条都没有**，而 `attempt=0` 有 5 行是 `malformed`。
+一个"不合规就重发一次"的实现如果真的跑了，不可能一条修复轮都没有——这就是反证。
+根因很位置化：`raw = await self._chat_raw(...)` 写在 `try` **外面**，而 `_chat_raw` 对空内容抛的正是
+`MalformedLlmOutputError`，于是这一类不合规直接穿过 `chat_structured`，既不修复也不留 attempt=1。
+
+- 修法：取正文移进 `try` 内；`LlmUnavailableError`（整链不可用）照旧直接上抛交降级轨，不进修复轮；
+  上一条是空内容时**不回带空 assistant 消息**（provider 不接受），只重问一次。
+- A/B 就是上表的 5/9 → 2/9：同 seed 同机器，只有代码不同。这条结论是"修好了一处真缺陷"，
+  不是"提升了定级质量"——同一个 seed 的第三次事件在两档里分别被判成 **2 级 rockfall** 与 **1 级 avalanche**，
+  一次模型抖动足以同时改掉灾种与等级，所以两档之间的等级差不能当任何结论。
+
+### 还欠着的两件事（都因这个数字才看得见）
+
+1. **仲裁腿的模型选错了**：`deepseek-reasoner` 在 `response_format=json_object` 下 10 次首答 8 次不可用
+   （6 次空内容、2 次 JSON 无法解析），而 `deepseek-chat` 三条腿 27/27。这是 `backend/.env` 的路由配置问题、
+   不是代码问题——但只有把首过率**按 task 分开**才看得见：总率 0.78 会被调用量大的腿 dominate。
+   换路由后必须重测一遍再回填基线（不重测就改数＝编数）。
+2. **增强腿的失败仍然打死主结论**（任务 MB-7c）：仲裁两轮都不合规时异常照旧沿 `handle()` 上抛，
+   第一条已经合法得出的研判结论跟着一起丢——修复后仍有 2/9 事件就是这么掉的。
+   方案 §3.2 明写"双盲是增强腿、非关键路径，跳过要留痕"，现在的是"增强腿故障 = 关键路径故障"。
+
+### 证据分档与**没**证明到的
+
+- 真机实测（分两档说清）：首过率、attempt 行数、按 task 明细、每档 36/37 次可算首答——**有档**，
+  出自 `backend/reports/llm_usage_20261012T{025853,031418}Z.json` 两份台账（`reports/` 已 gitignore，
+  基线值 0.7838 由 `--usage` 从第二档重算写出，不是手填）。每事件的灾种/等级/段口径与降级条数：
+  **修复后那档有档**（`.tmp-verify/measure_after.log`，2/9 就是它读出来的），
+  **修复前那档只有控制台读数、当时没落盘**——那份台账能严格支持的是"5 次不合规首答 + 0 条 attempt=1
+  ⇒ 修复轮一次都没跑、这 5 条各自即一次抛错"，而"这 5 次恰好落在 5 个不同事件上"要靠每事件归档才能核，
+  所以表里 5/9 那一格按"有观察、可推导、未归档"记。取证脚本已改为把 `events` 与 `degraded_assess_events`
+  一并写进台账档，下一批起两档都是可核的。
+- 单测/门禁绿（有档）：新增 17 条用例（枚举 4 / 网关台账与修复轮 6 / 质量表与门禁 7；对盘那轮改的是既有
+  用例里的断言，没再增条数），全量 `pytest tests/unit tests/contract tests/api tests/e2e`
+  **2731 passed / 0 failed / 0 errors**（MB-2 那批是 2714，2714+17 正对上），
+  `ruff format --check` / `ruff check src tests scripts` / `mypy src`(117) 全绿；
+  变异 14 条（枚举 4 + 首过率与修复轮 10）逐条转红、空转 0，档案 `.tmp-verify/mutation_mb7.log`
+  （两个变异器的完整输出，本轮起才补上——之前只在会话里读过，没落盘）。
+  其中两条第一次报的是"锚点出现 0 次"而非"没抓到"——`llm_gateway.py` 是 CRLF，写死 `\n` 的多行锚根本不匹配，
+  而单行锚会被更深缩进的同一行当子串吃掉、`count=1` 于是改到别人身上（上一版就是这么假绿了两条）。
+  现在变异器按文件实际行尾拼锚点并要求锚点唯一，歧义即报，不再把"没改到"读成"用例软"。
+- 独立对盘（承诺 vs 实现）抓出 4 处，全部当轮换修：① `--usage` 接受"非空但每行没有 `structured`/`attempt`"
+  的旧形状档 → 整份被读成"没有结构化调用" → None → 门禁 **exit 0**（实测复现），这就是我自己那条"永绿陷阱"
+  的复发，加了台账行形状闸（行必须是带 `structured`/`attempt`/`validation` 三键的对象，缺即 `ValueError`）；② `unavailable` 这个 `validation` 取值全仓无人写——"未配置/全熔断开闸"这两条路径
+  在任何一次调用之前就抛错、不落台账行，而我在注释与口径里把它写成"另计数、绝不静默丢"，
+  改注释与分桶名（`传输失败(不参与)`）把这条边界说实；③ `_complete` 的 docstring 声称"所有候选都失败抛
+  `LlmUnavailableError`"，实际抛的是最后一个 provider 异常——按实抛出改写；④ MB-3 里"这两个 token 全库 0 处"
+  是我 grep 漏了 `tests/`（实际测试里 7 行在用，且 `test_knowledge_cases.py:204-205` 把标签回落行为固化了）。
+  另有两条我复核后不采纳/只改可读性：REPORT 的"rockfall 从 2 级变 1 级"确系我读错档（那是 run2 第三事件在两档
+  分别被判成 2 级 rockfall 与 1 级 avalanche，灾种也变了），已改写；`test_real_agents_conformance.py` 的
+  `prompt_version="1.0.0"` 不是假绿（它验的是版本有没有被透传进信封，桩件值就是断言的输入），
+  但既然会被读成生产版本号，桩件值已改成 `9.9.9-stub` 并注明为什么用它。
+- 真 HTTP 出口（有档，另注一档）：本机默认装配那档跑进程内 ASGI 读 `GET /api/v1/metrics/latency`，
+  `llm` 块键为 `[budget_alerts, by_agent_model, configured, month, structured_first_pass, total_calls]`，
+  该格形如 `{"rate": null, "ledger_rows": 0, "detail": {"首过": 0, "需修复": 0, "传输失败(不参与)": 0}, "by_task": {}}`——一次调用都没跑时它报 null
+  而不是 1.0，这条口径在现场是看得见的。**这一档不是现场那台 postgres/nats 服务**：那台仍在跑本批之前的代码，
+  我没重启它（重启会把它现有检索/图谱腿的现场状态弄丢），所以"现场那台也带这一格"目前是读码 + 同装配进程内实测，
+  不是对那台进程的取证。
+- **没**证明到的：`trigger_f1` / `level_agreement` / `copy_judge_score` 三列仍是 null（金标集与裁判凭据缺位）；
+  样本只有 9 事件 × 4 腿，两档总率在 0.86↔0.78 间摆动，说明这一列宜当**回归哨兵**不宜当**验收门槛**；
+  assistant 意图解构腿与上报解析腿没进这次样本；前端没有任何消费 `llm` 快照的面（`by_agent_model` /
+  `structured_first_pass` 在 `frontend/src` 里 0 处引用），所以这一列目前只在后端出口与门禁里可见。
+
+
