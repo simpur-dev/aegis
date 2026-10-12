@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aegis import __version__
 from aegis.api.assistant_api import build_router as build_assistant_router
@@ -27,7 +27,14 @@ from aegis.bus import subjects
 from aegis.config import Settings, get_settings
 from aegis.container import PlatformContainer, create_container
 from aegis.domain.enums import HazardType
-from aegis.domain.messages import AgentMessage, TelemetryReading, utc_now
+from aegis.domain.messages import (
+    AgentMessage,
+    SharedKind,
+    TelemetryReading,
+    new_memory_record_id,
+    now_iso,
+    utc_now,
+)
 from aegis.errors import AegisError
 from aegis.knowledge.cases import HazardCase
 from aegis.observability import telemetry
@@ -63,6 +70,30 @@ class SimulationRequest(BaseModel):
     playbook: str = Field(default="转移", pattern="^(转移|封路|不行动)$")
     token_budget: int = Field(default=200_000, ge=1, le=10_000_000)
     seed: int = Field(default=20261011)
+
+
+class MemoryIn(BaseModel):
+    """人工/复盘侧写一条共享记忆（§4.3 记忆可治理的写入口）。
+
+    `kind` 只允许三个值，`region_code` 允许小写（存储侧统一归成大写口径）；
+    `valid_at` 缺省用当前时刻——它是"这条经验适用于哪个时刻"，不是"什么时候按了按钮"，
+    所以复盘补录时必须能显式给，不能悄悄拿 now() 顶替现场时刻。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: SharedKind
+    content: str = Field(min_length=2, max_length=2_000)
+    agent_id: str = Field(default="", max_length=64)
+    region_code: str | None = Field(default=None, max_length=24, pattern=r"^[0-9A-Za-z]{6,24}$")
+    refs: list[str] = Field(default_factory=list, max_length=32)
+    disagreement: bool = False
+    valid_at: str | None = Field(default=None, max_length=64)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _trim(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
 
 class ReportIn(BaseModel):
@@ -601,6 +632,79 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "llm_configured": ctn.llm_gateway is not None and ctn.llm_gateway.available,
             "note": "模型/版本来自真实路由配置与已迁入的版本化 prompt；训练集与评测分未做即 None，不冒充达标。",
         }
+
+    @app.get("/api/v1/memory/shared", tags=["memory"])
+    async def memory_shared(
+        ctn: PlatformContainer = Depends(get_container),
+        kind: SharedKind | None = None,
+        region_code: str | None = None,
+        agent_id: str | None = None,
+        q: str | None = Query(default=None, min_length=1, max_length=500),
+        limit: int = Query(default=10, ge=1, le=100),
+    ) -> dict[str, Any]:
+        """共享记忆读出口：除了条目，必须同时说清"哪一档后端"和"按什么序给的"。
+
+        这两个事实决定了空结果怎么读：`driver=memory` 的空是"这个进程还没人写过"，
+        而 `driver=postgres` + `order=vector` 的空是"按语义找过、确实没有相近的"。
+        只回 `items: []` 就是让调用方猜。
+        """
+        if ctn.memory is None:
+            raise HTTPException(status_code=503, detail={"code": "E_MEMORY_UNAVAILABLE", "message": "记忆服务未装配（memory）"})
+        # 序必须由"这一趟实际传了什么"决定，而不是由"配没配嵌入腿"决定：
+        # 腿在但这一次算失败，存储侧退的是时序，此时声称 vector 就是骗人。
+        query_embedding = ctn.memory.embed_query(q) if q else None
+        records = await ctn.memory.read_shared(
+            kind=kind, agent_id=agent_id, region_code=region_code, limit=limit, query_embedding=query_embedding
+        )
+        if query_embedding is not None:
+            order = "vector"
+        elif q:
+            order = "valid_at_desc_no_embedding"
+        else:
+            order = "valid_at_desc"
+        return {
+            "count": len(records),
+            "items": [record.model_dump() for record in records],
+            "driver": ctn.memory.backend,
+            "order": order,
+            "stats": dict(ctn.memory.stats),
+        }
+
+    @app.post("/api/v1/memory/shared", tags=["memory"], status_code=201, dependencies=[Depends(require_data_token)])
+    async def memory_write(
+        payload: MemoryIn,
+        ctn: PlatformContainer = Depends(get_container),
+    ) -> dict[str, Any]:
+        """写一条共享记忆（复盘教训、人工纠正的经验）。挂在令牌面之后：这是写侧，不是查询。"""
+        if ctn.memory is None:
+            raise HTTPException(status_code=503, detail={"code": "E_MEMORY_UNAVAILABLE", "message": "记忆服务未装配（memory）"})
+        record_id = new_memory_record_id()
+        written = await ctn.memory.write_shared(
+            kind=payload.kind,
+            agent_id=payload.agent_id,
+            content=payload.content,
+            record_id=record_id,
+            region_code=payload.region_code,
+            refs=payload.refs,
+            disagreement=payload.disagreement,
+            valid_at=payload.valid_at or now_iso(),
+        )
+        return {"record_id": written, "driver": ctn.memory.backend, "embedded": ctn.memory.embedder_ready}
+
+    @app.delete("/api/v1/memory/shared/{record_id}", tags=["memory"], dependencies=[Depends(require_data_token)])
+    async def memory_forget(
+        record_id: str,
+        ctn: PlatformContainer = Depends(get_container),
+    ) -> dict[str, Any]:
+        """删除一条记忆（§4.3「记忆可治理」）。没删到就是 404，不回一个 `removed: false` 的 200。
+
+        后果区别很实在：运维脚本 `if resp.ok` 会把"这条 id 早就不存在"读成"清理完成了"。
+        """
+        if ctn.memory is None:
+            raise HTTPException(status_code=503, detail={"code": "E_MEMORY_UNAVAILABLE", "message": "记忆服务未装配（memory）"})
+        if not await ctn.memory.forget(record_id):
+            raise HTTPException(status_code=404, detail=f"共享记忆里没有找到 {record_id}")
+        return {"record_id": record_id, "removed": True, "driver": ctn.memory.backend}
 
     @app.post("/api/v1/simulation/run", tags=["simulation"])
     async def simulation_run(payload: SimulationRequest) -> dict[str, Any]:

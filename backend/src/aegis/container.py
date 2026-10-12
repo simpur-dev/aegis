@@ -33,6 +33,7 @@ from aegis.integrations import (
     StoreBundle,
     build_analytics,
     build_knowledge,
+    build_memory,
     build_mqtt,
     build_retrieval,
     build_store,
@@ -59,6 +60,7 @@ from aegis.services.delivery import (
 )
 from aegis.services.label_flywheel import CAPTURE_MARKER, LabelFlywheel
 from aegis.services.llm_gateway import LlmGateway, build_gateway_if_configured
+from aegis.services.memory import MemoryService
 from aegis.services.risk_engine import RiskEngine
 from aegis.services.semantic_parser import DisasterTextParser, EvidenceNote, ParsedDisaster
 from aegis.services.task_parser import TaskParser
@@ -298,6 +300,10 @@ class PlatformContainer:
     knowledge_state: IntegrationState | None = None
     retrieval: HybridRetrievalService | None = None
     retrieval_state: IntegrationState | None = None
+    #: 共享记忆门面（§4.3）：assess 写研判、feedback 写教训、下一次同区域 assess 读回来。
+    #: 它的 `backend` 决定这句话是"存进了库"还是"只活到这个进程结束"，所以必须对外可见。
+    memory: MemoryService | None = None
+    memory_state: IntegrationState | None = None
     llm_gateway: LlmGateway | None = None
     mqtt: MqttSource | None = None
     mqtt_state: IntegrationState | None = None
@@ -380,6 +386,7 @@ class PlatformContainer:
                 parser=self.parser,
                 contracts=self.contracts,
                 service_token=self.settings.service_token,
+                memory=self.memory,
             )
             for agent in self.real_agents:
                 await agent.start(heartbeat_interval=0.5)
@@ -513,6 +520,18 @@ class PlatformContainer:
         if retrieval_detail != retrieval_state.detail:
             retrieval_state = replace(retrieval_state, detail=retrieval_detail)
         rows.append(retrieval_state)
+        if self.memory is not None:
+            memory_state = self.memory_state or IntegrationState(name="memory", enabled=True, driver=self.memory.backend)
+            memory_defects: dict[str, object] = {}
+            if self.memory.stats["嵌入失败"]:
+                # 嵌入腿在但算不出向量：这一档记忆从此只能按时间找，不能按语义找
+                memory_defects["embedding_errors"] = self.memory.stats["嵌入失败"]
+            if self.memory.evicted:
+                # 进程内后端满了丢最旧：重启归零之前先归零了，这行必须读得到
+                memory_defects["evicted"] = self.memory.evicted
+            if memory_defects:
+                memory_state = replace(memory_state, detail={**memory_state.detail, **memory_defects})
+            rows.append(memory_state)
         # MQTT 腿把运行期计数一并带出来：broker 是否连着、收了多少条、被拒/溢出各多少，
         # 这些正是"站端在发但平台没数"时唯一能区分故障位置的证据。
         mqtt_state = self.mqtt_state or IntegrationState(name="mqtt", enabled=False, driver="off")
@@ -798,6 +817,7 @@ def create_container(
     analytics = AnalyticsRecorder(analytics_sink, driver=analytics_state.driver, settings=cfg) if analytics_sink is not None else None
     knowledge, knowledge_state = build_knowledge(cfg, tracer)
     retrieval, retrieval_state = build_retrieval(cfg, tracer, store=bundle.durability)
+    memory, memory_state = build_memory(store=bundle.store, retrieval=retrieval)
     mqtt_source, mqtt_state = build_mqtt(cfg)
     weather_source, weather_state = build_weather(cfg, client=weather_client)
     outbound = OutboundCaller(OutboundPolicy.from_settings(cfg), client=outbound_client)
@@ -898,6 +918,8 @@ def create_container(
         knowledge_state=knowledge_state,
         retrieval=retrieval,
         retrieval_state=retrieval_state,
+        memory=memory,
+        memory_state=memory_state,
         mqtt=mqtt_source,
         mqtt_state=mqtt_state,
         weather=weather_source,

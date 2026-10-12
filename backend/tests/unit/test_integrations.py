@@ -355,8 +355,23 @@ class TestContainerWiring:
         assert ctn.weather is None
         # 按名字断言而不是按位置：状态列表是对外契约，加一条腿不该把既有断言整体挪位
         status = {state.name: state for state in ctn.integration_status()}
-        assert set(status) == {"store", "analytics", "knowledge", "retrieval", "mqtt", "weather", "outbound", "delivery", "tracing"}
+        assert set(status) == {
+            "store",
+            "analytics",
+            "knowledge",
+            "retrieval",
+            "memory",
+            "mqtt",
+            "weather",
+            "outbound",
+            "delivery",
+            "tracing",
+        }
         assert (status["store"].enabled, status["store"].driver) == (True, "memory")
+        # 记忆门面默认就在（进程内那一档），但"在"不等于"共享得起来"：driver 必须说清它活到哪一步。
+        # 接了 postgres 才会翻成 `driver=postgres`——这一行就是"重启归零"与"跨事件共享"的分界。
+        assert (status["memory"].enabled, status["memory"].driver) == (True, "memory")
+        assert status["memory"].detail.get("embedding") == "absent", "没配检索权重时不该让人以为向量在生效"
         assert status["analytics"].enabled is False
         assert status["knowledge"].enabled is True
         assert (status["retrieval"].enabled, status["retrieval"].driver) == (False, "off")

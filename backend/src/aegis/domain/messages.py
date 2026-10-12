@@ -371,3 +371,33 @@ def make_error(
         priority=request.priority,
         payload={"code": code, "message": message, "retryable": retryable, "detail": detail or {}},
     )
+
+
+# ---------- 智能体共享记忆（§4.3 / D5）----------
+#
+# 为什么这个模型住在 domain 而不是 services：它是"跨事件、跨智能体的经验实体"，
+# 两侧都要引用它——内核的 `services/memory.py` 定义门面与治理，存储腿
+# `persistence/agent_memory.py` 要把它读写成行。domain 是这两侧唯一都能引的一层
+# （铁律 3：内核不 import 可选腿；反过来让 persistence 去 import services 会造出
+# 这张依赖图里没有的方向）。放在 services 里，Postgres 实现就只能返回裸 dict，
+# 于是"一行记忆是什么"会在两处各说一遍。
+SharedKind = Literal["assessment", "disagreement", "lesson"]
+
+
+def new_memory_record_id() -> str:
+    return "mem_" + secrets.token_hex(8)
+
+
+class AgentMemoryRecord(BaseModel):
+    """共享命名空间里的一条记忆。字段即 §4.3 定义的群体认知实体，与 `007_agent_memory.sql` 逐列对应。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str = Field(min_length=1, max_length=64)
+    agent_id: str = Field(max_length=64)
+    kind: SharedKind
+    content: str = Field(min_length=1, max_length=2_000)
+    region_code: str | None = Field(default=None, max_length=24)
+    refs: list[str] = Field(default_factory=list)
+    disagreement: bool = False
+    valid_at: str = Field(min_length=4, max_length=64)

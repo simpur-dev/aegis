@@ -23,6 +23,21 @@ def typed(agents: Any) -> set[str]:
     return {agent.agent_type.value for agent in agents}
 
 
+async def test_real内环拿到的是容器那一份共享记忆门面(settings: Any) -> None:
+    """§4.3 的闭环靠的就是这一行注入：装配点漏了 `memory=`，`services/memory.py` 写得再全
+    也只是死代码——assess 的读写腿与 feedback 的教训写入全部走 `if self.memory is not None`，
+    于是"共享记忆"这句话只在测试里成立（2026-10-12 对盘实测就是这个状态）。"""
+    container = await boot(settings.model_copy(update={"agent_runtime": "real"}))
+    try:
+        assert container.memory is not None, "容器上连门面都没有"
+        by_type = {agent.agent_type.value: agent for agent in container.real_agents}
+        assert by_type["assess"].memory is container.memory, "研判读不到历史、也写不回共享命名空间"
+        assert by_type["feedback"].memory is container.memory, "效果验证的教训没地方落"
+        assert not hasattr(by_type["plan"], "memory"), "plan 不是记忆消费者（§3.3 只读历史）：别把它顺手接上凑数"
+    finally:
+        await container.shutdown()
+
+
 async def test_real模式压下mock且四副真内环上总线(settings: Any) -> None:
     container = await boot(settings.model_copy(update={"agent_runtime": "real"}), with_mock_agents=True)
     try:

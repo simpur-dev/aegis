@@ -393,6 +393,50 @@ class AnalyticsRecorder:
 _RERANK_TOP_N = 5
 
 
+def build_memory(
+    *,
+    store: object | None = None,
+    retrieval: object | None = None,
+) -> tuple[Any, IntegrationState]:
+    """装配共享记忆（§4.3 / D5）：接得上库就落 `agent_memory`，接不上就如实留在进程内。
+
+    这里决定的只是**这一条门面底下是什么**，不改变调用方的语义：assess 写研判、feedback 写教训、
+    下一次同区域 assess 检索引用，两种后端走同一套过滤与排序。差别在持久性——进程内那份重启即零、
+    多实例互不可见，"共享记忆"这句话只有 Postgres 侧撑得住，所以 `driver` 必须出现在状态面上，
+    而不是等有人问"记忆为什么是空的"时才去翻代码。
+
+    嵌入腿（`retrieval.embedder`）可选注入：没配权重时向量就是没算，行以 NULL 存着，
+    读侧退到"过滤 + 时序"；这里不拿随机向量冒充语义命中。
+    """
+    from aegis.services.memory import InMemoryAgentMemory, MemoryService  # 内核门面，延迟导入以保持装配层为唯一入口
+
+    port: Any = None
+    driver = "memory"
+    detail: dict[str, object] = {}
+    if store is not None and getattr(store, "acquire", None) is not None:
+        from aegis.persistence.agent_memory import memory_store_port  # 延迟导入：默认部署不必带 asyncpg
+
+        port = memory_store_port(store)
+        if port is not None:
+            driver = "postgres"
+
+    backend = port if port is not None else InMemoryAgentMemory()
+    embedder = getattr(retrieval, "embedder", None)
+    embedded_model = str(getattr(embedder, "model_id", "") or "") if embedder is not None else ""
+    if embedder is None:
+        detail["embedding"] = "absent"  # 没嵌入腿：向量列一律 NULL，读侧退到过滤+时序，这件事要写得出来
+    service = MemoryService(
+        backend,
+        embedder=embedder,
+        embedded_model=embedded_model,
+        backend=driver,
+    )
+    capacity = getattr(backend, "capacity", None)
+    if capacity is not None:
+        detail["capacity"] = capacity
+    return service, IntegrationState(name="memory", enabled=True, driver=driver, detail=detail)
+
+
 def build_retrieval(
     settings: Settings | None = None,
     tracer: Tracer | None = None,

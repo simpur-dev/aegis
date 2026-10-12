@@ -134,6 +134,8 @@ class TestMigrations:
         assert {"monitoring_stations", "telemetry_readings", "warnings", "standardized_task_units"} <= tables
         # 真值标注表也在同一批 DDL 里：回放缺它就退化成"只有预测侧"，算不出准确率
         assert "warning_truth_labels" in tables
+        # 共享记忆表也是：没有它，§4.3 的"跨事件、跨智能体"就只活到下一次重启
+        assert "agent_memory" in tables
 
     async def test_migrate_is_idempotent_and_checksummed(self, store: PostgresStore) -> None:
         # 夹具已应用过一轮：幂等的含义是"不重复应用"，故再跑两次都应返回空
@@ -146,6 +148,7 @@ class TestMigrations:
             "004_accuracy_labels.sql",
             "005_trigger_rules.sql",
             "006_warning_audience_copies.sql",
+            "007_agent_memory.sql",
         ]
 
 

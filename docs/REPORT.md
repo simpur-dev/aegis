@@ -1467,3 +1467,64 @@ dashboard：getAnimations 里还有 9 条 running
   触发 F1 / 定级一致率 / 文案裁判分（缺金标集与裁判模型凭据，CI 基线里三列仍为 null）、
   §4.6 编排归一与 MC 微调（未开工）。
 - 换供应商、换模型或调档，本表全部需重测：数字里含 DeepSeek 的实测时延与 mock 通道的模拟耗时。
+
+## MB-1 共享记忆接上生产路径（2026-10-12，本机 PostgreSQL + 真 HTTP 出口）
+
+方案 §4.3/D5 在仓库里的状态是"**代码写了、装配漏了一行**"：`services/memory.py` 的门面与
+`InMemoryAgentMemory` 都在，assess/feedback 两侧读写也都写在 `if self.memory is not None` 里，
+但 `container.py` 调 `build_agent_runtime(...)` 时**没传 `memory=`**，而 `agent_memory` 这张表
+在 `persistence/sql/` 里根本不存在——于是"共享记忆"这句话只在单测里成立，进程一重启就归零，
+多实例之间互不可见。这一批补的是这条断线，不新造第二套记忆实现。
+
+落地的四件事：
+
+1. `sql/007_agent_memory.sql` 建表（pgvector 列 `vector(1024)` 允许 NULL、`kind` 的 CHECK 与
+   pydantic 的 `SharedKind` 同一集合、`content` 上限与模型同为 2000、`region_code` 沿用站点/真值表
+   的 `^[0-9A-Z]{6,24}$` 口径）；`persistence/agent_memory.py` 做行↔记录翻译与 upsert；
+   `memory_store_port()` 按能力探测，内存视图没有 `acquire()` 就返回 None。
+2. `integrations.build_memory()` 挑后端：接得上库就 `driver=postgres`，接不上就 `driver=memory`
+   并把 `embedding: absent` 写进状态面；嵌入腿从 `retrieval.embedder` 取，`model_id` 随行落库。
+3. `container.py` 把门面递给真内环（`memory=self.memory`），并在 `/api/v1/integrations` 上
+   新增一行 `memory`——**这一行就是"重启归零"与"跨事件共享"的分界**，不让人靠猜。
+4. 治理出口：`GET/POST/DELETE /api/v1/memory/shared`。读出口除条目外必须回
+   `driver` 与 `order`（`vector` / `valid_at_desc` / `valid_at_desc_no_embedding`），
+   因为空结果的两种含义完全不同；`order` 由**这一趟实际传了什么**决定，而不是"配没配嵌入腿"——
+   腿在但这次算失败，存储侧退的是时序，此时声称 vector 就是骗人。删除没删到就是 404。
+
+### 证据分档（本轮实测）
+
+- 单元与接口：新增 40 条用例（`tests/unit/test_agent_memory_store.py` 31、
+  `tests/api/test_memory_api.py` 8、装配守卫 1）。全量门禁
+  `pytest tests/unit tests/contract tests/api tests/e2e` junitxml 计数
+  **2708 passed / 0 failed / 0 errors**（上一批同四目录是 2668），`ruff format --check`、
+  `ruff check src tests scripts`、`mypy src`（117 文件）全绿。
+- 变异检查 16 条（含两条改 DDL 文本的），每条只跑它对应的那一个 spec：**逐条 1:1 转红，空转 0**。
+  过程中发现并修掉了变异器自己的一个缺陷——它原先只在最后统一还原，跨文件的变异会叠着跑，
+  于是"接得上库却硬用进程内"这条的红被算到后面每一条变异头上；用两次控制组
+  （单独注入 M4、单独注入 M9）证伪了聚合归属，改成每条自带还原后归属才对上。
+- 真库：`PostgresStore.connect()`（即平台自己的迁移路径）在本机 `aegis-postgres` 上把 007 建起来，
+  11 列 4 约束；同 id 重写后仍是 1 行且内容被覆盖；`embedding` 列类型 `vector(1024)`，
+  无向量那条 `IS NULL=true` 且**不参与**余弦序；`delete` 第一次 True 第二次 False；
+  收尾按合成前缀清干净，行数回到基线 0。
+- 换库重跑：临时建一个空库 `aegis_mbtest` 跑 `tests/integration/test_persistence_postgres.py`
+  全套绿（含 `schema_migrations` 台账逐张有序列表新增 `007_agent_memory.sql`），跑完即删该库。
+  注意这一目录**不在四目录门禁里**，靠 CI 之外的显式 `AEGIS_TEST_PG_DSN` 才跑；本轮是手工跑的。
+- 活体 HTTP：`store=postgres` 的进程上 `POST /api/v1/memory/shared` 写入 → 绕开应用直接查库
+  读回同一行（`region_code=540121 / kind=lesson / valid_at` 带时区）→ `DELETE` 走接口 →
+  列表 `count=0`，再删一次 HTTP 404。
+
+### 这一批**没**证明到的事（不当达标处理）
+
+- **智能体自己那一笔写没落进库，本轮没测到**：真实链路里 assess 段每次都
+  `研判降级: 内环异常: RuntimeError`，抓 traceback 出来是 dashscope `401 invalid_api_key`——
+  配的那把 key 已失效，assess 在 LLM 那一步就抛了，压根走不到写记忆的那一行。所以
+  "assess 写研判→下次同区域读回来"这句话目前只有单测级证据（`test_assess_agent.py`），
+  没有真栈证据。要补需要一把有效 key。
+- 同一轮里顺带看到的两处口径问题（都是既有问题，本批没动）：`plan` 段在拿不到 LLM 时
+  仍以 `mode=agent`、10ms 级返回模板结果，这正是任务板上"毫秒级 agent"那条的又一实例；
+  以及 `services/llm_gateway.py` 之外的降级告警用 `extra={"err": ...}`，而控制台日志格式是
+  `%(asctime)s %(levelname)s %(message)s`——**`extra` 整个不进输出**，所以线上只剩一句没有原因的
+  "内环异常: RuntimeError"，原因只有切 JSON 日志才看得见。
+- 四类记忆门面（episodic/semantic/knowledge）仍无人装配：`read_categories` 目前只有测试在调，
+  真正的消费者是 §4.2 的 MCP `memory.search` 工具，装配点留到那一批一起做，免得先造一个
+  没人调的适配器。
