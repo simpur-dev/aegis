@@ -184,3 +184,30 @@ def test_retrieval_model_dir_matches_the_mounted_weights_target() -> None:
     assert mount, "compose 里找不到权重挂载：密集腿在部署形态就没有来源"
     assert pinned, "compose 没钉 AEGIS_RETRIEVAL_MODEL_DIR：镜像 ENV 会被 .env 的值盖掉"
     assert pinned.group(1) == mount.group(1), f"权重挂在 {mount.group(1)} 却告诉进程去 {pinned.group(1)} 找"
+
+
+def test_postgres_dockerfile_keeps_the_pgdg_archive_redirect() -> None:
+    """基座仍是 bullseye，而 PGDG 撤了 `bullseye-pgdg` 的当前发布目录（2026-10-12 实测 404）。
+
+    这条钉的不是"永远用归档源"，而是"不许回到那个已经不存在的路径上还本地全绿"：
+    缺这句重定向时，本机因为基座层早已缓存、镜像也在，`config --quiet` 与全套门禁都过，
+    只有照 README 换台干净机器的人才在第一条 `up` 上撞 `does not have a Release file`（退出码 100）。
+    迁到 bookworm/trixie 基座时该连同本用例一起改写——在那之前先把 ci.yml 的 `build postgres` 跑绿。
+    """
+    text = (REPO_ROOT / "deploy" / "postgres" / "Dockerfile").read_text(encoding="utf-8")
+    runs = " ".join(line for line in text.splitlines() if not line.strip().startswith("#"))
+    assert "apt-archive.postgresql.org" in runs, (
+        "PGDG 归档源重定向没了：基座还是 bullseye 时构建只在这台机器上成立，干净机器 404（见 ci.yml 的 build 步骤）"
+    )
+    assert "Check-Valid-Until" in runs, "归档目录的 Release 有效期已过期，不显式放宽 valid-until 则 apt update 仍会失败"
+
+
+def test_services_with_no_consumer_stay_out_of_the_default_profile() -> None:
+    """minio/redis 在本仓没有消费方，而 `minio/minio:latest` 已不可拉取（实测 pull access denied）。
+
+    它们回到默认档 ⇒ 每个照 README 跑 `up` 的人在第一条命令上失败，而失败原因（对象存储）
+    与他要部署的东西毫无关系。真要接对象存储时，先补配置键与消费方、再给一个具体 RELEASE tag。
+    """
+    blocks = compose_service_blocks()
+    for name in ("minio", "redis"):
+        assert 'profiles: ["reserved"]' in blocks[name], f"{name} 又回到默认档了：compose 的 up 会先撞上拉不到的镜像"

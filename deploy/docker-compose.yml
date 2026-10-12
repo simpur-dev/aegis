@@ -63,6 +63,13 @@ services:
     volumes:
       - minio_data:/data
     restart: unless-stopped
+    # 2026-10-12 实测：`minio/minio:latest` 已从可拉取状态撤走（pull access denied），
+    # 而它挂在默认档里 ⇒ 照文档 `up` 的人在第一个命令就失败。更根本的是这个服务在本仓
+    # **没有任何消费方**：`Settings` 里没有 minio/S3 相关键，`src`/`scripts`/`tests` 里
+    # 没有一处 import（`pyproject` 的 `objectstore` extra 装了 minio 客户端但无人用），
+    # 也没有任何腿的状态行会提到它。所以它移出默认档，放进 `reserved` profile 保留意图：
+    # 真要接对象存储时，先补配置键与消费方，再把它挪回来并钉一个具体 RELEASE tag。
+    profiles: ["reserved"]
 
   redis:
     image: redis:7-alpine
@@ -73,6 +80,9 @@ services:
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    # 同上：本仓无 redis 消费方（配置面与代码都没有），移出默认档，别让"起一堆没人在用的容器"
+    # 成为照文档部署的必经成本。需要时按 `--profile reserved` 显式起。
+    profiles: ["reserved"]
 
   emqx:
     image: emqx/emqx:5.8

@@ -81,7 +81,7 @@ jobs:
   deploy-artifacts:
     # 部署面的工件此前只有人手工跑过一次：compose 能不能解析、告警规则与分发配置过不过校验。
     # "文件存在"和"链路能起"是两件事——这条 job 把它们钉成构建失败，而不是交付后现场才发现。
-    name: 部署面工件校验（compose 解析 / promtool / amtool）
+    name: 部署面工件校验（compose 解析 / 镜像构建 / promtool / amtool）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,6 +90,12 @@ jobs:
           cp .env.example .env
           docker compose --env-file .env -f deploy/docker-compose.yml \
             --profile observability --profile app --profile iot config --quiet
+      - name: postgres 镜像必须真的构建得起来
+        # `config --quiet` 只看语法，看不见 apt 源活不活。2026-10-12 本机实测的正是这种失败：
+        # 基座 postgis/postgis:17-3.5 是 bullseye，而 PGDG 撤了 bullseye-pgdg 的 Release 文件
+        # （apt 报 "does not have a Release file" ⇒ RUN 退出码 100），当时所有门禁全绿、
+        # 而照 README 部署的人在第一条 `up` 上就卡死。构建放在 CI 里，这类上游撤源次日就露出来。
+        run: docker compose --env-file .env -f deploy/docker-compose.yml build --no-cache postgres
       - name: Prometheus 规则与采集配置校验
         run: |
           docker run --rm -v "$PWD/deploy:/cfg:ro" --entrypoint /bin/promtool \
