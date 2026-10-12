@@ -269,6 +269,9 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
 MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必需的**（`/mcp` 由框架发 307，是否跟随由客户端决定）；
 开启要两步：装可选依赖 `uv sync --extra dev --extra mcp`（extras 整表替换，已有的要列全）+ `AEGIS_MCP_ENABLED=true`。配了 `AEGIS_SERVICE_TOKEN` 时这一面与数据 API
 共用同一个令牌，`X-Aegis-Token` 与 `Authorization: Bearer` 两种头都认。
+真智能体的佐证取数走哪张门面由 `AEGIS_AGENT_CONTEXT_FACE` 决定（`auto`（默认）/ `rest` / `mcp`，见 `.env.example`）：
+`auto` 跟着部署形态走——本进程装得出工具面就走 MCP，否则继续走 REST 兼容面；显式点 `mcp` 而没有工具面时**启动当场失败**，
+不静退回 REST。当前生效的那一张写在 `/api/v1/integrations` 的 `mcp` 行 `detail.agent_context_face`。
 
 
 ### Web 页面（纯 Web，响应式，无原生移动端）
@@ -300,7 +303,7 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 | `weather` | `off` \| `http` | 拉取腿未配 base_url 时完全不存在；启用时按源隔离失败，轮次/条数/失败次数进状态行 |
 | `outbound` | `off` \| `http` | 工作流外呼（`api_call` / `device_control` 的出口）：主机白名单为空时整条不接入，节点按"缺少依赖服务"响亮失败；开着时调用/拒发/失败三个计数与 `last_error` 全进状态行，白名单命中的拒发会把这条腿标成降级运行 |
 | `tracing` | `local` \| `otlp` | 无 OTLP 端点时跨度只落本地——这一行必须说真话，否则"接了 Jaeger"是假的 |
-| `mcp` | `disabled` \| `absent` \| `streamable-http` | 标准 MCP 工具面（§4.2，官方 SDK 的 streamable HTTP）。关着时 `/mcp` 这条路径**不存在**（404），而不是"在但一律 503"；开着但没装可选依赖时路径在、一律 503，且这一行读成 `driver=absent` 并附那条 `--extra mcp` 安装提示——两种"没有工具面"必须能被分辨。装配起来后 `detail` 里同时给 `exposed_tools` 与 `absent_tools`：某条腿没装配（如检索关）时对应工具**不注册**而记入缺席，不留一个"列得到却调不动"的假工具。调用数/失败数/`last_error` 每次读这一行时从运行期台账重取（读数由 `tests/api/test_mcp_api.py::test_腿断了过线报工具错误并把成因带进状态行` 断言：一次失败调用后 `calls={"telemetry.query":1}`、`failures` 同值、成因原样带出） |
+| `mcp` | `disabled` \| `absent` \| `streamable-http` | 标准 MCP 工具面（§4.2，官方 SDK 的 streamable HTTP）。关着时 `/mcp` 这条路径**不存在**（404），而不是"在但一律 503"；开着但没装可选依赖时路径在、一律 503，且这一行读成 `driver=absent` 并附那条 `--extra mcp` 安装提示——两种"没有工具面"必须能被分辨。装配起来后 `detail` 里同时给 `exposed_tools` 与 `absent_tools`：某条腿没装配（如检索关）时对应工具**不注册**而记入缺席，不留一个"列得到却调不动"的假工具。调用数/失败数/`last_error` 每次读这一行时从运行期台账重取（读数由 `tests/api/test_mcp_api.py::test_腿断了过线报工具错误并把成因带进状态行` 断言：一次失败调用后 `calls={"telemetry.query":1}`、`failures` 同值、成因原样带出）。`detail.agent_context_face` 另说清**研判取数当前走哪张门面**：`mcp` = 真智能体经这张工具面取佐证，`rest` = 走 REST 兼容面，`未起真运行时` = `agent_runtime` 不是 real——"面开着"与"取数切过去了"是两件事，只看前者会读成后者 |
 
 案例入库有两条入口，走的是同一个装配点：单条 `POST /api/v1/knowledge/cases`，整批
 `uv run python -m scripts.ingest_cases`（内置 16 条预案模板，或 `--source cases.json` 换外部库）。

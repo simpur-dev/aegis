@@ -1784,3 +1784,97 @@ dashboard：getAnimations 里还有 9 条 running
 - 写工具 `memory.write` 在真协议面上没调过：默认面不含它，两把钥匙只在装配层与列表层验过。
 - 阶段 2 未启动，因此"智能体取数走 MCP"这句话现在还是假的，`.env.example` 与状态行的 `reason` 都写的是
   "未装期间走 REST 兼容面（语义不变）"，不留歧义。
+
+## MB-6 MCP 阶段 2：研判取数从 REST 临时面切到标准工具面（2026-10-12，真栈两档对照）
+
+### 这一步替换掉的是谁
+
+方案 D4 那一行的"现状"写的就是它：`agents/rest_context.py` 是 MA 期的临时做法（规范 §4 只给外部智能体 HTTP）。
+本批把 assess 的佐证取数改走 §4.2 那张工具面，**REST 端点保留为兼容面**，走哪张由一个配置项决定，
+而"当前真的走的是哪张"是状态面上的一格事实，不是读代码猜出来的。
+
+### 落地形态
+
+- `agents/mcp_context.py`：`McpAssessContext` 实现同一个 `AssessContextProvider`，一次佐证 = 一趟真会话里的
+  `cases.search` + `retrieval.search`。参数推导直接复用 `rest_context` 的 `first_hazard`/`hazard_param`
+  （这两个函数因此从私有改成共享）——两条门面各写一遍"问什么词、发哪个灾种"迟早长出口径。
+- 门面选择 `AEGIS_AGENT_CONTEXT_FACE`：`auto`（默认，跟着部署形态走：本进程装得出工具面就用它）/
+  `rest`（灰度回退与 A/B 对照的立足点）/ `mcp`（必须走它，没有工具面就**启动当场 ValueError**，不静退回 REST）。
+- 可见性：`/api/v1/integrations` 的 `mcp` 行多一格 `detail.agent_context_face`，取值 `mcp` / `rest` / `未起真运行时`。
+  "面开着"与"取数切过去了"是两件事，只看前者会把后者读成已完成。
+- 失败口径与 REST 严格一致：缺席工具、协议层报错、连不上，都进 `ctx["degraded"]` 并原样带到响应的
+  `context_degraded`；**连不上时不偷偷退回 REST**（那会把"这条腿坏了"读成"走了另一条好腿"，回退是运维的决定）。
+- 空查询两门面同判：不发检索腿、也不记故障。REST 原来在这里会拿一个 422 记成 `retrieval: HTTP 422`——
+  人工上报未越限那类事件本来就没词，这条噪声一天能刷几百次，最后没人再看降级清单。
+
+### 真栈两档对照（有档：`.tmp-verify/stage2_{mcp,rest}.json`、两份 `stage2_*_run.log`）
+
+形态：本机 PostgreSQL（**scratch 库 `aegis_probe_mcp`**，演示库 `aegis` 一行不动）+ 进程内内存总线 +
+真 DeepSeek + `agent_runtime=real`；工具面两档都开着，只差 `AEGIS_AGENT_CONTEXT_FACE` 一个键。
+为什么不是现场那台 NATS：另起流前缀被 JetStream 当场拒（原文
+`nats: BadRequestError: code=400 err_code=10065 description='subjects overlap with an existing stream'`），
+而停掉 8000 那台去腾总线会动到别人正在用的服务。所以这一档量的是**同形态下两张门面的相对差**，NATS 现场档另测（任务 #29）。
+
+| 读数 | face=mcp | face=rest |
+| --- | --- | --- |
+| 在册智能体 online | 5 | 5 |
+| `mcp` 行 `calls` | `{'cases.search': 1}` | `{}` ← 这格才是"切换真的生效"的直接证据 |
+| 协同 success_rate / 事务 | 1.0 / 3 条 ok | 1.0 / 3 条 ok |
+| `stage_assess_ms`（各档 1 个样本） | 10224 | 25778 |
+| 端到端上报用时（3 条） | 24890 / 1121 / 926 | 39563 / 828 / 930 |
+
+样本量必须说清：三条上报里**只有第一条真走到链路**——后两条三路解析没定级（`risk_level=null`、
+`decided_by=none`）→ 转人工核签，链路不起。所以每档只有 1 次 assess。那 15 秒的差**不能**读成
+"MCP 让研判快了 15 秒"：那是模型调用的抖动（同一档内 assess 的波动本来就是这个量级，MB-4 的
+0.86↔0.78 摆动是同一件事）。这一档能撑住的结论只有：链路语义没变、成功率没掉、工具面台账只在切过去的那档涨。
+
+### 把 LLM 摘掉之后单独量传输（有档：`.tmp-verify/bench_context_faces.log`）
+
+同一个活着的平台，两个 provider 各打 24 次 `corroborate`，两轮交换先后（免得把服务器热身记到某一张脸上）：
+
+- MCP：p50 142.4ms / p95 203.8ms / mean 123.1ms
+- REST：p50 215.9ms / p95 235.2ms / mean 205.0ms
+- 均值差 −81.8ms/次（n=24）
+
+这条支撑得到的话是"切过去没有变慢"（方向上还更快）。**机制没有隔离**：两边都不是连接复用
+（MCP 每次取数新开会话、REST 每次新建 client），所以不写成"MCP 更快是因为 X"。
+顺带一条对账：这 24 次之后服务端台账 `calls={'cases.search': 24}`——与客户端真发生的次数逐一对上，
+说明这个计数不是装饰；同一份台账在 face=rest 那档读 `{}`。
+
+### 对盘（承诺 vs 实现）抓出的四处
+
+1. `cases.search` 少了端点那句"`q` 空时用灾种中文名兜底"，于是两门面问 provider 的不是同一句话。补上，并加
+   `test_只给灾种时按中文名去问_与端点同一句回退`。**这条第一版用例抓不到**：我当时断的是"count>0"，
+   而内置预案库上两种问法都给得出东西——是变异检查报"没抓到"之后才改成断 provider 收到的实参。
+2. `telemetry.query` 的上限自己写了 2_000，而 `GET /api/v1/telemetry` 是 `le=5_000`：客户端要 3000 行会被静默砍。
+   对齐端点，并断"超上限仍收敛到端点那个数"。
+3. `memory.search` 上限 50 vs 端点 100，同一类分叉，一并改。
+4. `_items_of` 的"合法 JSON 但不是对象"那一支原先没有用例（第一版只测了"根本不是 JSON"），变异第 5 条因此空转；
+   补 `test_正文是JSON但不是对象时也不当命中`（顶层数组/字符串/null/数字四种都过一遍）。
+
+四处里有三处是**同一型**错误：工具层声称"复用端点那条读路径"，却在参数与形状上各自写了一份。
+按条数断言抓不住它们，只有断"发出去的调用长什么样"才抓得住——这条决定了 `test_mcp_tool_sources.py` 的写法。
+
+### 门禁与证据分档
+
+- 后端全量 `pytest tests/unit tests/contract tests/api tests/e2e`：**2802 passed / 0 failed / 0 errors**
+  （阶段 1 那批 2767 + 本批新增 35：21 + 8 + 4 + 1 + 1，逐档对得上），junit 档案 `.tmp-verify/junit_mcp_stage2_final.xml`；
+  `ruff format --check` / `ruff check src tests scripts` / `mypy src`(121 files) 全绿；前端本批未改动，仍复跑一遍取证：`vue-tsc --noEmit` 通过 + `vitest run` 47 files / 816 tests 全绿。
+  口径要说准：这一条是在"没装 `.env`、工具面关着"的默认形态下取的（`auto` 此时解析成 `rest`，也就是兼容面），
+  所以它复的是**门禁**的绿；"切换后"那一档的绿由 21 条门面用例（其中 2 条起真 uvicorn 走真工具面）+ 上面的真栈两档对照来撑。
+  把整条全量强行在 `mcp` 形态下再跑一遍不构成同一件事：那会让一批"默认形态"断言集体改口径，量的成了配置组合而非回归。
+- 新增用例：`tests/unit/test_mcp_context.py` 21 条（门面选择 4 + 取数与解析 12 + 两门面同判 3 + 真握手 2）、
+  `tests/unit/test_mcp_tool_sources.py` 8 条（source 与端点的同句契约）、容器档 4 条（`auto`/`rest`/`mcp` 三态与状态行可见）、
+  REST 档 1 条（空查询不发）、HTTP 档 1 条（只给灾种也召回）。
+- 变异 11 条逐条转红、空转 0、残留无，档案 `.tmp-verify/mutation_mcp_stage2.log`。
+  其中 4 条第一版是空转或锚点歧义，全都在本批内修成会红——这四处比"11 条全红"更有信息量，
+  它意味着我原本写的断言里有四条是"看着守住了、其实什么都没管"。
+
+### 这一批**没**证明到的事（不当达标处理）
+
+- 容器形态、第三方 MCP 客户端互测、NATS 现场档（三档都记在任务 #29，不是"以后再说"的口径而是**没数**）。
+- 并发下的尾延迟：bench 是串行 24 次；两腿在同一会话里串行发，`parallel` 版本没做。
+- 写工具 `memory.write` 没在真协议面上调过；`simulation.run` 没接进任何内环。
+- 消费方只切了一段：方案 §4.2 那张表里 perceive/plan 也要经 `cases.search`、沙盒经 `simulation.run`，本批没做（任务 #30）。
+- 只切了 assess 一张门面：perceive/plan/execute/feedback 的取数仍走各自既有路径（plan 的 MCP cases 复用是下一步）。
+- 端到端时延两档各 1 个样本，不构成结论；要拿它当依据得先解决"只有第一条上报真走链路"的样本问题。
