@@ -174,6 +174,56 @@ class TestChatStructured:
         # 纪律：修复只重发一次，绝不无限重试烧钱。
         assert len(calls.calls) == 2
 
+    async def test_每次尝试各落一条台账并带structured_attempt(self) -> None:
+        """首过率的原料（§4.1.2/§8）：修复轮与首答必须在台账里分得开，否则"首过率"只能靠声称。"""
+        g, _ = gw('{"level": 9}', '{"level": 4, "region": "540121", "confidence": 0.7}')
+        await g.chat_structured([{"role": "user", "content": "研判"}], schema=Verdict)
+        rows = [(r.structured, r.attempt, r.validation) for r in g.usage_records()]
+        assert rows == [(True, 0, "malformed"), (True, 1, "ok")]
+
+    async def test_非结构化调用不进结构化台账(self) -> None:
+        g, _ = gw('{"level": 3, "region": "540121", "confidence": 0.7}')
+        await g.chat([{"role": "user", "content": "润色"}])
+        last = g.usage_records()[-1]
+        assert (last.structured, last.attempt) == (False, 0)
+
+    async def test_首过率从台账算出并按task分开暴露(self) -> None:
+        """§4.1.2/§8 承诺"首过率进质量四表持续盯"：这一条钉住它真是从台账算的，不是填的。"""
+        g, _ = gw('{"level": 9}', '{"level": 4, "region": "540121", "confidence": 0.7}')
+        await g.chat_structured([{"role": "user", "content": "研判"}], schema=Verdict, task="assess")
+        stats = g.first_pass_stats()
+        assert stats["rate"] == 0.0, "首答越界、靠修复轮才过 → 首过记 0，修复轮不能算成首过"
+        assert stats["detail"] == {"首过": 0, "需修复": 1, "未答(传输或熔断)": 0}
+        assert stats["by_task"] == {"assess": 0.0}, "总率会被调用量大的腿 dominate，逐 task 才看得出哪条在退步"
+        assert g.usage_snapshot()["structured_first_pass"]["rate"] == 0.0, "用量出口必须带着这一格，报表与验收同源"
+
+    def test_没跑过模型时首过率是None(self) -> None:
+        g = LlmGateway(settings=Settings(env="test", llm_api_key=""))
+        assert g.first_pass_stats() == {
+            "rate": None,
+            "ledger_rows": 0,
+            "detail": {"首过": 0, "需修复": 0, "未答(传输或熔断)": 0},
+            "by_task": {},
+        }
+
+    async def test_空内容也走修复轮而非直接打死这条腿(self) -> None:
+        """真机缺陷回归：`_chat_raw` 的空内容异常在 try 外时，这一类不合规会绕过整个修复重试。"""
+        g, calls = gw("", '{"level": 4, "region": "540121", "confidence": 0.7}')
+        result = await g.chat_structured([{"role": "user", "content": "研判"}], schema=Verdict)
+        assert result.level == 4
+        assert len(calls.calls) == 2, "空内容也要重发一次"
+        repair_msgs = calls.calls[1]["messages"]
+        assert repair_msgs[1]["role"] == "user" and "没有产出任何内容" in repair_msgs[1]["content"]
+        assert len(repair_msgs) == 2, "上一条是空的，无非法正文可回带——也不给 provider 塞空 assistant 消息"
+
+    async def test_两轮都空内容才降级(self) -> None:
+        g, calls = gw("", "")
+        with pytest.raises(MalformedLlmOutputError):
+            await g.chat_structured([{"role": "user", "content": "研判"}], schema=Verdict)
+        assert len(calls.calls) == 2, "修复只重发一次；两轮都空即抛，交平台降级轨"
+        rows = [(r.attempt, r.validation) for r in g.usage_records()]
+        assert rows == [(0, "malformed"), (1, "malformed")]
+
     async def test_non_json_is_malformed(self) -> None:
         g, _ = gw("这不是 JSON", "这不是 JSON")
         with pytest.raises(MalformedLlmOutputError):

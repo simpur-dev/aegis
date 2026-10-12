@@ -6,7 +6,8 @@
 
 1. 多模型路由：按 task key 从 `Settings.llm_models` 选模型与生成参数；未配的 task 继承全局 `llm_model`。
 2. 结构化输出：`chat_structured(messages, schema)` —— json 模式 + Pydantic 校验 + 一次修复重试，
-   仍不合规即抛 `MalformedLlmOutputError`，交由调用方走既有降级轨（能力首过率由评测服务盯，D8）。
+   仍不合规即抛 `MalformedLlmOutputError`，交由调用方走既有降级轨（每次尝试各落一条台账，首过率由
+   `quality_eval.structured_first_pass_rate` 从台账算、进质量表第五列，§4.5/D8；首批实测见 REPORT 的 MB-4 节）。
 3. 流式：`chat_stream` 异步产出增量文本（assistant token 帧 / execute 文案进度用，可选）。
 4. 可观测：每次调用记进 Tracer 时延账本（`llm_call_ms`，按 trace_id/agent_id 归因，直通 /metrics），
    并落一份用量台账（模型/prompt版本/token/校验态），成本与时延按 agent×model 归因。
@@ -36,6 +37,7 @@ from aegis.domain.messages import now_iso
 from aegis.errors import AegisError, ErrorCode
 from aegis.observability.tracer import Tracer, percentile
 from aegis.services.prompt_registry import PromptRegistry
+from aegis.services.quality_eval import structured_first_pass_rate
 
 log = logging.getLogger("aegis.services.llm")
 
@@ -72,6 +74,10 @@ class LlmCallRecord:
     agent_id: str | None
     error: str | None = None
     at: str = ""  # UTC ISO，成本按月归因用（§4.8.3）
+    #: 首过率的原料（§4.1.2/§8）：结构化调用的每一次尝试各落一条，`attempt=0` 就是"第一次答"。
+    #: 没有这两格，台账里"修复轮过了"和"首答就过"长得一模一样，"首过率"就只能靠声称。
+    structured: bool = False
+    attempt: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -89,6 +95,8 @@ class LlmCallRecord:
             "agent_id": self.agent_id,
             "error": self.error,
             "at": self.at,
+            "structured": self.structured,
+            "attempt": self.attempt,
         }
 
 
@@ -218,6 +226,18 @@ class LlmGateway:
                 )
         return alerts
 
+    def first_pass_stats(self) -> dict[str, Any]:
+        """结构化输出首过率（§4.1.2/§8）：聚合自真实调用台账，一次都没跑则 rate=None（未评测，不冒满分）。
+
+        同时按 task 各算一份——总率会被调用量大的那条腿 dominate，逐 task 才看得出是哪条腿在退步。
+        """
+        rows = [rec.as_dict() for rec in self._usage]
+        rate, breakdown = structured_first_pass_rate(rows)
+        by_task: dict[str, float | None] = {}
+        for task in sorted({str(row.get("task")) for row in rows if row.get("structured")}):
+            by_task[task] = structured_first_pass_rate([row for row in rows if row.get("task") == task])[0]
+        return {"rate": rate, "ledger_rows": len(rows), "detail": breakdown, "by_task": by_task}
+
     def usage_snapshot(self) -> dict[str, Any]:
         """按 (agent_id, model) 归因的用量聚合：成本/时延的治理出口（§4.1.4 / §4.8.3）。
 
@@ -253,7 +273,13 @@ class LlmGateway:
             )
         rows.sort(key=lambda r: (r["agent_id"] or "", r["model"]))
         month = self.current_month()
-        return {"by_agent_model": rows, "total_calls": len(self._usage), "month": month, "budget_alerts": self.budget_alerts(month)}
+        return {
+            "by_agent_model": rows,
+            "total_calls": len(self._usage),
+            "month": month,
+            "budget_alerts": self.budget_alerts(month),
+            "structured_first_pass": self.first_pass_stats(),
+        }
 
     def model_info_for_task(self, task: str) -> dict[str, Any]:
         """D10：结论侧写进 `model_info` 的可复现凭证（模型/路由/prompt 版本口径）。"""
@@ -280,6 +306,8 @@ class LlmGateway:
         agent_id: str | None,
         prompt_version: str | None,
         stream: bool = False,
+        structured: bool = False,
+        attempt: int = 0,
     ) -> tuple[str, Any, str]:
         """返回 (content, response_obj_or_None, model_used)。非流式一次性返回正文；流式由 chat_stream 直接用。
 
@@ -328,6 +356,8 @@ class LlmGateway:
                         trace_id=trace_id,
                         agent_id=agent_id,
                         at=now_iso(),
+                        structured=structured,
+                        attempt=attempt,
                         error=f"{type(exc).__name__}: {str(exc)[:180]}",
                     )
                 )
@@ -350,6 +380,8 @@ class LlmGateway:
                     trace_id=trace_id,
                     agent_id=agent_id,
                     at=now_iso(),
+                    structured=structured,
+                    attempt=attempt,
                 )
             )
             return "", response, model_name
@@ -357,7 +389,20 @@ class LlmGateway:
         assert last_error is not None
         raise last_error
 
-    async def _chat_raw(self, messages, *, task, temperature, max_tokens, response_format, trace_id, agent_id, prompt_version) -> str:
+    async def _chat_raw(
+        self,
+        messages,
+        *,
+        task,
+        temperature,
+        max_tokens,
+        response_format,
+        trace_id,
+        agent_id,
+        prompt_version,
+        structured: bool = False,
+        attempt: int = 0,
+    ) -> str:
         _, response, model_used = await self._complete(
             messages,
             task=task,
@@ -367,6 +412,8 @@ class LlmGateway:
             trace_id=trace_id,
             agent_id=agent_id,
             prompt_version=prompt_version,
+            structured=structured,
+            attempt=attempt,
         )
         content = (response.choices[0].message.content or "").strip()
         content = _THINK_BLOCK.sub("", content).strip()
@@ -460,17 +507,23 @@ class LlmGateway:
         current = list(messages)
         last_error: MalformedLlmOutputError | None = None
         for attempt in range(repair + 1):
-            raw = await self._chat_raw(
-                current,
-                task=task,
-                temperature=temperature,
-                max_tokens=None,
-                response_format={"type": "json_object"},
-                trace_id=trace_id,
-                agent_id=agent_id,
-                prompt_version=prompt_version,
-            )
+            raw = ""
+            # 取正文必须在 try 内：`_chat_raw` 对"空内容"抛的正是 MalformedLlmOutputError，
+            # 放在 try 外会让这一类不合规**绕过整个修复重试**、直接把这条腿打死
+            # （真机实测：deepseek-reasoner 9 次仲裁里 5 次空内容，5 次都没进修复轮，研判整段降级）。
             try:
+                raw = await self._chat_raw(
+                    current,
+                    task=task,
+                    temperature=temperature,
+                    max_tokens=None,
+                    response_format={"type": "json_object"},
+                    trace_id=trace_id,
+                    agent_id=agent_id,
+                    prompt_version=prompt_version,
+                    structured=True,
+                    attempt=attempt,
+                )
                 parsed = self._parse_json_object(raw)
                 return schema.model_validate(parsed)
             except (MalformedLlmOutputError, ValidationError) as exc:
@@ -483,17 +536,17 @@ class LlmGateway:
                 if attempt >= repair:
                     break
                 # 修复轮：把上一次的非法输出原样带回，要求只按 schema 纠正格式，不改事实。
-                current = [
-                    *messages,
-                    {"role": "assistant", "content": raw[:4_000]},
-                    {
-                        "role": "user",
-                        "content": (
-                            "上一条输出不符合要求的 JSON schema。请只修正格式与缺失字段，"
-                            "不得新增或改动事实，重新输出且仅输出一个合法 JSON 对象。"
-                        ),
-                    },
-                ]
+                # 上一条是空内容时无从回带（也是 provider 明确不接受的空消息），只重问一次。
+                echo = [{"role": "assistant", "content": raw[:4_000]}] if raw else []
+                ask = (
+                    "上一条没有产出任何内容。请按要求输出且仅输出一个合法 JSON 对象。"
+                    if not raw
+                    else (
+                        "上一条输出不符合要求的 JSON schema。请只修正格式与缺失字段，"
+                        "不得新增或改动事实，重新输出且仅输出一个合法 JSON 对象。"
+                    )
+                )
+                current = [*messages, *echo, {"role": "user", "content": ask}]
         assert last_error is not None
         raise last_error
 
