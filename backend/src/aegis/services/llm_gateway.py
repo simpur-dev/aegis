@@ -69,7 +69,7 @@ class LlmCallRecord:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    validation: str  # ok | malformed | unavailable | transport_error
+    validation: str  # ok | malformed | transport_error（整链不可用不落行：它在调用之前就抛了）
     trace_id: str | None
     agent_id: str | None
     error: str | None = None
@@ -312,7 +312,9 @@ class LlmGateway:
         """返回 (content, response_obj_or_None, model_used)。非流式一次性返回正文；流式由 chat_stream 直接用。
 
         这里做三件事：候选模型（主+备）逐个尝试、provider 级熔断切备、调用落用量与时延。
-        所有候选都失败（或全熔断开闸）时抛 `LlmUnavailableError`——调用方据此走确定性降级。
+        抛法如实分两类，别指望调用方拿到统一类型：未配置或全部候选熔断开 `LlmUnavailableError`
+        （这两条在任何一次调用之前，**不落台账行**）；逐个尝试后仍失败则把最后一个 provider 异常原样上抛
+        （每次失败各落一行 `transport_error`）。两种都由调用方走确定性降级。
         """
         if not self.available or self._client is None:
             raise LlmUnavailableError("LLM 未配置（缺少 api key 或 client）")

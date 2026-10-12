@@ -64,7 +64,7 @@ def test_首过率只算真答了的结构化调用首答() -> None:
     ]
     rate, breakdown = structured_first_pass_rate(rows)
     assert rate == 0.5, "两次真答的首答里一次过 → 0.5；把修复轮或传输失败混进来的版本都不是这个数"
-    assert breakdown == {"首过": 1, "需修复": 1, "未答(传输或熔断)": 1}
+    assert breakdown == {"首过": 1, "需修复": 1, "传输失败(不参与)": 1}
 
 
 def test_没有结构化调用时首过率是None不是满分() -> None:
@@ -75,7 +75,7 @@ def test_没有结构化调用时首过率是None不是满分() -> None:
 
 
 def test_空台账或错档形要响亮报错(tmp_path: Path) -> None:
-    """拿错文件/空文件不能让这一列静默变 None——那等于悄悄关掉闸门。"""
+    """拿错文件/空文件/旧形状档都不能让这一列静默变 None——那等于悄悄关掉闸门。"""
     empty = tmp_path / "usage.json"
     empty.write_text("[]", encoding="utf-8")
     with pytest.raises(ValueError, match="空或不是"):
@@ -84,6 +84,16 @@ def test_空台账或错档形要响亮报错(tmp_path: Path) -> None:
     wrong.write_text('{"quality_table": {}}', encoding="utf-8")
     with pytest.raises(ValueError, match="空或不是"):
         _load_usage(str(wrong))
+    # 旧版网关导的档：非空、每行也是对象，但没有 structured/attempt 这两格——
+    # 不拦的话整份档被读成"没有结构化调用"，门禁 exit 0 却什么都没把关。
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(json.dumps([{"task": "assess", "validation": "ok"}, {"task": "plan", "validation": "ok"}]), encoding="utf-8")
+    with pytest.raises(ValueError, match="第 0 行"):
+        _load_usage(str(legacy))
+    scalars = tmp_path / "scalars.json"
+    scalars.write_text('["just", "strings"]', encoding="utf-8")
+    with pytest.raises(ValueError, match="第 0 行"):
+        _load_usage(str(scalars))
     wrapped = tmp_path / "wrapped.json"
     wrapped.write_text('{"usage": [{"structured": true, "attempt": 0, "validation": "ok"}]}', encoding="utf-8")
     assert _load_usage(str(wrapped))[0]["validation"] == "ok"

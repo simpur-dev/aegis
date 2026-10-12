@@ -75,13 +75,22 @@ _COLUMNS = ("trigger_f1", "level_agreement", "stu_legality", "copy_judge_score",
 def _load_usage(path: str) -> list[dict[str, Any]]:
     """读网关用量台账档（`LlmCallRecord.as_dict()` 的数组，或 `{"usage": [...]}` 的导出）。
 
-    空档与非数组一律报错而不是返回空表：返回空表会让首过率读成"未评测"，
-    等于拿一个填错的文件把这一列的闸门悄悄关掉。
+    三道形状闸，缺一即响亮报错而不是返回空表：① 空档/非数组；② 行不是对象；
+    ③ 行缺 `structured`/`attempt`/`validation` 任一键。第三道是给"旧版网关导的档"设的——
+    那种档每行都没有这两格，函数会把整份台账读成"没有结构化调用"→ None → 这一列不参与判定，
+    于是拿一个填对的文件名就能把闸门悄悄关掉，而它看起来完全正常。
     """
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     rows = raw.get("usage") if isinstance(raw, dict) else raw
     if not isinstance(rows, list) or not rows:
         raise ValueError(f"用量台账 {path} 为空或不是调用行数组（要的是网关 usage_records 的导出）——空档会把首过率这一列静默关掉")
+    required = ("structured", "attempt", "validation")
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict) or any(key not in row for key in required):
+            raise ValueError(
+                f"用量台账 {path} 第 {index} 行不是带 {'/'.join(required)} 三键的调用行——"
+                "旧版网关导的档算不出首过率，读成 None 等于悄悄关掉这一列的闸门"
+            )
     return [dict(row) for row in rows]
 
 

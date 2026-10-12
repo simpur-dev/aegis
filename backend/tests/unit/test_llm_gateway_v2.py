@@ -193,7 +193,7 @@ class TestChatStructured:
         await g.chat_structured([{"role": "user", "content": "研判"}], schema=Verdict, task="assess")
         stats = g.first_pass_stats()
         assert stats["rate"] == 0.0, "首答越界、靠修复轮才过 → 首过记 0，修复轮不能算成首过"
-        assert stats["detail"] == {"首过": 0, "需修复": 1, "未答(传输或熔断)": 0}
+        assert stats["detail"] == {"首过": 0, "需修复": 1, "传输失败(不参与)": 0}
         assert stats["by_task"] == {"assess": 0.0}, "总率会被调用量大的腿 dominate，逐 task 才看得出哪条在退步"
         assert g.usage_snapshot()["structured_first_pass"]["rate"] == 0.0, "用量出口必须带着这一格，报表与验收同源"
 
@@ -202,7 +202,7 @@ class TestChatStructured:
         assert g.first_pass_stats() == {
             "rate": None,
             "ledger_rows": 0,
-            "detail": {"首过": 0, "需修复": 0, "未答(传输或熔断)": 0},
+            "detail": {"首过": 0, "需修复": 0, "传输失败(不参与)": 0},
             "by_task": {},
         }
 

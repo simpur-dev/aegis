@@ -41,7 +41,7 @@ class FakeLLM:
         return self._q.pop(0)
 
     def model_info_for_task(self, task):
-        return {"model": "qwen-plus", "fallback_model": "", "task": task, "prompt_version": "1.0.0"}
+        return {"model": "qwen-plus", "fallback_model": "", "task": task, "prompt_version": "9.9.9-stub"}
 
 
 async def bring_up(bus: InMemoryBus, gateway: AgentGateway, agent: Any) -> Any:
@@ -77,7 +77,9 @@ class TestGate1SchemaLegality:
         assert reply.payload["risk_level"] == 3
         assert reply.causation_id is not None
         # D10：真智能体经总线回传 model_info，且过契约（schema 已声明该可选字段）。
-        assert reply.model_info is not None and reply.model_info.prompt_version == "1.0.0"
+        # 9.9.9-stub 是**桩件自己**报的版本（不是注册表里的真实版本号）：这条判的是"版本有没有被透传进信封"，
+        # 用一个一看就是假号的值，免得后来人把它读成"assess 的 prompt 就是 1.0.0"。
+        assert reply.model_info is not None and reply.model_info.prompt_version == "9.9.9-stub"
         await agent.stop()
         await gateway.close()
 

@@ -33,11 +33,14 @@ def structured_first_pass_rate(rows: Sequence[dict[str, Any]]) -> tuple[float | 
 
     输入是网关用量台账的 `as_dict()` 行（唯一形状；不做对象/字典双兼容，免得读错档形却静默算成空）。
 
-    分母只算"模型真的答了"的行（`ok`/`malformed`）；`transport_error`/`unavailable` 另计数不进分母——
-    那是网关故障，混进来会把"连不上模型"读成"模型格式能力退步"，这两件事必须分开看。
+    分母只算"模型真的答了"的行（`ok`/`malformed`）；`transport_error` 另计数不进分母——那是网关故障，
+    混进来会把"连不上模型"读成"模型格式能力退步"，这两件事必须分开看。
+    口径边界如实说清：网关的"未配置"与"全部候选熔断开闸"这两条路径在**任何一次调用之前**就抛
+    `LlmUnavailableError`、不落任何台账行，所以它们不出现在这一列里（那类事实由 `configured`/熔断状态与
+    降级留痕描述，不该被读成"模型输出不合规"）。
     一条可算的首答都没有 → None（未评测）：绝不因为"没数"就冒充满分，也不因为"没数"就谎报退步。
     """
-    first_ok = need_repair = not_answered = 0
+    first_ok = need_repair = transport_failed = 0
     for row in rows:
         if not row.get("structured") or int(row.get("attempt", 0)) != 0:
             continue
@@ -47,9 +50,9 @@ def structured_first_pass_rate(rows: Sequence[dict[str, Any]]) -> tuple[float | 
         elif validation == "malformed":
             need_repair += 1
         else:
-            not_answered += 1
+            transport_failed += 1
     answered = first_ok + need_repair
-    breakdown = {"首过": first_ok, "需修复": need_repair, "未答(传输或熔断)": not_answered}
+    breakdown = {"首过": first_ok, "需修复": need_repair, "传输失败(不参与)": transport_failed}
     if answered == 0:
         return None, breakdown
     return round(first_ok / answered, 4), breakdown
