@@ -65,9 +65,15 @@ class StageResult:
     ok: bool
     latency_ms: float
     note: str = ""
+    #: D10 的可审计面：这一段结论/文案是哪个模型、哪版 prompt 产的（智能体没带凭证就是 None，平台不代填）。
+    #: 只在有值时进 `as_dict()`——本地降级腿"没有模型参与"这件事不该被写成 `model_info: null` 让读的人猜。
+    model_info: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "mode": self.mode, "ok": self.ok, "latency_ms": round(self.latency_ms, 3), "note": self.note}
+        data = {"name": self.name, "mode": self.mode, "ok": self.ok, "latency_ms": round(self.latency_ms, 3), "note": self.note}
+        if self.model_info is not None:
+            data["model_info"] = self.model_info
+        return data
 
 
 @dataclass(slots=True)
@@ -85,6 +91,9 @@ class ChainResult:
     reference_cases: list[str] = field(default_factory=list)
     # 本次规划注入的检索上下文块 id：与案例召回分开记账，因为两者的语料面不同（案例库 vs 历史任务单元）
     context_docs: list[str] = field(default_factory=list)
+    #: 各段应答携带的模型凭证（段名 → 凭证）。三段的生产者是三个 helper，而段的记账在主流程里，
+    #: 两者之间要有明确中转，而不是让 helper 去改 stages。
+    stage_models: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -113,6 +122,18 @@ class ChainResult:
             "reference_cases": self.reference_cases,
             "context_docs": self.context_docs,
         }
+
+
+def _model_receipt(response: AgentMessage) -> dict[str, Any] | None:
+    """从智能体应答里取 `model_info`，并带上"谁答的"；没带凭证就如实 None。
+
+    这是 README 那句"模型与 Prompt 版本随结论入库"的唯一落点：凭证由智能体自己声明
+    （`agentkit` 把它写进响应信封），链路只转记、不推断——平台替它编一个模型名就是伪造审计证据。
+    """
+    info = response.model_info
+    if info is None:
+        return None
+    return {"agent": response.source, **info.model_dump(exclude_none=True)}
 
 
 class HazardResponseChain:
@@ -307,6 +328,7 @@ class HazardResponseChain:
                 verdict is not None,
                 sp.finished_ms or 0.0,
                 f"等级 {int(verdict.risk_level)}" if verdict else "定级失败",
+                model_info=result.stage_models.get("assess"),
             )
         )
         if verdict is None:
@@ -329,6 +351,7 @@ class HazardResponseChain:
                 bool(units),
                 sp.finished_ms or 0.0,
                 f"生成 {len(units)} 个任务单元",
+                model_info=result.stage_models.get("plan"),
             )
         )
         result.task_units = units
@@ -352,6 +375,7 @@ class HazardResponseChain:
                 warning is not None,
                 sp.finished_ms or 0.0,
                 warning.warning_id if warning else "预警发布失败",
+                model_info=result.stage_models.get("execute"),
             )
         )
         result.warning = warning
@@ -439,6 +463,8 @@ class HazardResponseChain:
             return local, False
 
         if (verdict := self._parse_agent_assessment(response.payload, region, hits)) is not None:
+            if (receipt := _model_receipt(response)) is not None:
+                result.stage_models["assess"] = receipt
             return verdict, True
         result.degradations.append(f"研判结论不合契约，{fallback_note}")
         return local, False
@@ -509,6 +535,10 @@ class HazardResponseChain:
         except Exception as exc:
             result.degradations.append(f"STU 解析失败: {exc}，采用本地剧本")
             return local
+        if units and (receipt := _model_receipt(response)) is not None:
+            # 只有真采纳了智能体产的任务单元才记凭证：回落本地剧本那一程没有模型参与，
+            # 记了就等于把本地结果算到某个模型头上。
+            result.stage_models["plan"] = receipt
         return units or local
 
     async def _recall_cases(self, verdict: RiskVerdict, result: ChainResult) -> list[dict[str, Any]]:
@@ -618,7 +648,12 @@ class HazardResponseChain:
                     priority=1,
                 )
                 used_agent = True
+                pre_adopt = record
                 record = self._adopt_agent_copy(record, response.payload, result, verdict=verdict)
+                if record != pre_adopt and (receipt := _model_receipt(response)) is not None:
+                    # 只有智能体写的文字真的进了这条预警才记凭证：文案全被数字闸拦回、保留平台模板的那一程，
+                    # 记上模型名字等于把模板产出的东西算到某个模型头上（与规划段同一条判据）。
+                    result.stage_models["execute"] = receipt
             except AegisError as exc:
                 result.degradations.append(f"执行智能体失败，文案回落平台模板: {exc.message}")
         dispatched = await self._direct_dispatch(record, result)

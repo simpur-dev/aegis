@@ -445,6 +445,22 @@ class PostgresStore:
             fetched = await conn.fetch(f"SELECT * FROM {TASKS_TABLE} WHERE event_id = $1 ORDER BY created_at", event_id)
             return [rows.task_from_row(record) for record in fetched]
 
+    async def load_chain_audit(self, trace_id: str) -> list[dict[str, Any]]:
+        """链路审计直读面：按 trace 取回库里的台账行（含各段的模型与 Prompt 凭证）。
+
+        这条读面存在的理由是**重启之后仍然查得到**：`chains` 那个读视图是进程内的
+        （见 `postgres.py` 的 `chains` 文档与待修缺陷"读视图不回填"），而台账是只追加的。
+        这里只回原始 dict，不反序列化成 `ChainResult`——那张对象的载荷含服务层类型，
+        持久层反向导入服务层正是 002_schema 表禁止的事。
+        """
+        async with self.acquire() as conn:
+            fetched = await conn.fetch(
+                f"SELECT trace_id, event_id, ok, acted, stages, risk, warning_id, errors, degradations, finished_at"
+                f" FROM {CHAINS_TABLE} WHERE trace_id = $1 ORDER BY finished_at",
+                trace_id,
+            )
+        return [dict(record) for record in fetched]
+
     async def save_workflow_definition(self, definition: WorkflowDef) -> None:
         async with self.acquire() as conn:
             await conn.execute(SQL_WF_DEF_UPSERT, *rows.workflow_def_params(definition))

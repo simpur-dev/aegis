@@ -34,6 +34,7 @@ from aegis.domain.messages import (
 )
 from aegis.persistence.errors import ConnectionFailedError, QueryFailedError, VectorEmbeddingError
 from aegis.persistence.postgres import PostgresStore
+from aegis.pipeline.chain import ChainResult, StageResult
 
 DSN = os.getenv("AEGIS_TEST_PG_DSN", "")
 pytestmark = pytest.mark.skipif(not DSN, reason="未设置 AEGIS_TEST_PG_DSN，跳过真实 Postgres 测试")
@@ -365,3 +366,41 @@ class TestReadModelStillServes:
     async def test_snapshot_reports_buffer_and_store_state(self, store: PostgresStore) -> None:
         snapshot: dict[str, Any] = store.snapshot()
         assert {"telemetry_count", "warning_count", "task_count", "chain_count"} <= set(snapshot)
+
+
+class TestChainAuditReadBack:
+    """链路台账的落库与直读回合（README『模型与 Prompt 版本随结论入库』这句话的硬证据）。
+
+    为什么必须在这一档验：`/api/v1/events` 读的是进程内视图，重启即空；
+    凭证若只活在那里，"事后还能查这条预警是哪个模型产的"就没有依据。
+    """
+
+    async def test_模型凭证随stages落库并能按trace直读回(self, store: PostgresStore) -> None:
+        trace = "trc_" + "ab" * 8
+        result = ChainResult(trace_id=trace, event_id="evt_" + "cd" * 6)
+        result.stages.append(
+            StageResult(
+                "assess",
+                "agent",
+                True,
+                9026.2,
+                "等级 2",
+                model_info={"agent": "assess.real01", "model": "deepseek-chat", "prompt_version": "1.1.0"},
+            )
+        )
+        result.stages.append(StageResult("plan", "local", True, 12.0, "生成 5 个任务单元"))
+        await store.record_chain(result)
+        assert await _count(store, "chain_runs") == 0, "落库走后台缓冲：flush 之前不该已经到库（这条同时钉住『别把缓冲当已写』）"
+        await store.flush()
+        assert await _count(store, "chain_runs") == 1
+
+        rows_read = await store.load_chain_audit(trace)
+        assert len(rows_read) == 1
+        stages = rows_read[0]["stages"]
+        assess = next(s for s in stages if s["name"] == "assess")
+        assert assess["model_info"] == {"agent": "assess.real01", "model": "deepseek-chat", "prompt_version": "1.1.0"}
+        plan = next(s for s in stages if s["name"] == "plan")
+        assert "model_info" not in plan, "本地段在库里也必须缺席这个键，事后才分得清『没走模型』与『走了没记名』"
+
+    async def test_未知trace回空表而不是报错(self, store: PostgresStore) -> None:
+        assert await store.load_chain_audit("trc_" + "0" * 16) == []

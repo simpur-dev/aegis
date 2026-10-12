@@ -16,7 +16,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -262,7 +262,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "all_enabled": all(state.enabled for state in rows),
         }
 
-    @app.get("/api/v1/cases/recall", tags=["knowledge"])
+    @app.get("/api/v1/cases/recall", tags=["knowledge"], dependencies=[Depends(require_data_token)])
     async def recall_cases(
         ctn: PlatformContainer = Depends(get_container),
         q: str = Query(default="", max_length=300),
@@ -311,7 +311,12 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         outcome = await ctn.knowledge.learn_case(case)
         return {"title": case.title, **outcome.model_dump()}
 
-    @app.get("/api/v1/retrieval/search", tags=["knowledge"], responses={503: {"description": "检索层未启用"}})
+    @app.get(
+        "/api/v1/retrieval/search",
+        tags=["knowledge"],
+        dependencies=[Depends(require_data_token)],
+        responses={503: {"description": "检索层未启用"}},
+    )
     async def search_context(
         ctn: PlatformContainer = Depends(get_container),
         q: str = Query(min_length=1, max_length=500),
@@ -634,6 +639,35 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
     ) -> dict[str, Any]:
         return {"items": [r.as_dict() for r in ctn.store.chains.latest(limit)]}
 
+    @app.get(
+        "/api/v1/audit/chain/{trace_id}",
+        tags=["ops"],
+        dependencies=[Depends(require_data_token)],
+        responses={503: {"description": "持久层不是 postgres：台账直读面只在真库形态提供"}},
+    )
+    async def audit_chain(
+        ctn: PlatformContainer = Depends(get_container),
+        trace_id: str = Path(pattern=r"^trc_[0-9a-f]{16}$"),
+    ) -> dict[str, Any]:
+        """一条 trace 的链路台账原文（只追加、直读库），含各段的模型与 Prompt 版本凭证。
+
+        与 `/api/v1/events` 的分工要说清：那边读的是**进程内**的链路读视图，重启后从空开始
+        （待修缺陷"读视图不回填"）；这里读的是 `chain_runs` 表，所以事后仍能回答
+        "这条预警当时是哪个模型、哪版 prompt 产的"。内存形态下如实 503——那份台账本来就随进程结束，
+        回一份空清单会被读成"这条 trace 没发生过"。
+        """
+        load = getattr(ctn.store, "load_chain_audit", None)
+        if load is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "E_AUDIT_UNAVAILABLE",
+                    "message": "链路台账直读面只在 AEGIS_STORE_BACKEND=postgres 时提供；内存形态的台账随进程结束",
+                },
+            )
+        events = await load(trace_id)
+        return {"trace_id": trace_id, "store": ctn.settings.store_backend, "found": bool(events), "events": events}
+
     @app.get("/api/v1/agents", tags=["agent"])
     async def list_agents(ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
         return {
@@ -662,7 +696,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "note": "模型/版本来自真实路由配置与已迁入的版本化 prompt；训练集与评测分未做即 None，不冒充达标。",
         }
 
-    @app.get("/api/v1/memory/shared", tags=["memory"])
+    @app.get("/api/v1/memory/shared", tags=["memory"], dependencies=[Depends(require_data_token)])
     async def memory_shared(
         ctn: PlatformContainer = Depends(get_container),
         kind: SharedKind | None = None,

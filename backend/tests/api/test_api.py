@@ -115,6 +115,36 @@ class TestOpsEndpoints:
         finally:
             await ctn.shutdown()
 
+    @pytest.mark.parametrize(
+        ("path", "expect"),
+        [
+            ("/api/v1/cases/recall?q=泥石流", 401),
+            ("/api/v1/retrieval/search?q=泥石流", 401),
+            ("/api/v1/memory/shared", 401),
+        ],
+    )
+    async def test_智能体真在用的读端点也在这个鉴权面里(self, path: str, expect: int) -> None:
+        """§4.8.1：`RestAssessContext` 逐条请求的就是这几个路径。
+
+        漏一个的表现是"配了令牌"与"真的在拦"脱钩——客户端认真带 Bearer、服务端认真不校验，
+        而同一份数据经 MCP 工具面取时反倒被拦（`app.py` 的 MCP 闸共用 `_presented_token`）。
+        两个面同一口径，才是这一节原本要的东西。
+        """
+        cfg = Settings(
+            env="test", bus_backend="memory", store_backend="memory", simulator_enabled=False, delivery_mode="mock", service_token="s3cr3t"
+        )
+        ctn = create_container(cfg, with_simulator=False)
+        await ctn.start()
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(cfg, container=ctn)), base_url=BASE) as c:
+                assert (await c.get(path)).status_code == expect, "没带凭据必须被拒"
+                assert (await c.get(path, headers={"X-Aegis-Token": "wrong"})).status_code == expect
+                for header in ({"X-Aegis-Token": "s3cr3t"}, {"authorization": "Bearer s3cr3t"}):
+                    # 带对凭据后不要求 200：这台没开检索，放行后是 503（腿没装配），那是一行事实不是鉴权失败
+                    assert (await c.get(path, headers=header)).status_code != expect, f"{header} 应当通过鉴权"
+        finally:
+            await ctn.shutdown()
+
     async def test_readyz_reports_state(self, client: httpx.AsyncClient) -> None:
         response = await client.get("/readyz")
         assert response.status_code == 200
@@ -288,3 +318,30 @@ class TestConcurrentRequests:
         assert all(r.status_code == 200 for r in responses)
         listing = (await client.get("/api/v1/warnings", params={"limit": 500})).json()
         assert len({item["warning_id"] for item in listing["items"]}) == listing["count"]
+
+
+class TestChainAuditEndpoint:
+    """`GET /api/v1/audit/chain/{trace_id}`：台账直读面的三档回答（200/404-空/503）与鉴权。"""
+
+    async def test_内存形态回503并说清为什么(self, client: httpx.AsyncClient) -> None:
+        """内存后端那份台账随进程走，回一份空清单会被读成"这条 trace 没发生过"。"""
+        response = await client.get(f"/api/v1/audit/chain/trc_{'0' * 16}")
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "E_AUDIT_UNAVAILABLE"
+
+    async def test_trace形状不对当场422(self, client: httpx.AsyncClient) -> None:
+        assert (await client.get("/api/v1/audit/chain/trc_短")).status_code == 422
+
+    async def test_审计面也在数据API同一个鉴权面上(self) -> None:
+        cfg = Settings(
+            env="test", bus_backend="memory", store_backend="memory", simulator_enabled=False, delivery_mode="mock", service_token="s3cr3t"
+        )
+        ctn = create_container(cfg, with_simulator=False)
+        await ctn.start()
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(cfg, container=ctn)), base_url=BASE) as c:
+                url = f"/api/v1/audit/chain/trc_{'0' * 16}"
+                assert (await c.get(url)).status_code == 401, "审计行里有模型/Prompt 版本与结论，裸放着就是把 D10 的凭证泄露面开大"
+                assert (await c.get(url, headers={"X-Aegis-Token": "s3cr3t"})).status_code == 503
+        finally:
+            await ctn.shutdown()

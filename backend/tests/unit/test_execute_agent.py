@@ -190,3 +190,33 @@ async def test_空分支与空标题都不算生成过() -> None:
     assert reply.payload["title_zh"] == ""
     assert set(reply.payload["audience_copies"]) == {"decision_lead"}
     assert reply.payload["rejected_roles"] == [], "空文本是没写，不是写了违规数字"
+
+
+class TestProvenance:
+    """D10 出处凭证：execute 也要说清"这段文案是谁写的"——它是民众读到的那一段。
+
+    这一组是被实时读数逼出来的：2026-10-12 重启真栈跑一条上报，链台账里
+    assess/plan 两段都带 `{model, prompt_version}`，唯独 `mode=agent` 的 execute 段是空的——
+    不是链路没转记，是 execute 内环压根没把凭证放进信封。
+    """
+
+    async def test_走模型时带出模型与prompt版本(self) -> None:
+        class Provenanced(FakeGateway):
+            def model_info_for_task(self, task: str) -> dict[str, Any]:
+                return {"model": "deepseek-chat", "prompt_version": "1.0.0"}
+
+        gateway = Provenanced(
+            ExecuteBranches(
+                title_zh="泥石流橙色预警",
+                branches={"residents": "立即沿预定路线避险（短雨 32 毫米）", "decision_lead": "请核查 540121 责任面"},
+            )
+        )
+        reply: Reply = await agent(gateway).handle(request(warn_payload()))
+        assert reply.model_info is not None, "采纳智能体文案却不记出处，README 那句『可审计』就还是半真"
+        assert reply.model_info.model == "deepseek-chat"
+        assert reply.model_info.prompt_version == "1.0.0"
+
+    async def test_回落轨不编凭证(self) -> None:
+        """没网关时 execute 原样回吐平台文案：这一段没有模型参与，凭证必须缺席而不是填个『unknown』。"""
+        reply: Reply = await agent(None).handle(request(warn_payload()))
+        assert reply.model_info is None

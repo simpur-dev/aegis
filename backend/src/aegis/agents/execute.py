@@ -25,7 +25,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from aegis.agents.agentkit import AgentKit, Reply
-from aegis.domain.messages import AgentMessage
+from aegis.domain.messages import AgentMessage, ModelInfo
 from aegis.services.text_guard import invented_numbers
 
 ROLES = ("decision_lead", "responder", "residents")
@@ -91,6 +91,8 @@ class ExecuteAgent(AgentKit):
         )
         branches, rejected = self._gate(result.branches, facts)
         body_bo, translation_pending = await self._translate(branches.get(self.body_role, base_zh), base_bo, request.trace_id)
+        # D10 出处凭证：这一段文字是民众实际读到的，最该能被追问是谁写的。
+        # 链路只在文案真进了预警时转记它（`chain._execute`），所以这里只管如实报自己用了什么模型。
         return Reply(
             payload={
                 "warning_id": payload.get("warning_id", ""),
@@ -101,8 +103,17 @@ class ExecuteAgent(AgentKit):
                 "rejected_roles": rejected,
                 "translation_pending": translation_pending,
                 "used_roles": sorted(branches),
-            }
+            },
+            model_info=self._provenance(),
         )
+
+    def _provenance(self) -> ModelInfo | None:
+        """与 assess/plan/feedback 同一句口径：凭证来自网关的按任务路由，平台不代填。"""
+        getter = getattr(self.llm, "model_info_for_task", None)
+        if getter is None:
+            return None
+        info = getter("execute")
+        return ModelInfo(model=info.get("model"), prompt_version=info.get("prompt_version"))
 
     def _gate(self, raw: dict[str, str], facts: str) -> tuple[dict[str, str], list[str]]:
         """逐分支过防幻觉闸：出现事实之外的数字就整条丢掉，并记下是谁被丢（不静默改写）。"""
