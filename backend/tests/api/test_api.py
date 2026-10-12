@@ -71,7 +71,7 @@ class TestOpsEndpoints:
         assert body["measured_columns"] == []
         cards = {c["agent"]: c for c in body["cards"]}
         assert cards["assess"]["model"] == "qwen-plus"
-        assert cards["assess"]["prompt_version"] == "1.0.0"  # 已迁入版本化真源
+        assert cards["assess"]["prompt_version"] == "1.1.0"  # 灾种枚举进正文时换的号  # 已迁入版本化真源
         assert cards["execute"]["prompt_version"] == "1.0.0"  # 三分支文案已迁入
         assert cards["perceive"]["prompt_version"] is None  # 未迁入的仍如实留白
         for card in body["cards"]:

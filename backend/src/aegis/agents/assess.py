@@ -30,6 +30,9 @@ class AssessVerdict(BaseModel):
     model_config = {"extra": "forbid"}
 
     risk_level: int = Field(ge=1, le=5)
+    #: 灾种必须逐字落在 `HazardType` 上。此前这格是无约束 str：模型交回
+    #: "暴雨诱发山洪、泥石流及滑坡" 也算通过，于是下游 `HazardType(...)` 要么炸、要么静默变 unknown
+    #: ——那正是"定级一致率/灾种对不对"最容易被抹平的地方。
     hazard_type: str
     confidence: float = Field(ge=0.0, le=1.0)
     rationale: str = Field(min_length=1)
@@ -40,6 +43,14 @@ class AssessVerdict(BaseModel):
     def _frozen(cls, v: int) -> int:
         if v not in tuple(int(x) for x in RiskLevel):
             raise ValueError("等级必须落在 1-5 冻结枚举内")
+        return v
+
+    @field_validator("hazard_type")
+    @classmethod
+    def _hazard_in_enum(cls, v: str) -> str:
+        allowed = tuple(str(item.value) for item in HazardType)
+        if v not in allowed:
+            raise ValueError(f"未知 hazard_type: {v}（只允许 {'/'.join(allowed)}）")
         return v
 
 
@@ -225,6 +236,9 @@ class AssessAgent(AgentKit):
         # 外部文本（触发命中携带的站点串、检索/案例/图谱/记忆佐证、分歧 rationale）过提示注入围栏（§4.8.2）。
         return {
             "region": region,
+            # 枚举清单进提示词：只说"取枚举之一"而不给清单，模型就交回"暴雨诱发山洪、泥石流"这类
+            # 中文描述——schema 现在会拒它（以前不拒，于是坏口径静默进下游）。同 plan 那条的教训。
+            "hazards": "、".join(str(item.value) for item in HazardType),
             "hits": fence_untrusted("触发命中", str(list(hits)[:8])),
             "context": fence_untrusted("外部佐证", context) if context else "",
             "arbitration": fence_untrusted("分歧", arbitration) if arbitration else "",

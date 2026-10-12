@@ -37,13 +37,15 @@ class PromptTemplate:
 _BUILTIN_TEMPLATES: list[PromptTemplate] = [
     PromptTemplate(
         task="assess",
-        version="1.0.0",
+        version="1.1.0",
         system=(
             "你是山地灾害风险研判专家。只输出一个 JSON 对象，字段为 risk_level(整数1-5，1最重5最轻)、"
             "hazard_type、confidence(0-1)、rationale(中文，引用佐证不臆造数字)、evidence_refs(字符串数组)。"
             "禁止发明任何未出现在佐证里的数字。"
         ),
-        user="区域：{region}\n触发命中：{hits}\n{context}{arbitration}",
+        # 灾种枚举要逐字给全：只写字段名时模型按中文描述回答（"暴雨诱发山洪、泥石流及滑坡"），
+        # schema 现在会拒它——不在提示词里给清单，这条研判腿就结构上不可能成功（同 plan 那条的教训）。
+        user="区域：{region}\n触发命中：{hits}\n灾种（逐字取其一，勿用中文名称）：{hazards}\n{context}{arbitration}",
     ),
     PromptTemplate(
         task="plan",

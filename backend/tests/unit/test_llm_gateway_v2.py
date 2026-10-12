@@ -302,13 +302,13 @@ class TestModelInfo:
             schema=Verdict,
             task="assess",
             prompt_key="assess",
-            prompt_vars={"region": "540121", "hits": "R-1", "context": "", "arbitration": ""},
+            prompt_vars={"region": "540121", "hits": "R-1", "hazards": "debris_flow、landslide", "context": "", "arbitration": ""},
         )
         sent = calls.calls[0]["messages"]
         assert sent[0]["role"] == "system" and "研判" in sent[0]["content"]
-        assert sent[1]["content"] == "区域：540121\n触发命中：R-1\n"
+        assert sent[1]["content"] == "区域：540121\n触发命中：R-1\n灾种（逐字取其一，勿用中文名称）：debris_flow、landslide\n"
         # 版本号来自注册表且随实际发送的提示词写入台账（可复现的前提，§4.1.6/D10）。
-        assert g.usage_records()[-1].prompt_version == "1.0.0"
+        assert g.usage_records()[-1].prompt_version == "1.1.0"
 
 
 class TestUnconfigured:
@@ -324,7 +324,7 @@ class TestUnconfigured:
 class TestPromptRegistry:
     def test_builtin_seeds_migrated_prompts(self) -> None:
         reg = PromptRegistry.builtin()
-        assert reg.version_for_task("assess") == "1.0.0"
+        assert reg.version_for_task("assess") == "1.1.0"  # 灾种枚举进提示词 → 正文变了就得换版本号
         assert reg.version_for_task("plan") == "1.1.0"  # 白名单进提示词 → 正文变了就得换版本号
         assert reg.version_for_task("feedback") == "1.0.0"
         assert reg.version_for_task("execute") == "1.0.0"  # 三分支文案已迁入版本化真源

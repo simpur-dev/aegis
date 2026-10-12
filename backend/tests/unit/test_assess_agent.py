@@ -7,17 +7,53 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from aegis.agents.assess import AssessAgent, AssessVerdict
-from aegis.domain.enums import AgentType
+from aegis.config import Settings
+from aegis.domain.enums import AgentType, HazardType
 from aegis.domain.messages import make_request, now_iso
+from aegis.services.llm_gateway import LlmGateway, MalformedLlmOutputError
 from aegis.services.memory import InMemoryAgentMemory, MemoryService, new_memory_record_id
+from aegis.services.prompt_registry import PromptRegistry
 
 TRACE = "trc_" + "7" * 16
 REQUEST_PAYLOAD = {"region_code": "540121", "hits": [{"rule_id": "R-DEBRIS-RAIN-1", "hazard_type": "debris_flow", "score": 0.9}]}
+
+
+class _StubCompletions:
+    """最小可用客户端：按脚本回放正文，并把每次 create 的入参记下。"""
+
+    def __init__(self, outputs: list[str]) -> None:
+        self._outputs = list(outputs)
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        content = self._outputs.pop(0)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+        )
+
+
+def _stub_client(outputs: list[str]) -> tuple[Any, _StubCompletions]:
+    completions = _StubCompletions(outputs)
+    return SimpleNamespace(chat=SimpleNamespace(completions=completions)), completions
+
+
+def _assess_vars() -> dict[str, str]:
+    return {
+        "region": "540121",
+        "hits": "R-DEBRIS-RAIN-1",
+        "hazards": "、".join(str(item.value) for item in HazardType),
+        "context": "",
+        "arbitration": "",
+    }
 
 
 class FakeGateway:
@@ -87,6 +123,39 @@ def verdict(level: int, *, confidence: float = 0.8, rationale: str = "强降雨�
     return AssessVerdict(
         risk_level=level, hazard_type="debris_flow", confidence=confidence, rationale=rationale, evidence_refs=["R-DEBRIS-RAIN-1"]
     )
+
+
+class TestHazardEnum:
+    """灾种这格以前是无约束 str：模型交回"暴雨诱发山洪、泥石流及滑坡"也算通过，静默进下游。
+
+    收紧成 `HazardType` 枚举后，约束与提示词必须成对在位——只加 schema 不给清单，
+    这条研判腿就结构上不可能成功（plan 白名单那次的真机教训：3 次 MalformedLlmOutputError）。
+    """
+
+    def test_中文灾种描述被schema拒收(self) -> None:
+        with pytest.raises(ValidationError):
+            AssessVerdict(risk_level=2, hazard_type="泥石流", confidence=0.7, rationale="强降雨叠加泥位抬升")
+
+    def test_枚举里每个值都是合法产出(self) -> None:
+        for item in HazardType:
+            assert AssessVerdict(risk_level=3, hazard_type=item.value, confidence=0.5, rationale="r").hazard_type == item.value
+
+    async def test_研判提示词逐字给全灾种清单(self) -> None:
+        a, _ = agent(verdict(3))
+        vars_ = a._prompt_vars(region="540121", hits=[], ctx={})
+        messages, _ = PromptRegistry.builtin().build("assess", **vars_)
+        sent = "\n".join(m["content"] for m in messages)
+        for item in HazardType:
+            assert item.value in sent, f"灾种 {item.value} 没进提示词：schema 会拒模型的一切合法候选答案"
+
+    async def test_中文灾种走完整链路时被拒并触发一次修复重试(self) -> None:
+        """经真网关（非 FakeGateway）：证明拒绝发生在 schema 层、且修复轮真的重发了一次。"""
+        malformed = '{"risk_level": 2, "hazard_type": "泥石流", "confidence": 0.7, "rationale": "强降雨", "evidence_refs": []}'
+        client, calls = _stub_client([malformed, malformed])
+        g = LlmGateway(client=client, model="qwen-plus", settings=Settings(env="test"))
+        with pytest.raises(MalformedLlmOutputError):
+            await g.chat_structured([], schema=AssessVerdict, task="assess", prompt_key="assess", prompt_vars=_assess_vars())
+        assert len(calls.calls) == 2, "一次修复重试：只重发一次，不无限重试"
 
 
 class TestSingleAssessment:
