@@ -121,6 +121,34 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 
 未完成或待取证（诚实标注，完整清单以 `docs/REPORT.md` 的"还没测到的"为准）：
 
+### 架构升级（MA/MB/MC）到哪一步了
+
+《课题6_架构升级方案》的 §6 里程碑**从来没有在仓库里有过状态位**：方案本身仍是"草案，待评审"、
+`adr/0007` 仍是"提议"，而 `AGENT_PROGRESS.md` 那张 M0–M4 表是**前端 UI 重设计**的里程碑，
+与 MA/MB/MC 同名不同物。所以下面这张表是这份文档第一次替三个阶段记账——
+判据只有一个：**代码在，且被生产路径调用**，才算做了。
+
+| 阶段项 | 状态 | 证据 / 缺什么 |
+| --- | --- | --- |
+| §4.1 LLM 网关 v2（路由/结构化输出/用量账本/Prompt 注册表） | 已落地 | `services/llm_gateway.py`、`services/prompt_registry.py`；prompt 版本进 `model_info` |
+| §3 五智能体上总线（agentkit + 三态运行时） | 已落地 | `agents/`、`AEGIS_AGENT_RUNTIME=mock\|real\|off`，real 与 mock 互斥 |
+| §5 验收口径分档（调度档 / LLM 档 / 端到端） | 已落地 | `sla_agent_txn_ms`，报表带 `口径档` 列；数见 REPORT |
+| §4.5 D9 数据飞轮（采集侧） | 部分落地 | `human_review` 一条已通（核签→真值行，真库验过）；**助手确认、演练两条没接** |
+| §4.3 D5 记忆服务 | 部分落地 | 共享命名空间已接生产（`007_agent_memory.sql` + 装配 + 治理端点）；**四类门面无人调**，消费者等 §4.2 |
+| §4.2 D4 MCP 工具层 v1 | **未开工** | 全仓 `mcp` 只出现在注释里，`pyproject` 无依赖；智能体仍走 REST 临时面 |
+| §3.2 assess 双盲仲裁 | 部分落地 | 触发/一致上调/仲裁/跳过留痕都在，但两次评估是**串行**而非方案的"并行"；`disagreement` 写进信封后链路丢弃 |
+| §3.4 execute 三分支文案 | 已落地 | `audience_copies` 入库（`006` 迁移）；发送权仍在平台交付腿 |
+| §3.6/§4.4 推演沙盒 | 部分落地 | `services/simulation.py` 有 K×T/概率矩阵/超限降 K；**角色只是四个字符串、无 LLM**，DAG 节点未换成沙盒，前端无报告页 |
+| §4.7 assistant 意图解构 | 部分落地 | 多步分解在 `/assistant/plan`；`/chat` 仍是词表优先，前端没调 plan |
+| §4.8.1 服务令牌 | 部分落地 | `require_data_token` 默认关；智能体真正用的端点没挂，且客户端发 `authorization: Bearer` 而服务端校 `x-aegis-token` |
+| §4.5 评测服务与金标集 | 部分落地 | 四表与 CI 门禁在（`scripts/quality_gate.py`，`ci.yml` 跑），**基线三列为 null**：无 `eval/judge.py`、无金标数据 |
+| §4.6 D7 编排归一（chain 退役） | 未开工 | `pipeline/chain.py` 738 行仍在，无"标准五段"模板、无 parity harness；触达段两处实现口径不一 |
+| MC 模型线（QLoRA/GPTQ/训练集导出/对照实验/论文专利） | 未开工 | 无任何落点 |
+
+一句话：**MA 基本收口（欠"结构化输出首过率"这个数字），MB 是"八项里两项整、五项半、一项零"，
+MC 未动**；而 MB 四条过门标准目前 0 条完全满足。
+
+
 - **真实并发曲线**：Locust 阈值由 `Settings` 的 SLA 反推，绝对值仍需在部署环境按站点数量梯度再量。
 - **弱网工况**：Zenoh 已在真实运行时验过互通与按序重放，但丢包/高时延数字来自本机合成注入，
   不是空口实测。
