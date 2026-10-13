@@ -2033,6 +2033,40 @@ host 侧三条直取的码：https InRelease = **200 / 180530B**、http 同一�
 装上 `postgresql-17-pgvector`）。所以 Dockerfile 里那句 sed 换 https 的实际作用是**少赌一跳 301**，
 它不改变 CI 的结果；而"本机能不能构建成功"取决于那个代理，不取决于 Dockerfile——这句话我原先是反着写的。
 
+### 第五处（push 之后才露出来）：CI 少装一个 extra，而 `--maxfail=1` 一直替它挡着
+
+推上去的运行 181（head `5ce9163`）里 `部署面工件校验` **整条 job 绿**——第四处那条 promtool 挂载形态与
+PGDG 走 https 都在 Linux 上过了。但 `质量门禁` 的 STEP 8 仍红，红的是**另一条**、且与本批改动无关：
+
+```
+FAILED tests/unit/test_mqtt_wiring.py::TestBuildMqtt::test_enabled_leg_carries_target_not_credentials
+E   assert False = isinstance(None, MqttSource)      # 收集到 56% 处
+```
+
+真因是一处 extras 面不对齐，日志一句就够定位：`aiomqtt` 挂在 `[project.optional-dependencies]` 的
+**`iot`** 而不是 `edge`（`pyproject.toml:32`），`deploy/Dockerfile:18` 一直带 `--extra iot`，
+而 CI 那句 `uv sync`（`ci.yml:30`）**从来没有它** ⇒ 这条腿的装配面用例在 CI 上必红，本机装着 iot 就永远绿。
+它为什么现在才露头：`--maxfail=1` 让整套测试停在 `tests/perf` 那条红上，而收集顺序里 `tests/unit` 在它后面——
+**一档红会盖住下一档的缺口**，这是本批主题的第二例（第一例是"本机子集绿"盖住了 perf）。
+
+治法两条一起下：
+1. `ci.yml` 的 `uv sync` 补 `--extra iot`，与镜像那串对齐；
+2. 用例侧按 `test_mcp_tools.py` 的 `needs_mcp` 同形补 `needs_iot`（`find_spec("aiomqtt")`），
+   另加一条**不看本机、只看部署面**的守卫用例 `TestLegInstalledInDeploySurfaces`：
+   读 `ci.yml` 与 `deploy/Dockerfile` 的 extras 串，少一个就红。
+
+两条反例（`.tmp-verify/mutation_ci_batch.log` 末段）：
+M8 把 `--extra iot` 从 `ci.yml` 里摘掉 ⇒ 守卫用例当场红（`test_mqtt_wiring.py:100`），其余 8 条照绿——
+说明它盯的确实是部署面；M9 把本机 venv 里的 `aiomqtt` 目录改名 ⇒ `6 skipped / 3 passed`，
+跳过理由如实写"未安装可选依赖 aiomqtt"，而 `disabled` 档、`mqtt-unavailable` 档和那条守卫照跑，
+改回目录后 `9 passed`。
+
+顺手做了一次 extras 全对照（比对 `pyproject.toml`、`ci.yml`、`deploy/Dockerfile` 三处的 `--extra` 集合）：
+11 个 extras 里只有 `objectstore`（minio）两边都不装，而全仓 `src`+`tests` 没有任何一处 import minio，
+所以它不构成同类缺口。**没验证的那半句**：README 路径 A 只教 `uv sync --extra dev`——补了 `needs_iot` 之后，
+照文档装的人在 MQTT 这档是跳过而不是硬红，但"只装 dev 整棵树绿"这句话我依然没量过（本机 venv 装着全部 extras），
+如实记为未证（任务 #34）。
+
 ### 门禁与本轮的口径修正（最要紧的一条）
 
 CI 的门禁跑的是 `uv run pytest -q --maxfail=1`，范围是 **整棵 `tests/`**；我此前本地的固定句是
@@ -2043,7 +2077,8 @@ CI 的门禁跑的是 `uv run pytest -q --maxfail=1`，范围是 **整棵 `tests
 - `pytest -q --maxfail=1 --junitxml`（整棵 `tests/`，`PYTHONHASHSEED=0`）同一条命令跑了三次：
   ① **2939 collected / 0 failed / 0 errors / 85 skipped / 382.3s**；② 与变异检查并跑的那一次
   **1 failed**（就是下面第四处那条计时断言）；③ 修完第四处后独跑复核两次，
-  **2939 / 0 / 0 / 85**，用时 381.0s 与 384.6s。
+  **2939 / 0 / 0 / 85**，用时 381.0s 与 384.6s；④ 第五处收口后（多一条部署面守卫用例）
+  **2940 / 0 / 0 / 85 / 450.5s**。
   85 条跳过都是缺 `AEGIS_TEST_PG_DSN` / `AEGIS_TEST_NATS_URL` 的集成与真服务档，与 CI 同形。
   ②③ 这对正是本批主题的证据：同一句命令、同一份工作树，差别只在有没有别的进程在抢 CPU——
   "跑绿过一次"不能当成"这条命令不会再红"，绑在机器速度上的断言尤其如此。
@@ -2084,11 +2119,11 @@ M7 是这次改写换来的实际覆盖：**旧断言认不出"记一个像样�
 
 ### 这一批**没**证明到的事
 
-- perf 那条在 **CI 的 Linux runner** 上会不会还红：本机是 Windows，绝对阈值（250ms）在负载高的共享
-  runner 上没量过。自校准用例能保证"仪表看得见阻塞"，保证不了"阈值不误伤"——第四处那条计时断言
-  （原任务 #21）就是同一毛病的另一面，本批已按"相对关系 + 低地板"改掉，但 Linux 侧只能等下次 push 见分晓。
-- `promtool` 两条本机按新挂载过了，`amtool` 那条形态没动（它本来就是命令行给绝对路径、文件在场即可）。
-- postgres 换 https 后 CI 侧那一次构建要等下次 push 才见；本机这次能过靠的是**清空代理 env 的一次性容器**，
-  不是 `docker compose build` 本身，所以"照 README 部署的人在这台机器上会不会卡"仍是个未知数
-  （卡的话卡在 Docker Desktop 的代理设置，而不是仓库）。
+- perf 那两条在 **CI 的 Linux runner** 上到底稳不稳：运行 181 只给了一半答案——收集走到 56%（`tests/unit`）
+  才停在 MQTT 那条上，说明 `tests/perf` 在 Linux 上是**跑到并通过**了；但那只证明这一次没红，
+  250ms 阈值在更挤的共享 runner 上会不会误伤，仍是量过的样本不足（本批独跑 4 次全绿）。
+- 部署面那一档：运行 181 里 `部署面工件校验` 整条 job 绿（compose 解析、postgres `--no-cache` 构建、
+  promtool 两条、amtool 一条），本批改的两处都在 Linux 上复检过了。
+- **README 路径 A 只教 `uv sync --extra dev`**：补上 `needs_iot` 后照文档装的人跑到 MQTT 那档是跳过而不是硬红，
+  可"只装 dev 整棵树绿"这句我依然没量过（本机 venv 装着全部 extras，跑不出那个面）——任务 #34。
 - 归档源是冻结的：`bullseye-pgdg` 从此不再跟安全更新，这是 Dockerfile 注释里明知故犯的取舍，本轮没变。
