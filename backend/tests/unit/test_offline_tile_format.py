@@ -10,6 +10,7 @@ pmtiles 改了字段偏移/枚举，镜像解码就会失去依据，测试当�
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import importlib.util
 import inspect
@@ -548,6 +549,58 @@ def test_bake_runs_from_any_working_directory(tmp_path: Path, monkeypatch: pytes
     assert (target / "terrain" / "layer.json").is_file()
     assert len(list((target / "terrain").glob("*/*/*.terrain"))) == 2
     assert BUILDER.DEFAULT_PUBLIC_DIR == PUBLIC_DIR
+
+
+def _next_up(value: float) -> float:
+    """把 float64 往上挪一个 ULP：模拟 glibc 与 MSVC 的 sin/cos/exp 在末位上的差。"""
+    bits = struct.unpack("<Q", struct.pack("<d", value))[0]
+    return struct.unpack("<d", struct.pack("<Q", bits + 1))[0]
+
+
+def test_头部浮点差一个ulp不改变落盘字节(tmp_path: Path) -> None:
+    """资产必须跨平台逐字节可复现，否则"生成器能重现这批字节"这句话只在烘焙机上成立。
+
+    2026-10-13 的实测：Windows 烘的 110 张瓦与 Linux 重烘比，29 张各差 1–8 个字节，
+    差异**全部**落在 88 字节头里的 double 段（顶点/索引/边/法向这些量化整数一字不差）——
+    两个 libm 的 sin/cos/exp 在 6.4e6 m 量级上就是差 1 ULP（≈9e-10 m）。
+    烘焙器因此把米制几何吸附到 0.1mm 网格（`HEADER_LENGTH_QUANTUM_M`）。
+
+    反面教材同批写死：把 center 真的挪动 1mm（大于网格）必须改变字节——否则上面那句
+    可能只是因为头部根本没被写出去而永远为真。
+    """
+    mesh = BUILDER.build_mesh(BUILDER.geographic_tile_rectangle(2, 5, 1))
+    baseline = BUILDER.encode_terrain_tile(mesh)
+
+    jittered = dataclasses.replace(
+        mesh,
+        center=tuple(_next_up(v) for v in mesh.center),
+        bounding_sphere_center=tuple(_next_up(v) for v in mesh.bounding_sphere_center),
+        bounding_sphere_radius=_next_up(mesh.bounding_sphere_radius),
+        horizon_occlusion=tuple(_next_up(v) for v in mesh.horizon_occlusion),
+    )
+    for label, raw, jitter in (
+        ("center", mesh.center[0], jittered.center[0]),
+        ("horizon_occlusion", mesh.horizon_occlusion[0], jittered.horizon_occlusion[0]),
+    ):
+        assert raw != jitter, f"反例构造失效：1 ULP 没挪动 {label}，这条断言就成了空跑"
+    assert BUILDER.encode_terrain_tile(jittered) == baseline, "1 ULP 的 libm 末位差改变了落盘字节：CI 与本机各绿各的那类缺陷"
+
+    moved = dataclasses.replace(mesh, center=tuple(v + 10 * BUILDER.HEADER_LENGTH_QUANTUM_M for v in mesh.center))
+    assert BUILDER.encode_terrain_tile(moved) != baseline, "挪了 1mm 都没改变字节 = 头部几何根本没写出去"
+
+
+def test_layer_json_落盘不吃平台行尾(tmp_path: Path) -> None:
+    """生成器的输出必须与入库档同形：文本模式写文件会把换行按平台翻译。
+
+    实测：Windows 上烘出来的 `layer.json` 带 CRLF（1395 字节），而仓库里那份一直是 LF
+    （`git show` 取回 1316 字节、0 个 CR，`.gitattributes` 的 `eol=lf` 把它挡住了）——
+    于是"生成器能重现资产"在字节层面从未成立过，只是没有任何一档门禁看得见它。
+    """
+    target = tmp_path / "public"
+    assert BUILDER.main(["--public", str(target), "--max-zoom", "0", "--refine-max-zoom", "0", "--no-pmtiles"]) == 0
+    baked = (target / "terrain" / "layer.json").read_bytes()
+    assert b"\r" not in baked, "烘焙出了平台行尾：资产字节跟着烘焙机走"
+    assert b"\r" not in (PUBLIC_DIR / "terrain" / "layer.json").read_bytes(), "入库的 layer.json 里出现 CR"
 
 
 def test_baking_is_deterministic(tmp_path: Path) -> None:
