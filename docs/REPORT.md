@@ -2067,6 +2067,57 @@ M8 把 `--extra iot` 从 `ci.yml` 里摘掉 ⇒ 守卫用例当场红（`test_mq
 照文档装的人在 MQTT 这档是跳过而不是硬红，但"只装 dev 整棵树绿"这句话我依然没量过（本机 venv 装着全部 extras），
 如实记为未证（任务 #34）。
 
+### 第六处（运行 182 的红）：离线瓦片资产在 Linux 上复现不出来——两处跨平台字节事故
+
+STEP 8 这次红在 `tests/unit/test_offline_tile_format.py::test_baking_is_deterministic`，
+报的是 `terrain/1/0/0.terrain 二次烘焙不一致`。**这是本批第一条真缺陷**（前五条都是门禁/工具自身的写法问题）：
+"资产能由生成器复现"这句话此前只在 Windows 上成立。取证用一份一次性探针
+（`.tmp-verify/tile_probe.py`，同一段烘焙代码在两个平台上各跑一次，与仓库里已提交的字节逐位比）：
+
+| 平台 | 环境 | `.terrain` | `layer.json` | `aegis.pmtiles` |
+| --- | --- | --- | --- | --- |
+| 本机 | py3.13.15 / zlib 1.3.2 | 110/110 逐字节一致 | 一致 | 一致 |
+| WSL | py3.12.3 / zlib 1.3 | **29/110 差 1–8 字节** | 1395(CRLF) vs 1316(LF) | 一致 |
+
+差异位置量出来是一句话就能定性：**全部落在 88 字节头里的 double 段**
+（center / 包围球 / 地平线遮蔽），而顶点、索引、边、法向这些量化整数**一字不差**。
+这是两个 libm 的末位差：ECEF 在 6.4e6 m 量级上 double 的 1 ULP ≈ 9e-10 m，
+MSVC 与 glibc 的 `sin/cos/exp` 本来就给不同的最后一位——原来的写法把它直接 `struct.pack` 了出去。
+
+两条修法（`scripts/build_offline_tiles.py`）：
+1. 落盘前把米制几何吸附到 0.1mm 网格（`stabilize_meters` / `HEADER_LENGTH_QUANTUM_M = 1e-4`），
+   放弃第 18 位有效数字——那一位在米制地形里没有含义；
+2. `layer.json` 的 `write_text` 显式 `newline="\n"`。
+
+第二条要说清责任边界：**它不在 CI 的红名单里**。入库那档一直是 LF
+（`git show` 取回 1316 字节、0 个 CR；`.gitattributes` 的 `* text=auto eol=lf` 挡住了），
+CI 检出 LF、Linux 重烘也是 LF，所以那边不红；红的是"烘焙机自己产出的字节"与"入库档"不同形——
+Windows 上烘出来是 CRLF，而 `git status` 因为归一化不报差异，所以**没有任何一档门禁看得见它**。
+是探针挖出来的，不是门禁挖出来的。
+
+修完重新烘焙全部 110 张瓦（量化后每张的头部字节都变了，故 110 个文件都进 diff），
+两个平台各复检一次：**双向 0 差异，`layer.json` 与 `aegis.pmtiles` 也逐字节一致**
+（`.tmp-verify/probe_win2.txt`、`probe_lin3.txt`）。
+
+### 这一处新加的两条守卫，以及它们各自的反例
+
+`test_头部浮点差一个ulp不改变落盘字节`：把 `center/包围球/地平线` 各挪 1 ULP，编码结果必须原样；
+同一条里写死反面教材——把 `center` 真的挪 1mm（大于网格）必须**改变**字节，
+否则"整段没写出去"也能让前半句永远为真。
+`test_layer_json_落盘不吃平台行尾`：现烘一份 tmp 资产断无 `\r`，再断入库那份也无 `\r`。
+
+| 变异 | 结果 |
+| --- | --- |
+| M10 摘掉 center 的网格吸附 | 红在 `1 ULP 的 libm 末位差改变了落盘字节`（586 行） |
+| M11 摘掉 `newline="\n"` | 红在 `烘焙出了平台行尾：资产字节跟着烘焙机走`（602 行），同批"入库档那份"照绿——它本来就是 LF |
+| M12 头部 center 整段写 0 | 红在反例控制 `挪了 1mm 都没改变字节 = 头部几何根本没写出去`（589 行） |
+
+外壳自己又错了两次，都记下来（`.tmp-verify/mutation_ci_batch.log` 末段）：
+① 我用 `python` 起 `subprocess` 跑 pytest 做变异外壳，那批"rc=1"其实是**崩溃**——
+portable python 抢了 stdlib，pytest 死在 `import argparse`，输出全空；改成从 Bash 直接跑才拿到真结果。
+② M12 第一次替换串写漏，留下 `for _ in in` → SyntaxError → collection error，那是坏变异不是证据；
+按行改法收紧后才有上面那条真反例。**"红"必须先证明它是断言红，而不是工具红。**
+
 ### 门禁与本轮的口径修正（最要紧的一条）
 
 CI 的门禁跑的是 `uv run pytest -q --maxfail=1`，范围是 **整棵 `tests/`**；我此前本地的固定句是
@@ -2078,7 +2129,9 @@ CI 的门禁跑的是 `uv run pytest -q --maxfail=1`，范围是 **整棵 `tests
   ① **2939 collected / 0 failed / 0 errors / 85 skipped / 382.3s**；② 与变异检查并跑的那一次
   **1 failed**（就是下面第四处那条计时断言）；③ 修完第四处后独跑复核两次，
   **2939 / 0 / 0 / 85**，用时 381.0s 与 384.6s；④ 第五处收口后（多一条部署面守卫用例）
-  **2940 / 0 / 0 / 85 / 450.5s**。
+  **2940 / 0 / 0 / 85 / 450.5s**；⑤ 第六处收口后（再加两条可复现性守卫、重烘 110 张瓦）
+  **2942 / 0 / 0 / 85 / 444.3s**，前端另跑一遍 `npm run test`：**47 files / 816 tests 全绿**
+  （它那套离线资产解析用例读的就是重烘后的字节）。
   85 条跳过都是缺 `AEGIS_TEST_PG_DSN` / `AEGIS_TEST_NATS_URL` 的集成与真服务档，与 CI 同形。
   ②③ 这对正是本批主题的证据：同一句命令、同一份工作树，差别只在有没有别的进程在抢 CPU——
   "跑绿过一次"不能当成"这条命令不会再红"，绑在机器速度上的断言尤其如此。
@@ -2127,3 +2180,7 @@ M7 是这次改写换来的实际覆盖：**旧断言认不出"记一个像样�
 - **README 路径 A 只教 `uv sync --extra dev`**：补上 `needs_iot` 后照文档装的人跑到 MQTT 那档是跳过而不是硬红，
   可"只装 dev 整棵树绿"这句我依然没量过（本机 venv 装着全部 extras，跑不出那个面）——任务 #34。
 - 归档源是冻结的：`bullseye-pgdg` 从此不再跟安全更新，这是 Dockerfile 注释里明知故犯的取舍，本轮没变。
+- 第六处只量到"zlib 1.3 与 1.3.2 产出的 `aegis.pmtiles` 逐字节相同"这一对，
+  **没有证明**任何 zlib 版本都相同——PNG 那条腿的字节一致性仍属"实测过一次通过"，不是"版本无关"。
+  同理，本机 Linux 复检用的是 WSL Ubuntu 24.04 的 py3.12.3/glibc，与 GitHub runner 的 glibc 小版本
+  不必相同；真正的那一档判据仍是 CI 下一次跑。
