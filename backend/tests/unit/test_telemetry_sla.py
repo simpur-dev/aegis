@@ -98,13 +98,29 @@ class TestW3cIdMapping:
 
 class TestSpanStageLedger:
     async def test_duration_lands_in_the_existing_ledger(self) -> None:
+        """账本里那条时长必须是"睡了多少就记多少"，且相对空跨度成倍大。
+
+        原来只断 `p50 >= 15`（给 20ms 的 sleep 留 5ms 余量）。本机静默时实测 40 次是
+        19.98–35.62ms（从不下穿），但 2026-10-13 那次整套并跑时它记到 11.48ms 直接假红——
+        绝对下限量的是"这台机器这一刻的调度"，不是"计时有没有真在走"。
+        所以换成两条各自管一件事的断言：低到 5ms 的地板仍能抓住"秒当毫秒记"（0.02）这类单位事故，
+        而"睡过的一定比空跑的大一个量级"这条相对关系不随机器速度成败。
+        """
+        idle = Tracer()
+        async with span_stage("stage_assess_ms", 5_000, tracer=idle, trace_id=TRACE):
+            pass
+
         tracer = Tracer()
         async with span_stage("stage_assess_ms", 5_000, tracer=tracer, trace_id=TRACE):
             await asyncio.sleep(0.02)
 
         stats = tracer.ledger.stats("stage_assess_ms")
         assert stats.count == 1
-        assert stats.p50 >= 15.0, "计时必须真实（不是 0）"
+        assert stats.p50 >= 5.0, f"计时失真（只记到 {stats.p50:.2f}ms）——0 或秒当毫秒都在这条上红"
+        assert stats.p50 >= 3.0 * max(idle.ledger.stats("stage_assess_ms").p50, 1e-3), (
+            f"睡了 20ms 的跨度（{stats.p50:.2f}ms）没比空跨度（{idle.ledger.stats('stage_assess_ms').p50:.2f}ms）大，"
+            "账本记的不是这段 body 的真实时长"
+        )
         assert stats.budget == 5_000, "预算需登记进账本，与 latency_report 同源"
         assert tracer.ledger.stats("stage_assess_ms").breaches == 0
 

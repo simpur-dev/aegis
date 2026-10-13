@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 
 from aegis.agents.mock import MockAgent
 from aegis.bus import subjects
@@ -253,26 +254,83 @@ class TestRegistryScale:
 
 
 class TestNoBlockingInEventLoop:
-    async def test_ingest_does_not_stall_bus(self, settings: Settings) -> None:
-        """摄取与总线并发推进：若摄取阻塞事件循环，心跳计数会明显落后。"""
+    """摄取不许在事件循环里同步等。量的是**最长一次 tick 停顿**，并且仪表先自校准。
+
+    上一版断的是"三次 `ingest_once` 期间 ticker 至少走到 3"，那实际是拿步长（10ms）去量
+    "这三次一共花了多久"：快机器上三次摄取不到 10ms 就跑完，ticker 一步没走 ⇒ CI 的 Linux
+    runner 必红；本机 Windows 时钟粒度约 15.6ms、摄取又慢，反而常绿。按机器速度成败的断言
+    抓不到阻塞，只会挑出更快的机器。
+    """
+
+    @staticmethod
+    async def _gaps_while(body: Callable[[], Awaitable[None]], *, step_s: float = 0.01) -> tuple[list[float], float]:
+        """跑 ticker 边执行 body，返回（相邻 tick 的间隔序列，body 总耗时）。"""
+        gaps: list[float] = []
+
+        async def ticker() -> None:
+            last = time.perf_counter()
+            while True:
+                await asyncio.sleep(step_s)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        task = asyncio.create_task(ticker())
+        started = time.perf_counter()
+        try:
+            # 先让 ticker 真跑出一步：`create_task` 只是排期，body 若是同步阻塞的，
+            # 它连起点都没设上，量出来的就是「阻塞没发生」而不是「阻塞多久」。
+            while not gaps:
+                await asyncio.sleep(step_s)
+            await body()
+            # 冲刷一步再停表：body 若是同步阻塞的，ticker 那个待完成的 sleep 只有等 body 让出循环
+            # 之后才会落地——不等这一步，度量到的就是空序列，而空序列看着像『没红』。
+            await asyncio.sleep(step_s * 3)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        return gaps, time.perf_counter() - started
+
+    async def test_仪表先自校准_同步阻塞必须被测出来(self) -> None:
+        """这条不测产品，测的是"这副仪表能不能看见阻塞"。
+
+        两段都是 0.3 秒，区别只在让不让出循环：`await asyncio.sleep` 期间 ticker 照常走，
+        `time.sleep` 期间它一步都动不了。两种都测出来，才说明下面那条"没红"是结论而不是运气
+        （校验器先被校验——否则它只是一个恰好会绿的装饰）。
+        """
+
+        async def yielding() -> None:
+            await asyncio.sleep(0.3)
+
+        async def blocking() -> None:
+            time.sleep(0.3)
+
+        free, _ = await self._gaps_while(yielding)
+        stuck, _ = await self._gaps_while(blocking)
+        assert max(free) < 0.1, f"挂起等待期间也测出了大间隔（{max(free) * 1000:.0f}ms），这副仪表不可信"
+        assert max(stuck) >= 0.25, f"同步 sleep(0.3) 都没被测出来（最大间隔 {max(stuck) * 1000:.0f}ms），仪表失灵"
+
+    async def test_摄取期间循环没被占住(self, settings: Settings) -> None:
         container = create_container(settings, with_simulator=True)
         await container.start()
         try:
-            ticks = 0
+            rounds = 0
 
-            async def ticker() -> None:
-                nonlocal ticks
+            async def body() -> None:
+                nonlocal rounds
+                deadline = time.perf_counter() + 0.15
                 while True:
-                    await asyncio.sleep(0.01)
-                    ticks += 1
-
-            task = asyncio.create_task(ticker())
-            try:
-                for _ in range(3):
                     await container.ingest.ingest_once()
-            finally:
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-            assert ticks >= 3, f"事件循环被阻塞（心跳计数 {ticks}）"
+                    rounds += 1
+                    if time.perf_counter() >= deadline and rounds >= 3:
+                        break
+
+            gaps, elapsed = await self._gaps_while(body)
+            assert rounds >= 3, f"观察窗内只做了 {rounds} 轮摄取，窗口不成立——停顿判定就没有底子"
+            assert len(gaps) >= 5, (
+                f"观察窗内 ticker 只走了 {len(gaps)} 步（{rounds} 轮摄取、共 {elapsed * 1000:.0f}ms），样本不足以判有无阻塞"
+            )
+            worst = max(gaps)
+            assert worst < 0.25, f"摄取期间事件循环最长停顿 {worst * 1000:.0f}ms（步长 10ms，超 25 倍即有人在循环里同步等）"
         finally:
             await container.shutdown()
