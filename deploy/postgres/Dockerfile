@@ -9,7 +9,18 @@
 #   apt 报 `E: The repository '... bullseye-pgdg Release' does not have a Release file.` ⇒ RUN 退出码 100。
 #   同时 `postgis/postgis:17-3.5` 重新拉取后仍是 bullseye 基座（`docker pull` 后 /etc/os-release 实读），
 #   所以这不是本地缓存过期，是这条构建路径在源头就断了。
-#   包体只在归档镜像上：`http://apt-archive.postgresql.org/pub/repos/apt/dists/bullseye-pgdg/Release` 200。
+#   包体只在归档站上：`http://apt-archive.postgresql.org/pub/repos/apt/dists/bullseye-pgdg/Release`
+#   2026-10-12 取回 200（2026-10-13 同一 URL 已是 301 → https，所以那次的 200 是跟着跳转拿到的）。
+#   但这条 host 的 **http** 会 301 到 https，而那一跳落在 CDN 边缘节点上——2026-10-12 本机 `--no-cache`
+#   重建时它回的是 `502 Bad Gateway`，apt 随即报 "not signed" 并以 100 退出（同一时刻 https 直取是 200，
+#   CI 上 http 那版又是过的）。不赌这一跳：源直接写 https。
+#   2026-10-13 复测（host 侧三条当场取回的码）：直取 https InRelease = 200 / 180530B，
+#   http 同一档 = 301，而 `apt.postgresql.org` 的 bullseye-pgdg = 404。同一天本机 `--no-cache` 仍构建
+#   失败，失败点在引擎侧代理：Docker Desktop 把出网走 `http.docker.internal:3128`，443 被重置
+#   （`Could not handshake: ...`）而 80 照常；清空代理 env 后同一条序列当场过了
+#   （`Get:4 https://apt-archive.../bullseye-pgdg InRelease [181 kB]` ⇒ 装上 postgresql-17-pgvector）。
+#   即这条构建在本机能否成功取决于那个代理，不取决于 Dockerfile。CI 侧无代理，http 版本本来就是跟着
+#   那跳 301 走到 https 才绿的——换 https 只是少一跳，不改变 CI 的结果。
 #
 # 因此这里把 PGDG 源改指 apt-archive，而不是换基座升版本：本仓的验收证据钉在
 # PostgreSQL 17.5 / PostGIS 3.5.2 / pgvector 0.8.6（见 docs/REPORT.md 的地理与向量能力实测、ADR-0003），
@@ -24,7 +35,7 @@
 ARG BASE_IMAGE=postgis/postgis:17-3.5
 FROM ${BASE_IMAGE}
 
-RUN sed -i 's#http://apt\.postgresql\.org/pub/repos/apt#http://apt-archive.postgresql.org/pub/repos/apt#' /etc/apt/sources.list.d/pgdg.list \
+RUN sed -i 's#http://apt\.postgresql\.org/pub/repos/apt#https://apt-archive.postgresql.org/pub/repos/apt#' /etc/apt/sources.list.d/pgdg.list \
     && apt-get update -o Acquire::Check-Valid-Until=false \
     && apt-get install -y --no-install-recommends postgresql-$PG_MAJOR-pgvector \
     && rm -rf /var/lib/apt/lists/*

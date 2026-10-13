@@ -97,11 +97,21 @@ jobs:
         # 而照 README 部署的人在第一条 `up` 上就卡死。构建放在 CI 里，这类上游撤源次日就露出来。
         run: docker compose --env-file .env -f deploy/docker-compose.yml build --no-cache postgres
       - name: Prometheus 规则与采集配置校验
+        # 挂载必须与 `deploy/docker-compose.yml` 里那两个 :ro 一一对应：`prometheus.yml` 的
+        # `rule_files` 写的是容器内路径 `/etc/prometheus/rules/alerts.yml`。
+        # 上一版这里把整目录挂到 /cfg 再 check config，promtool 照配置文件里的绝对路径去找，
+        # 得到的是 `"/etc/prometheus/rules/alerts.yml" does not point to an existing file`
+        # ——校验失败的是这一步的挂载形态，不是配置本身（CI 实测红过一次）。
         run: |
-          docker run --rm -v "$PWD/deploy:/cfg:ro" --entrypoint /bin/promtool \
-            prom/prometheus:v2.55.0 check rules /cfg/observability/alerts.yml
-          docker run --rm -v "$PWD/deploy:/cfg:ro" --entrypoint /bin/promtool \
-            prom/prometheus:v2.55.0 check config /cfg/prometheus.yml
+          docker run --rm \
+            -v "$PWD/deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$PWD/deploy/observability/alerts.yml:/etc/prometheus/rules/alerts.yml:ro" \
+            --entrypoint /bin/promtool prom/prometheus:v2.55.0 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm \
+            -v "$PWD/deploy/observability/alerts.yml:/etc/prometheus/rules/alerts.yml:ro" \
+            --entrypoint /bin/promtool prom/prometheus:v2.55.0 \
+            check rules /etc/prometheus/rules/alerts.yml
       - name: Alertmanager 分发与抑制配置校验
         run: |
           docker run --rm -v "$PWD/deploy:/cfg:ro" --entrypoint /bin/amtool \
