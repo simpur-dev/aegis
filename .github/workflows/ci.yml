@@ -27,7 +27,9 @@ jobs:
       - name: 安装依赖
         # 各可选子系统（持久层/分析/检索/边缘/图谱/MCP 工具面）的离线单测需要真驱动才能跑起来：
         # 只装 dev 会让这些用例静默跳过，绿色 CI 等于什么都没测。
-        run: uv sync --extra dev --extra perf --extra postgres --extra analytics --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp
+        # `iot`（aiomqtt）与 `deploy/Dockerfile` 的那串 extras 对齐：少它时 MQTT 的装配面用例只能跳过，
+        # 而 `test_mqtt_wiring.py` 里有一条按部署面判定的守卫用例专门钉这一点（2026-10-13 CI 就是红在这条上）。
+        run: uv sync --extra dev --extra perf --extra postgres --extra iot --extra analytics --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp
 
       - name: 格式检查
         run: uv run ruff format --check src tests scripts

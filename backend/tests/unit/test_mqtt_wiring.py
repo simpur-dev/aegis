@@ -7,8 +7,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,6 +19,16 @@ from aegis.config import Settings
 from aegis.connectors.mqtt import MqttSource
 from aegis.container import create_container
 from aegis.integrations import build_mqtt
+
+
+def iot_available() -> bool:
+    return importlib.util.find_spec("aiomqtt") is not None
+
+
+# 与 `test_mcp_tools.py` 的 needs_mcp 同形：没装 extra 的开发机上这几条是必然的红，装了又永远为真，
+# 两边都管不住真正会出事的那一刻（CI 或镜像把 `iot` 摘掉 ⇒ 订阅腿静默 absent 而测试照旧绿）。
+# 真正管得住的是下面 TestLegInstalledInDeploySurfaces 那条按部署面判定的守卫用例。
+needs_iot = pytest.mark.skipif(not iot_available(), reason="未安装可选依赖 aiomqtt（`uv sync --extra iot`）")
 
 
 def mqtt_settings(**overrides: Any) -> Settings:
@@ -53,6 +65,7 @@ class TestBuildMqtt:
         assert state.detail["broker"] == "10.0.0.9:1883"
         assert "aiomqtt" in str(state.detail["reason"])
 
+    @needs_iot
     def test_enabled_leg_carries_target_not_credentials(self) -> None:
         source, state = build_mqtt(mqtt_settings())
 
@@ -63,6 +76,7 @@ class TestBuildMqtt:
         assert "s3cr3t" not in json.dumps(state.detail, ensure_ascii=False)
         assert "mqtt_password" not in json.dumps(state.detail, ensure_ascii=False)
 
+    @needs_iot
     def test_empty_credentials_reach_the_client_as_anonymous(self) -> None:
         source, _state = build_mqtt(mqtt_settings(mqtt_password=""))
         assert source is not None
@@ -71,6 +85,23 @@ class TestBuildMqtt:
         assert client._username is None and client._password is None
 
 
+class TestLegInstalledInDeploySurfaces:
+    def test_ci与镜像都装了这一条iot腿(self) -> None:
+        """装没装这腿由部署面说了算，不由本机环境说了算。
+
+        2026-10-13 的实测：`deploy/Dockerfile` 一直带 `--extra iot`，而 CI 那句 `uv sync` 少了它——
+        于是这条腿的装配面用例在 CI 上是红的（当时还没有 needs_iot，`isinstance(source, MqttSource)`
+        直接 `assert False`），而本机装着 iot 永远绿。更要紧的是它被 `--maxfail=1` 挡在
+        `tests/perf` 那条红后面，直到那条修好才露出来：一档门禁的红会盖住下一档的缺口。
+        """
+        repo = Path(__file__).resolve().parents[3]
+        ci = (repo / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        dockerfile = (repo / "deploy" / "Dockerfile").read_text(encoding="utf-8")
+        assert "--extra iot" in ci, "CI 不装 iot 时 MQTT 用例只是跳过，绿色 CI 测不到订阅腿"
+        assert "--extra iot" in dockerfile, "镜像少这个 extra ⇒ 容器里 mqtt 永远 driver=mqtt-unavailable"
+
+
+@needs_iot
 class TestContainerMqttLeg:
     def test_mqtt_source_joins_the_ingest_round(self) -> None:
         ctn = create_container(mqtt_settings(), with_simulator=False)
