@@ -1954,3 +1954,141 @@ dashboard：getAnimations 里还有 9 条 running
 - 内存形态的审计面只覆盖了"如实 503"这一档，"内存台账随进程消失"本身没做量化。
 - perceive/feedback 两段不经模型，所以链路里没有它们的转记判据；若将来这两段引入模型，`stage_models` 要跟着加口径。
 - `model_info` 目前只有落库与直读两面，报表侧（`scripts/metrics_report.py`）与前端都还没有消费点。
+
+## CI-1 push 报红：两处真因、修法治法，以及"本机绿"为什么不算数（2026-10-13，以日志原文为准）
+
+诊断口径先说清楚：这一步的证据是 **CI 自己吐出来的日志文本**（runs API 拉 ZIP 后逐文件 grep），
+不是我对自己改动的猜测。运行 180（head `5522ded`）里红的只有两步：
+
+```
+JOB 质量门禁 … -> failure      STEP 8 单元 + 契约门禁 + 端到端
+JOB 部署面工件校验 … -> failure STEP 5 Prometheus 规则与采集配置校验
+FAILED tests/perf/test_performance.py::TestNoBlockingInEventLoop::test_ingest_does_not_stall_bus
+    - AssertionError: 事件循环被阻塞（心跳计数 0）
+FAILED: "/etc/prometheus/rules/alerts.yml" does not point to an existing file
+```
+
+### 第一处：那条"防阻塞"的用容量的是机器速度，不是阻塞
+
+旧断言是"三次 `ingest_once` 期间 ticker 至少走到 3 步"。它实际拿 10ms 的步长去量"这三步一共花了多久"：
+机器越快，三次摄取越可能在一拍之内跑完 ⇒ ticker 一步没走 ⇒ 计数 0 ⇒ 判成"阻塞"。CI 的 Linux runner
+时钟粒度细、摄取又快，所以必红；本机 Windows 粒度约 15.6ms、摄取又慢，反而常绿。**按机器速度成败的
+断言抓不到阻塞，只会挑出更快的机器**——它报的红与产品无关。
+
+改法：量的对象换成**最长一次 tick 停顿**（`_gaps_while` 收集相邻 tick 的间隔），并在同一批里加一条
+不测产品、只测仪表的自校准用例：同一段 0.3 秒，`await asyncio.sleep` 期间 ticker 照常走
+（最大间隔 < 100ms），`time.sleep` 期间它一步都动不了（最大间隔 ≥ 250ms）——两种都测得出来，
+下面那条"没红"才是结论而不是运气。两处非显而易见的仪表缺陷是这条自校准用例逼出来的：
+① body 结束后必须再等 3 步冲刷，否则同步阻塞时 ticker 那拍还没落地，量到空序列，而空序列看着像"没红"；
+② `create_task` 只是排期，body 若同步阻塞则连起点都没设上，所以要先等第一步 tick 真跑出来。
+
+变异检查五条（`.tmp-verify/mutation_ci_batch.log`，逐条当场跑、当场还原）：
+
+| 变异 | 结果 |
+| --- | --- |
+| M1 `IngestService.ingest_once` 里塞 `__import__("time").sleep(0.5)` | **红**：`AssertionError: 摄取期间事件循环最长停顿 501ms` |
+| M2 删掉仪表里 body 之后的冲刷步 | **红**：自校准那条报 `同步 sleep(0.3) 都没被测出来（最大间隔 0ms），仪表失灵` |
+| M3 删掉"先让 ticker 跑出第一步"的预热 | **红**：同上那条改成 `最大间隔 19ms` —— 阻塞整段变得看不见 |
+| M4 观察窗 0.15s 改 0s | **没红**：轮次下限仍逼着做满 3 轮，样本数并没被削掉，所以这条断言本来就不该接住它 |
+| M5 把"至少 3 轮"的下限改成 1 轮 | 先**没红**（只有 1 轮摄取时 ticker 也已走过 5 拍，样本判定成立）⇒ 于是补了一条 `assert rounds >= 3`，重跑转红（`assert 1 >= 3`） |
+
+M4/M5 这一对是本轮真正的收获：原来的两条断言只管"有没有大停顿"，**没有一条在钉住"这 0.15 秒里到底做了
+几轮摄取"**——窗口是可以被悄悄掏空的。补上的那条把观察窗的下限显式化，M5 才有反例。
+还原后 `tests/perf` **21 passed**（整目录，两条文件）。
+
+一个自己造出来的现场事故也记在这里：跑 M5 时我顺手用了 `git checkout -- tests/perf/test_performance.py`
+来还原，而这条用例的改写**还没提交**——那一句把整份重写（72 行插入）打回 HEAD。靠变异前临时留的
+`/tmp/tp.bak` 恢复，恢复后逐条比对 `diff -q` 一致、`grep -c MUTATION` 为 0 才继续。
+教训与既往那条"量测脚本擦掉现场"同形：**还原变异只能用备份文件，不能用 `git checkout`**，
+未提交的工作树没有"上一个已提交状态"可回。
+
+### 第二处：校验失败的是那一步的挂载形态，不是配置
+
+`prometheus.yml` 的 `rule_files` 写的是容器内绝对路径 `/etc/prometheus/rules/alerts.yml`，而上一版 CI 把
+整个 `deploy/` 挂到 `/cfg` 再 `check config /cfg/prometheus.yml`——promtool 照配置里的绝对路径去找，
+那个路径在容器里根本不存在，于是报 `does not point to an existing file`。配置文件本身没问题，
+是"校验器怎么挂"错了。改法：挂载与 `deploy/docker-compose.yml` 里那两条 `:ro` 一一对应。
+
+本机 2026-10-13 逐条复跑（三条命令、三次独立退出码）：
+
+| 命令 | 结果 |
+| --- | --- |
+| `promtool check config /etc/prometheus/prometheus.yml`（挂 prometheus.yml + rules/alerts.yml） | `SUCCESS: 1 rule files found` / `9 rules found` |
+| `promtool check rules /etc/prometheus/rules/alerts.yml` | `SUCCESS: 9 rules found` |
+| `amtool check-config /cfg/observability/alertmanager.yml` | 通过：global / route / 1 inhibit rule / 2 receivers / 0 templates |
+
+Git-Bash 会把这些命令里的 `/bin/promtool` 当 Windows 路径转换（实测变成 `D:/app/git/Git/usr/bin/promtool`），
+所以本机复跑必须带 `MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'`；CI 上是 bash，不需要。
+
+### 第三处：postgres 构建在 CI 本来就是绿的，改 https 只为解本机那一跳
+
+这一步**不在**上面的红名单里。CI 用的是 http 版，apt 跟着那跳 301 走到 https 取到了
+`Get:4 https://apt-archive.postgresql.org/... bullseye-pgdg InRelease [181 kB]`——日志原文可查。
+但 2026-10-12 本机同一条构建是断的（`502 Bad Gateway` ⇒ "not signed" ⇒ 退出码 100）。2026-10-13 复测，
+host 侧三条直取的码：https InRelease = **200 / 180530B**、http 同一档 = **301**、
+`apt.postgresql.org/pub/repos/apt/dists/bullseye-pgdg/Release` = **404**（撤源是真的，包只在归档站上）。
+同一天本机 `--no-cache` 仍失败，失败点换到了引擎侧：Docker Desktop 把出网走 `http.docker.internal:3128`，
+443 被重置（`Could not handshake: The TLS connection was non-properly terminated [IP: 18.172.112.59 443]`）
+而 80 照常。把代理 env 清空后在同一条镜像上跑同一段序列当场过（`Get:4/5/7` 全是 apt-archive 的 https 条目，
+装上 `postgresql-17-pgvector`）。所以 Dockerfile 里那句 sed 换 https 的实际作用是**少赌一跳 301**，
+它不改变 CI 的结果；而"本机能不能构建成功"取决于那个代理，不取决于 Dockerfile——这句话我原先是反着写的。
+
+### 门禁与本轮的口径修正（最要紧的一条）
+
+CI 的门禁跑的是 `uv run pytest -q --maxfail=1`，范围是 **整棵 `tests/`**；我此前本地的固定句是
+`pytest tests/unit tests/contract tests/api tests/e2e`——那条 perf 用例**从没进过我的命令**。
+所以"2821 全绿"与"CI 红"这两件事同时为真并不矛盾，而我把前者当成了后者该绿的证据。修法治法：
+本地按 CI 形态整条复跑，取数用 `--junitxml`（`-q` 叠加 addopts 的 `-q` 会把汇总行吞掉）：
+
+- `pytest -q --maxfail=1 --junitxml`（整棵 `tests/`，`PYTHONHASHSEED=0`）同一条命令跑了三次：
+  ① **2939 collected / 0 failed / 0 errors / 85 skipped / 382.3s**；② 与变异检查并跑的那一次
+  **1 failed**（就是下面第四处那条计时断言）；③ 修完第四处后独跑复核两次，
+  **2939 / 0 / 0 / 85**，用时 381.0s 与 384.6s。
+  85 条跳过都是缺 `AEGIS_TEST_PG_DSN` / `AEGIS_TEST_NATS_URL` 的集成与真服务档，与 CI 同形。
+  ②③ 这对正是本批主题的证据：同一句命令、同一份工作树，差别只在有没有别的进程在抢 CPU——
+  "跑绿过一次"不能当成"这条命令不会再红"，绑在机器速度上的断言尤其如此。
+  末次跑的 XML 留在 `.tmp-verify/junit_ci_tree.xml`（计数就从它取，`.gitignore` 里这条目录本就忽略，
+  复核时在本机读）。
+- `ruff format --check src tests scripts`（278 files already formatted）、`ruff check`（All checks passed）、
+  `mypy src`（121 files, no issues）。
+- README 2.1 第 3 步补了这段口径：那条命令与 CI 同一句、范围是整棵树，只跑子集不算门禁。
+
+### 第四处（本轮自己造出来的红）：另一条绝对计时下限，任务 #21 的那条
+
+整树二跑刚过 85% 时红了一条与本批无关的：
+
+```
+FAILED tests/unit/test_telemetry_sla.py::TestSpanStageLedger::test_duration_lands_in_the_existing_ledger
+E   AssertionError: 计时必须真实（不是 0）
+E   assert 11.480099999971571 >= 15.0
+```
+
+先查的是产品还是用例在说谎：同一台机器上单跑 40 次同一段代码（一次性探针 `/tmp/ledger_probe.py`，
+未入库），账本记到的时长是 **19.98 / 24.02 / 35.62ms**（min/p50/max，`sleep(0.02)`），
+与体外自己量的 wall time 一致（20.03 / 24.08 / 35.69）——**记账路径没测错**。
+差别只在那一次整树跑：我一边跑全量、一边另起 pytest 跑变异，正是本仓记忆里那条"量性能的命令不要和
+整套测试同时跑"被我自己的手工动作破了一次；那次 `sleep(0.02)` 在循环里只走出 11.48ms。
+
+所以这条断言的毛病与第一处同形：`p50 >= 15` 量的是"这台机器这一刻的调度"，不是"计时有没有真在走"。
+改法是把两件事拆开各钉一条：地板降到 5ms（仍能抓住"秒当毫秒记"= 0.02 这类单位事故，又不会被调度抖动误伤），
+再加一条**相对**关系"睡过 20ms 的跨度至少是空跨度的 3 倍"。两条各有反例（M6/M7，改 `ledger.record` 那一行）：
+
+| 变异 | 红在哪条 |
+| --- | --- |
+| M6 `ledger.record(name, elapsed_ms / 1000)` | 地板：`AssertionError: 计时失真（只记到 0.02ms）` |
+| M7 `ledger.record(name, 1000.0)`（写死常数） | 相对：`p50 >= 3 × 空跨度` 不成立——旧的 `>= 15` 会放它过去 |
+
+M7 是这次改写换来的实际覆盖：**旧断言认不出"记一个像样的常数"，新断言认得出**。
+还原用备份文件回写、`grep -c MUT` 归零、`tests/unit/test_telemetry_sla.py` 29 passed 之后才继续。
+任务 #21 至此收口（根因不是并发负载本身，而是那条断言把自己绑在了机器速度上）。
+
+### 这一批**没**证明到的事
+
+- perf 那条在 **CI 的 Linux runner** 上会不会还红：本机是 Windows，绝对阈值（250ms）在负载高的共享
+  runner 上没量过。自校准用例能保证"仪表看得见阻塞"，保证不了"阈值不误伤"——第四处那条计时断言
+  （原任务 #21）就是同一毛病的另一面，本批已按"相对关系 + 低地板"改掉，但 Linux 侧只能等下次 push 见分晓。
+- `promtool` 两条本机按新挂载过了，`amtool` 那条形态没动（它本来就是命令行给绝对路径、文件在场即可）。
+- postgres 换 https 后 CI 侧那一次构建要等下次 push 才见；本机这次能过靠的是**清空代理 env 的一次性容器**，
+  不是 `docker compose build` 本身，所以"照 README 部署的人在这台机器上会不会卡"仍是个未知数
+  （卡的话卡在 Docker Desktop 的代理设置，而不是仓库）。
+- 归档源是冻结的：`bullseye-pgdg` 从此不再跟安全更新，这是 Dockerfile 注释里明知故犯的取舍，本轮没变。

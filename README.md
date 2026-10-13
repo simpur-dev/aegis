@@ -91,6 +91,9 @@ cd backend && uv sync --extra dev
 cd ../frontend && npm install
 
 # 3) 全量测试（离线可跑：总线用内存实现，可选腿一律关闭）
+#    这条与 CI 用的是同一句命令，范围是 tests/ 整棵树（含 tests/perf 与 tests/integration，
+#    后者在缺 AEGIS_TEST_PG_DSN / AEGIS_TEST_NATS_URL 时自行跳过）。只跑 tests/unit 那一档
+#    子集不算门禁：2026-10-12 就是"本机子集全绿、CI 红"，红在一个本机从没进过命令的 perf 用例上。
 cd ../backend && uv run pytest -q
 
 # 4) 前端类型检查与单测
