@@ -62,6 +62,18 @@ PROVENANCE = "合成高程/合成影像：由 scripts/build_offline_tiles.py 的
 # 就会在 backend/frontend/public 里造出一套没人看的瓦（本项目已经在 Settings.env_file 上踩过同一类坑）。
 DEFAULT_PUBLIC_DIR = Path(__file__).resolve().parent.parent / "frontend" / "public"
 
+# 落盘的米制几何只保留到 0.1 毫米。ECEF 在 6.4e6 m 量级上 double 的 1 ULP ≈ 9e-10 m，
+# 而 Windows(MSVC) 与 Linux(glibc) 的 sin/cos/exp 在末位上本就不一样：2026-10-13 实测同一份
+# 脚本两边重烘，110 张瓦有 29 张各差 1–8 个字节，且差异**全部**落在 88 字节头里的 double 段
+# （顶点、索引、边、法向这些量化整数一字不差）。归到 0.1mm 网格后跨平台字节一致，
+# 代价是放弃第 18 位有效数字——那一位在米制地形里没有含义。
+HEADER_LENGTH_QUANTUM_M = 1e-4
+
+
+def stabilize_meters(value: float) -> float:
+    """把米制浮点量吸附到 0.1mm 网格上，使 1 ULP 的 libm 差异不改变落盘字节。"""
+    return round(value / HEADER_LENGTH_QUANTUM_M) * HEADER_LENGTH_QUANTUM_M
+
 
 # ---------- 合成地表 ----------
 
@@ -439,10 +451,10 @@ def encode_terrain_tile(mesh: Mesh) -> bytes:
         raise ValueError("顶点数超过 u16 索引上限")
 
     parts: list[bytes] = []
-    parts.append(struct.pack("<3d", *mesh.center))
+    parts.append(struct.pack("<3d", *(stabilize_meters(v) for v in mesh.center)))
     parts.append(struct.pack("<2f", mesh.minimum_height, mesh.maximum_height))
-    parts.append(struct.pack("<4d", *mesh.bounding_sphere_center, mesh.bounding_sphere_radius))
-    parts.append(struct.pack("<3d", *mesh.horizon_occlusion))
+    parts.append(struct.pack("<4d", *(stabilize_meters(v) for v in (*mesh.bounding_sphere_center, mesh.bounding_sphere_radius))))
+    parts.append(struct.pack("<3d", *(stabilize_meters(v) for v in mesh.horizon_occlusion)))
 
     parts.append(struct.pack("<I", vertex_count))
     encoded = delta_zigzag_encode(mesh.u) + delta_zigzag_encode(mesh.v) + delta_zigzag_encode(mesh.height)
@@ -786,6 +798,9 @@ def bake(
             indent=2,
         ),
         encoding="utf-8",
+        # 显式 \n：文本模式默认会把换行按平台翻译，于是 Windows 烘出来的 layer.json 带 CRLF
+        # 而 CI(Linux) 重烘带 LF——两份"同一个资产"在字节门禁下必然不等（2026-10-13 实测首差在 offset 1）。
+        newline="\n",
     )
 
     result: dict[str, object] = {
