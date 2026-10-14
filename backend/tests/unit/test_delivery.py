@@ -86,16 +86,20 @@ class TestDispatch:
         assert all(d.audience_count == 2 for d in record.deliveries)
 
     async def test_channels_run_concurrently(self) -> None:
-        adapters = {
-            Channel.SMS: StubAdapter(Channel.SMS, delay_ms=120),
-            Channel.BEIDOU: StubAdapter(Channel.BEIDOU, delay_ms=120),
-            Channel.BROADCAST: StubAdapter(Channel.BROADCAST, delay_ms=120),
-        }
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-        await DeliveryDispatcher(adapters).dispatch(warning([Channel.SMS, Channel.BEIDOU, Channel.BROADCAST]))
-        elapsed = (loop.time() - started) * 1000
-        assert elapsed < 300, f"并发下发应为 ~120ms，实测 {elapsed:.0f}ms（疑似串行）"
+        """并发判据拿"同批测出的单通道参照"比，不写死毫秒数（旧写法 300ms 距串行真值 360ms 只差 60ms）。"""
+        three = [Channel.SMS, Channel.BEIDOU, Channel.BROADCAST]
+        channels = warning(three)
+
+        async def dispatch_ms(adapters: dict[Channel, StubAdapter]) -> tuple[float, set[str]]:
+            started = asyncio.get_running_loop().time()
+            record = await DeliveryDispatcher(adapters).dispatch(channels)
+            return (asyncio.get_running_loop().time() - started) * 1000, {d.status for d in record.deliveries}
+
+        solo_ms, _ = await dispatch_ms({channel: StubAdapter(channel, delay_ms=120) for channel in three[:1]})
+        parallel_ms, statuses = await dispatch_ms({channel: StubAdapter(channel, delay_ms=120) for channel in three})
+        assert statuses == {"delivered"}
+        # 三条各 120ms：串行要 ~3 个单通道时长，并行只 ~1 个。判定用比值，机器快慢一起缩放。
+        assert parallel_ms < solo_ms * 2.0, f"三条通道耗时 {parallel_ms:.0f}ms ≥ 单通道参照 {solo_ms:.0f}ms 的两倍：下发疑似串行"
 
     async def test_retry_then_success(self) -> None:
         adapter = StubAdapter(Channel.SMS, fail_first=2)

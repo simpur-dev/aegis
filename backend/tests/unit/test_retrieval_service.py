@@ -304,6 +304,12 @@ class TestRerank:
 
 class TestBudgetAndDegradation:
     async def test_slow_dense_leg_yields_partial_result_within_budget(self) -> None:
+        """预算到点交卷：慢腿 400ms、预算 40ms，判定线 300ms 距两种真相各有量级余量。
+
+        与 `test_delivery`/`test_workflow_engine` 那两条不同，这里不是"距串行真值只差几十毫秒"
+        的假红形状：正常路径实测 ~40ms（7.5 倍余量），坏路径（没设预算、傻等慢腿）是 ~400ms，
+        判定线落在两者之间且离两端都远，所以保留绝对值。
+        """
         conn = FakeConn(rows=[hit("stu_1", 0.95)], delay_ms=400)
         service = build_service(conn=conn, default_budget_ms=40.0)
         started = time.perf_counter()

@@ -18,6 +18,8 @@ import asyncio
 import json
 import os
 import sys
+from collections.abc import Iterator
+from typing import cast
 
 import pytest
 
@@ -29,10 +31,24 @@ PREFIX = "field"
 
 pytestmark = pytest.mark.skipif(not HOST, reason="未设置 AEGIS_TEST_MQTT_HOST，跳过真实 MQTT broker 测试")
 
+_PRIOR_LOOP_POLICY: object | None = None
 if sys.platform == "win32":
     # paho 的 asyncio 支持走 loop.add_reader/add_writer，Windows 默认的 Proactor 循环没有这两个钩子。
     # 生产是 Linux 容器部署，不受影响；本机跑这条腿必须换 Selector 循环。见 connectors/mqtt.py 头注释。
+    # 必须在 import 期就换（pytest-asyncio 的循环在各用例建立时才取策略，晚一步就来不及），
+    # 但换完整整要还原：模块顶层只管换不管还，会外泄给同一进程里后续每个文件的循环实现，
+    # 后面的时序类断言就跑在另一套循环上——`tests/unit/test_event_loop_policy_hygiene.py` 钉的就是这个。
+    _PRIOR_LOOP_POLICY = asyncio.get_event_loop_policy()
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # type: ignore[attr-defined]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_loop_policy_after_this_module() -> Iterator[None]:
+    try:
+        yield
+    finally:
+        if _PRIOR_LOOP_POLICY is not None:
+            asyncio.set_event_loop_policy(cast("asyncio.AbstractEventLoopPolicy", _PRIOR_LOOP_POLICY))
 
 
 async def publish(topic: str, payload: dict[str, object] | bytes, *, qos: int = 1) -> None:

@@ -19,17 +19,25 @@ import uvicorn
 from aegis.api.app import create_app
 from aegis.config import Settings
 
-
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
+#: 判定线：第一帧必须在这一秒数内到，否则浏览器顶着一句假的"重连中"。
+FIRST_FRAME_LIMIT_S = 2.0
+#: 等帧天花板要宽过判定线：两处都写 2.0 时，慢的第一帧会以裸 TimeoutError 收场，
+#: 那句真正有用的诊断永远走不到。
+FIRST_FRAME_CEILING_S = 8.0
 
 
 @pytest.fixture
 async def live() -> AsyncIterator[httpx.AsyncClient]:
-    port = _free_port()
-    settings = Settings(env="dev", bus_backend="memory", delivery_mode="mock", http_port=port, simulator_seed=33)
+    """把监听 socket 自己绑好再交给 uvicorn：端口取自己绑到的那个，不存在"抢号窗口"。
+
+    旧写法 `_free_port()` 先 bind(0) 拿号、关闭、再把同号交给 uvicorn——
+    这两步之间任何进程占走该口，本机就是随机 `EADDRINUSE`。
+    """
+    settings = Settings(env="dev", bus_backend="memory", delivery_mode="mock", http_port=0, simulator_seed=33)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(128)
+    port = int(listener.getsockname()[1])
     # uvicorn 默认无限等待在途连接结束；SSE 长连接在 Windows 的 proactor 事件循环上
     # 关闭后连接对象未必被判定为已断开，会让优雅退出永久挂起。给 1s 上限，让测试
     # 断言的是"能在超时内退出"，而不是依赖平台清理时序。
@@ -42,19 +50,22 @@ async def live() -> AsyncIterator[httpx.AsyncClient]:
             timeout_graceful_shutdown=1,
         )
     )
-    task = asyncio.create_task(server.serve())
-    async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=20.0) as client:
-        for _ in range(200):
-            try:
-                if (await client.get("/healthz")).status_code == 200:
-                    break
-            except httpx.HTTPError:
-                await asyncio.sleep(0.05)
-        else:  # pragma: no cover - 服务器未能起来时快速失败
-            pytest.fail("uvicorn 服务器未在超时内就绪")
-        yield client
-        server.should_exit = True
-    await asyncio.wait_for(task, timeout=15.0)
+    task = asyncio.create_task(server.serve(sockets=[listener]))
+    try:
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=20.0) as client:
+            for _ in range(200):
+                try:
+                    if (await client.get("/healthz")).status_code == 200:
+                        break
+                except httpx.HTTPError:
+                    await asyncio.sleep(0.05)
+            else:  # pragma: no cover - 服务器未能起来时快速失败
+                pytest.fail("uvicorn 服务器未在超时内就绪")
+            yield client
+            server.should_exit = True
+        await asyncio.wait_for(task, timeout=15.0)
+    finally:
+        listener.close()
 
 
 class TestLiveServer:
@@ -104,10 +115,12 @@ class TestLiveServer:
         started = time.perf_counter()
         async with live.stream("GET", "/api/v1/events/stream") as response:
             assert response.status_code == 200
-            first = await asyncio.wait_for(response.aiter_lines().__anext__(), timeout=2.0)
+            # 等帧的天花板要比判定线宽：两处都写 2.0 时，慢的第一帧会变成裸 TimeoutError，
+            # 那句"浏览器在这段时间里显示的是假的重连中"永远走不到——诊断信息自己先失效。
+            first = await asyncio.wait_for(response.aiter_lines().__anext__(), timeout=FIRST_FRAME_CEILING_S)
         elapsed = time.perf_counter() - started
         assert first.startswith(":"), f"第一帧应是注释帧（不是事件），实际 {first!r}"
-        assert elapsed < 2.0, f"第一帧等了 {elapsed:.2f}s：浏览器在这段时间里显示的是假的『重连中』"
+        assert elapsed < FIRST_FRAME_LIMIT_S, f"第一帧等了 {elapsed:.2f}s：浏览器在这段时间里显示的是假的『重连中』"
 
     async def test_空闲时的保活帧得是JS收得到的心跳而不是注释(self, live: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
         """注释帧（`: keep-alive`）浏览器根本不给 JS，于是这条流"看起来连着"没有任何证据。

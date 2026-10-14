@@ -209,29 +209,55 @@ class TestExecutionSemantics:
         assert "ok" in joined, f"也没给出连线上的可选分支名：{gate['notes']}"
 
     async def test_parallel_branches_run_concurrently(self) -> None:
+        """并发判据必须拿"同批测出的串行参照"来比，不能写死秒数。
+
+        旧断言 `elapsed < 0.22`：并行真值 0.12s、串行 0.24s，阈值距串行只差 20ms——
+        循环里一次偶发停顿就假红（同一族毛病本批已撞过三次，全都被 `--maxfail=1` 挡在别人后面）。
+        现在同批跑一份强制串行的定义当参照，只断两者之比：机器快慢一起缩放，判定不随之变。
+        """
+
         async def slow_query(**_kwargs: object) -> list[dict]:
             await asyncio.sleep(0.12)
             return []
 
         engine = make_engine(WorkflowServices(telemetry_query=slow_query))
-        workflow_id = await make_definition(
-            engine,
-            [
-                node("root", "delay", {"seconds": 0}),
-                node("left", "data_fetch", {"limit": 1}),
-                node("right", "data_fetch", {"limit": 1}),
-                node("join", "join", {"upstream": ["left", "right"]}),
-            ],
+
+        async def run(nodes: list[dict], edges: list[dict], trace_suffix: str) -> tuple[float, dict]:
+            workflow_id = await make_definition(engine, nodes, edges)
+            started = asyncio.get_running_loop().time()
+            detail = await engine.start(workflow_id, trace_id="trc_" + trace_suffix * 16, payload={})
+            return asyncio.get_running_loop().time() - started, detail
+
+        fork_nodes = [
+            node("root", "delay", {"seconds": 0}),
+            node("left", "data_fetch", {"limit": 1}),
+            node("right", "data_fetch", {"limit": 1}),
+            node("join", "join", {"upstream": ["left", "right"]}),
+        ]
+        parallel_elapsed, detail = await run(
+            fork_nodes,
             [edge("root", "left"), edge("root", "right"), edge("left", "join"), edge("right", "join")],
+            "3",
         )
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-        detail = await engine.start(workflow_id, trace_id="trc_" + "3" * 16, payload={})
-        elapsed = loop.time() - started
         assert detail["status"] == "succeeded"
         join = next(n for n in detail["nodes"] if n["node_id"] == "join")
         assert set(join["output"]["merged"]) == {"left", "right"}
-        assert elapsed < 0.22, f"并行分支疑似串行执行（耗时 {elapsed:.2f}s）"
+
+        # 参照：同样的两个取数节点，但右支挂在左支之后、join 只等右支 ⇒ 只能串行，两次 sleep 都得等完。
+        serial_nodes = [
+            node("root", "delay", {"seconds": 0}),
+            node("left", "data_fetch", {"limit": 1}),
+            node("right", "data_fetch", {"limit": 1}),
+            node("join", "join", {"upstream": ["right"]}),
+        ]
+        serial_elapsed, serial_detail = await run(
+            serial_nodes,
+            [edge("root", "left"), edge("left", "right"), edge("right", "join")],
+            "5",
+        )
+        assert serial_detail["status"] == "succeeded"
+        assert serial_elapsed > parallel_elapsed, f"串行参照（{serial_elapsed:.2f}s）没比并行（{parallel_elapsed:.2f}s）慢，参照不成立"
+        assert parallel_elapsed < serial_elapsed * 0.75, f"并行 {parallel_elapsed:.2f}s vs 串行参照 {serial_elapsed:.2f}s：两支没同时跑"
 
     async def test_join_waits_for_all_upstreams(self) -> None:
         async def query(**_kwargs: object) -> list[dict]:
