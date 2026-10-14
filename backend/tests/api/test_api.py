@@ -233,10 +233,14 @@ class TestWarningAndTaskEndpoints:
         assert detail.json()["channels"]
 
     async def test_warning_filter_by_region(self, client: httpx.AsyncClient, container: PlatformContainer) -> None:
+        """过滤要有正反两判：旧写法只有一句 `all(...)`，端点返回空列表时照样绿。"""
         container.simulator.scenario = "surge"
         await client.post("/api/v1/drill/run", json={"scenario": "surge", "ticks": 1})
         listing = (await client.get("/api/v1/warnings", params={"region_code": "540121"})).json()
+        assert listing["items"], "surge 演练之后 540121 一条预警都没有：这条过滤没在过滤任何东西"
         assert all("540121" in item["region_codes"] for item in listing["items"])
+        other = (await client.get("/api/v1/warnings", params={"region_code": "000000"})).json()
+        assert other["items"] == [], f"换了区号还返回同一批：region_code 根本没参与筛选 {[i['region_codes'] for i in other['items']]}"
 
     async def test_task_detail_and_404(self, client: httpx.AsyncClient, container: PlatformContainer) -> None:
         container.simulator.scenario = "surge"
@@ -280,8 +284,11 @@ class TestAgentEndpoints:
             container.simulator.scenario = "surge"
             await client.post("/api/v1/drill/run", json={"scenario": "surge", "ticks": 1})
             body = (await client.get("/api/v1/collaboration")).json()
-            assert body["success_rate"] in (1.0, None) or body["success_rate"] >= 0.9
-            assert isinstance(body["transactions"], list)
+            # 旧写法 `success_rate in (1.0, None) or >= 0.9` 让"一笔事务都没有"（None）直接达标。
+            assert body["transactions"], "跑了 surge 却没留下任何协同事务：成功率那句没有底子"
+            assert body["success_rate"] is not None and body["success_rate"] >= 0.9, body["success_rate"]
+            first = body["transactions"][0]
+            assert {"trace_id", "outcome", "latency_ms"} <= set(first), f"事务形状不对，报表侧读不到东西：{sorted(first)}"
         finally:
             for agent in agents:
                 await agent.stop()

@@ -373,8 +373,7 @@ class TestWarningRoundTrip:
         )
         assert skewed.reach_seconds() == pytest.approx(-60.0)
         row = as_row(rows.WARNING_COLUMNS, rows.warning_params(skewed))
-        assert row["reach_seconds"] == 0.0
-        assert row["reach_seconds"] >= 0
+        assert row["reach_seconds"] == 0.0  # 负提前量在行面上被夹到 0
 
     def test_draft_without_release_has_no_reach(self) -> None:
         row = as_row(rows.WARNING_COLUMNS, rows.warning_params(warning(released_at=None)))

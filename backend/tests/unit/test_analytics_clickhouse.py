@@ -140,8 +140,11 @@ class TestBackoffPureFunction:
         assert _backoff(3, 0.2, 5.0) == pytest.approx(0.8)
         assert _backoff(20, 0.2, 5.0) == 5.0
 
-    def test_never_negative(self) -> None:
-        assert _backoff(1, 0.01, 0.01) >= 0.0
+    def test_zero_base_and_equal_cap_stay_exact(self) -> None:
+        """`>= 0.0` 那种下界谁都过；退避值是算出来的，就给死值。"""
+        assert _backoff(1, 0.01, 0.01) == pytest.approx(0.01)
+        assert _backoff(1, 0.0, 5.0) == 0.0
+        assert _backoff(3, 0.5, 1.0) == 1.0
 
 
 # --------------------------------------------------------------------- 受理与落库

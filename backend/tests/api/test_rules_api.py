@@ -65,7 +65,9 @@ async def test_换版立即反映到对外面(settings: Settings) -> None:
     async with _client(container) as client:
         body = (await client.get("/api/v1/rules")).json()
         assert body["provenance"]["source"] == "postgres"
-        assert all(row["version"] == 7 for row in body["items"])
+        # 条数要从头钉死：`all(row["version"] == 7 ...)` 对空列表恒真，reload 少一条也看不出来。
+        assert len(body["items"]) == 9, f"换版后条数变了：{len(body['items'])} 条"
+        assert {row["version"] for row in body["items"]} == {7}, [row["version"] for row in body["items"]]
 
 
 @pytest.mark.asyncio

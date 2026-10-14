@@ -222,26 +222,31 @@ async def test_llm建议白名单外动作时拒绝并计数() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("text", "action", "call_prefix"),
+    ("text", "action", "expected_calls"),
     [
-        ("最近发布了哪些预警", "query.warnings", "list_warnings"),
-        ("最近的链路事件", "query.chains", "list_chains"),
-        ("查一下任务 stu_0123456789abcdef", "query.tasks", "get_task"),
-        ("540121 有哪些站点", "query.stations", "list_stations"),
-        ("在线智能体有几个", "query.agents", "list_agents"),
-        ("P95 时延是多少", "query.metrics", "latency_report"),
-        ("wrn_0123456789abcdef0123 为什么是红色", "explain.warning", "get_warning"),
-        ("trc_0123456789abcdef 是谁判的", "explain.chain", "get_chain"),
+        ("最近发布了哪些预警", "query.warnings", {"list_warnings"}),
+        ("最近的链路事件", "query.chains", {"list_chains"}),
+        ("查一下任务 stu_0123456789abcdef", "query.tasks", {"get_task"}),
+        ("540121 有哪些站点", "query.stations", {"list_stations"}),
+        ("在线智能体有几个", "query.agents", {"list_agents"}),
+        ("P95 时延是多少", "query.metrics", {"latency_report"}),
+        # 认知镜像这条会读两面：预警行 + 它背后的链路段（`assistant.py:_explain_warning` 里
+        # 拿到 trace_id 就去取 chain），期望写成一个动作名是旧的恒真断言掩盖出来的错。
+        ("wrn_0123456789abcdef0123 为什么是红色", "explain.warning", {"get_warning", "get_chain"}),
+        ("trc_0123456789abcdef 是谁判的", "explain.chain", {"get_chain"}),
     ],
 )
-async def test_只读任务直达且不产生待确认动作(text: str, action: str, call_prefix: str) -> None:
+async def test_只读任务直达且不产生待确认动作(text: str, action: str, expected_calls: set[str]) -> None:
     rec = Recorder()
     service = AssistantService(actions=build_actions(rec), settings=settings())
     events = await collect(service, text, reporter="值班员")
     intents = [event for event in events if event.type == "intent"]
     assert intents[0].data["action"] == action
     assert not any(event.type == "proposal" for event in events)
-    assert any(call in call for call in rec.calls), rec.calls
+    # 意图对了还不算通路对：真正打出去的动作方法集合必须就是表里给定的那一个。
+    # 旧写法 `any(call in call for call in rec.calls)` 是恒真式（只剩"列表非空"），
+    # 打错动作、少打一个动作、多打一个动作都判不出来。
+    assert {call.split(":", 1)[0] for call in rec.calls} == expected_calls, rec.calls
 
 
 @pytest.mark.asyncio

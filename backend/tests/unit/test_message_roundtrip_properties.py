@@ -141,7 +141,10 @@ class TestContractRejection:
             decode(json.dumps(document).encode())
 
     def test_non_json_bytes_do_not_decode(self) -> None:
-        with pytest.raises(Exception):  # noqa: B017 - 解码器异常类型不作契约，只要求"必然抛"
+        """钉的是"抛的是解码类错误"，不是"随便抛点什么"：`raises(Exception)` 连解码器内部的
+        AttributeError 也算通过。实测 `b"\\x00\\x01not json"` 抛 orjson.JSONDecodeError（ValueError 子类），
+        形状不合的 JSON 抛 ValidationError。"""
+        with pytest.raises((ValueError, ValidationError)):
             decode(b"\x00\x01not json")
 
     def test_deadline_bounds_match_the_sla_window(self) -> None:

@@ -63,11 +63,24 @@ class TestKnobsAreReachable:
         assert not orphan, f".env.example 里承诺了但生产代码不读的键: {orphan}"
 
     def test_reserved_knobs_are_still_declared(self) -> None:
-        """预留清单也会腐烂：字段被删了或被接线了，都要在这里显式处理而不是留下幽灵条目。"""
+        """预留清单也会腐烂：字段被删了或被接线了，都要在这里显式处理而不是留下幽灵条目。
+
+        `RESERVED` 现在是空的，下面两条对空集合恒真——所以同批加一条**探测器自检**：
+        拿一个真已接线的字段名假装挂在 RESERVED 上，探测器必须把它报成"已接线却还留着"。
+        没有这条，清单为空时这个测试就只是个装饰。
+        """
         text = production_text()
         wired = [name for name in RESERVED if name in text]
         assert not wired, f"已接线的旋钮仍挂在 RESERVED 上: {wired}"
         assert all(name in Settings.model_fields for name in RESERVED)
+
+        probe = "simulator_enabled"
+        assert probe in text, "自检用的字段名不在生产代码里了，换掉它，否则探测器自检也是空跑"
+        assert [name for name in (*RESERVED, probe) if name in text] == [probe], "探测器抓不出'已接线却挂在预留清单上'的幽灵条目"
+        ghost = "aegis_selftest_unwired_knob"
+        assert [name for name in (*Settings.model_fields, ghost) if name not in text and name not in RESERVED] == [ghost], (
+            "探测器抓不出'生产代码没读'的字段"
+        )
 
 
 class TestDeliveryChannelAssembly:

@@ -99,7 +99,10 @@ async def test_执行类动作只在确认之后落地(container: PlatformContai
 
         session = (await client.get(f"/api/v1/assistant/sessions/{proposals[0]['session_id']}")).json()
         assert session["session_id"] == proposals[0]["session_id"]
-        assert all(row["status"] != "pending" for row in session["pending_actions"])
+        # 生产侧把 `pending_actions` 过滤成"只含 pending"，所以对它的 all(...) 恒真；
+        # 先证明这份 session 真在（查不到也会回一个空壳），再要求待确认集合整个清空。
+        assert session["turns"] >= 1, "会话面回的是空结构：这条断言没有底子"
+        assert session["pending_actions"] == [], session["pending_actions"]
 
 
 @pytest.mark.asyncio
