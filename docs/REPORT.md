@@ -2184,3 +2184,95 @@ M7 是这次改写换来的实际覆盖：**旧断言认不出"记一个像样�
   **没有证明**任何 zlib 版本都相同——PNG 那条腿的字节一致性仍属"实测过一次通过"，不是"版本无关"。
   同理，本机 Linux 复检用的是 WSL Ubuntu 24.04 的 py3.12.3/glibc，与 GitHub runner 的 glibc 小版本
   不必相同；真正的那一档判据仍是 CI 下一次跑。
+
+
+## CI-2 门禁可信度全面审计：CI 自己哪里在撒谎（2026-10-14，四个只读子代理 + 逐条本地复核）
+
+### 为什么单独立这一节
+
+CI-1 那六条里没有一条是 CI 设计本身抓出来的——全靠事后翻日志、再事后被 `--maxfail=1` 一条条放出来。
+用户的要求是"全面检查 CI 到底哪里有问题"，所以这一步查的不是产品，是**门禁的判定力本身**。
+方法：四个只读子代理分面调查（工作流文件 / 空跑断言 / 环境与依赖对齐 / 跨平台与时序），
+我把它们的结论**逐条本地复核**后再落地——本仓记忆里那条"子代理结论须复核"这次直接救了一次场（见下）。
+
+### 被我校验否掉的三条子代理结论（记下来，免得以后当成已成立的前提）
+
+- "镜像删掉 `--extra mcp` 没人守" — **不成立**：`test_mcp_tools.py:204` 就是按 ci.yml/Dockerfile 判定的守卫。
+  那位子代理只 grep 了 `test_config_env_surface.py` 一个文件。
+- "`test_weather_transport_live.py` 无 env 门，会随机器翻" — **不成立**：它自己 `asyncio.start_server`
+  起一个本机最小 HTTP 服务，不依赖外部网络，也不依赖任何服务在场。
+- "`test_analytics_duckdb_spatial_live.py` 无 env 门" — 半成立但结论错：它确实没有 env 门，
+  但 fixture 里在扩展装不上时 `pytest.skip(带上 spatial_reason)`（`:127-129`），
+  这是"跑不了就说跑不了"的形状，不是静默假绿。这一条**保留现状**，只把理由写进本文件。
+
+### 落地清单（每条都带反例；反例编号 W8–W16 在 `.tmp-verify/mutation_ci_batch.log`）
+
+P0 — 绿色不等于测过：
+
+| # | 事实 | 治法 | 反例 |
+| --- | --- | --- | --- |
+| 1 | 持久层三个文件（42 项）在 CI 恒 skip：ci.yml 全文唯一的 `AEGIS_TEST_*` 是 NATS | 新增 `integration-postgres` job：`deploy/postgres` 镜像起一次性容器（官方 postgis 镜像没 pgvector，`CREATE EXTENSION vector` 必炸），宿主端口 5543 | 本机彩排 **42 passed** |
+| 2 | 两条"上游解析顺序漂移"守卫读 `frontend/node_modules`，而 gate job 不跑 npm ⇒ CI 永远 skip，代码注释却写着"CI 装了就会跑" | gate job 加 `npm ci`（前端 + 仓库根），node 版本跟 `.nvmrc` | W9 摘掉那条命令 → 新守卫红 |
+| 3 | 守卫内层是 `assert f"{offset}" in text`：数字 `"8"` 在那份源码里出现 6 次以上，随便一个偏移都命中 | 改成钉 `bytesToHeader` 里 21 处完整形状并要求恰好出现一次 | W11 把 `rootDirectoryOffset` 的偏移改成 9 → 新守卫当场红，**旧写法不会** |
+| 4 | 五条恒真断言（详见 commit `0b65a74`） | 各换成有判定力的判定 | W1–W7 逐条红 |
+| 5 | 七处生成器 `write_text` 走平台默认换行：Windows 产 CRLF 而入库档是 LF，被 `.gitattributes eol=lf` 掩盖，**没有任何一档门禁看得见** | 全部显式 `newline="\n"` + `ast` 扫源码的守卫 + 基线档归一 | W8 摘 newline → 守卫点名到行；W10 塞回 CRLF → 无 CR 守卫红 |
+
+P1 — 结论不可复核／会随环境翻：`-q` 叠 addopts 的 `-q` 是 `-qq` 且 CI 从不产 junit ⇒ 计数入产物、
+`if-no-files-found` 由 `ignore` 改 `error`；`--maxfail=1` 去掉（本批三次都是"修好一条才露下一条"）；
+`PYTHONHASHSEED=0` 钉住（`mock.py` 那处 `abs(hash(...))` 种子同时换成 `zlib.crc32`，否则同一提交两台机器给不同延迟分布）；
+`uv lock --check` 前置 + 所有 `uv sync` 加 `--frozen`（此前 CI 对活 PyPI 重解，测的闭包可能不是镜像装的闭包）；
+`cancel-in-progress` 只对 PR 生效（连推 main 不再取消正要出结论的那次）。
+
+P2 — 部署面与文档口径：镜像补 `--extra seekdb`（`.env.example` 早把 seekdb 开关交给部署面，容器里没驱动就是"打开即抛"）；
+新增守卫 **CI 装的 extras ⊇ 镜像装的**（W16 重演 10-13 的 iot 事故即红）；
+`.env.example` 写清 clickhouse 档 compose 默认不带服务；`.dockerignore` 注释指向不存在的 `frontend/Dockerfile` 已改如实；
+README 的 `quality_gate` 那句自称"CI 同款"却不带 `--baseline`（不带＝基线缺席＝无判定）已补齐；
+node 版本 `.nvmrc=v24.11.1` 与 README 实测对齐（CI 曾写死 '20'）；仓库根 `package-lock.json` 纳入安装与缓存。
+
+P3 — 会假红的形状：`test_workflow_engine` 的并发判定（阈值 0.22 距串行真值 0.24 只差 20ms）改成
+**同批自测的串行参照 + 比值**（W15：把并行那组边改成链式 → 红在"参照不成立"）；
+`test_delivery` 三通道同理从写死 300ms 改成比值；`test_sse_live` 两处：`wait_for(2.0)` 与
+`assert elapsed < 2.0` 同一个数写两遍使诊断文案永远走不到（等帧天花板改 8s、判定线仍 2s），
+`_free_port()` 的"先占号再关闭再交出去"是 TOCTOU（改成自己绑好监听 socket 交给 `server.serve(sockets=[...])`）；
+`test_mqtt_live` 在 import 期换 Windows 事件循环策略且不还原，会外泄给同进程后续每个文件的循环实现——
+保留 import 期换（pytest-asyncio 建循环时才取策略）但加模块级 autouse fixture 还原，并新增
+`tests/unit/test_event_loop_policy_hygiene.py` 接泄漏（W13 把还原摘掉即红，真 broker 在场 4 passed）。
+**这条守卫当场就立了功**：第一次整树跑（2948 项）它报了一条我没预料到的泄漏形状——
+broker 没开时整模块被 skip，模块级 autouse fixture 一次都不运行，于是"只换不还"仍然发生。
+补法是 `if sys.platform == "win32" and HOST:`：换策略的前提是"这条腿真要跑"。
+两种模式各验一次：无 broker（`1 passed, 3 skipped`）与真 mosquitto（`4 passed`），守卫都过。
+`test_retrieval_service` 的 budget 用例经两端实测（正常 ~40ms、坏路径 ~400ms、判定线 300ms）**余量都够**，
+因此保留绝对值只补理由——不是所有绝对阈值都是病。
+
+### 我自己在这一步犯的三次工具错（都记下来）
+
+1. 用 `python` 起 `subprocess` 跑 pytest 做变异外壳，那批"rc=1"整批是**崩溃不是红**：
+   portable python 抢了 stdlib，pytest 死在 `import argparse`，stdout 全空。判据：
+   **"红"必须看到断言文本 + 文件行号**，`rc!=0 且输出为空` 一律先修外壳。
+2. W9 第一版反例是假绿：我把守卫写成查 `"npm ci"`，而占位注释里恰好含这三个字 ⇒ 摘掉命令也不红。
+   针要钉到具体那一行整串。
+3. 批量给七个写点插 `newline="\n"` 时，我的字符串补丁把转义写成了真换行，六个脚本当场 SyntaxError。
+   处置：确认那六个文件相对 HEAD 只有我造成的破坏后 `git checkout` 回退，再逐条用编辑工具重写并 `py_compile` 全量校验。
+   （与"还原变异只用备份"不矛盾：这里回退的对象就是我自己刚写的坏字节，且回退前逐文件确认过无其他未提交改动。）
+
+### 这一节的门禁与计数
+
+- 整树（CI 形态、去掉 `--maxfail`、`PYTHONHASHSEED=0`、带 junit）：**2948 collected / 0 failed / 0 errors /
+  85 skipped / 525.5s**，XML 在 `.tmp-verify/junit_ci_tree.xml`。
+  这条计数本身也说明去 maxfail 的价值：第一次整树跑它报的就是 **1 failed**（新加的守卫抓到一条真泄漏），
+  若还带着 `--maxfail=1`，那一跑只会在第一条红上停下，我看不到"自己刚写的守卫在什么条件下会红"。
+- 前端：`npm run test` **47 files / 816 tests**；`npx playwright test e2e/map-visual.spec.ts`
+  本机 **7 passed (1.5m)**。
+- 静态档：`ruff format --check`（282 files）、`ruff check`、`mypy src`(121)、`uv lock --check`
+  （`Resolved 142 packages`，退出码 0——新加的那步不会一上线就红）。
+- 反例台账：`.tmp-verify/mutation_ci_batch.log` 的 W8–W16 段，含每条红在哪一句与本机彩排数字。
+
+### 这一节**没**证明到的事
+
+- 新 job 的 CI 侧首跑（真库档、Playwright 档）只能等 push 之后；本机彩排只证明命令序列与用例本身可过。
+- Playwright 在 runner 上的 SwiftShader 像素阈值与 `retries: 0` 的组合可能带来随机红——
+  真出现时处置是查断言的时序假设，**不是加重试**。
+- `map-visual` 本机实测 `7 passed (1.5m)`，但日志里有 preview 打给 127.0.0.1:8000 的 ECONNREFUSED：
+  那噪声不影响这 7 项（它们断的是地图与资产面，不依赖后端返回），CI 上会同样出现。
+- `ui-overlap.spec.ts`（112–115 项、17–21 分钟、需要真后端）仍在门禁外，这是决策不是漏配。
+- 只装 `--extra dev` 时整棵 `tests/` 会不会硬红（README 路径 A 那句）仍未量过——任务 #34。
