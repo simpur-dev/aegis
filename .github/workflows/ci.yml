@@ -7,7 +7,9 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # 只对 PR 抢跑：连推 main 时把正要出结论的那次 ~7 分钟跑取消掉，等于那个 commit 永远没有结论，
+  # 而后一次绿覆盖的是另一棵树。
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   gate:
@@ -16,6 +18,11 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      # 钉住哈希种子：`test_knowledge_memory.py` 的 hypothesis 用例随 PYTHONHASHSEED 抖（本机口径一直是 0），
+      # 而 mock 智能体的一处随机种子也取自 hash()。不钉就是"同一 commit 两次跑结论不同"，
+      # 再叠上 --maxfail 就会变成随机截断整场。
+      PYTHONHASHSEED: "0"
     steps:
       - uses: actions/checkout@v4
 
@@ -24,12 +31,36 @@ jobs:
         with:
           enable-caching: true
 
+      - name: 依赖锁必须先自洽
+        # 不这一步，CI 会对活 PyPI 重解，测出来的闭包可能不是镜像（deploy/Dockerfile 用 --frozen）装的闭包。
+        run: uv lock --check
+
       - name: 安装依赖
         # 各可选子系统（持久层/分析/检索/边缘/图谱/MCP 工具面）的离线单测需要真驱动才能跑起来：
         # 只装 dev 会让这些用例静默跳过，绿色 CI 等于什么都没测。
         # `iot`（aiomqtt）与 `deploy/Dockerfile` 的那串 extras 对齐：少它时 MQTT 的装配面用例只能跳过，
         # 而 `test_mqtt_wiring.py` 里有一条按部署面判定的守卫用例专门钉这一点（2026-10-13 CI 就是红在这条上）。
-        run: uv sync --extra dev --extra perf --extra postgres --extra iot --extra analytics --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp
+        run: uv sync --frozen --extra dev --extra perf --extra postgres --extra iot --extra analytics --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp
+
+      - name: 装前端源码依赖（两条上游读取器漂移守卫要用）
+        # `test_offline_tile_format.py` 里有两条守卫是读 `frontend/node_modules` 里的
+        # Cesium/pmtiles 源码来判"上游解析顺序有没有漂移"的。gate job 此前不跑 npm，
+        # 而 node_modules 又不在版本控制里 ⇒ 这两条在 CI 上永远 skip、永远不判。
+        # 本机装了就会跑，但门禁的结论必须由 CI 给出，所以在这里真装一次。
+        # 顺带把仓库根的 npm 编排依赖也装上（根 package-lock.json 此前没有任何 job 装过）。
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: npm ci（前端与仓库根）
+        # 本 job 的 defaults 是 backend，所以一律用绝对路径，别写相对 `npm ci` 装到 backend 里去。
+        run: |
+          npm --prefix "$GITHUB_WORKSPACE" ci
+          npm --prefix "$GITHUB_WORKSPACE/frontend" ci
 
       - name: 格式检查
         run: uv run ruff format --check src tests scripts
@@ -41,7 +72,11 @@ jobs:
         run: uv run mypy src
 
       - name: 单元 + 契约门禁 + 端到端
-        run: uv run pytest -q --maxfail=1
+        # 去掉 --maxfail=1：它让一次跑只暴露第一条红，本批连续三次都是"修好一条才露出下一条"
+        # （perf 断言 → MQTT 的 extras → 离线瓦的跨平台字节）。红要一次看全。
+        # 计数进产物：`-q` 叠上 pyproject addopts 的 `-q` 是 `-qq`，汇总行会被吞掉，
+        # 事后连"跑了几条、跳了几条"都无从复核。
+        run: uv run pytest -q --junitxml=reports/junit-gate.xml
 
       - name: 指标实测冒烟（Mock 智能体）
         run: uv run python -m scripts.metrics_report --rounds 6 --agents --out reports/ci-metrics.json
@@ -52,7 +87,7 @@ jobs:
         # 这些在 CI 档里是 null：不参与判定，既不会谎报达标也不会谎报退步。
         run: uv run python -m scripts.quality_gate --baseline baselines/quality_baseline.json --json reports/ci-quality.json
 
-      - name: 上传指标报告
+      - name: 上传指标报告与测试计数
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -60,7 +95,9 @@ jobs:
           path: |
             backend/reports/ci-metrics.json
             backend/reports/ci-quality.json
-          if-no-files-found: ignore
+            backend/reports/junit-gate.xml
+          # ignore 会让"报告没生成"这种半失败静默通过；这里 pytest 一定产出 junit，缺了就是出事。
+          if-no-files-found: error
 
   frontend:
     name: 前端门禁（类型 / 单测 / 构建）
@@ -72,7 +109,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # 跟 .nvmrc 走：README 的实测口径是 node v24.11.1 / npm 11.6.2，
+          # 而这里曾写死 '20'——门禁验的是没人用的那一版。
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
@@ -152,7 +191,68 @@ jobs:
         with:
           enable-caching: true
 
-      - run: uv sync --extra dev
+      - run: uv sync --frozen --extra dev
 
       - name: NATS 总线往返与持久订阅
         run: uv run pytest -q -m nats tests/integration/test_nats_bus.py
+
+  integration-postgres:
+    # 持久层是这平台唯一的事实底座（预警、台账、共享记忆、向量检索都落在这里），
+    # 而内存读视图不校验 SQL、不建扩展、也不会暴露 ST_DWithin 的单位问题——
+    # 这三个文件此前只在"我本机的临时库"上跑过，CI 全程 skip：绿色门禁从来没测过数据面。
+    name: 真实 PostgreSQL + PostGIS + pgvector 集成测试
+    runs-on: ubuntu-latest
+    needs: gate
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # 一次性容器里的口令，随运行作废；不是任何现场凭据。
+      AEGIS_TEST_PG_DSN: postgresql://aegis:ci_only_pw@127.0.0.1:5543/aegis
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 起一个只属于本次运行的库
+        # 复用 deploy/postgres/Dockerfile（postgis + pgvector 同镜像）而不是裸 postgis 官方镜像：
+        # 官方镜像没有 pgvector，`001_extensions.sql` 的 CREATE EXTENSION vector 会当场炸。
+        # 宿主端口用 5543，避开 runner 上可能已占 5432 的 service；也不用 compose up——
+        # 那会带命名卷与 restart policy，这里只需要一个跑完即弃的库进程。
+        run: |
+          docker build -t aegis-pg-ci deploy/postgres
+          docker run -d --name aegis-pg-ci \
+            -p 127.0.0.1:5543:5432 \
+            -e POSTGRES_USER=aegis -e POSTGRES_PASSWORD=ci_only_pw -e POSTGRES_DB=aegis \
+            aegis-pg-ci
+          for _ in $(seq 1 60); do
+            if docker exec aegis-pg-ci pg_isready -U aegis -d aegis >/dev/null 2>&1; then
+              echo "库就绪"; exit 0
+            fi
+            sleep 2
+          done
+          echo "PostgreSQL 未就绪" >&2
+          docker logs aegis-pg-ci >&2
+          exit 1
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-caching: true
+
+      - run: uv sync --frozen --extra dev --extra postgres
+
+      - name: 落库 / 空间算子 / 向量检索 / 台账直读
+        # 这套用例会 `TRUNCATE … RESTART IDENTITY CASCADE`（9 张表）——只在这个跑完即删的容器里发生。
+        # 本机绝不允许对着演示库跑这条（会清掉现场数据），本仓的口径是另建专用库。
+        run: |
+          uv run pytest -q \
+            tests/integration/test_persistence_postgres.py \
+            tests/integration/test_geo_endpoints_live.py \
+            tests/integration/test_accuracy_replay_live.py \
+            --junitxml=reports/junit-postgres.xml
+
+      - name: 上传真库计数
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-postgres-report
+          path: backend/reports/junit-postgres.xml
+          if-no-files-found: error

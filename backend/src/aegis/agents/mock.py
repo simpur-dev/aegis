@@ -12,6 +12,7 @@ import asyncio
 import logging
 import random
 import re
+import zlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -274,7 +275,9 @@ async def start_mock_agents(
             latency_ms=latency_ms,
             fail_rate=fail_rate,
             misbehavior=misbehavior.get(agent_type, Misbehavior.NONE),
-            seed=abs(hash(agent_type.value)) % 65_536,
+            # 种子必须与进程无关：`hash()` 受 PYTHONHASHSEED 支配，同一个提交在两台机器上会给出
+            # 不同的延迟分布——演练数字就成了机器巧合。crc32 是稳定映射。
+            seed=zlib.crc32(agent_type.value.encode()) % 65_536,
         )
         for agent_type, caps in specs
     ]
