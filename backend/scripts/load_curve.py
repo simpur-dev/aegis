@@ -392,7 +392,7 @@ def main() -> int:
     print(json.dumps(curve, ensure_ascii=False, indent=2))
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(curve, ensure_ascii=False, indent=2), encoding="utf-8")
+        args.out.write_text(json.dumps(curve, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
         print(f"[已写入] {args.out}", file=sys.stderr)
     # 有级别越阈值就非零退出：这条命令因此可以直接进 CI 当容量门禁，
     # 而不只是"跑出一份没人看的 JSON"。

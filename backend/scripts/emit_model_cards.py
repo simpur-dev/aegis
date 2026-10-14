@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     report = asyncio.run(_build_report())
     text = json.dumps(report, ensure_ascii=False, indent=2)
     if args.json_out:
-        Path(args.json_out).write_text(text, encoding="utf-8")
+        Path(args.json_out).write_text(text, encoding="utf-8", newline="\n")
     print(text)
     return 0
 

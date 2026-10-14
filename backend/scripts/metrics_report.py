@@ -441,7 +441,7 @@ async def run(
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
         print(f"\n[已写入] {out}", file=sys.stderr)
     # 只有"现场标注数据集判出不达标"才算这次报表失败；未量测不是失败，是如实的空结论
     return 1 if fatal or accuracy.indicator in {"not_met", "insufficient_sample"} else 0

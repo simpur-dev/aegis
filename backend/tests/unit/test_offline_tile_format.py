@@ -659,13 +659,49 @@ def test_cesium_quantized_mesh_offsets_have_not_drifted() -> None:
     assert "0x024b" not in text.lower(), "这版 Cesium 不再从 pos=0 读 center 了：需要先确认前导魔数口径"
 
 
-@pytest.mark.skipif(not PMTILES_SOURCE.is_file(), reason="未安装 pmtiles 源码（npm install 后才会跑）")
+@pytest.mark.skipif(not PMTILES_SOURCE.is_file(), reason="未安装 pmtiles 源码（npm ci 后才会跑）")
 def test_pmtiles_header_offsets_and_enums_have_not_drifted() -> None:
+    """字段与偏移必须**成对**钉：旧写法断 `f"{offset}" in text`，而数字 "8" 在那份源码里出现 34 次，
+    "16" 出现 8 次——随便一个数都命中，漂移守卫自己先失效了（2026-10-13 审计实算）。
+    现在钉的是 `bytesToHeader` 里那行完整形状，且要求它恰好出现一次：改名或挪偏移都会红。
+    """
     text = PMTILES_SOURCE.read_text(encoding="utf-8")
-    for offset in (8, 16, 24, 32, 56, 64, 72, 80, 88, 96, 97, 98, 99, 100, 101, 102, 118, 119, 123):
-        assert f"{offset}" in text, f"pmtiles 头解析里找不到偏移 {offset}"
-    assert "getUint8(99)" in text, "tileType 偏移变了"
-    assert "getUint8(101)" in text, "maxZoom 偏移变了"
-    assert "const HEADER_SIZE_BYTES = 127;" in text
+    u64_fields = {
+        "rootDirectoryOffset": 8,
+        "rootDirectoryLength": 16,
+        "jsonMetadataOffset": 24,
+        "jsonMetadataLength": 32,
+        "leafDirectoryOffset": 40,
+        "leafDirectoryLength": 48,
+        "tileDataOffset": 56,
+        "tileDataLength": 64,
+        "numAddressedTiles": 72,
+        "numTileEntries": 80,
+        "numTileContents": 88,
+    }
+    for field, offset in u64_fields.items():
+        needle = f"{field}: getUint64(v, {offset}),"
+        assert text.count(needle) == 1, f"pmtiles 的 {field} 不再读偏移 {offset}（应恰好一行 {needle!r}，实到 {text.count(needle)} 次）"
+
+    u8_fields = {
+        "clustered": 96,
+        "internalCompression": 97,
+        "tileCompression": 98,
+        "tileType": 99,
+        "minZoom": 100,
+        "maxZoom": 101,
+        "centerZoom": 118,
+    }
+    for field, offset in u8_fields.items():
+        needle = f"{field}: v.getUint8({offset})"
+        assert needle in text, f"pmtiles 的 {field} 偏移或读法变了（找不到 {needle!r}）"
+
+    i32_fields = {"minLon": 102, "minLat": 106, "maxLon": 110, "maxLat": 114, "centerLon": 119, "centerLat": 123}
+    for field, offset in i32_fields.items():
+        needle = f"{field}: v.getInt32({offset}, true) / 10000000,"
+        assert needle in text, f"pmtiles 的 {field} 定点量化口径变了（找不到 {needle!r}）——本仓烘焙器写的是 1e7 定点"
+
+    assert "const HEADER_SIZE_BYTES = 127;" in text, "头长度变了：127 之外的字节属于别的字段"
     assert "await source.getBytes(0, 16384)" in text, "首个块大小变了：根目录必须仍然落在里面"
-    assert "Png = 2" in text and "Gzip = 2" in text and "None = 1" in text
+    for enum in ("Png = 2", "Gzip = 2", "None = 1"):
+        assert enum in text, f"枚举值 {enum} 变了：镜像解码器里的 tileType/压缩判定要跟着改"

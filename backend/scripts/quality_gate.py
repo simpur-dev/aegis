@@ -137,7 +137,7 @@ async def _run(args: argparse.Namespace) -> int:
                 )
             )
             return 2
-        target.write_text(json.dumps(current.as_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        target.write_text(json.dumps(current.as_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     baseline = _load_baseline(args.baseline) if args.baseline else QualityMetrics()
     result = regression_gate(current, baseline)
     report = {
@@ -152,7 +152,7 @@ async def _run(args: argparse.Namespace) -> int:
         report["first_pass_ledger"] = {"source": args.usage, **breakdown}
     text = json.dumps(report, ensure_ascii=False, indent=2)
     if args.json:
-        Path(args.json).write_text(text, encoding="utf-8")
+        Path(args.json).write_text(text, encoding="utf-8", newline="\n")
     print(text)
     return 0 if result.passed else 1
 

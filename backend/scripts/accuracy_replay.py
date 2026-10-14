@@ -95,7 +95,7 @@ async def run(
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
         print(f"[已写入] {out}", file=sys.stderr)
     await store.close()
     # 达标与否决定退出码：这条命令因此能当回放门禁用，而不是"跑出一份没人看的 JSON"。
