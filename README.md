@@ -357,7 +357,10 @@ uv run python -m scripts.zenoh_poc                  # 站端↔网关弱网链�
 uv run python -m scripts.load_curve --levels 1,10,30,60 --duration 25s
                                                     # 并发曲线：自己起服务、按梯度跑 Locust、报出拐点
 uv run python -m scripts.emit_model_cards          # 各智能体模型卡片（模型/Prompt 版本/评测分；未评测如实 None）
-uv run python -m scripts.quality_gate              # 质量表回归门禁：任一指标较基线回退即红（CI 同款；首过率需 --usage 台账）
+uv run python -m scripts.quality_gate --baseline baselines/quality_baseline.json
+                                                    # 质量表回归门禁：任一指标较基线回退即红。
+                                                    # `--baseline` 不能省：不带它，基线缺席＝无判定（CI 那句带着它）
+                                                    # 首过率还要真调用台账：加 --usage <gateway-usage.json>，无台账＝该列 None
 AEGIS_PG_DSN=postgresql://<user>:<password>@127.0.0.1:5432/<db> \
 uv run python -m scripts.load_curve --profile deployed --levels 1,10,30,60 --duration 25s
                                                     # 同一套曲线换到真 NATS JetStream + 真 PostgreSQL 上量。

@@ -13,9 +13,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # （analytics 缺 → 分钟物化不写；graph 缺 → 案例知识只有内存兜底；retrieval 缺 → 密集/重排腿不可用；
 #  mcp 缺 → `/api/v1/integrations` 的 mcp 行读成 driver=absent，工具面只在 REST 兼容面上）。
 # edge（Zenoh）与 perf（locust/schemathesis）不在这里：前者跑在站端，后者只在 CI 里跑。
+# seekdb（pymysql）在这里：`.env.example` 把 `AEGIS_RETRIEVAL_INDEX_BACKEND=seekdb` 交给部署面选，
+# 容器里没有驱动就等于给运维一个"打开必抛"的开关（缺依赖时 retrieval/seekdb.py 抛
+# "seekdb 检索需要 pymysql 依赖"）——一个纯 Python 驱动，几十 KB，不值得让它成为现场惊喜。
 COPY backend/pyproject.toml backend/uv.lock ./backend/
 RUN cd backend && uv sync --frozen --no-dev \
-    --extra postgres --extra iot --extra analytics --extra graph --extra retrieval --extra mcp
+    --extra postgres --extra iot --extra analytics --extra graph --extra retrieval --extra seekdb --extra mcp
 
 COPY backend ./backend
 COPY contracts /contracts
