@@ -20,6 +20,5 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Selector 策略
 def test_前面的用例没把事件循环策略换走() -> None:
     policy = type(asyncio.get_event_loop_policy()).__name__
     assert policy != "WindowsSelectorEventLoopPolicy", (
-        f"当前策略是 {policy}：某个文件在 import 期换了全局策略且没还原，"
-        "此后同进程内每个用例跑的都不是默认循环（时序类结论的基线变了）"
+        f"当前策略是 {policy}：某个文件在 import 期换了全局策略且没还原，此后同进程内每个用例跑的都不是默认循环（时序类结论的基线变了）"
     )
