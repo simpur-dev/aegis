@@ -119,6 +119,44 @@ jobs:
       - run: npm run test
       - run: npm run build
 
+  frontend-e2e:
+    # Playwright 真浏览器档此前只在本地手工跑过（docs/REPORT.md 有"71 项通过"的记录），云端从不挡合并——
+    # 地图与重叠类回归因此可以静默坏掉。第一阶段只纳 `map-visual.spec.ts`：
+    # 它零后端依赖（webServer 自己 build + `vite preview`，且反向断言"请求源只剩本机 origin"），
+    # 7 项 ~17.5s，加上装浏览器约 5–8 分钟。本机 2026-10-14 实测：`7 passed (1.5m)`，
+    # 且 preview 的 /api 代理在没有后端时会往 127.0.0.1:8000 留下 ECONNREFUSED 日志——
+    # 那是日志噪声不是失败原因，这 7 项断的是地图与资产面，没有一条依赖后端返回。
+    # 不纳 `ui-overlap.spec.ts` 是**决策不是漏配**：它 beforeAll 直打真后端 `AEGIS_API_TARGET`、
+    # 单线程 17–21 分钟、且已知有一项靠自适应重试（GPU 抢占时 leafCount 漂）。要进门禁得先起后端并拆组，
+    # 那属于另一件事，见 docs/REPORT.md 与本文件末尾的说明。
+    name: 前端真浏览器门禁（Playwright / 地图可视）
+    runs-on: ubuntu-latest
+    needs: frontend
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # --with-deps 装的是 headless shell 需要的系统库；runner 上没有真 GPU，配置里刻意走 SwiftShader。
+      - run: npx playwright install --with-deps chromium
+      - name: 地图可视 e2e
+        # 不给 retries：`playwright.config.ts` 里 retries=0 是有意的——一次重试会把"红得有道理"
+        # 变成"绿得没道理"。这一档如果开始出现随机红，处置方式是查断言的时序假设，不是加重试。
+        run: npx playwright test e2e/map-visual.spec.ts
+      - name: 失败时留现场
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-map-visual
+          path: frontend/test-results/
+          if-no-files-found: warn
+
   deploy-artifacts:
     # 部署面的工件此前只有人手工跑过一次：compose 能不能解析、告警规则与分发配置过不过校验。
     # "文件存在"和"链路能起"是两件事——这条 job 把它们钉成构建失败，而不是交付后现场才发现。
