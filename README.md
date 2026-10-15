@@ -102,6 +102,7 @@ cd ../frontend && npm install
 #    mock 的随机种子也曾随进程变）、`--junitxml` 留计数（`-q` 叠 addopts 的 `-q` 是 `-qq`，汇总行会被吞）。
 #    只装 dev 时 integration 里 2 个无环境门的文件会真跑、其余按缺 DSN/URL 自行跳过（这是实测，不是推断）。
 cd ../backend && PYTHONHASHSEED=0 uv run pytest -q --junitxml=reports/junit-local.xml
+uv run python scripts/ci_junit_guard.py reports/junit-local.xml   # 计数守卫：全体 skip 也算红（CI 三条 job 都跑它）
 
 # 4) 前端类型检查与单测
 cd ../frontend && npm run typecheck && npm run test

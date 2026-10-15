@@ -2370,3 +2370,43 @@ mode 也没重测（README 那张排障表里 `perceive/feedback = local` 那一
 `19.538 ms`、`0.820`、在册五条、`flush_行数=7` 都从文件里重读得到）；而 **`agent_memory` 那 1 行
 是在 scratch 容器拆除前用 psql 读回的**，库与容器已按运维要求删除，这一条现在只能靠本段的转述，
 复现路径是重起 NATS + scratch Postgres 再跑同一条上报链。修前那次 0 行同理（出自 n=1 冒烟的同一库）。
+
+## CI-3 计数守卫：绿必须自带"我跑过几条"（2026-10-15）
+
+**动因来自运行 184 自己**。那次推上去 4 个提交，六个 job 全绿——`integration-nats` 是它生平第一次绿
+（此前最近 20 次运行成功 0 次），`integration-postgres` 也是路径修好后的第一次绿。但我抠各步时长时
+读到了可疑的数：
+
+| 步骤 | 时长 |
+| --- | --- |
+| postgres｜起一个只属于本次运行的库（含 `docker build` postgis+pgvector 基础镜像） | 24s |
+| postgres｜`uv sync --frozen --extra dev --extra postgres` | 1s |
+| postgres｜三条真库文件的 pytest | **7s** |
+| nats｜`uv sync --frozen --extra dev` | 0s |
+| nats｜`pytest -m nats tests/integration/test_nats_bus.py` | 6s |
+
+本机 `--collect-only` 对着同一批文件数：`test_nats_bus.py` 4 条、`test_persistence_postgres.py` 24 条、
+`test_geo_endpoints_live.py` 8 条。7s 跑三十来条真库用例不是不可能，但**我没法证实**：日志与产物下载
+要 OAuth（本机 git 凭证拿去调 API 是 401），而公开 jobs API 只给得出"步骤成功 + 产物文件存在"。
+问题就在这儿——环境变量名一旦打错，`skipif` 会让整批用例跳过，pytest 退出码 0、junit 照样生成、
+`if-no-files-found: error` 照样过：**全体 skip 与真的测完，在外部看是同一种绿**。
+
+**做法**：判据落进仓里，而不是留在人眼里。
+
+- `backend/scripts/ci_junit_guard.py`：读 junit 的 `testsuite` 属性，`ran = tests - skipped`，
+  `ran <= 0` 即红；产物缺失、读不出结构、畸形 XML 一律算不合格（不是"无声通过"）。
+- 接进三条 job：`gate`（核对 `junit-gate.xml`）、`integration-postgres`（核对既有产物）、
+  `integration-nats`——后者原本连 junit 都没有，这次补上 `--junitxml=reports/junit-nats.xml`
+  与产物上传（`if-no-files-found: error`），守卫才有东西可核。
+- README 第 3 步的本机命令同步加一句守卫，保持"本机与 CI 同范围"那句承诺不是空话。
+- `tests/unit/test_ci_junit_guard.py`：6 条判据（全体 skip / 零收集 / 真跑过 / 产物缺失 /
+  畸形 XML / `testsuites` 包裹结构）+ 2 条 CI 接线（三条 job 各恰好一步守卫、核对的是自己那份产物；
+  被守卫的每条 pytest 步骤都必须产出对应 junit）。
+
+**判定力实测**：把守卫里 `ran = tests - skipped` 改成 `ran = tests` → 红"全体skip必须红"那一条；
+从 `ci.yml` 里整段摘掉 postgres 的守卫步骤 → 红接线那一条；两次都按备份 md5 复位后回绿。
+本机全量：`tests=2970 skipped=85 ran=2885 failures=0 errors=0`，守卫退出码 0，全树 0 失败。
+
+**这批还没证到的**：守卫在 CI 上的实际效果——184 早于它，要等下一次带它跑的 CI 才算验；
+两条集成 job 的真实计数仍未读到（缺一个能读 Actions 日志/产物的令牌，不是代码问题）；
+分支保护依旧没开，所以"红挡合并"这件事仍然不存在。

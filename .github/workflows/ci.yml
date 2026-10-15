@@ -78,6 +78,11 @@ jobs:
         # 事后连"跑了几条、跳了几条"都无从复核。
         run: uv run pytest -q --junitxml=reports/junit-gate.xml
 
+      - name: 计数守卫（绿必须证明自己跑过用例）
+        # 环境变量名一旦打错，`skipif` 会让整批用例跳过而 job 照绿——"文件存在 + 无失败"证不了这件事，
+        # 所以把判据落到仓里：收集数减去跳过数必须 > 0。反例由 tests/unit/test_ci_junit_guard.py 钉住。
+        run: uv run python scripts/ci_junit_guard.py reports/junit-gate.xml
+
       - name: 指标实测冒烟（Mock 智能体）
         run: uv run python -m scripts.metrics_report --rounds 6 --agents --out reports/ci-metrics.json
 
@@ -241,7 +246,19 @@ jobs:
       - run: uv sync --frozen --extra dev
 
       - name: NATS 总线往返与持久订阅
-        run: uv run pytest -q -m nats tests/integration/test_nats_bus.py
+        # 计数进产物 + 守卫：这条 job 在 2026-10-15 之前成功 0 次，此后任何"绿"都得能自证跑过几条。
+        run: uv run pytest -q -m nats tests/integration/test_nats_bus.py --junitxml=reports/junit-nats.xml
+
+      - name: 计数守卫（绿必须证明自己跑过用例）
+        run: uv run python scripts/ci_junit_guard.py reports/junit-nats.xml
+
+      - name: 上传总线计数
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-nats-report
+          path: backend/reports/junit-nats.xml
+          if-no-files-found: error
 
   integration-postgres:
     # 持久层是这平台唯一的事实底座（预警、台账、共享记忆、向量检索都落在这里），
@@ -299,6 +316,11 @@ jobs:
             tests/integration/test_geo_endpoints_live.py \
             tests/integration/test_accuracy_replay_live.py \
             --junitxml=reports/junit-postgres.xml
+
+      - name: 计数守卫（七秒的绿也要报数）
+        # 2026-10-15 的运行 184 里这一步只用了 7s，而公开 API 只能证明"文件在、没失败"；
+        # 全体 skip 同样满足那两条，所以计数判据必须由 job 自己执行。
+        run: uv run python scripts/ci_junit_guard.py reports/junit-postgres.xml
 
       - name: 上传真库计数
         if: always()
