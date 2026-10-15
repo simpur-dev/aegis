@@ -208,7 +208,7 @@ docker compose --env-file .env -f deploy/docker-compose.yml exec backend python 
 | `memory` 行 | `driver=postgres` | `memory` ⇒ 共享记忆命名空间所在库没接上（007 迁移没跑到） |
 | `delivery` / `tracing` 行 | `mock` / `local` | 这两条默认就不是真的；触达时间与链路取证都属于演练口径 |
 | psql 扩展 | `postgis 3.5.2`、`vector 0.8.6` | 报 `extension not available` ⇒ 镜像不是本仓 `deploy/postgres` 构建出来的（2.3 第 5 条） |
-| 链路各段 mode | 容器内 `POST /api/v1/reports` 实测：`assess/plan/execute = agent`（53/1903/3313ms），`perceive/feedback = local` | 全 `local` 而 `/api/v1/agents` 又 `online=0` ⇒ 智能体没注册或已停跳（看下一行） |
+| 链路各段 mode | 容器内 `POST /api/v1/reports` 实测：`assess/plan/execute = agent`（53/1903/3313ms），`perceive/feedback = local`——这一档是 2026-10-15 反馈腿派发接通**之前**的形状。接通后本机真栈（NATS + scratch Postgres + real 运行时，一条上报链）从库里读回：`feedback = agent`、19.538ms、note `触达回执已归档｜效果分 0.820｜归因腿 local｜建议 none`，同轮 `agent_memory` 落 1 行 `lesson`（refs 挂本次 `warning_id`）；该轮 `assess/plan/execute` 因供应商 503 落本地轨 | 全 `local` 而 `/api/v1/agents` 又 `online=0` ⇒ 智能体没注册或已停跳（看下一行）；只有 `feedback=local` 而别段是 `agent` ⇒ 反馈内环报错或归因不合契约，去看 `degradations` 里"反馈…"那一条 |
 | `mcp` 行 | 模板默认 `AEGIS_MCP_ENABLED=false` ⇒ `driver=disabled`，此时 `/mcp/` 是 404（这一格读的是模板与装配代码，容器形态本轮未重测） | 改成 true 后这一行应为 `streamable-http`；读到 `absent` ⇒ 镜像里的 extras 少了 `mcp`（`deploy/Dockerfile` 那行 `uv sync` 会整表替换 extras，列漏一个就静默降级） |
 | 智能体注册 | `GET /api/v1/agents` 实测回 `online=5`、id 是 `assess.mock01` 等五条 | 后缀就是档位：`.mock01` 是替身、`.real01` 是真内环；`online=0` 而 items 仍有五条 ⇒ 心跳停更但条目在册（见 2.3 第 8 条） |
 

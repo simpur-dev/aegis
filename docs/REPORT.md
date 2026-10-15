@@ -2317,3 +2317,51 @@ broker 没开时整模块被 skip，模块级 autouse fixture 一次都不运行
 （任务 #41）。手能证到的只有单元档：假网关按脚本抛异常，断的是内环合成与链路记账。
 另外 `double_blind` 现在只有链路读一次做降级留痕，报表与前端还没有它的位置（#32 同族）。
 方案要求的"并行第二评估"也没动——两条串行腿的墙钟代价依旧。
+
+## MB-6 反馈闭环接上派发（2026-10-15）
+
+**这个洞的形状不是"没实现"，是"实现了没人叫"**：`FeedbackAgent` 五件套齐全（效果分确定性口径、
+LLM 归因、阈值建议 `pending_human_review`、教训写共享记忆、LLM 缺席回落规则摘要），也确实在册
+（真栈冒烟的总线视角 `online=5` 含 `feedback.real01`），但链路只 dispatch `assess/plan/execute`，
+反馈段是 `publish_to(subjects.ops("feedback","status"))` 一条广播——**它订阅的是 `agent.feedback.in`**。
+所以 §3.5 那三件事在真栈上发生 0 次；2026-10-15 从 scratch 库读回 `select count(*) from agent_memory`
+= **0 行**，而 `tests/unit/test_feedback_agent.py` 全是直调 `handle()`，一片绿。
+
+**改法**（只动消费者，内环一行没改）：
+
+- 链路在汇总触达回执后派发一次 `Action.FEEDBACK_ATTRIBUTE`（新增动作，与广播用的 `feedback.status`
+  分开——混用一个动作时"谁该回这条"没有判据），载荷带 `warning_id / region_code / reach_stats
+  {total,delivered,failed,pending} / response_state`。
+- 采纳判据写死在链路侧：`effect_score` 缺席、不是数、或不在 0—1 内 → 整份弃用并记一条
+  `反馈结论不合契约，按平台回执归档`；宁可这一段没有归因，也不记一个编出来的分数。
+- 采纳后三处可见：`chain_runs.stages[feedback]` 的 `mode=agent` + note（效果分/归因腿/建议状态）、
+  段上的 `model_info`、以及 `ops.feedback.status` 那条事件本身带上归因正文。
+- 凭证不冒领：`decided_by=local`（网关在场但不可用、内环走规则摘要）时**不记**模型凭证，
+  与"规划回落本地剧本不记"是同一条判据。
+- 失败只塌自己：反馈段排在预警已发布之后，`AegisError` 收口成一条 `反馈归因降级: …`，
+  链的 `ok` 与已发布预警都不动（与上一条 MB-7c 同一条判据）。
+
+**证据**：`tests/contract/test_feedback_closed_loop.py` 7 条，跑真内存总线 + 真内环 + 真链路。
+基线 `rc=0 red=0`；变异逐条只打红该打的那一条（外壳自带 rc 与红条计数，不看 `-qq` 的空摘要）：
+
+| 变异 | 红条 | 实测 |
+| --- | --- | --- |
+| M1 撤掉派发（chain 回 HEAD） | 台账/弃用/越界/隔离/不冒领 共 5 条 | 5 |
+| M2 摘掉 `decided_by` 守卫 | 网关不可用那一档 | 1 |
+| M3 失败不再收口（直接上抛） | 隔离那条 | 1 |
+| M4 去掉效果分 0—1 范围守卫 | 越界那条 | 1 |
+| M5 段上不记 `model_info` | 台账那条 | 1 |
+| M6 ops 事件不带归因 | 台账那条 | 1 |
+
+M2 第一次是**测不出来**的：那档用例当时用 `llm=None`，而 `llm=None` 时本来就取不到凭证，守卫删掉
+照样绿。换成"网关在场但 `available=False`"才构造出真冒领场景——这条记下来是因为它说明
+"我加了反向对照"和"反向对照真的能红"是两件事。
+
+**仍欠**：阈值建议只到 `pending_human_review` 这一格，"人工确认 → calibration 复用"那条落地还没接
+（任务 MB-6 后半截，与 #16 同一族）；前端与报表都还看不见归因；`feedback` 段在**容器形态**下的
+mode 也没重测（README 那张排障表里 `perceive/feedback = local` 那一档是派发接通之前的形状）。
+真栈派发本身已于 2026-10-15 证到：本机进程 + NATS + scratch Postgres + `--runtime real` 跑一条上报链，
+从库里读回 `stages` 的 feedback 段 `mode=agent`、`latency_ms=19.538`、note `触达回执已归档｜效果分
+0.820｜归因腿 local｜建议 none`，且 `agent_memory` 从修前的 0 行变成 1 行 `lesson`（refs 挂本次
+`warning_id`）。这一档走的是规则摘要腿（供应商 503），所以段上不带模型凭证——它证的是"派发到位、
+教训入库、结论入账"，证不到归因正文的质量；后者仍随 #41 等 DeepSeek 恢复后取。

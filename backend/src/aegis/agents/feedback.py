@@ -8,7 +8,10 @@ R9 的落点，也是"预警反馈闭环"的智能体侧一半。诚实边界（
   本智能体不改阈值。
 - 教训经注入的 MemoryService 写入共享命名空间（§4.3 的第二个消费者）；写失败只降级不断链。
 
-作为独立内环实现（与 assess/plan 同法），挂总线、消费平台真实回执流的集成属 MB。
+集成现状：链路在回执汇总后向 `agent.feedback.in` 派发一次 `feedback.attribute`（`pipeline/chain.py`
+的 `_feedback`），采纳的归因会带进段台账与 ops 状态事件；失败或应答不合契约时按降级留痕、不改结论。
+总线级的派发与消费由 `tests/contract/test_feedback_closed_loop.py` 钉住——这条腿曾经只广播不派发，
+于是本内环在生产链上 0 次发生，而单测直调 `handle()` 看不出来。
 """
 
 from __future__ import annotations

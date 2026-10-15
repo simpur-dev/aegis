@@ -26,7 +26,8 @@ HazardResponseChain.process(readings)
   ② assess    : dispatch assess.hazard ──▶ 智能体定级 ──失败/超时──▶ RiskEngine 本地定级
   ③ plan      : dispatch plan.stu        ──▶ 智能体拆解   ──失败/超时──▶ TaskParser 剧本拆解
   ④ execute   : WarningService 生成预警 ──▶ dispatch execute.warn 或 DeliveryDispatcher 多通道并发下发
-  ⑤ feedback  : 汇总触达回执 → ops.feedback.status（反馈智能体可订阅）
+  ⑤ feedback  : dispatch feedback.attribute ──▶ 智能体归因（阈值建议 + 教训写记忆）──失败/超时──▶ 只归档回执
+                两种结果都发 ops.feedback.status；采纳时那条事件与段台账一起带上效果分与归因正文
      │
      ▼
 PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时延）+ Prometheus
@@ -138,11 +139,12 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 | §4.2 D4 MCP 工具层 v1 | 部分落地（工具面 + **assess 一段**的取数已切；其余四段与沙盒消费方未接） | 阶段 1 服务端：`mcp>=2.3` 作可选 extra（CI 与镜像都列了）、清单单一真源、默认面 4 项只读、写工具两把钥匙、`/mcp/` 三态（404/503/streamable-http）、鉴权与数据 API 同面。阶段 2 取数切换：`AEGIS_AGENT_CONTEXT_FACE=auto\|rest\|mcp`（`auto` 跟着部署形态走，点名 `mcp` 而没有工具面则启动当场失败），`agents/mcp_context.py` 与 `rest_context.py` 复用同一份参数推导、同一条"什么算降级"的判据，状态行 `detail.agent_context_face` 分别说清"面开着"与"取数切过去了"。真栈两档对照见 REPORT MB-6（face=mcp 时工具面台账 `calls={'cases.search':1}`、face=rest 时 `calls={}`）；方案那条过门标准"MCP 切换后门禁复绿"= **已达**。**还欠的**：方案那张消费方表里 perceive/plan 也要经 `cases.search`、沙盒经 `simulation.run`，如今只有研判切了；写工具与容器/第三方客户端形态未取证 |
 | §3.2 assess 双盲仲裁 | 部分落地 | 触发/一致上调/仲裁/跳过留痕都在，但两次评估是**串行**而非方案的"并行"；`disagreement` 写进信封后链路丢弃；**增强腿失败已收口在增强腿**（MB-7c，2026-10-15）：第二遍或仲裁任一异常都不再穿出 `handle()`，第一遍结论照用、状态写进 `double_blind=failed_<leg>:<异常名>`，链路把它转成一条看得见的降级记录进 `chain_runs.degradations`；关键路径（第一遍定级）失败仍按原语义上抛交规则降级轨 |
 | §3.4 execute 三分支文案 | 已落地 | `audience_copies` 入库（`006` 迁移）；发送权仍在平台交付腿 |
+| §3.5 feedback 归因闭环 | 部分落地（派发于 2026-10-15 接上） | 链路在汇总触达回执后 dispatch `feedback.attribute`，采纳的归因/效果分/阈值建议一起进段台账与 `ops.feedback.status`，教训由内环写共享记忆。修前的形状是"五个内环都在册、feedback 一个请求也收不到"：该段只广播不派发，于是 §3.5 的三件事在真栈上发生 0 次（2026-10-15 真库读回 `agent_memory` 里 lesson 恒 0 行），而单测直调 `handle()` 全绿看不出来。判据：效果分缺席或不在 0—1 内整份弃用并留痕；`decided_by=local` 那一程不记模型凭证；反馈腿失败只塌自己，已发布的预警不收回。**仍欠**：阈值建议只到 `pending_human_review`，"人工确认→calibration 复用"这条落地还没接（任务 MB-6 后半截），前端也看不见归因 |
 | §3.6/§4.4 推演沙盒 | 部分落地 | `services/simulation.py` 有 K×T/概率矩阵/超限降 K；**角色只是四个字符串、无 LLM**，DAG 节点未换成沙盒，前端无报告页 |
 | §4.7 assistant 意图解构 | 部分落地 | 多步分解在 `/assistant/plan`；`/chat` 仍是词表优先，前端没调 plan |
 | §4.8.1 服务令牌 | 已落地（默认关是配置项，不是缺口） | 数据 API 与 MCP 工具面共用同一个 `_presented_token`，认 `X-Aegis-Token` 与 `Authorization: Bearer` 两种头（头名不一致曾让"配了令牌"与"真的在拦"脱钩，那正是这一节的原始事故）；**智能体真在请求的读端点也进了闸**（`/api/v1/cases/recall`、`/api/v1/retrieval/search`、`/api/v1/memory/shared` 读写删、新增的审计直读面），11 条变异逐条证明"摘掉任一端点的鉴权都会红"。仍欠一件：Web 端不携凭据，所以开令牌的部署里数据面板会 401（README 2.3 第 11 条） |
 | §4.5 评测服务与金标集 | 部分落地 | 门禁与出口在（`scripts/quality_gate.py`，`ci.yml` 跑）；表已加第五列**结构化输出首过率**并用真 DeepSeek 实测入基线（0.7838，按 task 分开看才是能行动的那张表）；**另三列仍为 null**：无 `eval/judge.py`、无金标数据 |
-| §4.6 D7 编排归一（chain 退役） | 未开工 | `pipeline/chain.py` 773 行仍在（本机实测行数），无"标准五段"模板、无 parity harness；触达段两处实现口径不一 |
+| §4.6 D7 编排归一（chain 退役） | 未开工 | `pipeline/chain.py` 859 行仍在（2026-10-15 本机实测行数；反馈腿接上派发后又长了 86 行——退役前它一直在长），无"标准五段"模板、无 parity harness；触达段两处实现口径不一 |
 | MC 模型线（QLoRA/GPTQ/训练集导出/对照实验/论文专利） | 未开工 | 无任何落点 |
 
 一句话（口径与上表逐行对齐，不另算一套）：**MA 已收口**（欠的那个"结构化输出首过率"于 2026-10-12 实测补齐，

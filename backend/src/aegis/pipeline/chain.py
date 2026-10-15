@@ -384,9 +384,24 @@ class HazardResponseChain:
 
         async with instrumentation.span("stage_feedback_ms", trace_id=trace) as feedback_span:
             with self._tracer.span("stage_feedback_ms", trace_id=trace) as sp:
-                await self._feedback(warning, trace)
+                feedback = await self._feedback(warning, trace, result)
             instrumentation.set_attributes(feedback_span, span_attrs={"aegis.reach_expected": warning is not None})
-        result.stages.append(StageResult("feedback", "local", True, sp.finished_ms or 0.0, "触达回执已归档"))
+        result.stages.append(
+            StageResult(
+                "feedback",
+                "agent" if feedback is not None else "local",
+                True,
+                sp.finished_ms or 0.0,
+                # 归因结论要点进台账：`chain_runs.stages` 是事后唯一还能查到的地方
+                (
+                    f"触达回执已归档｜效果分 {feedback['effect_score']:.3f}｜归因腿 {feedback['decided_by']}｜"
+                    f"建议 {feedback['suggestion_status']}"
+                    if feedback is not None
+                    else "触达回执已归档"
+                ),
+                model_info=result.stage_models.get("feedback"),
+            )
+        )
         return await self._finish(result)
 
     async def process_many(self, grouped: dict[str, list[TelemetryReading]]) -> list[ChainResult]:
@@ -751,27 +766,93 @@ class HazardResponseChain:
         )
         await self._gateway.publish_to(subjects.alert(int(record.risk_level), record.region_codes[0]), event)
 
-    async def _feedback(self, record: WarningRecord | None, trace: str) -> None:
+    async def _feedback(self, record: WarningRecord | None, trace: str, result: ChainResult) -> dict[str, Any] | None:
+        """回执汇总 → 派发给反馈智能体归因 → 状态进 ops 流。返回被采纳的归因（未采纳给 `None`）。
+
+        §3.5 的归因、阈值建议、教训写记忆都发生在 FeedbackAgent 内环里。此前这一段只广播不派发，
+        于是智能体在册却永远等不到请求，那三件事在真栈上发生 0 次——本方法补上派发与消费。
+        """
         if record is None:
-            return
-        delivered = sum(1 for d in record.deliveries if d.status in ("delivered", "retried"))
+            return None
+        deliveries = record.deliveries
+        delivered = sum(1 for d in deliveries if d.status in ("delivered", "retried"))
+        failed = sum(1 for d in deliveries if d.status == "failed")
+        reach_stats = {
+            "channels": len(deliveries),
+            "total": len(deliveries),
+            "delivered": delivered,
+            "failed": failed,
+            "pending": max(0, len(deliveries) - delivered - failed),
+            "reach_seconds": record.reach_seconds(),
+        }
+        response_state = "pending" if delivered else "unknown"
+        attribution: dict[str, Any] | None = None
+        if self._registry.pick(AgentType.FEEDBACK.value, "reach_track") is not None:
+            try:
+                response = await self._gateway.dispatch(
+                    AgentType.FEEDBACK,
+                    Action.FEEDBACK_ATTRIBUTE,
+                    {
+                        "warning_id": record.warning_id,
+                        "region_code": record.region_codes[0] if record.region_codes else "",
+                        "reach_stats": reach_stats,
+                        "response_state": response_state,
+                    },
+                    trace_id=trace,
+                    capability="reach_track",
+                    deadline_ms=self._agent_txn_ms,
+                    ttl_ms=self._agent_txn_ttl_ms,
+                )
+            except AegisError as exc:
+                # 反馈段排在预警已发布之后：它失败只能塌自己这一腿，不许把已经发出去的预警拖回降级
+                result.degradations.append(f"反馈归因降级: {exc.message}")
+            else:
+                parsed = self._parse_agent_feedback(response.payload)
+                if parsed is None:
+                    result.degradations.append("反馈结论不合契约，按平台回执归档")
+                else:
+                    attribution = parsed
+                    # 凭证只跟着真正由模型产出的归因走：`decided_by=local` 时那段文字是规则摘要，
+                    # 记到模型头上与"规划回落本地剧本不记凭证"是同一条判据。
+                    if parsed["decided_by"] == "agent" and (receipt := _model_receipt(response)) is not None:
+                        result.stage_models["feedback"] = receipt
+        payload: dict[str, Any] = {
+            "warning_id": record.warning_id,
+            "reach_stats": reach_stats,
+            "response_state": response_state,
+            "observed_at": now_iso(),
+        }
+        if attribution is not None:
+            payload.update(attribution)
         event = make_event(
             source="platform.feedback",
             action=Action.FEEDBACK_STATUS.value,
             trace_id=trace,
             target="platform.feedback_sink",
-            payload={
-                "warning_id": record.warning_id,
-                "reach_stats": {
-                    "channels": len(record.deliveries),
-                    "delivered": delivered,
-                    "reach_seconds": record.reach_seconds(),
-                },
-                "response_state": "pending" if delivered else "unknown",
-                "observed_at": now_iso(),
-            },
+            payload=payload,
         )
         await self._gateway.publish_to(subjects.ops("feedback", "status"), event)
+        return attribution
+
+    @staticmethod
+    def _parse_agent_feedback(payload: dict[str, Any]) -> dict[str, Any] | None:
+        """只收契约内的字段；效果分不是 0—1 的数就整份弃用（宁可没有归因，不要编一个）。"""
+        try:
+            score = float(payload["effect_score"])
+            text = str(payload["attribution"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not 0.0 <= score <= 1.0 or not text:
+            return None
+        return {
+            "effect_score": round(score, 3),
+            "attribution": text[:500],
+            "unreached_audiences": [str(item) for item in (payload.get("unreached_audiences") or [])][:16],
+            "lag_stage": str(payload.get("lag_stage", ""))[:120],
+            "threshold_suggestion": str(payload.get("threshold_suggestion", ""))[:500],
+            "suggestion_status": str(payload.get("suggestion_status", "none")),
+            "decided_by": str(payload.get("decided_by", "local")),
+        }
 
     @property
     def warnings(self) -> dict[str, WarningRecord]:

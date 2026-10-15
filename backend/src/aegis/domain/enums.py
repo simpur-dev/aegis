@@ -74,6 +74,9 @@ class Action(StrEnum):
     EXECUTE_ACK = "execute.ack"
     # 反馈
     FEEDBACK_STATUS = "feedback.status"
+    #: 链路 → 反馈智能体的归因请求（回执汇总后发一次）。与 `feedback.status`（平台往 ops 流归档的
+    #: 状态事件）分开口径：前者要应答、后者只是广播，混用一个动作会让"谁该回这条"没有判据。
+    FEEDBACK_ATTRIBUTE = "feedback.attribute"
     # 框架
     ERROR_RAISE = "error.raise"
     AGENT_REGISTER = "agent.register"
