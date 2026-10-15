@@ -29,7 +29,7 @@ import type { DefinitionSummary } from '@/api/workflow'
 import type { NodeProps } from '@vue-flow/core'
 import { MAX_ATTEMPTS, MAX_BACKOFF_MS, NODE_SPECS, type FlowNodeData, type NodeCategory, type NodeType } from '@/utils/graph'
 import { installUnsavedGuard } from '@/components/workflow/confirmDiscard'
-import { backendNodeTypes, readRepoFile } from '@/testing/repoSource'
+import { backendInternalNodeTypes, backendNodeTypes, backendPanelNodeTypes, readRepoFile } from '@/testing/repoSource'
 
 /**
  * 后端节点类型从 `backend/src/aegis/workflow/nodes.py` 现解析，不在前端抄一份清单：
@@ -77,10 +77,24 @@ describe('节点类型注册表与后端对齐', () => {
     expect(NODE_SPECS).toHaveProperty('degrade_to_rule')
   })
 
-  it('面板分组展开后仍是同一集合（四类卡片组件全覆盖）', () => {
-    expect(PALETTE_GROUPS.flatMap((group) => group.types).sort()).toEqual([...BACKEND_NODE_TYPES].sort())
+  it('面板分组展开后仍是后端的可拖集合（内部原语不进面板，四类卡片组件全覆盖）', () => {
+    expect(PALETTE_GROUPS.flatMap((group) => group.types).sort()).toEqual(backendPanelNodeTypes().sort())
     expect(Object.keys(CATEGORY_LABELS).sort()).toEqual((Object.keys(WORKFLOW_NODE_TYPES) as NodeCategory[]).sort())
     expect(PALETTE_GROUPS.map((group) => group.category)).toEqual(['io', 'logic', 'intelligence', 'human'])
+  })
+
+  it('镜像里标了 internal 的类型与后端一字不差：谁被挡在面板外，两端得说同一句话', () => {
+    /**
+     * 后端把 `chain_stage` 设成内部原语（它要的是链路盘面，从画布拖出来必然失败），
+     * 前端镜像必须同时知道两件事：这个类型存在（画布/检查器要能画它、校验它），
+     * 以及它不可拖（面板里不该出现）。少任何一半，症状都是"前端说这张图合法、后端拒收"。
+     */
+    const mirrored = (Object.keys(NODE_SPECS) as NodeType[]).filter((type) => NODE_SPECS[type].internal === true).sort()
+    expect(mirrored).toEqual(backendInternalNodeTypes())
+    expect(mirrored, '内部原语应当确实存在于后端注册表').not.toEqual([])
+    const draggable = PALETTE_GROUPS.flatMap((group) => group.types)
+    for (const type of mirrored) expect(draggable, `${type} 是内部原语，不该出现在面板里`).not.toContain(type)
+    expect(draggable).toContain('branch')
   })
 
   /**
@@ -163,7 +177,7 @@ describe('NodeShell 共用外框', () => {
   })
 })
 
-describe('类别卡片组件（16 类 → 4 个组件）', () => {
+describe('类别卡片组件（按类别分卡，4 个组件覆盖全部类型）', () => {
   it('io 卡片把标量配置渲染成摘要条', () => {
     const wrapper = mount(NodeIo, { global: HANDLE_STUB, props: nodeProps(cardData('data_fetch')) })
     const shell = wrapper.findComponent(NodeShell)

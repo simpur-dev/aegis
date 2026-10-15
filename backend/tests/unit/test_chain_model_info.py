@@ -19,6 +19,7 @@ from aegis.domain.messages import ModelInfo, TelemetryReading, make_request, now
 from aegis.persistence import rows
 from aegis.pipeline.chain import HazardResponseChain
 from aegis.pipeline.result import ChainResult, StageResult, model_receipt
+from aegis.pipeline.stages import HazardStages
 
 REGION = "540121"
 TRACE = "trc_" + "0" * 16
@@ -87,10 +88,12 @@ class FakeGateway:
 def chain_with(response: Any | None) -> HazardResponseChain:
     present = {"assess"} if response is not None else set()
     return HazardResponseChain(
-        gateway=FakeGateway(response),  # type: ignore[arg-type]
-        registry=FakeRegistry(present),  # type: ignore[arg-type]
-        contracts=_NullContracts(),  # type: ignore[arg-type]
-        settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+        HazardStages(
+            gateway=FakeGateway(response),  # type: ignore[arg-type]
+            registry=FakeRegistry(present),  # type: ignore[arg-type]
+            contracts=_NullContracts(),  # type: ignore[arg-type]
+            settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+        )
     )
 
 
@@ -172,10 +175,12 @@ class TestCapture:
 
         gateway = TwoAgentGateway(_response(model_info=ModelInfo(model="deepseek-chat", prompt_version="1.1.0")))
         chain = HazardResponseChain(
-            gateway=gateway,  # type: ignore[arg-type]
-            registry=FakeRegistry({"assess", "plan"}),  # type: ignore[arg-type]
-            contracts=_NullContracts(),  # type: ignore[arg-type]
-            settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+            HazardStages(
+                gateway=gateway,  # type: ignore[arg-type]
+                registry=FakeRegistry({"assess", "plan"}),  # type: ignore[arg-type]
+                contracts=_NullContracts(),  # type: ignore[arg-type]
+                settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+            )
         )
         result = await chain.process([reading()], region_code=REGION, preset_hits=[trigger_hit()])
         assert "assess" in result.stage_models, gateway.calls
@@ -231,10 +236,12 @@ class TestExecuteReceipt:
 
         assess_response = _response(model_info=ModelInfo(model="deepseek-chat", prompt_version="1.1.0"))
         chain = HazardResponseChain(
-            gateway=CopyGateway(assess_response),  # type: ignore[arg-type]
-            registry=FakeRegistry({"assess", "execute"}),  # type: ignore[arg-type]
-            contracts=_NullContracts(),  # type: ignore[arg-type]
-            settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+            HazardStages(
+                gateway=CopyGateway(assess_response),  # type: ignore[arg-type]
+                registry=FakeRegistry({"assess", "execute"}),  # type: ignore[arg-type]
+                contracts=_NullContracts(),  # type: ignore[arg-type]
+                settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+            )
         )
         return await chain.process([reading()], region_code=REGION, preset_hits=[trigger_hit()])
 

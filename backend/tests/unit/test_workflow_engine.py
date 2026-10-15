@@ -717,3 +717,41 @@ class TestRuntimeFlexibility:
     async def test_instance_detail_missing_returns_none(self) -> None:
         engine = make_engine()
         assert engine.instance_detail("wfi_" + "0" * 12) is None
+
+
+def _trace(i: int) -> str:
+    return "trc_" + format(i, "016x")
+
+
+class TestInstanceRetention:
+    """留底上界：实例只活在内存里（落库面未接），D7 之后每条预警都起一个实例，无上界就是常驻泄漏。"""
+
+    async def test_超出上界挤掉最老的终态实例(self) -> None:
+        engine = make_engine(max_instances=8)
+        workflow_id = await make_definition(engine, [node("a", "delay", {"seconds": 0})], [])
+        details = [await engine.start(workflow_id, trace_id=_trace(i), payload={}) for i in range(12)]
+        assert len(engine.instances()) == 8, "上界没压住：驻留实例还在涨"
+        assert engine.evicted_instances == 4
+        kept = {row["instance_id"] for row in engine.instances()}
+        assert details[-1]["instance_id"] in kept, "最新一条必须还在，值班员刚跑完就要看它"
+        assert engine.instance_detail(details[0]["instance_id"]) is None
+
+    async def test_等待人工的实例不被上界挤掉(self) -> None:
+        """WAITING 是现场工单：不能因为后来跑了 11 条预警，值班员手上的图就 404。
+
+        这条是"只挤终态"与"按最老挤"的分水岭——前者是本引擎的判据，后者会假绿在这条用例上。
+        """
+        engine = make_engine(max_instances=8)
+        sign_id = await make_definition(engine, [node("sign", "human_review", {})], [])
+        waiting = await engine.start(sign_id, trace_id=_trace(0), payload={})
+        assert waiting["status"] == "waiting"
+        plain_id = await make_definition(engine, [node("a", "delay", {"seconds": 0})], [])
+        for i in range(1, 12):
+            await engine.start(plain_id, trace_id=_trace(i), payload={})
+        assert waiting["instance_id"] in {row["instance_id"] for row in engine.instances()}
+        resumed = await engine.resume(waiting["instance_id"], node_id="sign", decision={"choice": "approve"})
+        assert resumed["status"] == "succeeded"
+
+    async def test_上界过小在构造期拒绝(self) -> None:
+        with pytest.raises(ValueError, match="不得小于 8"):
+            make_engine(max_instances=4)

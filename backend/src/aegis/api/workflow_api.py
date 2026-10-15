@@ -121,9 +121,10 @@ def build_router() -> APIRouter:
     @router.get("/node-types")
     async def node_types(container: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
         engine = engine_of(container)
-        registry = engine.node_registry
+        # 面板口径，不是注册表口径：内部原语（`chain_stage`）拖出来跑不起来，所以不给画布看。
+        specs = engine.node_registry.panel_specs()
         return {
-            "count": len(registry.names()),
+            "count": len(specs),
             "items": [
                 {
                     "type": spec.type_name,
@@ -131,8 +132,7 @@ def build_router() -> APIRouter:
                     "required_config": list(spec.required_config),
                     "optional_config": list(spec.optional_config),
                 }
-                for spec in (registry.get(name) for name in registry.names())
-                if spec is not None
+                for spec in specs
             ],
         }
 

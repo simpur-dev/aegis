@@ -194,7 +194,7 @@ class TestNodeTypesAndConfigs:
             spec.validate_config(validated.config)
 
     def test_模板集合驱动的节点类型明显多于十类(self) -> None:
-        """指标 2 本体是"注册 16 类"，这条盯的是"剧本里真的用起来"的那几类。"""
+        """指标 2 本体是"注册 17 类"，这条盯的是"剧本里真的用起来"的那几类。"""
         used = {str(node["type"]) for template in BUILTIN_TEMPLATES for node in template["nodes"]}
         assert used >= REQUIRED_NODE_TYPES, f"内置模板整体没驱动到这些节点类型：{sorted(REQUIRED_NODE_TYPES - used)}"
         assert used & OUTBOUND_NODE_TYPES, "外呼两类节点一个模板都没用到，16 类就只活在注册表里"

@@ -24,11 +24,13 @@ from aegis.container import create_container
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "aegis"
 
-#: 参与时延测量的模块：起点、终点、相减都只能有一个时钟纪元
+#: 参与时延测量的模块：起点、终点、相减都只能有一个时钟纪元。
+#: D7 归一后链路起点不在 `chain.py` 里了——它随盘面搬到 `pipeline/board.py`（`started_at` 字段），
+#: 所以这里跟的是"谁取时"，不是"哪个编排器"。
 MEASURING_FILES = (
     "services/assistant.py",
     "services/warning_service.py",
-    "pipeline/chain.py",
+    "pipeline/board.py",
     "container.py",
 )
 
@@ -48,17 +50,28 @@ def test_测量起点不得用_monotonic纪时钟(relative: str) -> None:
     assert not bad, f"{relative} 用 time.monotonic() 起表：Windows 上步进 15.6 ms，毫秒级测量会读成 0（{bad}）"
 
 
+#: 真在取时的写法：直接调用，或作为 dataclass 字段的 default_factory（`pipeline/board.py` 的起点）。
+#: 只匹配 `time.perf_counter()` 会让"起点搬进盘面字段"这种合法搬家读成"测量点被删了"。
+_TAKING = re.compile(r"time\.perf_counter\(\)|default_factory=time\.perf_counter\b")
+
+
 @pytest.mark.parametrize("relative", MEASURING_FILES)
 def test_测量点确实用了_perf_counter(relative: str) -> None:
     """正向对照：上一条禁掉了错误时钟，这一条保证正确的那个真的在用——否则两条一起成空文。"""
-    assert "time.perf_counter()" in _read(relative), f"{relative} 里找不到 perf_counter：测量点被整体删掉了？"
+    assert _TAKING.search(_read(relative)), f"{relative} 里找不到 perf_counter：测量点被整体删掉了？"
 
 
 def test_同一条测量链上不得混用两个时钟纪元() -> None:
-    """warning_service 收 chain 传来的 started_at：起点与终点必须同为 perf_counter。"""
-    chain = _read("pipeline/chain.py")
+    """预警生成段收的是**盘面**给的链路起点：起点与终点必须同为 perf_counter。"""
+    board = _read("pipeline/board.py")
+    stages = _read("pipeline/stages.py")
     draft = _read("services/warning_service.py")
-    assert "started_at = time.perf_counter()" in chain, "链路起点不再用 perf_counter：下游的减法就成了跨纪元相减"
+    assert "started_at: float = field(default_factory=time.perf_counter)" in board, (
+        "链路起点不再用 perf_counter：下游的减法就成了跨纪元相减"
+    )
+    # 两条编排路径（固定顺序 / DAG）都把起点交给执行段，靠的是同一句盘面取值：
+    # 谁改成自己现取一次，就会长出第二个纪元，`warning_generation_ms` 跟着失真。
+    assert "started_at=board.started_at" in stages, "执行段不再从盘面取起点：两条编排路径会各自造一个纪元"
     # 只看赋值取时（文档字符串里讲历史时会提到 monotonic，那不算违规）
     assert re.search(r"=\s*time\.monotonic\(\)", draft) is None, (
         "预警生成段还在用 monotonic 取时：与 started_at 不同纪元，差值会被 max(...,0) 夹成 0"

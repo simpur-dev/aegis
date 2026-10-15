@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { NODE_SPECS } from '@/utils/graph'
-import { readRepoFile } from '@/testing/repoSource'
+import { backendInternalNodeTypes, readRepoFile } from '@/testing/repoSource'
 
 interface BackendSpec {
   required: string[]
@@ -106,5 +106,12 @@ describe('NODE_SPECS 与后端 NodeSpec 逐字段对账', () => {
       }
     }
     expect(drift, drift.join('\n')).toEqual([])
+  })
+
+  it('内部原语（internal）标记一致：节点面板挡不挡得住，取决于两端说的是不是同一句话', () => {
+    const mirrored = Object.keys(NODE_SPECS)
+      .filter((name) => NODE_SPECS[name as keyof typeof NODE_SPECS].internal === true)
+      .sort()
+    expect(mirrored).toEqual(backendInternalNodeTypes())
   })
 })

@@ -26,8 +26,12 @@ import pytest
 
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
+from aegis.domain.messages import new_event_id
+from aegis.pipeline.board import ChainBoard
+from aegis.pipeline.result import ChainResult
 from aegis.workflow.engine import WorkflowValidationError
 from aegis.workflow.nodes import default_registry
+from conftest import REGION, readings_rain_burst
 
 ALLOWED_HOST = "api.example.com"
 TRACE = "trc_" + "a" * 16
@@ -110,6 +114,17 @@ SCENARIOS: dict[str, dict[str, Any]] = {
         ],
         "expectations": {"api": "response"},
     },
+    "链路段_标准五段的头两段": {
+        "nodes": [
+            {"node_id": "perceive", "type": "chain_stage", "config": {"stage": "perceive"}},
+            {"node_id": "assess", "type": "chain_stage", "config": {"stage": "assess"}},
+        ],
+        "edges": [{"source": "perceive", "target": "assess", "condition": "hit"}],
+        "expectations": {"perceive": "mode", "assess": "mode"},
+        # 链路段的入参（读数、区域、起点时钟）不在画布 payload 里，得先开一盘：
+        # 这正是 `chain_stage` 与其它节点类型的区别，也是它必须单独登记证据的理由。
+        "chain_board": True,
+    },
     "外呼_设备联动": {
         "nodes": [
             {
@@ -163,7 +178,22 @@ async def assembled() -> AsyncIterator[PlatformContainer]:
 
 async def _run(ctn: PlatformContainer, case: dict[str, Any], label: str) -> dict[str, Any]:
     workflow = await ctn.workflow.create_definition(name=f"矩阵-{label}", description="", nodes=case["nodes"], edges=case.get("edges", []))
-    return await ctn.workflow.start(workflow.workflow_id, trace_id=TRACE, payload=dict(case.get("payload", {})))
+    payload = dict(case.get("payload", {}))
+    if case.get("chain_board"):
+        stations = ctn.workflow_chain.stations
+        board = stations.open(
+            ChainBoard(
+                result=ChainResult(trace_id=TRACE, event_id=new_event_id()),
+                trace=TRACE,
+                region=REGION,
+                readings=readings_rain_burst(),
+            )
+        )
+        try:
+            return await ctn.workflow.start(workflow.workflow_id, trace_id=TRACE, payload={**payload, "board_trace": board.trace})
+        finally:
+            stations.close(TRACE)
+    return await ctn.workflow.start(workflow.workflow_id, trace_id=TRACE, payload=payload)
 
 
 def _node(detail: dict[str, Any], node_id: str) -> dict[str, Any]:

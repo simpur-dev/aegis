@@ -1,8 +1,10 @@
 """灾害响应五段的**唯一实现**：感知 → 研判 → 决策 → 执行 → 反馈。
 
-架构决策（D7 编排归一 §4.6）：这里只有"段"，没有"顺序"。谁按什么顺序调用这五段是编排器的职责
-——`pipeline/chain.py` 的固定顺序与 `workflow/` 的 DAG 节点都不得自带第二份 agent 优先/降级判定，
-否则两处口径迟早分叉（触达段就分叉过一次，见 §4.6 的退役理由）。
+架构决策（D7 编排归一 §4.6）：这里既有"段的判定"，也有"段的记账"（`stage_*_ms` 账本样本、
+跨度属性、`StageResult`、降级留痕、D10 凭证转记）。谁按什么顺序调用这五段是编排器的职责——
+`pipeline/chain.py` 的固定顺序与 `workflow/` 的"标准五段"DAG 节点调的是**同一批方法**，
+两条编排路径因此不可能各说各话：判定只有一份，账也只有一份。
+（此前它们分叉过一次：触达段两处实现口径不一，那正是 §4.6 列出的退役理由。）
 
 每一段都是"智能体优先、平台降级"：
 - 智能体在线且契约合法 → 采纳其结论（mode=agent）；
@@ -34,8 +36,10 @@ from aegis.domain.messages import (
 )
 from aegis.errors import AegisError
 from aegis.knowledge.provider import CaseMatch, KnowledgeProvider
+from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.result import ChainResult, model_receipt
+from aegis.pipeline.board import ChainBoard
+from aegis.pipeline.result import STAGE_ORDER, ChainResult, StageResult, model_receipt
 from aegis.services.delivery import AllChannelsFailedError, DeliveryDispatcher
 from aegis.services.risk_engine import RiskEngine, RiskVerdict
 from aegis.services.task_parser import TaskParser
@@ -56,10 +60,7 @@ _CONTEXT_DOC_LIMIT = 5
 
 
 class HazardStages:
-    """五段的执行体。方法返回"这一段的产物"，把 mode/latency/note 的记账留给编排器——
-
-    段的产物与段的记账分开，才能让固定顺序编排与 DAG 节点复用同一段实现而不会各记各的账。
-    """
+    """五段的执行体：每段自己写自己的账，交给编排器的就是那条 `StageResult`。"""
 
     def __init__(
         self,
@@ -99,7 +100,6 @@ class HazardStages:
 
     @property
     def tracer(self) -> Tracer:
-        """编排器共用同一只计时器：段的账本样本名由编排器写，时钟必须由段这边交出。"""
         return self._tracer
 
     @property
@@ -134,9 +134,72 @@ class HazardStages:
             self._agent_hits.remove(h)
         return picked
 
+    # ---------- 段的统一入口（两条编排路径都走这里） ----------
+
+    async def run_stage(self, name: str, board: ChainBoard) -> StageResult:
+        """按段名跑一段并把 `StageResult` 记进盘面。
+
+        固定顺序编排（`pipeline/chain.py`）与工作流节点（DAG 的 `chain_stage`）都只调这一个方法：
+        "同一段在同一条链路上跑两次会不会长出两套账"这件事，因此结构上不可能发生。
+        段名就是指标样本名的一部分（`stage_<name>_ms`），所以这里的名字与 `STAGE_ORDER` 一起构成契约。
+        """
+        result = board.result
+        if name == "perceive":
+            stage = await self.perceive(
+                result, board.readings, board.region, board.trace, preset_hits=board.preset_hits, intake=board.intake
+            )
+        elif name == "assess":
+            stage = await self.assess(
+                result, result.hits, board.region, board.trace, preset_verdict=board.preset_verdict, reported=board.reported
+            )
+        elif name == "plan":
+            stage = await self.plan(result, board.trace)
+        elif name == "execute":
+            stage = await self.execute(result, board.trace, started_at=board.started_at)
+        elif name == "feedback":
+            stage = await self.feedback(result, board.trace)
+        else:
+            raise ValueError(f"未知段名：{name}（可用：{', '.join(STAGE_ORDER)}）")
+        result.stages.append(stage)
+        return stage
+
     # ---------- ① 感知 ----------
 
     async def perceive(
+        self,
+        result: ChainResult,
+        readings: list[TelemetryReading],
+        region: str,
+        trace: str,
+        *,
+        preset_hits: list[TriggerHit] | None = None,
+        intake: str = "telemetry",
+    ) -> StageResult:
+        """命中（规则 ⊕ 智能体上报）写进 `result.hits`，返回感知段的账。"""
+        reported = intake == "report"
+        async with instrumentation.span("stage_perceive_ms", trace_id=trace) as span:
+            with self._tracer.span("stage_perceive_ms", trace_id=trace) as sp:
+                hits, agent_hit_count = await self._perceive(readings, region, trace, preset_hits=preset_hits)
+            # 阶段结论写在账本计时之外：跨度不参与任何时延测量
+            instrumentation.set_attributes(
+                span,
+                span_attrs={
+                    "aegis.hits": len(hits),
+                    "aegis.agent_hits": agent_hit_count,
+                    "aegis.intake": intake,
+                    "aegis.mode": "hybrid" if agent_hit_count else "local",
+                },
+            )
+        result.hits = hits
+        return StageResult(
+            "perceive",
+            "hybrid" if agent_hit_count else "local",
+            True,
+            sp.finished_ms or 0.0,
+            ("上报文本判定：" if reported else "") + f"命中 {len(hits)} 条（智能体 {agent_hit_count} 条）",
+        )
+
+    async def _perceive(
         self,
         readings: list[TelemetryReading],
         region: str,
@@ -157,6 +220,45 @@ class HazardStages:
     # ---------- ② 研判 ----------
 
     async def assess(
+        self,
+        result: ChainResult,
+        hits: list[TriggerHit],
+        region: str,
+        trace: str,
+        *,
+        preset_verdict: RiskVerdict | None = None,
+        reported: bool = False,
+    ) -> StageResult:
+        """定级写进 `result.verdict`；None 就是研判未产出，编排器据此早退。"""
+        before = len(result.degradations)
+        async with instrumentation.span("stage_assess_ms", trace_id=trace) as span:
+            with self._tracer.span("stage_assess_ms", trace_id=trace) as sp:
+                verdict, answered_by_agent = await self._assess(
+                    hits, region, result, trace, preset_verdict=preset_verdict, reported=reported
+                )
+            if verdict is None:
+                instrumentation.mark_error(span, "研判未产出定级结论", code="assess_failed")
+            elif len(result.degradations) > before:
+                # 智能体缺位/超时/产出不合契约 → 平台规则引擎接管：降级，不是故障
+                instrumentation.mark_degraded(span, result.degradations[-1])
+            instrumentation.set_attributes(
+                span,
+                span_attrs={
+                    "aegis.assessed_by": verdict.assessed_by if verdict else "",
+                    "aegis.risk_level": int(verdict.risk_level) if verdict else 0,
+                },
+            )
+        result.verdict = verdict
+        return StageResult(
+            "assess",
+            "agent" if answered_by_agent else "local",
+            verdict is not None,
+            sp.finished_ms or 0.0,
+            f"等级 {int(verdict.risk_level)}" if verdict else "定级失败",
+            model_info=result.stage_models.get("assess"),
+        )
+
+    async def _assess(
         self,
         hits: list[TriggerHit],
         region: str,
@@ -228,7 +330,30 @@ class HazardStages:
 
     # ---------- ③ 决策 ----------
 
-    async def plan(self, verdict: RiskVerdict, result: ChainResult, trace: str) -> list[StandardizedTaskUnit]:
+    async def plan(self, result: ChainResult, trace: str) -> StageResult:
+        verdict = result.verdict
+        if verdict is None:
+            raise ValueError("plan 段需要研判段的定级结论：编排器必须在研判早退后停手")
+        before = len(result.degradations)
+        async with instrumentation.span("stage_plan_ms", trace_id=trace) as span:
+            with self._tracer.span("stage_plan_ms", trace_id=trace) as sp:
+                units = await self._plan(verdict, result, trace)
+            if not units:
+                instrumentation.mark_error(span, "决策未产出任务单元", code="plan_empty")
+            elif len(result.degradations) > before:
+                instrumentation.mark_degraded(span, result.degradations[-1])
+            instrumentation.set_attributes(span, span_attrs={"aegis.task_units": len(units)})
+        result.task_units = units
+        return StageResult(
+            "plan",
+            "agent" if any(u.created_by != "platform.task_parser" for u in units) else "local",
+            bool(units),
+            sp.finished_ms or 0.0,
+            f"生成 {len(units)} 个任务单元",
+            model_info=result.stage_models.get("plan"),
+        )
+
+    async def _plan(self, verdict: RiskVerdict, result: ChainResult, trace: str) -> list[StandardizedTaskUnit]:
         # 召回放在取本地剧本之前：无论最终由智能体还是本地剧本产出任务单元，
         # "参考过哪些历史案例"都是这条链路的证据，不该只在智能体在线时才存在。
         references = await self._recall_cases(verdict, result)
@@ -343,7 +468,38 @@ class HazardStages:
 
     # ---------- ④ 执行 ----------
 
-    async def execute(
+    async def execute(self, result: ChainResult, trace: str, *, started_at: float) -> StageResult:
+        """出文案、发预警、广播；产物写进 `result.warning`（None 表示发布失败）。
+
+        `started_at` 必须是**链路起点**的 perf_counter 读数，由编排器传下来：
+        `warning_generation_ms`（≤3min 那一项）量的就是"链路开始→预警就绪"，
+        在生成步里现取会恒为 0。
+        """
+        verdict = result.verdict
+        if verdict is None:
+            raise ValueError("execute 段需要研判段的定级结论：编排器必须在研判早退后停手")
+        before = len(result.degradations)
+        async with instrumentation.span("stage_execute_ms", trace_id=trace) as span:
+            with self._tracer.span("stage_execute_ms", trace_id=trace) as sp:
+                warning, used_agent = await self._execute(verdict, result, trace, started_at=started_at)
+            if warning is None:
+                instrumentation.mark_error(span, "预警发布失败", code="execute_failed")
+            elif len(result.degradations) > before:
+                instrumentation.mark_degraded(span, result.degradations[-1])
+            instrumentation.set_attributes(
+                span, span_attrs={"aegis.warning_id": warning.warning_id if warning else "", "aegis.used_agent": used_agent}
+            )
+        result.warning = warning
+        return StageResult(
+            "execute",
+            "agent" if used_agent else "local",
+            warning is not None,
+            sp.finished_ms or 0.0,
+            warning.warning_id if warning else "预警发布失败",
+            model_info=result.stage_models.get("execute"),
+        )
+
+    async def _execute(
         self,
         verdict: RiskVerdict,
         result: ChainResult,
@@ -486,12 +642,37 @@ class HazardStages:
 
     # ---------- ⑤ 反馈 ----------
 
-    async def feedback(self, record: WarningRecord | None, trace: str, result: ChainResult) -> dict[str, Any] | None:
-        """回执汇总 → 派发给反馈智能体归因 → 状态进 ops 流。返回被采纳的归因（未采纳给 `None`）。
+    async def feedback(self, result: ChainResult, trace: str) -> StageResult:
+        """回执汇总 → 派发给反馈智能体归因 → 状态进 ops 流。
 
-        §3.5 的归因、阈值建议、教训写记忆都发生在 FeedbackAgent 内环里。此前这一段只广播不派发，
-        于是智能体在册却永远等不到请求，那三件事在真栈上发生 0 次——本方法补上派发与消费。
+        §3.5 的归因、阈值建议、教训写记忆都发生在 FeedbackAgent 内环里；这一段负责把它**叫起来**
+        并把采纳结果记进台账。此前只广播不派发，于是智能体在册却收不到请求，那三件事在真栈上
+        发生 0 次。
         """
+        async with instrumentation.span("stage_feedback_ms", trace_id=trace) as span:
+            with self._tracer.span("stage_feedback_ms", trace_id=trace) as sp:
+                attribution = await self._feedback(result.warning, trace, result)
+            instrumentation.set_attributes(span, span_attrs={"aegis.reach_expected": result.warning is not None})
+        return StageResult(
+            "feedback",
+            "agent" if attribution is not None else "local",
+            True,
+            sp.finished_ms or 0.0,
+            # 归因结论要点进台账：`chain_runs.stages` 是事后唯一还能查到的地方
+            self._feedback_note(attribution),
+            model_info=result.stage_models.get("feedback"),
+        )
+
+    @staticmethod
+    def _feedback_note(attribution: dict[str, Any] | None) -> str:
+        if attribution is None:
+            return "触达回执已归档"
+        return (
+            f"触达回执已归档｜效果分 {attribution['effect_score']:.3f}"
+            f"｜归因腿 {attribution['decided_by']}｜建议 {attribution['suggestion_status']}"
+        )
+
+    async def _feedback(self, record: WarningRecord | None, trace: str, result: ChainResult) -> dict[str, Any] | None:
         if record is None:
             return None
         deliveries = record.deliveries

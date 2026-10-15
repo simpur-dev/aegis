@@ -1,7 +1,7 @@
 """柔性工作流引擎：DAG + 状态机 + 事件驱动调度 + 动态改图。
 
 对应考核指标 2 的三条：
-- "≥10 类节点自定义配置" → NodeRegistry 16 类节点，config 逐节点校验；
+- "≥10 类节点自定义配置" → NodeRegistry 17 类节点（含 1 类内部原语，面板可拖 16 类），config 逐节点校验；
 - "常规任务调度响应时延 ≤2s" → 节点就绪到开始执行的 workflow_schedule_ms（事件驱动，无轮询）；
 - "异常工况识别与重调度 ≤10s" → 失败/超时被立即分类并按 on_failure 处置，
   workflow_reschedule_ms 记录"首次失败→终态"的实际时长。
@@ -125,9 +125,12 @@ class WorkflowEngine:
         tracer: Tracer | None = None,
         settings: Settings | None = None,
         max_parallel: int = 32,
+        max_instances: int = 128,
     ) -> None:
         if max_parallel < 1:
             raise ValueError("max_parallel 必须 ≥ 1")
+        if max_instances < 8:
+            raise ValueError("max_instances 不得小于 8：留底太少会把还在被人看的实例也挤掉")
         # 注意：WorkflowRepository / NodeRegistry 定义了 __len__，空实例是假值，
         # 用 `x or default` 会把调用方传入的空仓储/注册表静默替换掉（容量/测试注入失效），
         # 因此这里统一按 `is None` 判断是否使用默认值。
@@ -139,6 +142,10 @@ class WorkflowEngine:
         self._semaphore = asyncio.Semaphore(max_parallel)
         self._instances: dict[str, _MutableInstance] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        #: 实例只活在内存里（落库面尚未接），所以必须有上界：D7 之后每条预警都会起一个实例，
+        #: 无上界就是每报一次警漏一份节点状态在进程里，值班一个班次就吃掉几百 MB。
+        self._max_instances = int(max_instances)
+        self.evicted_instances = 0
 
     # ---------- 定义管理 ----------
 
@@ -347,7 +354,35 @@ class WorkflowEngine:
             raise WorkflowValidationError(f"工作流定义不存在: {workflow_id}")
         instance = self._instantiate(definition, trace_id=trace_id, payload=payload or {})
         await self._drive(instance)
+        self._retire_kept_instances(keep=instance.instance_id)
         return self.instance_detail(instance.instance_id) or {}
+
+    def _retire_kept_instances(self, *, keep: str = "") -> int:
+        """丢掉最老的**已终态**实例，把驻留数量压回上界内。
+
+        只动 succeeded/failed/aborted：WAITING 是"等人签字"的现场工单， RUNNING 还在跑，
+        两者被挤掉的表现都是值班员打不开自己刚起的图——那是比内存更贵的代价。
+        `keep` 给刚刚跑完的那个实例一个免死名额：调用方紧接着还要读它的详情。
+
+        只在 `start()` 里调：实例是 `_instantiate` 的产物，而它只有 `start()` 一个调用方，
+        所以"每建一个就压一次上界"已经盖住了全部增长路径。`resume`/`bypass_node` 那两处
+        也调 `_drive`，但它们不新建实例——在那里再压一次是把同一件事写两遍。
+        """
+        terminal = {InstanceStatus.SUCCEEDED, InstanceStatus.FAILED, InstanceStatus.ABORTED}
+        overflow = len(self._instances) - self._max_instances
+        if overflow <= 0:
+            return 0
+        dropped = 0
+        for instance_id, instance in list(self._instances.items()):
+            if dropped >= overflow:
+                break
+            if instance_id == keep or instance.status not in terminal:
+                continue
+            self._instances.pop(instance_id, None)
+            self._locks.pop(instance_id, None)
+            dropped += 1
+        self.evicted_instances += dropped
+        return dropped
 
     def _instantiate(self, definition: WorkflowDef, *, trace_id: str, payload: dict[str, Any]) -> _MutableInstance:
         instance = _MutableInstance(

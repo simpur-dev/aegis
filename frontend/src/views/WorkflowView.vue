@@ -3,7 +3,7 @@
  * 工作流编排画布页：左侧节点面板 / 中间 Vue Flow 画布 / 右侧检查器与实例控制。
  *
  * 页面本身只做排版与副作用编排：模型在 stores/workflow，图换算与校验在 utils/graph，
- * 画布事件粘合在 useWorkflowCanvas，组件层按"类别"而非"类型"拆分（16 类 → 4 个卡片组件）。
+ * 画布事件粘合在 useWorkflowCanvas，组件层按"类别"而非"类型"拆分（N 类 → 4 个卡片组件）。
  */
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'

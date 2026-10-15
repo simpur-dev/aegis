@@ -15,10 +15,12 @@
 
 export type NodeCategory = 'io' | 'logic' | 'intelligence' | 'human'
 
-/** 后端 nodes.py:351-366 已注册的 16 类节点，新增类型必须同步 NODE_SPECS 与节点面板。 */
+/** 后端 nodes.py 已注册的 17 类节点（含 1 类内部原语，见 NodeSpec.internal）；
+ *  新增类型必须同步 NODE_SPECS，可拖进面板的那些还会由 PALETTE_GROUPS 自动带上。 */
 export type NodeType =
   | 'api_call'
   | 'branch'
+  | 'chain_stage'
   | 'data_fetch'
   | 'delay'
   | 'degrade_to_rule'
@@ -133,12 +135,17 @@ export interface NodeSpec {
   required_config: readonly string[]
   optional_config: readonly string[]
   min_config: Readonly<Record<string, number>>
+  /** 后端 `NodeSpec.internal`：引擎能驱动、但不给画布拖。缺省按 false 处理，
+   *  所以镜像里只有内部原语需要显式写 `internal: true`。 */
+  internal?: boolean
 }
 
 /** 后端注册表的前端镜像；类别 + 配置白名单的唯一真源。 */
 export const NODE_SPECS: Record<NodeType, NodeSpec> = {
   api_call: { category: 'io', required_config: ['method', 'url'], optional_config: ['body'], min_config: {} },
   branch: { category: 'logic', required_config: ['rules'], optional_config: ['upstream', 'default'], min_config: {} },
+  // 标准五段模板的段节点：只在系统模板里出现，拖出来跑不起来（它要的是链路盘面），所以不进面板。
+  chain_stage: { category: 'logic', required_config: ['stage'], optional_config: [], min_config: {}, internal: true },
   data_fetch: { category: 'io', required_config: [], optional_config: ['region_code', 'metric', 'limit'], min_config: {} },
   delay: { category: 'logic', required_config: [], optional_config: ['seconds'], min_config: {} },
   degrade_to_rule: {
@@ -166,6 +173,9 @@ export const NODE_SPECS: Record<NodeType, NodeSpec> = {
 }
 
 export const NODE_TYPES: NodeType[] = Object.keys(NODE_SPECS) as NodeType[]
+
+/** 节点面板的可拖集合：镜像去掉内部原语。后端 `/node-types` 用同一口径（`panel_specs()`）。 */
+export const PANEL_NODE_TYPES: NodeType[] = NODE_TYPES.filter((type) => !NODE_SPECS[type].internal)
 
 /** 11 个节点状态的画布样式；Record<NodeState, …> 保证后端新增状态时编译期即报错。 */
 export interface NodeStateStyle {

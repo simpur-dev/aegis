@@ -43,6 +43,7 @@ from aegis.knowledge.provider import (
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import HazardResponseChain
 from aegis.pipeline.result import ChainResult
+from aegis.pipeline.stages import HazardStages
 from conftest import REGION, readings_rain_burst
 
 GRAPH_URI = "neo4j+ssc://aegis_reader:sup3rs3cr3t@10.0.0.9:7687?database=neo4j"
@@ -193,7 +194,15 @@ def build_chain(
     knowledge: KnowledgeProvider | None,
 ) -> HazardResponseChain:
     gateway = AgentGateway(bus, registry, contracts, Tracer(), default_deadline_ms=1_500)
-    return HazardResponseChain(gateway=gateway, registry=registry, contracts=contracts, settings=settings, knowledge=knowledge)
+    return HazardResponseChain(
+        HazardStages(
+            gateway=gateway,
+            registry=registry,
+            contracts=contracts,
+            settings=settings,
+            knowledge=knowledge,
+        )
+    )
 
 
 class TestChainRecall:
@@ -290,11 +299,13 @@ class TestChainRecall:
         await bus.idle()
 
         chain = HazardResponseChain(
-            gateway=gateway,
-            registry=registry,
-            contracts=contracts,
-            settings=base_settings(),
-            knowledge=stub,
+            HazardStages(
+                gateway=gateway,
+                registry=registry,
+                contracts=contracts,
+                settings=base_settings(),
+                knowledge=stub,
+            )
         )
         try:
             result = await chain.process(readings_rain_burst())

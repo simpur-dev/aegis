@@ -1,12 +1,13 @@
 /**
  * 节点面板 / 检查器的元数据注册表（纯数据，无 Vue 依赖）。
  *
- * 16 类节点的"类别归属"与"配置白名单"在 @/utils/graph 的 NODE_SPECS（后端 nodes.py 的镜像），
+ * 节点的"类别归属"与"配置白名单"在 @/utils/graph 的 NODE_SPECS（后端 nodes.py 的镜像，17 类），
  * 这里只补 UI 需要的中文名、字段编辑器形态与新建节点时的默认配置。
+ * Record<NodeType, …> 的穷尽性由 TS 保证：后端新增类型时本文件编译即失败。
  * Record<NodeType, …> 的穷尽性由 TS 保证：后端新增类型时本文件编译即失败。
  */
 
-import { NODE_SPECS, NODE_TYPES, type JsonValue, type NodeCategory, type NodeDef, type NodeType } from '@/utils/graph'
+import { NODE_SPECS, PANEL_NODE_TYPES, type JsonValue, type NodeCategory, type NodeDef, type NodeType } from '@/utils/graph'
 
 export type FieldKind = 'text' | 'number' | 'string_list' | 'json'
 
@@ -99,6 +100,14 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     fields: [listField('upstream', '参与汇聚的上游节点', '必须是已连线的上游（后端在定义期校验：没连线会 400）')],
     defaults: { upstream: [] },
   },
+  // 内部原语：出现在"标准五段处置链路"这类系统模板里，面板不给拖（PALETTE_GROUPS 按 internal 滤掉），
+  // 但画布要能把它画出来、检查器要能显示它的段名——所以镜像与元数据都得有它。
+  chain_stage: {
+    label: '链路段（系统）',
+    description: '链路段：把标准五段之一交给链路侧执行（不可从面板拖入）',
+    fields: [textField('stage', '段名', 'perceive / assess / plan / execute / feedback')],
+    defaults: { stage: 'perceive' },
+  },
   delay: {
     label: '延时等待',
     description: '延时等待：节流与错峰',
@@ -161,12 +170,13 @@ export interface PaletteGroup {
   types: NodeType[]
 }
 
-/** 节点面板分组：类别顺序即展示顺序，组内按类型名排序保证渲染稳定。 */
+/** 节点面板分组：类别顺序即展示顺序，组内按类型名排序保证渲染稳定。
+ *  取材用 PANEL_NODE_TYPES（镜像去掉内部原语），与后端 `/node-types` 同一个口径。 */
 export const PALETTE_GROUPS: PaletteGroup[] = (Object.keys(CATEGORY_LABELS) as NodeCategory[])
   .map((category) => ({
     category,
     label: CATEGORY_LABELS[category],
-    types: NODE_TYPES.filter((type) => NODE_SPECS[type].category === category),
+    types: PANEL_NODE_TYPES.filter((type) => NODE_SPECS[type].category === category),
   }))
   .filter((group) => group.types.length > 0)
 

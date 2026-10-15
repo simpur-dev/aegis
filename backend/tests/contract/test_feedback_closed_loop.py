@@ -20,6 +20,7 @@ from aegis.domain.enums import Action, AgentType, Channel, HazardType
 from aegis.domain.messages import TelemetryReading, TriggerHit, now_iso
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import HazardResponseChain
+from aegis.pipeline.stages import HazardStages
 from aegis.services.delivery import DeliveryDispatcher, MockChannelAdapter
 from aegis.services.memory import InMemoryAgentMemory, MemoryService
 
@@ -121,14 +122,16 @@ def _feedback_agent(bus: InMemoryBus, *, llm: Any, memory: Any, agent_cls: Any =
 
 def _chain(gateway: Any, registry: Any, contracts: Any, settings: Settings) -> HazardResponseChain:
     return HazardResponseChain(
-        gateway=gateway,
-        registry=registry,
-        contracts=contracts,
-        settings=settings,
-        dispatcher=DeliveryDispatcher(
-            {Channel.SMS: MockChannelAdapter(name=Channel.SMS, latency_ms=1.0, receipt_latency_ms=1.0)},
-            Tracer(),
-        ),
+        HazardStages(
+            gateway=gateway,
+            registry=registry,
+            contracts=contracts,
+            settings=settings,
+            dispatcher=DeliveryDispatcher(
+                {Channel.SMS: MockChannelAdapter(name=Channel.SMS, latency_ms=1.0, receipt_latency_ms=1.0)},
+                Tracer(),
+            ),
+        )
     )
 
 

@@ -12,6 +12,7 @@ from aegis.config import Settings
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit, make_request, make_response, now_iso
 from aegis.pipeline.chain import HazardResponseChain
+from aegis.pipeline.stages import HazardStages
 
 REGION = "540121"
 TRACE = "trc_" + "1" * 16
@@ -88,10 +89,12 @@ class _Contracts:
 
 async def _run(double_blind: str) -> Any:
     chain = HazardResponseChain(
-        gateway=_Gateway(_assess_response(double_blind)),  # type: ignore[arg-type]
-        registry=_Registry(),  # type: ignore[arg-type]
-        contracts=_Contracts(),  # type: ignore[arg-type]
-        settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+        HazardStages(
+            gateway=_Gateway(_assess_response(double_blind)),  # type: ignore[arg-type]
+            registry=_Registry(),  # type: ignore[arg-type]
+            contracts=_Contracts(),  # type: ignore[arg-type]
+            settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+        )
     )
     return await chain.process([_reading()], region_code=REGION, preset_hits=[_hit()])
 
@@ -122,10 +125,12 @@ class TestBlindLegTrace:
         )
         bare = make_response(request, source="assess.stub", payload={"risk_level": 2, "hazard_type": "debris_flow", "confidence": 0.7})
         chain = HazardResponseChain(
-            gateway=_Gateway(bare),  # type: ignore[arg-type]
-            registry=_Registry(),  # type: ignore[arg-type]
-            contracts=_Contracts(),  # type: ignore[arg-type]
-            settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+            HazardStages(
+                gateway=_Gateway(bare),  # type: ignore[arg-type]
+                registry=_Registry(),  # type: ignore[arg-type]
+                contracts=_Contracts(),  # type: ignore[arg-type]
+                settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+            )
         )
         result = await chain.process([_reading()], region_code=REGION, preset_hits=[_hit()])
         assert result.stage("assess") is not None and result.stage("assess").mode == "agent"

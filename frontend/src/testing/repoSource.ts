@@ -32,14 +32,58 @@ export function readRepoFile(...parts: string[]): string {
   return readFileSync(target, 'utf-8')
 }
 
-/** 从 `backend/src/aegis/workflow/nodes.py` 里解析出注册过的节点类型名（`NodeSpec("name", …)`）。 */
+/** 从 `backend/src/aegis/workflow/nodes.py` 里解析出注册过的节点类型名（`NodeSpec("name", …）`）。 */
 export function backendNodeTypes(): string[] {
+  return backendSpecFlags()
+    .map((entry) => entry.type)
+    .sort()
+}
+
+/** 后端 `NodeSpec.internal` 为真的那几类：引擎能驱动，但 `/node-types` 与节点面板都不给看。 */
+export function backendInternalNodeTypes(): string[] {
+  return backendSpecFlags()
+    .filter((entry) => entry.internal)
+    .map((entry) => entry.type)
+    .sort()
+}
+
+/** 面板口径的注册集合（= 全部类型减去内部原语）。 */
+export function backendPanelNodeTypes(): string[] {
+  const internal = new Set(backendInternalNodeTypes())
+  return backendNodeTypes().filter((type) => !internal.has(type))
+}
+
+interface BackendSpecFlag {
+  readonly type: string
+  readonly internal: boolean
+}
+
+/** 逐个 `NodeSpec(...)` 调用扫一遍：类型名取第一个实参，`internal` 写在同一调用的关键字实参里。 */
+function backendSpecFlags(): BackendSpecFlag[] {
   const text = readRepoFile('backend', 'src', 'aegis', 'workflow', 'nodes.py')
-  const found = [...text.matchAll(/NodeSpec\(\s*"([a-z_]+)"/g)].map((match) => match[1])
+  const found: BackendSpecFlag[] = []
+  for (const match of text.matchAll(/NodeSpec\(\s*"([a-z_]+)"/g)) {
+    const start = (match.index ?? 0) + match[0].length
+    // 括号深度扫描到本次调用的右括号为止：`internal=True` 是写在调用尾部的，
+    // 只看第一个 `)` 会把它落在窗外（那些元组实参本身就带括号）。字符串里的括号跳过。
+    let depth = 1
+    let index = start
+    let quote = ''
+    while (index < text.length && depth > 0) {
+      const char = text[index] as string
+      if (quote) {
+        if (char === quote) quote = ''
+      } else if (char === '"' || char === "'") quote = char
+      else if (char === '(') depth += 1
+      else if (char === ')') depth -= 1
+      index += 1
+    }
+    found.push({ type: match[1] as string, internal: /internal\s*=\s*True/.test(text.slice(start, index)) })
+  }
   if (found.length === 0) {
     throw new Error('nodes.py 里一个 NodeSpec 都没解析到：注册写法变了，门禁得跟着改（不是把断言删掉）')
   }
-  return [...new Set(found)].sort()
+  return found
 }
 
 /** 从装配面源码里解析出对外报出的腿名（状态行的唯一真源：`IntegrationState(name=...)`）。 */

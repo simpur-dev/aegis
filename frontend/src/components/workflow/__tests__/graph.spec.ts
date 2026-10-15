@@ -394,11 +394,12 @@ describe('utils/graph 模型编辑', () => {
     expect(inboundSources(def, 'fetch_1')).toEqual([])
   })
 
-  it('16 类节点的类别归属唯一真源（nodes.py 的镜像）', () => {
+  it('17 类节点的类别归属唯一真源（nodes.py 的镜像）', () => {
     expect(Object.keys(NODE_SPECS).sort()).toEqual(
       [
         'api_call',
         'branch',
+        'chain_stage',
         'data_fetch',
         'delay',
         'degrade_to_rule',

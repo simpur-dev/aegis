@@ -284,6 +284,8 @@ AVALANCHE_TEMPLATE: dict[str, Any] = {
     ],
 }
 
+STANDARD_CHAIN_TEMPLATE_NAME = "标准五段处置链路"
+
 BUILTIN_TEMPLATES: tuple[dict[str, Any], ...] = (
     DEBRIS_FLOW_TEMPLATE,
     LAKE_OUTBURST_TEMPLATE,
@@ -356,6 +358,66 @@ async def register_builtin_templates(engine: WorkflowEngine, *, force: bool = Fa
         )
         created.append(template["name"])
     return created
+
+
+def standard_chain_template(*, agent_txn_ms: int) -> dict[str, Any]:
+    """标准五段模板：D7 编排归一的对照物，节点是 `chain_stage`，段名按 `STAGE_ORDER` 排。
+
+    刻意不进 `BUILTIN_TEMPLATES`（那份清单的口径是"5 灾种处置剧本"，混进来会让
+    "灾种模板 5/5"门禁一起失真，同 `REPORT_REVIEW_TEMPLATE` 的理由）。
+
+    预算从配置传进来而不是写死：LLM 段的单次事务预算是 `sla_agent_txn_ms`，
+    节点超时若小于它就会"链路还在等智能体、节点先被判死"，两处数字必须同源。
+    两条早退用边条件表达：感知无命中、研判无结论时，下游按分支级联跳过。
+    """
+    timeout = agent_txn_ms + 5_000
+    stage_nodes = [
+        ("perceive", "① 感知"),
+        ("assess", "② 研判"),
+        ("plan", "③ 决策"),
+        ("execute", "④ 执行"),
+        ("feedback", "⑤ 反馈"),
+    ]
+    nodes = [
+        {
+            "node_id": stage,
+            "type": "chain_stage",
+            "name": f"{title}（标准五段）",
+            "config": {"stage": stage},
+            "sla_ms": timeout,
+            "timeout_ms": timeout,
+            # 段本身不会"失败"：智能体缺位/超时都在段内降级为本地轨，
+            # 真出错（盘面找不到、装配缺失）必须响亮留在实例上，而不是被 retry 掩盖。
+            "on_failure": "abort",
+        }
+        for stage, title in stage_nodes
+    ]
+    edges = [
+        {"source": "perceive", "target": "assess", "condition": "hit"},
+        {"source": "assess", "target": "plan", "condition": "verdict"},
+        {"source": "plan", "target": "execute"},
+        {"source": "execute", "target": "feedback"},
+    ]
+    return {
+        "name": STANDARD_CHAIN_TEMPLATE_NAME,
+        "description": "标准五段处置链路（感知→研判→决策→执行→反馈）：D7 编排归一的 DAG 形态",
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
+async def register_standard_chain_template(engine: WorkflowEngine, *, agent_txn_ms: int, force: bool = False) -> str | None:
+    """幂等注册标准五段模板（与灾种剧本分开，理由见 `standard_chain_template`）。"""
+    template = standard_chain_template(agent_txn_ms=agent_txn_ms)
+    if not force and not _needs_registration(engine.latest_definition(template["name"])):
+        return None
+    await engine.create_definition(
+        name=template["name"],
+        description=template["description"],
+        nodes=template["nodes"],
+        edges=template["edges"],
+    )
+    return template["name"]
 
 
 async def register_report_review_template(engine: WorkflowEngine, *, force: bool = False) -> str | None:

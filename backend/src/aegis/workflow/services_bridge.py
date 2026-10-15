@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from aegis.domain.enums import HazardType, RiskLevel
@@ -167,6 +167,7 @@ def build_workflow_services(
     gateway: AgentGateway,
     outbound: OutboundCaller | None = None,
     scenario_provider: ScenarioProvider | None = None,
+    run_chain_stage: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
 ) -> WorkflowServices:
     """装配节点服务。
 
@@ -382,4 +383,5 @@ def build_workflow_services(
         collect_feedback=collect_feedback,
         notify=notify,
         http_call=outbound if outbound is not None and outbound.enabled else None,
+        run_chain_stage=run_chain_stage,
     )

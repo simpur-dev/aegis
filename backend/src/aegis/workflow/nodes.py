@@ -59,6 +59,10 @@ class WorkflowServices:
     generate_warning: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
     publish_warning: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
     collect_feedback: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
+    #: 标准五段模板的段执行口：签名是 (段名, 实例 payload) → 段产物。
+    #: 由装配点把 `pipeline/workflow_chain.py` 的调度器注进来——本模块不认识 ChainResult，
+    #: 段判定也只在这里被转发，不在工作流侧另写一遍（D7 §4.6）。
+    run_chain_stage: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
     notify: Callable[[dict[str, Any]], Awaitable[None]] | None = None
     http_call: Callable[..., Awaitable[dict[str, Any]]] | None = None
 
@@ -101,6 +105,10 @@ class NodeSpec:
     required_config: tuple[str, ...] = ()
     optional_config: tuple[str, ...] = ()
     min_config: dict[str, Any] = field(default_factory=dict)
+    #: 内部原语：引擎能驱动、注册表里有它，但不进画布节点面板（`/node-types` 会滤掉）。
+    #: `chain_stage` 就属于这类——它要的是链路的盘面（ChainBoard），从画布上拖出来永远跑不起来，
+    #: 摆在面板里只是让值班员多一个必然失败的选项。
+    internal: bool = False
 
     def validate_config(self, config: dict[str, Any]) -> dict[str, Any]:
         missing = [key for key in self.required_config if key not in config or config[key] in (None, "")]
@@ -138,6 +146,14 @@ class NodeRegistry:
 
     def names(self) -> list[str]:
         return sorted(self._specs)
+
+    def panel_specs(self) -> list[NodeSpec]:
+        """节点面板/`/node-types` 的数据源：注册表去掉内部原语。
+
+        引擎侧一律看 `names()`（"每一类都得有被驱动过的证据"，见分派矩阵用例），
+        画布侧看这里（"值班员能拖的"），两个口径各说各的事，别用其中一个去替另一个。
+        """
+        return [self._specs[name] for name in self.names() if not self._specs[name].internal]
 
     def __len__(self) -> int:
         return len(self._specs)
@@ -293,6 +309,27 @@ async def _situation_simulate(ctx: NodeContext, config: dict[str, Any]) -> NodeO
     )
 
 
+#: 标准五段的段名清单。与 `pipeline/result.py` 的 `STAGE_ORDER` 逐字相同——
+#: 由 `tests/unit/test_chain_workflow_parity.py` 断两处不许漂移（工作流侧不 import 链路模块）。
+_CHAIN_STAGES = ("perceive", "assess", "plan", "execute", "feedback")
+
+
+async def _chain_stage(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
+    """标准五段模板的节点：把这一段交给链路侧执行，节点只搬产物与分支。
+
+    `branch` 是早退的载体（感知没命中、研判没出结论时下游按边条件级联跳过），
+    判据在链路侧算，这里不重复。
+    """
+    stage = str(config["stage"])
+    if stage not in _CHAIN_STAGES:
+        raise NodeConfigError(f"chain_stage 段名不合法: {stage}（只允许 {'/'.join(_CHAIN_STAGES)}）")
+    service = ctx.require_service("run_chain_stage", "chain_stage")
+    outcome = await service(stage, ctx.payload)
+    branch = str(outcome.get("branch") or "")
+    note = str(outcome.get("note") or "")[:256]
+    return NodeOutcome(output=dict(outcome), branch=branch or None, note=note)
+
+
 async def _human_review(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
     """会签/审批节点：首次执行挂起等待决策，恢复执行时读取 decision。"""
     decision = ctx.decision or ctx.payload.get("decision")
@@ -417,6 +454,7 @@ def default_registry() -> NodeRegistry:
         NodeSpec("api_call", "外部 API 调用", _api_call, ("method", "url"), ("body",)),
         NodeSpec("device_control", "设备控制：广播/路障等联动", _device_control, ("device", "action", "command_url")),
         NodeSpec("degrade_to_rule", "规则降级：智能体不可用时保守定级", _degrade_to_rule, (), ("risk_level",), {"risk_level": 1}),
+        NodeSpec("chain_stage", "链路段：把标准五段之一交给链路侧执行", _chain_stage, ("stage",), internal=True),
     ]
     for spec in specs:
         registry.register(spec)

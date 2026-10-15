@@ -180,6 +180,21 @@ async def test_节点类型出口与后端注册表同源(container: PlatformCon
 
 
 @pytest.mark.asyncio
+async def test_内部段原语给引擎看不给画布看(container: PlatformContainer) -> None:
+    """`chain_stage` 要的是链路盘面（ChainBoard），从画布拖出来必然失败，所以它只进引擎注册表。
+
+    这条盯的是两个口径不许互相顶掉：面板少了它（值班员少一个死选项），引擎不能少它
+    （标准五段模板就建在它上面，分派矩阵用例负责证明"引擎真的驱动过"）。
+    """
+    async with _client(container) as client:
+        names = {str(row["type"]) for row in (await client.get("/api/v1/workflow/node-types")).json()["items"]}
+    registered = set(container.workflow.node_registry.names())
+    assert "chain_stage" in registered, "引擎注册表里没了它，标准五段模板就是空图"
+    assert "chain_stage" not in names
+    assert registered - names == {"chain_stage"}, "内部原语只有这一类：再多出来一个就说明有人把面板口径当注册表口径写了"
+
+
+@pytest.mark.asyncio
 async def test_核签台账的签字人来自提交者而不是接口默认(container: PlatformContainer) -> None:
     """平台没有登录态：`by` 只能是签字的人自己写的字。
 

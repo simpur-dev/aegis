@@ -33,6 +33,7 @@ from aegis.knowledge.cases import HazardCase, load_builtin_cases
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import HazardResponseChain
 from aegis.pipeline.result import ChainResult
+from aegis.pipeline.stages import HazardStages
 from aegis.retrieval.corpus import CASES_SOURCE, doc_from_case, docs_from_cases
 from aegis.retrieval.docs import LEG_LEXICAL, Provenance, RetrievedDoc
 from aegis.retrieval.embedder import HashingEmbedder
@@ -250,7 +251,15 @@ def build_chain(
     retrieval: Any | None,
 ) -> HazardResponseChain:
     gateway = AgentGateway(bus, registry, contracts, Tracer(), default_deadline_ms=1_500)
-    return HazardResponseChain(gateway=gateway, registry=registry, contracts=contracts, settings=settings, retrieval=retrieval)
+    return HazardResponseChain(
+        HazardStages(
+            gateway=gateway,
+            registry=registry,
+            contracts=contracts,
+            settings=settings,
+            retrieval=retrieval,
+        )
+    )
 
 
 async def drive_with_plan_agent(
@@ -283,11 +292,13 @@ async def drive_with_plan_agent(
     await asyncio.sleep(0.01)
     await bus.idle()
     chain = HazardResponseChain(
-        gateway=gateway,
-        registry=registry,
-        contracts=contracts,
-        settings=settings,
-        retrieval=retrieval,
+        HazardStages(
+            gateway=gateway,
+            registry=registry,
+            contracts=contracts,
+            settings=settings,
+            retrieval=retrieval,
+        )
     )
     try:
         result = await chain.process(readings_rain_burst())
@@ -374,7 +385,15 @@ class TestChainRetrieval:
         stub = StubRetrieval()
         settings = base_settings()
         gateway = AgentGateway(bus, registry, contracts, Tracer(), default_deadline_ms=1_500)
-        chain = HazardResponseChain(gateway=gateway, registry=registry, contracts=contracts, settings=settings, retrieval=stub)
+        chain = HazardResponseChain(
+            HazardStages(
+                gateway=gateway,
+                registry=registry,
+                contracts=contracts,
+                settings=settings,
+                retrieval=stub,
+            )
+        )
 
         result = await chain.process(readings_rain_burst())
 

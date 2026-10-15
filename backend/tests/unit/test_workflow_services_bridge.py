@@ -49,6 +49,8 @@ def bridge(**overrides: Any) -> WorkflowServices:
         "warning_service": SimpleNamespace(),
         "dispatcher": SimpleNamespace(),
         "gateway": SimpleNamespace(),
+        # 标准五段模板的段执行口：装配点给的是 `ChainStations`，桥只转发不调用它
+        "run_chain_stage": SimpleNamespace(),
     }
     args.update(overrides)
     return build_workflow_services(**args)

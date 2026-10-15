@@ -52,6 +52,8 @@ from aegis.observability.telemetry import telemetry_status
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.chain import HazardResponseChain
 from aegis.pipeline.result import ChainResult
+from aegis.pipeline.stages import HazardStages
+from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
 from aegis.services.assistant import AssistantActions, AssistantService
 from aegis.services.delivery import (
     ChannelAdapter,
@@ -72,7 +74,12 @@ from aegis.storage.store import StoreProtocol, rule_library_port
 from aegis.workflow.engine import WorkflowEngine
 from aegis.workflow.outbound import OutboundCaller, OutboundPolicy, parse_host_list
 from aegis.workflow.services_bridge import build_workflow_services
-from aegis.workflow.templates import REPORT_REVIEW_TEMPLATE, register_builtin_templates, register_report_review_template
+from aegis.workflow.templates import (
+    REPORT_REVIEW_TEMPLATE,
+    register_builtin_templates,
+    register_report_review_template,
+    register_standard_chain_template,
+)
 
 if TYPE_CHECKING:
     from aegis.retrieval.service import HybridRetrievalService
@@ -298,6 +305,9 @@ class PlatformContainer:
     bundle: StoreBundle
     rule_engine: RuleEngine
     analytics: AnalyticsRecorder | None = None
+    #: 同一条五段的 DAG 编排（D7 §4.6）。段的判定与记账与 `chain` 共用同一个 HazardStages，
+    #: parity 用例与退役切换都走它——加它不是为了多一个入口，而是为了让 chain 能退。
+    workflow_chain: WorkflowChain | None = None
     knowledge: KnowledgeProvider | None = None
     knowledge_state: IntegrationState | None = None
     retrieval: HybridRetrievalService | None = None
@@ -428,6 +438,9 @@ class PlatformContainer:
         await register_builtin_templates(self.workflow)
         # 核签流程与灾种剧本分开注册：低置信度上报要能开出一张真人可签的工单
         await register_report_review_template(self.workflow)
+        # 标准五段模板：D7 退役 chain 的对照物。预算取配置里的 LLM 段事务预算，
+        # 两边同源——节点超时若小于段预算，就会出现在链路还在等智能体时节点先被判死。
+        await register_standard_chain_template(self.workflow, agent_txn_ms=int(self.settings.sla_agent_txn_ms))
 
         if with_ingest_loop and self.ingest.sources:
             period = ingest_interval_seconds or self.settings.simulator_interval_seconds
@@ -901,20 +914,24 @@ def create_container(
         translator=gateway_llm.translate if gateway_llm is not None and gateway_llm.available else None,
     )
     chain = HazardResponseChain(
-        gateway=gateway,
-        registry=registry,
-        contracts=contracts,
-        tracer=tracer,
-        settings=cfg,
-        rule_engine=rule_engine,
-        risk_engine=RiskEngine(rule_engine),
-        task_parser=TaskParser(contracts, settings=cfg),
-        warning_service=warning_service,
-        dispatcher=dispatcher,
+        HazardStages(
+            gateway=gateway,
+            registry=registry,
+            contracts=contracts,
+            tracer=tracer,
+            settings=cfg,
+            rule_engine=rule_engine,
+            risk_engine=RiskEngine(rule_engine),
+            task_parser=TaskParser(contracts, settings=cfg),
+            warning_service=warning_service,
+            dispatcher=dispatcher,
+            knowledge=knowledge,
+            retrieval=retrieval,
+        ),
         on_result=on_result,
-        knowledge=knowledge,
-        retrieval=retrieval,
     )
+    # 段的执行口先于引擎：引擎的服务里要摆这个可调用，而它只依赖段与盘面，不依赖引擎本身。
+    stations = ChainStations(chain.stages)
     use_simulator = cfg.simulator_enabled if with_simulator is None else with_simulator
     simulator = HazardScenarioSimulator(seed=cfg.simulator_seed) if use_simulator else None
 
@@ -942,10 +959,12 @@ def create_container(
             outbound=outbound,
             # 案例驱动推演的注入位：知识腿没装配就留 None，节点侧显式降级而不是回退到 ±1 启发式
             scenario_provider=AssembledScenarios(knowledge=knowledge, settings=cfg) if knowledge is not None else None,
+            run_chain_stage=stations,
         ),
         tracer=tracer,
         settings=cfg,
     )
+    workflow_chain = WorkflowChain(chain.stages, workflow, stations=stations, on_result=on_result)
     container = PlatformContainer(
         settings=cfg,
         transport=bus,
@@ -955,6 +974,7 @@ def create_container(
         gateway=gateway,
         store=store,
         chain=chain,
+        workflow_chain=workflow_chain,
         ingest=ingest,
         dispatcher=dispatcher,
         exporter=MetricsExporter(gateway, tracer),

@@ -1,5 +1,5 @@
 /**
- * 类别 → 自定义节点组件的映射（4 个组件覆盖 16 类节点，见 @/utils/graph 的 NODE_SPECS）。
+ * 类别 → 自定义节点组件的映射（4 个组件按类别覆盖 NODE_SPECS 的全部类型，含内部原语）。
  * 单列一处是为了让 NodePalette / Inspector 等纯数据模块不被 SFC 依赖牵连。
  */
 import { markRaw } from 'vue'
