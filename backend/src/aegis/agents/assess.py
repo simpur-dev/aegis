@@ -1,7 +1,9 @@
 """assess 研判智能体内环（§3.2）：LLM 结构化定级 + 双盲交叉验证 + D10 溯源。
 
 R1/R8/R11 的落点：定级由 `chat_structured`（1–5 枚举强约束，越界即拒）产出，红/橙级触发
-双盲（第二评估 + 分歧仲裁），结论自带 `model_info`（可复现）与 `disagreement`。取数经注入的
+双盲（第二评估 + 分歧仲裁），结论自带 `model_info`（可复现）与 `disagreement`。两腿在
+规则轨预触发（请求带 `rule_level`）时**并行**发出，预触发落空则按模型自己的结论补跑串行
+第二腿——覆盖面不减，时延省一半的那条路要预触发才成立。取数经注入的
 `AssessContextProvider`（Protocol），**不碰存储层**；LLM 缺位/超时/不合规一律让内环异常上抛，
 由 agentkit 回执 error、平台规则降级轨接管（LLM 不可用≠平台不可用）。
 上抛只适用于**关键路径**（第一遍定级）：双盲是增强腿，它的失败在腿内收口成 `double_blind=failed_*`
@@ -10,6 +12,7 @@ R1/R8/R11 的落点：定级由 `chat_structured`（1–5 枚举强约束，越�
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -20,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 from aegis.agents.agentkit import AgentKit, Reply
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import AgentMessage, ModelInfo, now_iso
+from aegis.observability.tracer import percentile
 from aegis.services.memory import MemoryService, new_memory_record_id
 from aegis.services.prompt_guard import fence_untrusted
 
@@ -89,6 +93,108 @@ class AssessAgent(AgentKit):
             return float("inf")
         return request.deadline_ms - (time.perf_counter() - started_at) * 1000
 
+    def _llm(self) -> Any:
+        """内环唯一的 LLM 出口。缺位在 `handle` 入口就抛，这里只做类型收窄（mypy 看不见那句判空）。"""
+        if self.llm is None:
+            raise RuntimeError("assess 内环需要 LLM 网关（缺位由平台规则降级轨接管）")
+        return self.llm
+
+    def _pre_flagged_high_risk(self, payload: dict[str, Any]) -> bool:
+        """规则轨（平台风险引擎）已经把这次事件报成红/橙——并行预发第二腿的依据。
+
+        它只回答"要不要现在就开两腿"，不参与判定：结论的出处仍然只有模型那一份。
+        没带这一格（老调用方）就是不预触发，走原来的"模型报红/橙后补跑第二腿"。
+        """
+        try:
+            return int(payload["rule_level"]) <= int(RiskLevel.ORANGE)
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    def _recent_grade_p50_ms(self) -> float:
+        """网关台账里 `assess` 任务的历史 p50：并行发车之前唯一能拿到的耗时事实。"""
+        records = getattr(self.llm, "usage_records", None) or []
+        latencies = sorted(float(record.latency_ms) for record in records if getattr(record, "task", "") == "assess")
+        return percentile(latencies, 50) if latencies else 0.0
+
+    def _pair_affordable(self, request: AgentMessage, started_at: float) -> bool:
+        """现在就发两条腿吗：deadline 太紧整对不开；有历史耗时时还要求剩余预算够 p50 的倍数。
+
+        串行那一程当场拿"上一趟实测"做判据，并行必须在发车前就有数——所以读的是调用台账。
+        读不到（新装、假网关）时只按 deadline 判：宁可不预估，也不拍一个数当事实。
+        """
+        deadline = request.deadline_ms
+        if deadline is not None and deadline < self.double_blind_min_deadline_ms:
+            return False
+        estimate = self._recent_grade_p50_ms()
+        return estimate <= 0.0 or self._budget_left(request, started_at) >= self.blind_budget_factor * estimate
+
+    async def _grade(self, *, task: str, base_vars: dict[str, str], request: AgentMessage) -> tuple[AssessVerdict, float]:
+        """一趟结构化定级 + 它的真实耗时（增强腿的预算闸用的是这个数，不是常量）。"""
+        started = time.perf_counter()
+        verdict = await self._llm().chat_structured(
+            [],
+            schema=AssessVerdict,
+            task=task,
+            prompt_key="assess",
+            prompt_vars=base_vars,
+            agent_id=self.agent_id,
+            trace_id=request.trace_id,
+        )
+        return verdict, (time.perf_counter() - started) * 1000
+
+    async def _blind_leg(self, *, base_vars: dict[str, str], request: AgentMessage) -> tuple[AssessVerdict | BaseException, float]:
+        """第二评估（异模型路由、上下文独立，§3.2）：失败不外抛，把异常本身交回调用方。
+
+        并行时它是 `gather` 的一路——抛出会让另一路一起被取消，整段研判跟着死（那就是 MB-7c 修掉的
+        那个形状）；串行时它同样只该收口在增强腿。两种走法共用"异常当结果返回"这一个形状。
+        """
+        started = time.perf_counter()
+        try:
+            verdict = await self._llm().chat_structured(
+                [],
+                schema=AssessVerdict,
+                task="arbitration",
+                prompt_key="assess",
+                prompt_vars=base_vars,
+                agent_id=self.agent_id,
+                trace_id=request.trace_id,
+            )
+        except Exception as exc:
+            return exc, (time.perf_counter() - started) * 1000
+        return verdict, (time.perf_counter() - started) * 1000
+
+    async def _resolve_blind(
+        self,
+        first: AssessVerdict,
+        second: AssessVerdict,
+        *,
+        request: AgentMessage,
+        started_at: float,
+        leg_ms: float,
+        region: str,
+        hits: list[Any],
+        ctx: dict[str, Any],
+    ) -> tuple[AssessVerdict, bool | None, str]:
+        """两腿都在：一致则上调置信，分歧则第三 call 仲裁（两份 rationale 并入）；仲裁失败也只在增强腿内收口。"""
+        if int(second.risk_level) == int(first.risk_level):
+            boosted = first.model_copy(update={"confidence": min(0.99, first.confidence + self.confidence_boost)})
+            return boosted, False, "agreed"
+        if self._budget_left(request, started_at) < self.blind_budget_factor * leg_ms:
+            # 分歧已经发生却没时间仲裁：取更保守（等级更高=数字更小）的一条，并留痕
+            conservative = first if int(first.risk_level) <= int(second.risk_level) else second
+            return conservative, True, "arbitrated_skipped_budget"
+        arb_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, divergence=(first, second))
+        try:
+            arb, _ = await self._grade(task="arbitration", base_vars=arb_vars, request=request)
+        except Exception as exc:
+            log.warning(
+                "研判双盲仲裁腿失败，保留第一遍结论",
+                extra={"leg": "arbitration", "err": type(exc).__name__, "trace_id": request.trace_id},
+            )
+            # 仲裁没落地就还没做出比较：既不能说一致，也不能说已判定分歧
+            return first, None, f"failed_arbitration:{type(exc).__name__}"
+        return arb, True, "arbitrated"
+
     async def handle(self, request: AgentMessage) -> Reply:
         if self.llm is None:
             raise RuntimeError("assess 内环需要 LLM 网关（缺位由平台规则降级轨接管）")
@@ -113,86 +219,69 @@ class AssessAgent(AgentKit):
                 log.warning("assess 历史研判召回降级", extra={"err": type(exc).__name__})
 
         base_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx)
-        first_started_at = time.perf_counter()
-        first = await self.llm.chat_structured(
-            [],
-            schema=AssessVerdict,
-            task="assess",
-            prompt_key="assess",
-            prompt_vars=base_vars,
-            agent_id=self.agent_id,
-            trace_id=request.trace_id,
-        )
-        first_ms = (time.perf_counter() - first_started_at) * 1000
-
-        disagreement: bool | None = None
-        final = first
+        # §3.2 要求"并行第二评估"，但"要不要第二腿"的触发条件（初始定级 ≤2）长在模型的第一份结论上——
+        # 那是第二腿发车之前拿不到的东西。所以并行只在**规则轨已经报了红/橙**时预触发：`rule_level` 是
+        # 平台在 dispatch 之前就算好的事实，拿它当预触发不引入新阈值，也不参与判定（结论的出处仍然只有
+        # 模型那一份）。预触发不成立时照旧在模型报出红/橙后补跑第二腿：覆盖面不减，只是那一程串行。
         blind_status = "not_applicable"
-        # 双盲只对高危（红=1/橙=2）触发（§8 成本对策）；一致则上调置信，分歧则第三 call 仲裁。
-        if self.double_blind and int(first.risk_level) <= int(RiskLevel.ORANGE):
-            deadline = request.deadline_ms
-            if deadline is not None and deadline < self.double_blind_min_deadline_ms:
-                # §3.2：双盲是增强腿、非关键路径——deadline 紧张时跳过并留痕，不冒超期风险。
-                blind_status = "skipped_deadline"
-            elif self._budget_left(request, started_at) < self.blind_budget_factor * first_ms:
-                blind_status = "skipped_budget"
-                log.info(
-                    f"研判双盲增强腿跳过：剩余预算不足上一次调用的 {self.blind_budget_factor:.1f} 倍",
-                    extra={"first_ms": round(first_ms, 1)},
-                )
-            else:
+        blind_mode = ""
+        second_leg: tuple[AssessVerdict | BaseException, float] | None = None
+        if self.double_blind and self._pre_flagged_high_risk(payload) and self._pair_affordable(request, started_at):
+            blind_mode = "parallel"
+            (first, first_ms), second_leg = await asyncio.gather(
+                self._grade(task="assess", base_vars=base_vars, request=request),
+                self._blind_leg(base_vars=base_vars, request=request),
+            )
+        else:
+            first, first_ms = await self._grade(task="assess", base_vars=base_vars, request=request)
+            # 双盲只对高危（红=1/橙=2）触发（§8 成本对策）；一致则上调置信，分歧则第三 call 仲裁。
+            if self.double_blind and int(first.risk_level) <= int(RiskLevel.ORANGE):
+                deadline = request.deadline_ms
+                if deadline is not None and deadline < self.double_blind_min_deadline_ms:
+                    # §3.2：双盲是增强腿、非关键路径——deadline 紧张时跳过并留痕，不冒超期风险。
+                    blind_status = "skipped_deadline"
+                elif self._budget_left(request, started_at) < self.blind_budget_factor * first_ms:
+                    blind_status = "skipped_budget"
+                    log.info(
+                        f"研判双盲增强腿跳过：剩余预算不足上一次调用的 {self.blind_budget_factor:.1f} 倍",
+                        extra={"first_ms": round(first_ms, 1)},
+                    )
+                else:
+                    blind_mode = "serial"
+                    second_leg = await self._blind_leg(base_vars=base_vars, request=request)
+
+        final = first
+        disagreement: bool | None = None
+        if second_leg is not None:
+            outcome, second_ms = second_leg
+            if isinstance(outcome, BaseException):
                 # 增强腿的失败只能收口在增强腿：第一遍结论已经到手，第二/三遍任何异常都不许穿出
                 # handle()——穿出就等于用一次模型故障废掉整段研判（真机 503 风暴实测：四条链路
                 # stages 全成 mode=local、协同成功率 0.0，而第一遍结论本可以活下来）。
-                leg = "second"
-                try:
-                    second_started_at = time.perf_counter()
-                    second = await self.llm.chat_structured(
-                        [],
-                        schema=AssessVerdict,
-                        task="arbitration",
-                        prompt_key="assess",
-                        prompt_vars=base_vars,
-                        agent_id=self.agent_id,
-                        trace_id=request.trace_id,
-                    )
-                    second_ms = (time.perf_counter() - second_started_at) * 1000
-                    if int(second.risk_level) != int(first.risk_level):
-                        arb_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, divergence=(first, second))
-                        if self._budget_left(request, started_at) < self.blind_budget_factor * max(first_ms, second_ms):
-                            # 分歧已经发生却没时间仲裁：取更保守（等级更高=数字更小）的一条，并留痕
-                            final = first if int(first.risk_level) <= int(second.risk_level) else second
-                            disagreement = True
-                            blind_status = "arbitrated_skipped_budget"
-                        else:
-                            leg = "arbitration"
-                            arb = await self.llm.chat_structured(
-                                [],
-                                schema=AssessVerdict,
-                                task="arbitration",
-                                prompt_key="assess",
-                                prompt_vars=arb_vars,
-                                agent_id=self.agent_id,
-                                trace_id=request.trace_id,
-                            )
-                            final = arb
-                            disagreement = True
-                            blind_status = "arbitrated"
-                    else:
-                        final = first.model_copy(update={"confidence": min(0.99, first.confidence + self.confidence_boost)})
-                        disagreement = False
-                        blind_status = "agreed"
-                except Exception as exc:
-                    blind_status = f"failed_{leg}:{type(exc).__name__}"
-                    log.warning(
-                        "研判双盲增强腿失败，保留第一遍结论",
-                        extra={"leg": leg, "err": type(exc).__name__, "trace_id": request.trace_id},
-                    )
+                blind_status = f"failed_second:{type(outcome).__name__}"
+                log.warning(
+                    "研判双盲增强腿失败，保留第一遍结论",
+                    extra={"leg": "second", "err": type(outcome).__name__, "trace_id": request.trace_id},
+                )
+            else:
+                final, disagreement, blind_status = await self._resolve_blind(
+                    first,
+                    outcome,
+                    request=request,
+                    started_at=started_at,
+                    leg_ms=max(first_ms, second_ms),
+                    region=region,
+                    hits=hits,
+                    ctx=ctx,
+                )
 
         result_payload = self._to_chain_payload(final, region=region, hits=hits)
         # §3.2 双盲状态如实留痕：agreed / arbitrated / skipped_deadline / skipped_budget /
         # arbitrated_skipped_budget / not_applicable —— 收腿这件事必须看得见，不能伪装成"跑了且一致"
         result_payload["double_blind"] = blind_status
+        # 这两遍是同时发的还是排队发的：它决定这一段的时延形状（并行≈一趟调用，串行≈两趟）。
+        # 只在增强腿真开过时有值，"" 就是压根没开（跳过或不适用）——别让"没做"读成"做了且一致"。
+        result_payload["double_blind_mode"] = blind_mode
         # 取数哪条腿没拿到（REST 503/超时/连不上）必须看得见，否则"没有佐证"会读成"佐证就是这些"。
         result_payload["context_degraded"] = list(ctx.get("degraded") or [])
 

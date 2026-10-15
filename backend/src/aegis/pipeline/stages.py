@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from aegis.bus import subjects
@@ -57,6 +58,38 @@ log = logging.getLogger("aegis.pipeline")
 _CASE_RECALL_LIMIT = 3
 # 注入的检索上下文块数：与案例召回分开计数，块越长下游研判读的越多但预算也吃得更紧
 _CONTEXT_DOC_LIMIT = 5
+
+#: 信封里的分歧格只有三种事实：False（两遍一致）、True（两遍不一致）、缺席（老版应答没带这一格）。
+#: 把 None 折成 False 就是"没评估"冒充"评估过且一致"——§3.2 双盲最怕的正是这种读法。
+_DISAGREEMENT_LABELS: dict[bool | None, str] = {True: "两遍不一致", False: "两遍一致", None: "分歧格未带"}
+
+
+@dataclass(frozen=True, slots=True)
+class _AssessOutcome:
+    """研判段交回编排器的三件事：结论、谁答的、双盲走到哪一步。
+
+    智能体在信封里带了 `double_blind` 与 `disagreement`（D10 的可选字段），此前链路只读结论：
+    于是"双盲做了且分歧、由仲裁改判"与"根本没做双盲"在 `chain_runs` 里长同一个样，
+    事后想查"这段时间模型自相矛盾的频率"就没有出处。这一段的事实必须由这一段落账。
+    """
+
+    verdict: RiskVerdict | None
+    answered_by_agent: bool
+    blind_status: str = ""
+    disagreement: bool | None = None
+    blind_mode: str = ""
+
+    def note_suffix(self) -> str:
+        """降级轨（本地定级）没有双盲这件事，不补半句；智能体那一程把状态串原样带上。
+
+        `parallel` / `serial` 说的是这两遍是同时发的还是排队发的——它是这一段时延形状的事实，
+        没有这格，"预触发没生效"与"预触发了但两腿一致"在台账上会长得一模一样。
+        """
+        if not self.answered_by_agent or not self.blind_status:
+            return ""
+        label = _DISAGREEMENT_LABELS[self.disagreement]
+        head = f"双盲 {self.blind_mode}/{self.blind_status}" if self.blind_mode else f"双盲 {self.blind_status}"
+        return f"；{head}（{label}）"
 
 
 class HazardStages:
@@ -233,9 +266,8 @@ class HazardStages:
         before = len(result.degradations)
         async with instrumentation.span("stage_assess_ms", trace_id=trace) as span:
             with self._tracer.span("stage_assess_ms", trace_id=trace) as sp:
-                verdict, answered_by_agent = await self._assess(
-                    hits, region, result, trace, preset_verdict=preset_verdict, reported=reported
-                )
+                outcome = await self._assess(hits, region, result, trace, preset_verdict=preset_verdict, reported=reported)
+            verdict = outcome.verdict
             if verdict is None:
                 instrumentation.mark_error(span, "研判未产出定级结论", code="assess_failed")
             elif len(result.degradations) > before:
@@ -251,10 +283,10 @@ class HazardStages:
         result.verdict = verdict
         return StageResult(
             "assess",
-            "agent" if answered_by_agent else "local",
+            "agent" if outcome.answered_by_agent else "local",
             verdict is not None,
             sp.finished_ms or 0.0,
-            f"等级 {int(verdict.risk_level)}" if verdict else "定级失败",
+            (f"等级 {int(verdict.risk_level)}" if verdict else "定级失败") + outcome.note_suffix(),
             model_info=result.stage_models.get("assess"),
         )
 
@@ -267,23 +299,29 @@ class HazardStages:
         *,
         preset_verdict: RiskVerdict | None = None,
         reported: bool = False,
-    ) -> tuple[RiskVerdict | None, bool]:
-        """返回 (结论, 是否由总线智能体应答)。降级路径的结论来自规则引擎或上报解析腿。"""
+    ) -> _AssessOutcome:
+        """结论与"这一段是谁答的、双盲走到哪一步"。降级路径的结论来自规则引擎或上报解析腿。"""
         local = preset_verdict or self._risk_engine.assess(hits, region_code=region)
         fallback_note = "采用上报解析定级" if preset_verdict is not None else "采用规则定级"
         if self._registry.pick(AgentType.ASSESS.value, "risk_assess") is None:
-            return local, False
+            return _AssessOutcome(local, False)
+        request_payload: dict[str, Any] = {
+            "region_code": region,
+            "window": "1h",
+            "candidate_hazards": sorted({h.hazard_type for h in hits}),
+            "hits": [h.model_dump() for h in hits],
+            "intake": "report" if reported else "telemetry",
+        }
+        # 规则轨的等级随请求交给智能体，只用作 §3.2 双盲的**预触发信号**（并行发两条腿要在看到
+        # 模型结论之前就决定）；判定口径不变，结论的出处仍然只有模型那一份。规则轨没结论时
+        # 干脆不送这一格——读不到就不预触发，比填一个数冒充"规则也说高危"诚实。
+        if local is not None:
+            request_payload["rule_level"] = int(local.risk_level)
         try:
             response = await self._gateway.dispatch(
                 AgentType.ASSESS,
                 Action.ASSESS_HAZARD,
-                {
-                    "region_code": region,
-                    "window": "1h",
-                    "candidate_hazards": sorted({h.hazard_type for h in hits}),
-                    "hits": [h.model_dump() for h in hits],
-                    "intake": "report" if reported else "telemetry",
-                },
+                request_payload,
                 trace_id=trace,
                 capability="risk_assess",
                 # 事务预算 = LLM 档（§5 A 案）：与 `stage_*_ms` 同档同钟；
@@ -294,7 +332,7 @@ class HazardStages:
             )
         except AegisError as exc:
             result.degradations.append(f"研判降级: {exc.message}")
-            return local, False
+            return _AssessOutcome(local, False)
 
         if (verdict := self._parse_agent_assessment(response.payload, region, hits)) is not None:
             if (receipt := model_receipt(response)) is not None:
@@ -304,9 +342,15 @@ class HazardStages:
             blind = str(response.payload.get("double_blind") or "")
             if blind.startswith("failed"):
                 result.degradations.append(f"研判增强腿失败: {blind}（主结论取第一遍）")
-            return verdict, True
+            return _AssessOutcome(
+                verdict,
+                True,
+                blind_status=blind,
+                disagreement=response.disagreement,
+                blind_mode=str(response.payload.get("double_blind_mode") or ""),
+            )
         result.degradations.append(f"研判结论不合契约，{fallback_note}")
-        return local, False
+        return _AssessOutcome(local, False)
 
     @staticmethod
     def _parse_agent_assessment(payload: dict[str, Any], region: str, hits: list[TriggerHit]) -> RiskVerdict | None:

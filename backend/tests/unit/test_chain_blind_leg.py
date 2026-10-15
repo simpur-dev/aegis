@@ -44,7 +44,7 @@ def _hit() -> Any:
     )
 
 
-def _assess_response(double_blind: str) -> Any:
+def _assess_response(double_blind: str, disagreement: bool | None = None, mode: str = "") -> Any:
     request = make_request(
         source="platform.t01",
         target="assess.stub",
@@ -53,7 +53,7 @@ def _assess_response(double_blind: str) -> Any:
         trace_id=TRACE,
         reply_to="reply.t01.inbox",
     )
-    return make_response(
+    response = make_response(
         request,
         source="assess.stub",
         payload={
@@ -63,8 +63,11 @@ def _assess_response(double_blind: str) -> Any:
             "rationale": "10 分钟降雨 28 毫米且泥位上行",
             "evidence_refs": ["R-DEBRIS-RAIN-1"],
             "double_blind": double_blind,
+            "double_blind_mode": mode,
         },
     )
+    # `disagreement` 是 D10 加在信封上的可选格：不带就是 None（没评估过），与 False（评估过且一致）不同
+    return response if disagreement is None else response.model_copy(update={"disagreement": disagreement})
 
 
 class _Gateway:
@@ -82,15 +85,22 @@ class _Registry:
         return object() if agent_type == AgentType.ASSESS.value else None
 
 
+class _NoAgentsRegistry:
+    """一个智能体都不在册：研判必须落到规则降级轨，且不许冒充"双盲做过"。"""
+
+    def pick(self, agent_type: str, capability: str) -> object | None:
+        return None
+
+
 class _Contracts:
     def stu_errors(self, payloads: list[dict[str, Any]]) -> list[str]:
         return []
 
 
-async def _run(double_blind: str) -> Any:
+async def _run(double_blind: str, disagreement: bool | None = None, mode: str = "") -> Any:
     chain = HazardResponseChain(
         HazardStages(
-            gateway=_Gateway(_assess_response(double_blind)),  # type: ignore[arg-type]
+            gateway=_Gateway(_assess_response(double_blind, disagreement, mode)),  # type: ignore[arg-type]
             registry=_Registry(),  # type: ignore[arg-type]
             contracts=_Contracts(),  # type: ignore[arg-type]
             settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
@@ -135,3 +145,49 @@ class TestBlindLegTrace:
         result = await chain.process([_reading()], region_code=REGION, preset_hits=[_hit()])
         assert result.stage("assess") is not None and result.stage("assess").mode == "agent"
         assert not any("研判增强腿失败" in note for note in result.degradations), result.degradations
+
+
+class TestBlindFactReachesLedger:
+    """§3.2 的双盲事实写在信封上（`double_blind` + D10 的 `disagreement`），链路必须把它落到台账。
+
+    只读结论的后果是"两遍不一致、由仲裁改判"与"根本没做双盲"在 `chain_runs` 里长同一个样——
+    事后既查不出这条链路当时矛盾过，也没法统计模型自相矛盾的频率。
+    """
+
+    async def test_一致与分歧都进研判段的note(self) -> None:
+        agreed = await _run("agreed", disagreement=False)
+        assert agreed.stage("assess") is not None and "双盲 agreed（两遍一致）" in agreed.stage("assess").note
+        arbitrated = await _run("arbitrated", disagreement=True)
+        assert arbitrated.stage("assess") is not None
+        note = arbitrated.stage("assess").note
+        assert "双盲 arbitrated（两遍不一致）" in note, note
+        assert not any("研判增强腿失败" in text for text in arbitrated.degradations), "分歧不是故障，别把它染成降级"
+
+    async def test_不带分歧格时说分歧格未带而不是两遍一致(self) -> None:
+        """反向对照：把 None 折成 False 判据，这条立刻红——那正是"没评估"冒充"评估过且一致"。"""
+        result = await _run("agreed")
+        assert result.stage("assess") is not None
+        note = result.stage("assess").note
+        assert "分歧格未带" in note, note
+        assert "两遍一致" not in note, note
+
+    async def test_两腿是并行还是串行也进台账(self) -> None:
+        """时延形状是个事实：预触发让两腿同时发车之后，台账要分得开"并行且一致"与"串行且一致"。"""
+        result = await _run("agreed", disagreement=False, mode="parallel")
+        assert result.stage("assess") is not None
+        assert "双盲 parallel/agreed（两遍一致）" in result.stage("assess").note, result.stage("assess").note
+
+    async def test_本地降级轨不提双盲(self) -> None:
+        """规则定级这一程没有任何智能体参与，note 里不该出现"双盲"字样。"""
+        chain = HazardResponseChain(
+            HazardStages(
+                gateway=_Gateway(_assess_response("agreed", disagreement=False)),  # type: ignore[arg-type]
+                registry=_NoAgentsRegistry(),  # type: ignore[arg-type]
+                contracts=_Contracts(),  # type: ignore[arg-type]
+                settings=Settings(env="test", bus_backend="memory", store_backend="memory"),
+            )
+        )
+        result = await chain.process([_reading()], region_code=REGION, preset_hits=[_hit()])
+        assess = result.stage("assess")
+        assert assess is not None and assess.mode == "local"
+        assert "双盲" not in assess.note, assess.note

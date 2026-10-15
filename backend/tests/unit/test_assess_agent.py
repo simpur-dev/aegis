@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -107,12 +108,16 @@ class SlowGateway(FakeGateway):
         return await super().chat_structured(messages, **kw)
 
 
-def _request(deadline_ms: int = 5000) -> Any:
+def _request(deadline_ms: int = 5000, rule_level: int | None = None) -> Any:
+    payload = dict(REQUEST_PAYLOAD)
+    if rule_level is not None:
+        # 规则轨的等级：§3.2 并行双盲的预触发信号（由链路在 dispatch 前算好交下来）
+        payload["rule_level"] = rule_level
     return make_request(
         source="platform.gateway",
         target="assess.real01",
         action="assess.hazard",
-        payload=REQUEST_PAYLOAD,
+        payload=payload,
         trace_id=TRACE,
         reply_to="reply.gw0000000a.inbox",
         deadline_ms=deadline_ms,
@@ -387,3 +392,107 @@ class TestBlindBudget:
         assert reply.payload["double_blind"] == "arbitrated_skipped_budget"
         assert reply.payload["risk_level"] == 1, "红色(1)与黄色(3)分歧时取更重的等级，不取较轻的那条"
         assert reply.payload.get("disagreement") is True or reply.disagreement is True
+
+
+class TimingGateway(FakeGateway):
+    """按脚本回放并记下每趟调用的起止墙钟：并行与否只能用时间窗判，调用顺序证明不了并发。
+
+    `history_ms` 造的是网关调用台账：并行发车之前没有"上一趟实测"可用，判据只能来自这里。
+    """
+
+    def __init__(self, *verdicts: Any, delay: float = 0.05, history_ms: list[float] | None = None) -> None:
+        super().__init__(*verdicts)
+        self._delay = delay
+        self.windows: list[tuple[float, float]] = []
+        self.usage_records = [SimpleNamespace(task="assess", latency_ms=float(ms)) for ms in (history_ms or [])]
+
+    async def chat_structured(self, messages, **kw: Any) -> Any:
+        started = time.perf_counter()
+        await asyncio.sleep(self._delay)
+        result = await super().chat_structured(messages, **kw)
+        self.windows.append((started, time.perf_counter()))
+        return result
+
+
+def assess_agent(*verdicts: Any, delay: float = 0.05, history_ms: list[float] | None = None) -> tuple[AssessAgent, TimingGateway]:
+    gw = TimingGateway(*verdicts, delay=delay, history_ms=history_ms)
+    a = AssessAgent(
+        transport=_NullTransport(),
+        agent_type=AgentType.ASSESS,
+        agent_id="assess.real01",
+        capabilities=["risk_assess"],
+        llm=gw,
+    )  # type: ignore[arg-type]
+    return a, gw
+
+
+class TestParallelDoubleBlind:
+    """§3.2 的"并行第二评估"：两条腿必须真的同时在飞，而不是排队。
+
+    判据刻意用时间窗的**相对关系**（第二腿在第一腿结束之前就已开始），不用绝对毫秒数——
+    本机时钟粒度与并发负载都能把绝对值晃掉，晃不掉的是重叠。
+    """
+
+    async def test_规则轨预触发时两条腿同时发车(self) -> None:
+        a, gw = assess_agent(verdict(2), verdict(2))
+        reply = await a.handle(_request(deadline_ms=3000, rule_level=2))
+        assert [c["task"] for c in gw.calls[:2]] == ["assess", "arbitration"]
+        assert reply.payload["double_blind"] == "agreed" and reply.payload["double_blind_mode"] == "parallel"
+        first, second = gw.windows[0], gw.windows[1]
+        assert second[0] < first[1], f"两腿没重叠：第二腿 {second[0]:.4f} 才开始，第一腿 {first[1]:.4f} 就完了"
+        assert reply.disagreement is False
+
+    async def test_没有预触发时补跑第二腿并保持串行(self) -> None:
+        """覆盖面不能因为并行口径而缩小：模型自己报红/橙时，第二腿照样要跑，只是排队跑。"""
+        a, gw = assess_agent(verdict(2), verdict(2))
+        reply = await a.handle(_request(deadline_ms=3000))
+        assert len(gw.calls) == 2
+        assert reply.payload["double_blind_mode"] == "serial"
+        first, second = gw.windows[0], gw.windows[1]
+        assert second[0] >= first[1], "串行这一程不该重叠：重叠了就说明预触发口径被绕过了"
+
+    async def test_历史耗时说来不及就不并行预发(self) -> None:
+        """并行必须在发车前就有数：台账里 assess 的 p50 已经吃掉预算的 1.5 倍，就不该乐观地发两腿。
+
+        判据落在"这一程最终仍是串行跑完双盲"：预触发的乐观并行被预算闸挡下，但覆盖面不缩——
+        模型自己报了橙，第二腿照样补跑，只是排队。
+        """
+        a, gw = assess_agent(verdict(2), verdict(2), history_ms=[2400.0, 2600.0])
+        reply = await a.handle(_request(deadline_ms=3000, rule_level=2))
+        assert len(gw.calls) == 2
+        assert reply.payload["double_blind_mode"] == "serial", "预算不够时预触发必须让位给串行补跑"
+        assert reply.payload["double_blind"] == "agreed"
+
+    async def test_预触发落空时不预支第二腿的成本(self) -> None:
+        """规则轨与模型都说黄：只发一趟。并行不是"永远发两趟"，§8 的成本对策仍然算数。"""
+        a, gw = assess_agent(verdict(4))
+        reply = await a.handle(_request(deadline_ms=3000, rule_level=4))
+        assert len(gw.calls) == 1
+        assert reply.payload["double_blind"] == "not_applicable"
+        assert reply.payload["double_blind_mode"] == ""
+
+    async def test_预触发也要过deadline闸(self) -> None:
+        """预算紧就整对不开：并行省下的墙钟不能变成"明知来不及还发两趟"。"""
+        a, gw = assess_agent(verdict(2))
+        reply = await a.handle(_request(deadline_ms=200, rule_level=1))  # 200 < min_deadline(800)
+        assert len(gw.calls) == 1, "deadline 紧张时并行预触发不能绕过跳过判据"
+        assert reply.payload["double_blind"] == "skipped_deadline"
+
+    async def test_并行时第二腿失败不废掉第一遍(self) -> None:
+        """MB-7c 的形状在并行下同样成立：增强腿抛出的异常不许穿出 handle()。"""
+        a, gw = assess_agent(verdict(1), RuntimeError("第二腿 503"))
+        reply = await a.handle(_request(deadline_ms=3000, rule_level=1))
+        assert len(gw.calls) == 2, "第二腿失败后不该再要仲裁"
+        assert reply.payload["risk_level"] == 1, "第一遍结论必须活下来"
+        assert reply.payload["double_blind"] == "failed_second:RuntimeError"
+        assert reply.payload["double_blind_mode"] == "parallel"
+        assert reply.disagreement is None, "第二腿没出结论，既不能说一致也不能说分歧"
+
+    async def test_并行分歧仍走第三腿仲裁(self) -> None:
+        a, gw = assess_agent(verdict(1), verdict(3), verdict(2))
+        reply = await a.handle(_request(deadline_ms=3000, rule_level=1))
+        assert [c["task"] for c in gw.calls] == ["assess", "arbitration", "arbitration"]
+        assert reply.payload["double_blind"] == "arbitrated"
+        assert reply.disagreement is True
+        assert reply.payload["risk_level"] == 2, "仲裁那份才是最终结论"
+        assert "分歧" in gw.calls[2]["prompt_vars"]["arbitration"], "仲裁轮要真的拿到两份分歧 rationale"
