@@ -2363,5 +2363,10 @@ mode 也没重测（README 那张排障表里 `perceive/feedback = local` 那一
 真栈派发本身已于 2026-10-15 证到：本机进程 + NATS + scratch Postgres + `--runtime real` 跑一条上报链，
 从库里读回 `stages` 的 feedback 段 `mode=agent`、`latency_ms=19.538`、note `触达回执已归档｜效果分
 0.820｜归因腿 local｜建议 none`，且 `agent_memory` 从修前的 0 行变成 1 行 `lesson`（refs 挂本次
-`warning_id`）。这一档走的是规则摘要腿（供应商 503），所以段上不带模型凭证——它证的是"派发到位、
+`warning_id`，正文 `…：触达 4/4，响应 pending。`）。这一档走的是规则摘要腿（供应商 503），所以段上不带模型凭证——它证的是"派发到位、
 教训入库、结论入账"，证不到归因正文的质量；后者仍随 #41 等 DeepSeek 恢复后取。
+
+证据分档要说死：`backend/reports/mb6_witness_realstack.json` 是本机进程那份产物（`mode=agent`、
+`19.538 ms`、`0.820`、在册五条、`flush_行数=7` 都从文件里重读得到）；而 **`agent_memory` 那 1 行
+是在 scratch 容器拆除前用 psql 读回的**，库与容器已按运维要求删除，这一条现在只能靠本段的转述，
+复现路径是重起 NATS + scratch Postgres 再跑同一条上报链。修前那次 0 行同理（出自 n=1 冒烟的同一库）。
