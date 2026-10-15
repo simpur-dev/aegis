@@ -2440,3 +2440,69 @@ step summary 只渲染在需要登录的 Actions 页面上，压根不是公开�
 warning **消失了**（证明键名修复真生效），换来两条新的——`Failed to restore: Cache service responded
 with 400` 与 `Failed to save: <h2>Our services aren't available right now</h2>`。也就是说缓存服务当时
 本身在故障，`uv sync` 走的是无缓存路径：这条不是我方能修的，也没有让 job 变红（uv 把缓存失败当软失败）。
+
+## D7 编排归一前两拍：段逻辑与段的记账一起下沉，标准五段模板 + parity 门（2026-10-15）
+
+**这一拍要拆的是"双编排路径"这句话**：`pipeline/chain.py` 里五段的判定与降级留痕写了一遍，
+`workflow/` 的节点里又写了一遍（触达段就分叉过一次）。方案 §4.6 给的四步是"模板 → 段下沉 → parity 全绿 → 退役"，本轮**走完前三步、第 4 步没做**：
+段下沉与标准五段模板落地，parity 全绿；生产入口仍是固定顺序编排器，`chain.py` 还在。
+
+**改了什么**（行数是本机 `grep -c ""` 实测，不是估的）：
+
+- `pipeline/result.py`（97 行）：`STAGE_ORDER` / `StageResult` / `ChainResult` / `model_receipt` 独立成模块——
+  它是**对外口径**（API、前端 `types.ts`、`chain_runs` 落库映射都读它），退役 chain 时这些形状不许变。
+- `pipeline/stages.py`（575 → 756 行）：五段的判定**和记账**都在这里，唯一入口
+  `run_stage(段名, 盘面)`。上一拍只把判定搬过来、账留给编排器，那正是"两条路径各记各的账"的形状。
+- `pipeline/board.py`（新增 114 行）：`ChainBoard`/`ChainBoards`——`ChainResult` 不是 JSON，不能在节点
+  output 里传来传去，按 trace 暂存；开/收盘成对，`finish()` 只在"无触发命中"时补四条 skipped
+  （研判无结论那条路径不补，否则 `chain_runs.stages` 长度会变，而"对外口径不变"是 §4.6 第 4 条）。
+- `pipeline/span.py`（新增 52 行）：根跨度 `hazard_chain` 的属性与"有 errors 判故障、否则有降级判 degraded"
+  的口径只写一遍，两条路径共用。
+- `pipeline/workflow_chain.py`（新增 153 行）：DAG 编排器 + `ChainStations`（段执行口）+ `stage_branch()`
+  （早退判据的唯一落点）。`pipeline/chain.py` 相应从 **859**（D7 立项时的实测行数）→ 321 → **91** 行。
+- `workflow/templates.py`：`standard_chain_template(agent_txn_ms=…)` 注册"标准五段处置链路"，
+  节点超时与 `sla_agent_txn_ms + 5_000` **同源**——节点超时若小于段预算，会出现"链路还在等智能体、节点先被判死"。
+  刻意不进 `BUILTIN_TEMPLATES`（那份清单的口径是"5 灾种处置剧本"）。
+- `workflow/nodes.py`：新增 `chain_stage` 节点（handler 只搬产物与分支，段名合法性在节点侧挡），
+  并把 `internal` 这个事实写进注册表：**引擎注册 17 类，画布面板可拖 16 类**。
+
+**"内部原语进不进面板"是一次真实的取舍**：`chain_stage` 要的是链路盘面（`ChainBoard`），从画布拖出来
+永远跑不起来，摆在面板里只是让值班员多一个必然失败的选项；但它在系统模板里必须能被画出来、被校验通过。
+所以做的是**两个口径**而不是一个开关：`NodeSpec.internal=True` → `NodeRegistry.panel_specs()` → `/node-types`
+滤掉它（计数仍是 16，前端镜像的可拖集合不变）；`names()` 仍是 17，分派矩阵的覆盖率门禁照旧要求
+"每一类都被装配好的引擎驱动过"，于是 `chain_stage` 也有了自己的矩阵场景。前端侧把这条对账补齐：
+`repoSource.ts` 现在解析 `internal=True`（括号深度扫描到本次调用的右括号，字符串里的括号跳过——只看第一个
+`)` 会把写在尾部的关键字实参落在窗外），`NODE_SPECS.chain_stage.internal=true` 且 `PANEL_NODE_TYPES` 过滤掉它。
+
+顺带补了一处可诊断性：盘面找不到时原先抛 `KeyError`，而引擎只给 `AegisError` 保留 message，
+节点上就只剩"节点执行异常: KeyError"——值班员得自己猜哪一步没开盘。改成 `ChainBoardMissing`（`AegisError` 子类），
+错误里留的是"这条 trace 没有开过盘：trc_…"，并有一条用例从实例详情把它读回来。
+
+**证据**：
+
+- parity 用例 10 条（`tests/unit/test_chain_workflow_parity.py`）：同一容器、同一个 `HazardStages` 实例，
+  固定顺序与 DAG 各跑一次，比的是**可观测物**——段序/mode/ok/note、定级五元组、任务单元形状、预警内容、
+  降级与故障清单、D10 凭证落在哪几段、五段 `stage_*_ms` 各加一次；随机 id 归一后再比，墙钟耗时刻意不比。
+  另有一条钉 `_CHAIN_STAGES == STAGE_ORDER`（工作流侧那份是复制品，不许漂）。
+- 变异检查（外壳自证：先确认锚点在文件里恰好一次，跑完按字节还原）：
+  ① **parity 只该抓"单侧变了"**——parity 比的是两条路径的差，改共享实现两边一起变、它本来就不该红，
+  所以三条变异都打在单侧：DAG 丢掉"无命中早退" → 红 1 条；DAG 不补 skipped → 红 1 条；
+  固定顺序少跑反馈段 → 红 3 条。② 实例留底：撤掉 `start()` 里的退役调用 → 红"上界没压住"；
+  把"只挤终态"改成"按最老挤" → 红"等待人工的实例不被挤掉"。③ 前端面板口径：把 `PANEL_NODE_TYPES`
+  的过滤去掉 → 红 3 条（面板集合、内部原语不入面板、面板 16 项）。
+- 前端：`npm run typecheck` 通过；`npx vitest run` **818 passed / 47 files**（本轮新增 2 条对账用例）。
+- 后端全量门禁（本机，整棵 `tests/`，不是子集）：`ruff format --check` / `ruff check` / `mypy src` 全绿，
+  `PYTHONHASHSEED=0 uv run pytest -q --junitxml` 计数 **tests=2994 / skipped=85 / ran=2909 / failures=0 / errors=0**。
+- **这一拍"只跑工作流套件"是不够的**：全量当场抓到三处由搬家造成的漂移——
+  ① 时钟守卫盯的是 `pipeline/chain.py` 里的 `started_at = time.perf_counter()`，起点搬进盘面字段之后，
+  它把这条读成"测量点被整体删掉了？"。改法是把它对齐到**谁在取时**：`pipeline/board.py` 进清单，
+  正向对照认 `default_factory=time.perf_counter` 这种写法（只认 `time.perf_counter()` 会让一次合法搬家假红），
+  同时补一条更值钱的判据"执行段必须从盘面取起点"——两条编排路径各自现取一次就是第二个纪元。
+  ② 装配桥守卫报 `节点声明依赖却没人装配：['run_chain_stage']`（桥的替身参数表要跟上新字段）。
+  ③ `/node-types` 的计数守卫（16）与注册表（17）分家，就是上面那个两口径取舍。
+  ①②修完各做变异复验：起点换成 `time.monotonic` → 红 2 条；执行段自己取时 → 红 1 条。
+
+**还没做、也没当成已做**：① 生产入口仍走 `HazardResponseChain`，`pipeline/chain.py` 未退役；② parity 目前是
+**装配级**证据（内存总线 + mock 通道），DAG 路径在真栈（NATS + Postgres）上跑一条链路的证据还没取；
+③ `ChainBoards.snapshot()`（开着几张盘）眼下只有 parity 用例在读，没接进 `/api/v1/status`——
+这条写在 `board.py` 的注释里，跟退役一起做。
