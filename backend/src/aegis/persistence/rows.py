@@ -29,7 +29,7 @@ from aegis.persistence.errors import MappingError
 from aegis.workflow.model import NodeRun, WorkflowDef, WorkflowInstance
 
 if TYPE_CHECKING:  # 仅用于类型标注：运行期不导入 pipeline，本层因此不牵动 services 依赖
-    from aegis.pipeline.chain import ChainResult
+    from aegis.pipeline.result import ChainResult
 
 # 契约 ID 的实际上限：stu_/wrn_/trc_/evt_ 前缀 + 十六进制，64 已远够，越界即视为上游污染。
 MAX_ID_LEN = 64

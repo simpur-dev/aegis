@@ -1,11 +1,11 @@
-"""灾害响应链路：感知 → 研判 → 决策 → 执行 → 反馈 的平台侧编排器（M1 固定流水线）。
+"""灾害响应链路的**固定顺序编排器**（M1 五段）。
 
-架构决策：每一段都是"智能体优先、平台降级"。
-- 智能体在线且契约合法 → 采纳其结论（mode=agent）；
-- 智能体缺位/超时/产出不合契约 → 平台规则引擎与本地剧本兜底（mode=local），链路永不阻断。
+D7 编排归一（§4.6）后这里只剩"顺序 + 记账"：五段的实际逻辑（智能体优先、契约校验、降级留痕、
+凭证转记）全在 `pipeline/stages.py`，产物定义在 `pipeline/result.py`。本模块不自带任何段实现——
+工作流的"标准五段"模板调的是同一个 `HazardStages` 对象，两条编排路径因此不可能各说各话。
 
-这正是把智能体接入工作外包给队友的前提：平台不依赖任何智能体也能完成端到端预警，
-真实智能体上线后按契约逐个替换降级路径（`scripts/demo_e2e.py` 与一致性测试覆盖两种形态）。
+每段的 agent/local 语义写在 `stages.py` 的模块文档里；这里保留的是链路的对外形状：
+根跨度 `hazard_chain`、五段各自的 `stage_*_ms` 账本样本、以及早退路径也照样 `_finish`（落库）。
 """
 
 from __future__ import annotations
@@ -13,130 +13,34 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway, ContractRegistry
 from aegis.bus.registry import AgentRegistry
-from aegis.config import Settings, get_settings
-from aegis.domain.enums import Action, AgentType, HazardType, RiskLevel
-from aegis.domain.messages import (
-    AgentMessage,
-    StandardizedTaskUnit,
-    TelemetryReading,
-    TriggerHit,
-    WarningRecord,
-    make_event,
-    new_event_id,
-    new_trace_id,
-    now_iso,
-)
-from aegis.errors import AegisError
-from aegis.knowledge.provider import CaseMatch, KnowledgeProvider
+from aegis.config import Settings
+from aegis.domain.messages import AgentMessage, TelemetryReading, TriggerHit, WarningRecord, new_event_id, new_trace_id
+from aegis.knowledge.provider import KnowledgeProvider
 from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
-from aegis.services.delivery import AllChannelsFailedError, DeliveryDispatcher
+from aegis.pipeline.result import STAGE_ORDER, ChainResult, StageResult
+from aegis.pipeline.stages import HazardStages
+from aegis.services.delivery import DeliveryDispatcher
 from aegis.services.risk_engine import RiskEngine, RiskVerdict
 from aegis.services.task_parser import TaskParser
-from aegis.services.text_guard import invented_numbers
 from aegis.services.trigger_rules import RuleEngine
 from aegis.services.warning_service import WarningService
 
 if TYPE_CHECKING:
-    # 只在类型面出现：链路运行时不 import 检索层（装配层守住"内核不依赖持久/检索实现"这条边界）。
+    # 只在类型面出现：编排器运行时不 import 检索层（铁律 3：内核不依赖可选腿的实现）。
     from aegis.retrieval.service import HybridRetrievalService
 
 log = logging.getLogger("aegis.pipeline")
 
-_STAGE_ORDER = ("perceive", "assess", "plan", "execute", "feedback")
-# 参考案例条数：3 条足够支撑"凭什么这么判"的可解释性，再多会把规划 payload 撑成噪声
-_CASE_RECALL_LIMIT = 3
-# 注入的检索上下文块数：与案例召回分开计数，块越长下游研判读的越多但预算也吃得更紧
-_CONTEXT_DOC_LIMIT = 5
-
-
-@dataclass(slots=True)
-class StageResult:
-    name: str
-    mode: str  # agent | local | hybrid | skipped
-    ok: bool
-    latency_ms: float
-    note: str = ""
-    #: D10 的可审计面：这一段结论/文案是哪个模型、哪版 prompt 产的（智能体没带凭证就是 None，平台不代填）。
-    #: 只在有值时进 `as_dict()`——本地降级腿"没有模型参与"这件事不该被写成 `model_info: null` 让读的人猜。
-    model_info: dict[str, Any] | None = None
-
-    def as_dict(self) -> dict[str, Any]:
-        data = {"name": self.name, "mode": self.mode, "ok": self.ok, "latency_ms": round(self.latency_ms, 3), "note": self.note}
-        if self.model_info is not None:
-            data["model_info"] = self.model_info
-        return data
-
-
-@dataclass(slots=True)
-class ChainResult:
-    trace_id: str
-    event_id: str
-    stages: list[StageResult] = field(default_factory=list)
-    hits: list[TriggerHit] = field(default_factory=list)
-    verdict: RiskVerdict | None = None
-    task_units: list[StandardizedTaskUnit] = field(default_factory=list)
-    warning: WarningRecord | None = None
-    errors: list[str] = field(default_factory=list)
-    degradations: list[str] = field(default_factory=list)
-    # 本次规划参考过的历史案例 id：可解释性证据，不是"提示词装饰"——报告里要能回答"凭什么这么判"。
-    reference_cases: list[str] = field(default_factory=list)
-    # 本次规划注入的检索上下文块 id：与案例召回分开记账，因为两者的语料面不同（案例库 vs 历史任务单元）
-    context_docs: list[str] = field(default_factory=list)
-    #: 各段应答携带的模型凭证（段名 → 凭证）。三段的生产者是三个 helper，而段的记账在主流程里，
-    #: 两者之间要有明确中转，而不是让 helper 去改 stages。
-    stage_models: dict[str, dict[str, Any]] = field(default_factory=dict)
-
-    @property
-    def ok(self) -> bool:
-        """链路成功 = 各段执行成功且无降级错误。无触发时同样成功（未告警是正确结果）。"""
-        return all(s.ok for s in self.stages) and not self.errors
-
-    @property
-    def acted(self) -> bool:
-        return self.verdict is not None
-
-    def stage(self, name: str) -> StageResult | None:
-        return next((s for s in self.stages if s.name == name), None)
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "trace_id": self.trace_id,
-            "event_id": self.event_id,
-            "ok": self.ok,
-            "acted": self.acted,
-            "stages": [s.as_dict() for s in self.stages],
-            "risk": self.verdict.as_payload() if self.verdict else None,
-            "task_units": [u.task_unit_id for u in self.task_units],
-            "warning_id": self.warning.warning_id if self.warning else None,
-            "errors": self.errors,
-            "degradations": self.degradations,
-            "reference_cases": self.reference_cases,
-            "context_docs": self.context_docs,
-        }
-
-
-def _model_receipt(response: AgentMessage) -> dict[str, Any] | None:
-    """从智能体应答里取 `model_info`，并带上"谁答的"；没带凭证就如实 None。
-
-    这是 README 那句"模型与 Prompt 版本随结论入库"的唯一落点：凭证由智能体自己声明
-    （`agentkit` 把它写进响应信封），链路只转记、不推断——平台替它编一个模型名就是伪造审计证据。
-    """
-    info = response.model_info
-    if info is None:
-        return None
-    return {"agent": response.source, **info.model_dump(exclude_none=True)}
-
 
 class HazardResponseChain:
+    """按固定顺序跑五段。段的实现见 `HazardStages`——本类不再自带判定分支。"""
+
     def __init__(
         self,
         *,
@@ -154,46 +58,44 @@ class HazardResponseChain:
         on_result: Callable[[ChainResult], Awaitable[None]] | None = None,
         knowledge: KnowledgeProvider | None = None,
         retrieval: HybridRetrievalService | None = None,
+        stages: HazardStages | None = None,
     ) -> None:
-        self._gateway = gateway
-        self._registry = registry
-        self._contracts = contracts
-        self._tracer = tracer or Tracer()
-        self._settings = settings or get_settings()
-        self._rule_engine = rule_engine or RuleEngine()
-        self._risk_engine = risk_engine or RiskEngine(self._rule_engine)
-        self._task_parser = task_parser or TaskParser(contracts, settings=self._settings)
-        self._warning_service = warning_service or WarningService(self._tracer, settings=self._settings)
-        self._dispatcher = dispatcher
-        self._agent_hits: deque[TriggerHit] = deque(maxlen=agent_hit_window)
-        self._warnings: dict[str, WarningRecord] = {}
+        #: `stages` 是给工作流编排留的中转口：DAG 节点持同一个 HazardStages 实例，
+        #: 而不是再造一份"看起来一样"的段逻辑（parity 用例断的正是这层同一性）。
+        self._stages = stages or HazardStages(
+            gateway=gateway,
+            registry=registry,
+            contracts=contracts,
+            tracer=tracer,
+            settings=settings,
+            rule_engine=rule_engine,
+            risk_engine=risk_engine,
+            task_parser=task_parser,
+            warning_service=warning_service,
+            dispatcher=dispatcher,
+            agent_hit_window=agent_hit_window,
+            knowledge=knowledge,
+            retrieval=retrieval,
+        )
+        self._tracer = self._stages.tracer
         self._on_result = on_result
-        self._knowledge = knowledge
-        self._retrieval = retrieval
+
+    @property
+    def stages(self) -> HazardStages:
+        return self._stages
+
+    @property
+    def warnings(self) -> dict[str, WarningRecord]:
+        return self._stages.warnings
+
+    async def handle_agent_message(self, message: AgentMessage) -> None:
+        """网关上行事件：感知段的智能体触发命中由此进入 `HazardStages`。"""
+        await self._stages.handle_agent_message(message)
 
     async def _finish(self, result: ChainResult) -> ChainResult:
         if self._on_result is not None:
             await self._on_result(result)
         return result
-
-    # ---------- 上行事件消费（网关 result handler） ----------
-
-    async def handle_agent_message(self, message: AgentMessage) -> None:
-        if message.action == Action.PERCEIVE_TRIGGER_HIT.value:
-            try:
-                self._agent_hits.append(TriggerHit.model_validate(message.payload))
-            except Exception as exc:
-                log.warning("智能体触发命中载荷非法", extra={"error": str(exc), "msg_id": message.msg_id})
-        elif message.action == Action.FEEDBACK_STATUS.value:
-            log.info("收到反馈", extra={"warning_id": message.payload.get("warning_id")})
-
-    def _drain_agent_hits(self, region_code: str) -> list[TriggerHit]:
-        picked = [h for h in self._agent_hits if h.region_code == region_code]
-        for h in picked:
-            self._agent_hits.remove(h)
-        return picked
-
-    # ---------- 主链路 ----------
 
     async def process(
         self,
@@ -277,7 +179,7 @@ class HazardResponseChain:
 
         async with instrumentation.span("stage_perceive_ms", trace_id=trace) as perceive_span:
             with self._tracer.span("stage_perceive_ms", trace_id=trace) as sp:
-                hits, agent_hit_count = await self._perceive(readings, region, trace, preset_hits=preset_hits)
+                hits, agent_hit_count = await self._stages.perceive(readings, region, trace, preset_hits=preset_hits)
             # 阶段结论写在账本计时之外：跨度不参与任何时延测量
             instrumentation.set_attributes(
                 perceive_span,
@@ -300,560 +202,120 @@ class HazardResponseChain:
         result.hits = hits
 
         if not hits:
-            result.stages.extend([StageResult(n, "skipped", True, 0.0, "无触发条件命中") for n in _STAGE_ORDER[1:]])
+            result.stages.extend([StageResult(name, "skipped", True, 0.0, "无触发条件命中") for name in STAGE_ORDER[1:]])
             return await self._finish(result)
 
-        assess_degradations = len(result.degradations)
-        async with instrumentation.span("stage_assess_ms", trace_id=trace) as assess_span:
+        result.stages.append(await self._assess_stage(result, hits, region, trace, preset_verdict, reported))
+        if result.verdict is None:
+            return await self._finish(result)
+
+        result.stages.append(await self._plan_stage(result, trace))
+        result.stages.append(await self._execute_stage(result, trace, started_at))
+        result.stages.append(await self._feedback_stage(result, trace))
+        return await self._finish(result)
+
+    # ---------- 逐段的记账（段本身的逻辑全在 HazardStages） ----------
+
+    async def _assess_stage(
+        self, result: ChainResult, hits: list[TriggerHit], region: str, trace: str, preset_verdict: RiskVerdict | None, reported: bool
+    ) -> StageResult:
+        before = len(result.degradations)
+        async with instrumentation.span("stage_assess_ms", trace_id=trace) as span:
             with self._tracer.span("stage_assess_ms", trace_id=trace) as sp:
-                verdict, answered_by_agent = await self._assess(
+                verdict, answered_by_agent = await self._stages.assess(
                     hits, region, result, trace, preset_verdict=preset_verdict, reported=reported
                 )
             if verdict is None:
-                instrumentation.mark_error(assess_span, "研判未产出定级结论", code="assess_failed")
-            elif len(result.degradations) > assess_degradations:
+                instrumentation.mark_error(span, "研判未产出定级结论", code="assess_failed")
+            elif len(result.degradations) > before:
                 # 智能体缺位/超时/产出不合契约 → 平台规则引擎接管：降级，不是故障
-                instrumentation.mark_degraded(assess_span, result.degradations[-1])
+                instrumentation.mark_degraded(span, result.degradations[-1])
             instrumentation.set_attributes(
-                assess_span,
+                span,
                 span_attrs={
                     "aegis.assessed_by": verdict.assessed_by if verdict else "",
                     "aegis.risk_level": int(verdict.risk_level) if verdict else 0,
                 },
             )
-        result.stages.append(
-            StageResult(
-                "assess",
-                "agent" if answered_by_agent else "local",
-                verdict is not None,
-                sp.finished_ms or 0.0,
-                f"等级 {int(verdict.risk_level)}" if verdict else "定级失败",
-                model_info=result.stage_models.get("assess"),
-            )
-        )
-        if verdict is None:
-            return await self._finish(result)
         result.verdict = verdict
+        return StageResult(
+            "assess",
+            "agent" if answered_by_agent else "local",
+            verdict is not None,
+            sp.finished_ms or 0.0,
+            f"等级 {int(verdict.risk_level)}" if verdict else "定级失败",
+            model_info=result.stage_models.get("assess"),
+        )
 
-        plan_degradations = len(result.degradations)
-        async with instrumentation.span("stage_plan_ms", trace_id=trace) as plan_span:
+    async def _plan_stage(self, result: ChainResult, trace: str) -> StageResult:
+        verdict = result.verdict
+        assert verdict is not None  # 调用方已在研判段之后早退，这里不重开一条降级轨
+        before = len(result.degradations)
+        async with instrumentation.span("stage_plan_ms", trace_id=trace) as span:
             with self._tracer.span("stage_plan_ms", trace_id=trace) as sp:
-                units = await self._plan(verdict, result, trace)
+                units = await self._stages.plan(verdict, result, trace)
             if not units:
-                instrumentation.mark_error(plan_span, "决策未产出任务单元", code="plan_empty")
-            elif len(result.degradations) > plan_degradations:
-                instrumentation.mark_degraded(plan_span, result.degradations[-1])
-            instrumentation.set_attributes(plan_span, span_attrs={"aegis.task_units": len(units)})
-        result.stages.append(
-            StageResult(
-                "plan",
-                "agent" if any(u.created_by != "platform.task_parser" for u in units) else "local",
-                bool(units),
-                sp.finished_ms or 0.0,
-                f"生成 {len(units)} 个任务单元",
-                model_info=result.stage_models.get("plan"),
-            )
-        )
+                instrumentation.mark_error(span, "决策未产出任务单元", code="plan_empty")
+            elif len(result.degradations) > before:
+                instrumentation.mark_degraded(span, result.degradations[-1])
+            instrumentation.set_attributes(span, span_attrs={"aegis.task_units": len(units)})
         result.task_units = units
+        return StageResult(
+            "plan",
+            "agent" if any(u.created_by != "platform.task_parser" for u in units) else "local",
+            bool(units),
+            sp.finished_ms or 0.0,
+            f"生成 {len(units)} 个任务单元",
+            model_info=result.stage_models.get("plan"),
+        )
 
-        execute_degradations = len(result.degradations)
-        async with instrumentation.span("stage_execute_ms", trace_id=trace) as execute_span:
+    async def _execute_stage(self, result: ChainResult, trace: str, started_at: float) -> StageResult:
+        verdict = result.verdict
+        assert verdict is not None
+        before = len(result.degradations)
+        async with instrumentation.span("stage_execute_ms", trace_id=trace) as span:
             with self._tracer.span("stage_execute_ms", trace_id=trace) as sp:
-                warning, used_agent = await self._execute(verdict, result, trace, started_at=started_at)
+                warning, used_agent = await self._stages.execute(verdict, result, trace, started_at=started_at)
             if warning is None:
-                instrumentation.mark_error(execute_span, "预警发布失败", code="execute_failed")
-            elif len(result.degradations) > execute_degradations:
-                instrumentation.mark_degraded(execute_span, result.degradations[-1])
+                instrumentation.mark_error(span, "预警发布失败", code="execute_failed")
+            elif len(result.degradations) > before:
+                instrumentation.mark_degraded(span, result.degradations[-1])
             instrumentation.set_attributes(
-                execute_span,
-                span_attrs={"aegis.warning_id": warning.warning_id if warning else "", "aegis.used_agent": used_agent},
+                span, span_attrs={"aegis.warning_id": warning.warning_id if warning else "", "aegis.used_agent": used_agent}
             )
-        result.stages.append(
-            StageResult(
-                "execute",
-                "agent" if used_agent else "local",
-                warning is not None,
-                sp.finished_ms or 0.0,
-                warning.warning_id if warning else "预警发布失败",
-                model_info=result.stage_models.get("execute"),
-            )
-        )
         result.warning = warning
-        if warning:
-            self._warnings[warning.warning_id] = warning
-
-        async with instrumentation.span("stage_feedback_ms", trace_id=trace) as feedback_span:
-            with self._tracer.span("stage_feedback_ms", trace_id=trace) as sp:
-                feedback = await self._feedback(warning, trace, result)
-            instrumentation.set_attributes(feedback_span, span_attrs={"aegis.reach_expected": warning is not None})
-        result.stages.append(
-            StageResult(
-                "feedback",
-                "agent" if feedback is not None else "local",
-                True,
-                sp.finished_ms or 0.0,
-                # 归因结论要点进台账：`chain_runs.stages` 是事后唯一还能查到的地方
-                (
-                    f"触达回执已归档｜效果分 {feedback['effect_score']:.3f}｜归因腿 {feedback['decided_by']}｜"
-                    f"建议 {feedback['suggestion_status']}"
-                    if feedback is not None
-                    else "触达回执已归档"
-                ),
-                model_info=result.stage_models.get("feedback"),
-            )
+        return StageResult(
+            "execute",
+            "agent" if used_agent else "local",
+            warning is not None,
+            sp.finished_ms or 0.0,
+            warning.warning_id if warning else "预警发布失败",
+            model_info=result.stage_models.get("execute"),
         )
-        return await self._finish(result)
+
+    async def _feedback_stage(self, result: ChainResult, trace: str) -> StageResult:
+        async with instrumentation.span("stage_feedback_ms", trace_id=trace) as span:
+            with self._tracer.span("stage_feedback_ms", trace_id=trace) as sp:
+                feedback = await self._stages.feedback(result.warning, trace, result)
+            instrumentation.set_attributes(span, span_attrs={"aegis.reach_expected": result.warning is not None})
+        return StageResult(
+            "feedback",
+            "agent" if feedback is not None else "local",
+            True,
+            sp.finished_ms or 0.0,
+            # 归因结论要点进台账：`chain_runs.stages` 是事后唯一还能查到的地方
+            self._feedback_note(feedback),
+            model_info=result.stage_models.get("feedback"),
+        )
+
+    @staticmethod
+    def _feedback_note(feedback: dict[str, Any] | None) -> str:
+        if feedback is None:
+            return "触达回执已归档"
+        return (
+            f"触达回执已归档｜效果分 {feedback['effect_score']:.3f}｜归因腿 {feedback['decided_by']}｜建议 {feedback['suggestion_status']}"
+        )
 
     async def process_many(self, grouped: dict[str, list[TelemetryReading]]) -> list[ChainResult]:
         """多区域并发处理（一区域一条链路，互不阻塞）。"""
         return list(await asyncio.gather(*(self.process(readings, region_code=region) for region, readings in grouped.items())))
-
-    # ---------- 各段实现 ----------
-
-    async def _perceive(
-        self,
-        readings: list[TelemetryReading],
-        region: str,
-        trace: str,
-        *,
-        preset_hits: list[TriggerHit] | None = None,
-    ) -> tuple[list[TriggerHit], int]:
-        # 上报腿的命中是 `services/semantic_parser` 用同一张规则表算出来的，这里不重算阈值。
-        local_hits = list(preset_hits) if preset_hits is not None else self._rule_engine.evaluate(readings, region_code=region).hits
-        agent_hits = self._drain_agent_hits(region)
-        merged = list(local_hits)
-        seen = {h.rule_id for h in merged}
-        merged.extend(h for h in agent_hits if h.rule_id not in seen)
-        for _hit in agent_hits:
-            self._tracer.record("perceive_agent_hit_ms", 0.0, trace_id=trace, outcome="agent")
-        return merged, len(agent_hits)
-
-    @property
-    def _agent_txn_ms(self) -> int:
-        """LLM 段事务的预算（§5 A 案）：与段预算同一档，不用两个数互相打脸。"""
-        return int(self._settings.sla_agent_txn_ms)
-
-    @property
-    def _agent_txn_ttl_ms(self) -> int:
-        # TTL 必须宽于预算：默认 30s 的 TTL 会在投递前就把 60s 事务判成"超期丢弃"，
-        # 等于让一个传输层默认值偷偷改小业务预算。留 5s 给排队与回程。
-        return int(self._settings.sla_agent_txn_ms) + 5_000
-
-    async def _assess(
-        self,
-        hits: list[TriggerHit],
-        region: str,
-        result: ChainResult,
-        trace: str,
-        *,
-        preset_verdict: RiskVerdict | None = None,
-        reported: bool = False,
-    ) -> tuple[RiskVerdict | None, bool]:
-        """返回 (结论, 是否由总线智能体应答)。降级路径的结论来自规则引擎或上报解析腿。"""
-        local = preset_verdict or self._risk_engine.assess(hits, region_code=region)
-        fallback_note = "采用上报解析定级" if preset_verdict is not None else "采用规则定级"
-        if self._registry.pick(AgentType.ASSESS.value, "risk_assess") is None:
-            return local, False
-        try:
-            response = await self._gateway.dispatch(
-                AgentType.ASSESS,
-                Action.ASSESS_HAZARD,
-                {
-                    "region_code": region,
-                    "window": "1h",
-                    "candidate_hazards": sorted({h.hazard_type for h in hits}),
-                    "hits": [h.model_dump() for h in hits],
-                    "intake": "report" if reported else "telemetry",
-                },
-                trace_id=trace,
-                capability="risk_assess",
-                # 事务预算 = LLM 档（§5 A 案）：与 `stage_*_ms` 同档同钟；
-                # 不再用 `llm_timeout_seconds`（单次 HTTP 超时），也不蹭 ≤10s 调度档。
-                deadline_ms=self._agent_txn_ms,
-                ttl_ms=self._agent_txn_ttl_ms,
-                priority=1,
-            )
-        except AegisError as exc:
-            result.degradations.append(f"研判降级: {exc.message}")
-            return local, False
-
-        if (verdict := self._parse_agent_assessment(response.payload, region, hits)) is not None:
-            if (receipt := _model_receipt(response)) is not None:
-                result.stage_models["assess"] = receipt
-            # 双盲是增强腿：它失败时主结论照用第一遍，但这件事必须落在台账上——
-            # 不落的后果是"双盲没做成"被读成"双盲做成了且一致"（铁律 7：降级要看得见）。
-            blind = str(response.payload.get("double_blind") or "")
-            if blind.startswith("failed"):
-                result.degradations.append(f"研判增强腿失败: {blind}（主结论取第一遍）")
-            return verdict, True
-        result.degradations.append(f"研判结论不合契约，{fallback_note}")
-        return local, False
-
-    @staticmethod
-    def _parse_agent_assessment(payload: dict[str, Any], region: str, hits: list[TriggerHit]) -> RiskVerdict | None:
-        try:
-            level = RiskLevel(int(payload["risk_level"]))
-            hazard = HazardType(str(payload["hazard_type"]))
-            confidence = float(payload["confidence"])
-        except (KeyError, ValueError, TypeError):
-            return None
-        if not 0.0 <= confidence <= 1.0:
-            return None
-        return RiskVerdict(
-            hazard_type=hazard,
-            region_code=region,
-            risk_level=level,
-            confidence=confidence,
-            rationale=str(payload.get("rationale", ""))[:1000] or "智能体结论",
-            hits=hits,
-            assessed_by=str(payload.get("assessed_by", "assess.agent")),
-        )
-
-    async def _plan(self, verdict: RiskVerdict, result: ChainResult, trace: str) -> list[StandardizedTaskUnit]:
-        # 召回放在取本地剧本之前：无论最终由智能体还是本地剧本产出任务单元，
-        # "参考过哪些历史案例"都是这条链路的证据，不该只在智能体在线时才存在。
-        references = await self._recall_cases(verdict, result)
-        local = self._task_parser.parse(verdict, event_id=result.event_id)
-        if self._registry.pick(AgentType.PLAN.value, "task_decompose") is None:
-            return local
-        # 检索块只在智能体在场时取：本地剧本不消费正文块，为它付一次 CPU 推理不值。
-        context = await self._retrieve_context(verdict, result)
-        try:
-            response = await self._gateway.dispatch(
-                AgentType.PLAN,
-                Action.PLAN_STU,
-                {
-                    "event_id": result.event_id,
-                    "risk": verdict.as_payload(),
-                    "objective": "按灾种处置剧本生成标准化任务单元",
-                    "constraints": {"sla_warning_gen_seconds": self._settings.sla_warning_gen_seconds},
-                    "reference_cases": references,
-                    "retrieved_context": context,
-                },
-                trace_id=trace,
-                capability="task_decompose",
-                # 事务预算 = LLM 档（§5 A 案）：与 `stage_*_ms` 同档同钟；
-                # 不再用 `llm_timeout_seconds`（单次 HTTP 超时），也不蹭 ≤10s 调度档。
-                deadline_ms=self._agent_txn_ms,
-                ttl_ms=self._agent_txn_ttl_ms,
-                priority=1,
-            )
-        except AegisError as exc:
-            result.degradations.append(f"决策降级: {exc.message}")
-            return local
-
-        raw_units = response.payload.get("task_units")
-        if not isinstance(raw_units, list):
-            result.degradations.append("决策产出不含 task_units，采用本地剧本")
-            return local
-        payloads = [u for u in raw_units if isinstance(u, dict)]
-        if errors := self._contracts.stu_errors(payloads):
-            result.degradations.append(f"STU 校验失败 {len(errors)} 项，采用本地剧本")
-            return local
-        try:
-            units = [StandardizedTaskUnit.model_validate(p) for p in payloads]
-        except Exception as exc:
-            result.degradations.append(f"STU 解析失败: {exc}，采用本地剧本")
-            return local
-        if units and (receipt := _model_receipt(response)) is not None:
-            # 只有真采纳了智能体产的任务单元才记凭证：回落本地剧本那一程没有模型参与，
-            # 记了就等于把本地结果算到某个模型头上。
-            result.stage_models["plan"] = receipt
-        return units or local
-
-    async def _recall_cases(self, verdict: RiskVerdict, result: ChainResult) -> list[dict[str, Any]]:
-        """规划前的案例召回：LLM 与图谱都不进这条路径的必需依赖，失败只记降级、绝不阻断预警。
-
-        预算来自 knowledge_recall_budget_ms：宁可少给几条参考案例，也不能让一次知识检索
-        把"≤3min 预警生成"的窗口吃掉。命中切片由 `CaseMatch.planning_brief()` 给出，
-        与案例知识 API 共用同一份映射（链路不自己抄一遍字段）。
-        """
-        if self._knowledge is None:
-            return []
-        query = self._planning_query(verdict)
-        try:
-            matches: list[CaseMatch] = await self._knowledge.recall(
-                query,
-                hazard_type=verdict.hazard_type.value,
-                region_code=verdict.region_code,
-                limit=_CASE_RECALL_LIMIT,
-                budget_ms=self._settings.knowledge_recall_budget_ms,
-            )
-        except Exception as exc:  # 知识层是增强腿：任何异常都降级，不外抛到预警路径
-            log.warning("案例召回降级", extra={"trace_id": result.trace_id, "err": type(exc).__name__})
-            result.degradations.append(f"案例召回降级: {type(exc).__name__}")
-            return []
-
-        result.reference_cases = [match.case_id for match in matches]
-        return [match.planning_brief() for match in matches]
-
-    @staticmethod
-    def _planning_query(verdict: RiskVerdict) -> str:
-        """案例召回与检索上下文共用同一句查询串：两处各拼一遍迟早漂成两个口径。"""
-        return f"{verdict.hazard_type.cn} {verdict.region_code} {verdict.rationale}"
-
-    async def _retrieve_context(self, verdict: RiskVerdict, result: ChainResult) -> list[dict[str, Any]]:
-        """规划前的混合检索上下文：dense + 词法 + RRF，LLM 一次都不进这条回路。
-
-        与案例召回的分工写在字段上就清楚了：`reference_cases` 是结构化的历史处置方案，
-        `context_docs` 是按语义排好序的上下文块（当前是 pgvector 上的历史任务单元 + 案例语料）。
-        预算来自 retrieval_budget_ms；密集腿因缺少连接而被"跳过"时不记降级——那是装配状态，
-        已由 `/api/v1/integrations` 报出，写进每一条预警只会淹没真正的故障。
-        """
-        if self._retrieval is None:
-            return []
-        from aegis.retrieval.service import RetrievalQuery  # 延迟导入：链路不因此依赖检索层的 I/O 面
-
-        try:
-            outcome = await self._retrieval.retrieve(
-                RetrievalQuery(
-                    text=self._planning_query(verdict),
-                    k=_CONTEXT_DOC_LIMIT,
-                    trace_id=result.trace_id,
-                    budget_ms=self._settings.retrieval_budget_ms,
-                )
-            )
-        except Exception as exc:  # 检索是增强腿：任何异常都降级，不外抛到预警路径
-            log.warning("检索上下文降级", extra={"trace_id": result.trace_id, "err": type(exc).__name__})
-            result.degradations.append(f"检索上下文降级: {type(exc).__name__}")
-            return []
-
-        for item in outcome.degradations:
-            if not item.is_skipped:
-                result.degradations.append(f"检索腿降级: {item.leg}/{item.reason}"[:160])
-        result.context_docs = [doc.doc_id for doc in outcome.docs]
-        return [doc.as_reference() for doc in outcome.docs]
-
-    async def _execute(
-        self,
-        verdict: RiskVerdict,
-        result: ChainResult,
-        trace: str,
-        *,
-        started_at: float | None = None,
-    ) -> tuple[WarningRecord | None, bool]:
-        """出文案与发预警是两件事：智能体只产文案，发送与回执永远属于平台交付腿。
-
-        升级前这里是这么写的：注册了 execute 智能体，就把它 ack 里的 `channel_results`
-        直接当触达证据（`_parse_ack`），没给就替每条通道造一条 `status="delivered"` 的回执。
-        那等于"谁来答这一跳，谁就能自己宣布送达"——≤20min 触达指标与 `warning_reach_ms`
-        会跟着一起变成编的。现在：智能体的自报通道结果一律不采信（只留一行可见事实），
-        触达记录只能来自 `DeliveryDispatcher.dispatch()` 的真回执。
-        """
-        draft = await self._warning_service.generate(verdict, event_id=result.event_id, trace_id=trace, started_at=started_at)
-        record = draft.record
-        used_agent = False
-        if self._registry.pick(AgentType.EXECUTE.value, "warn_publish") is not None:
-            try:
-                response = await self._gateway.dispatch(
-                    AgentType.EXECUTE,
-                    Action.EXECUTE_WARN,
-                    {
-                        "warning_id": record.warning_id,
-                        "level": int(record.risk_level),
-                        "regions": record.region_codes,
-                        "audiences": record.audiences,
-                        "content": {"zh": record.body_zh, "bo": record.body_bo},
-                        "channels": record.channels,
-                        # 文案里的数字必须有出处可查：把预警事实的引用交给智能体，
-                        # 回收时再拿同一批事实做防幻觉闸（§3.4 护栏）。
-                        "content_refs": self._copy_facts(record, verdict),
-                    },
-                    trace_id=trace,
-                    capability="warn_publish",
-                    # 事务预算 = LLM 档（§5 A 案）：与 `stage_*_ms` 同档同钟；
-                    # 不再用 `llm_timeout_seconds`（单次 HTTP 超时），也不蹭 ≤10s 调度档。
-                    deadline_ms=self._agent_txn_ms,
-                    ttl_ms=self._agent_txn_ttl_ms,
-                    priority=1,
-                )
-                used_agent = True
-                pre_adopt = record
-                record = self._adopt_agent_copy(record, response.payload, result, verdict=verdict)
-                if record != pre_adopt and (receipt := _model_receipt(response)) is not None:
-                    # 只有智能体写的文字真的进了这条预警才记凭证：文案全被数字闸拦回、保留平台模板的那一程，
-                    # 记上模型名字等于把模板产出的东西算到某个模型头上（与规划段同一条判据）。
-                    result.stage_models["execute"] = receipt
-            except AegisError as exc:
-                result.degradations.append(f"执行智能体失败，文案回落平台模板: {exc.message}")
-        dispatched = await self._direct_dispatch(record, result)
-        if dispatched is None:
-            return None, used_agent
-        await self._broadcast(dispatched, trace)
-        return dispatched, used_agent
-
-    @staticmethod
-    def _copy_facts(record: WarningRecord, verdict: RiskVerdict) -> str:
-        """给文案防幻觉闸用的事实池：平台已产出的预警正文 + 定级依据与证据引用。
-
-        只做拼接、不改数值——数字口径的唯一真源仍是 record 与 verdict，智能体不能往里加东西。
-        """
-        refs = [f"{hit.rule_id}={hit.score}" for hit in verdict.hits]
-        return " ".join(
-            [
-                record.title_zh,
-                record.body_zh,
-                record.body_bo or "",
-                " ".join(record.region_codes),
-                str(int(record.risk_level)),
-                verdict.rationale,
-                f"confidence={verdict.confidence}",
-                *refs,
-            ]
-        )
-
-    @staticmethod
-    def _adopt_agent_copy(record: WarningRecord, payload: dict[str, Any], result: ChainResult, *, verdict: RiskVerdict) -> WarningRecord:
-        """采纳智能体的文案，但采纳的是【文字】不是送达：数字必须都在事实池里，否则整段弃用。"""
-        claims = payload.get("channel_results")
-        if isinstance(claims, list) and claims:
-            result.degradations.append(f"执行智能体自报 {len(claims)} 条通道结果未采信（无 dispatcher 凭证）：触达证据只认平台交付腿回执")
-        facts = HazardResponseChain._copy_facts(record, verdict)
-        update: dict[str, Any] = {}
-        for slot in ("title_zh", "body_zh", "body_bo"):
-            value = payload.get(slot)
-            if not isinstance(value, str) or not value.strip():
-                continue
-            invented = sorted(invented_numbers(value, facts))
-            if invented:
-                result.degradations.append(f"执行智能体文案含预警事实之外的数字 {invented}，该字段弃用，保留平台模板")
-                continue
-            update[slot] = value
-        copies = payload.get("audience_copies")
-        if isinstance(copies, dict):
-            kept: dict[str, str] = {}
-            dropped: list[str] = []
-            for role, text in copies.items():
-                if not isinstance(role, str) or not isinstance(text, str) or not text.strip():
-                    continue
-                bad = sorted(invented_numbers(text, facts))
-                if bad:
-                    dropped.append(role)
-                else:
-                    kept[role.strip()] = text.strip()
-            if dropped:
-                result.degradations.append(f"执行智能体受众分支 {sorted(dropped)} 含预警事实之外的数字，不入库")
-            if kept:
-                update["audience_copies"] = kept
-        if not update:
-            return record
-        adopted = record.model_copy(update=update)
-        result.degradations.append("预警文案取自执行智能体（送达记录仍由平台交付腿产生）")
-        return adopted
-
-    async def _direct_dispatch(self, record: WarningRecord, result: ChainResult) -> WarningRecord | None:
-        if self._dispatcher is None:
-            record.released_at = now_iso()
-            return record
-        try:
-            return await self._dispatcher.dispatch(record)
-        except AllChannelsFailedError as exc:
-            result.errors.append(f"全部通道失败: {exc.message}")
-            return None
-
-    async def _broadcast(self, record: WarningRecord, trace: str) -> None:
-        event = make_event(
-            source="platform.pipeline",
-            action=Action.EXECUTE_ACK.value,
-            trace_id=trace,
-            target=f"platform.broadcast_{int(record.risk_level)}",
-            payload={
-                "warning_id": record.warning_id,
-                "risk_level": int(record.risk_level),
-                "regions": record.region_codes,
-                "title": record.title_zh,
-            },
-        )
-        await self._gateway.publish_to(subjects.alert(int(record.risk_level), record.region_codes[0]), event)
-
-    async def _feedback(self, record: WarningRecord | None, trace: str, result: ChainResult) -> dict[str, Any] | None:
-        """回执汇总 → 派发给反馈智能体归因 → 状态进 ops 流。返回被采纳的归因（未采纳给 `None`）。
-
-        §3.5 的归因、阈值建议、教训写记忆都发生在 FeedbackAgent 内环里。此前这一段只广播不派发，
-        于是智能体在册却永远等不到请求，那三件事在真栈上发生 0 次——本方法补上派发与消费。
-        """
-        if record is None:
-            return None
-        deliveries = record.deliveries
-        delivered = sum(1 for d in deliveries if d.status in ("delivered", "retried"))
-        failed = sum(1 for d in deliveries if d.status == "failed")
-        reach_stats = {
-            "channels": len(deliveries),
-            "total": len(deliveries),
-            "delivered": delivered,
-            "failed": failed,
-            "pending": max(0, len(deliveries) - delivered - failed),
-            "reach_seconds": record.reach_seconds(),
-        }
-        response_state = "pending" if delivered else "unknown"
-        attribution: dict[str, Any] | None = None
-        if self._registry.pick(AgentType.FEEDBACK.value, "reach_track") is not None:
-            try:
-                response = await self._gateway.dispatch(
-                    AgentType.FEEDBACK,
-                    Action.FEEDBACK_ATTRIBUTE,
-                    {
-                        "warning_id": record.warning_id,
-                        "region_code": record.region_codes[0] if record.region_codes else "",
-                        "reach_stats": reach_stats,
-                        "response_state": response_state,
-                    },
-                    trace_id=trace,
-                    capability="reach_track",
-                    deadline_ms=self._agent_txn_ms,
-                    ttl_ms=self._agent_txn_ttl_ms,
-                )
-            except AegisError as exc:
-                # 反馈段排在预警已发布之后：它失败只能塌自己这一腿，不许把已经发出去的预警拖回降级
-                result.degradations.append(f"反馈归因降级: {exc.message}")
-            else:
-                parsed = self._parse_agent_feedback(response.payload)
-                if parsed is None:
-                    result.degradations.append("反馈结论不合契约，按平台回执归档")
-                else:
-                    attribution = parsed
-                    # 凭证只跟着真正由模型产出的归因走：`decided_by=local` 时那段文字是规则摘要，
-                    # 记到模型头上与"规划回落本地剧本不记凭证"是同一条判据。
-                    if parsed["decided_by"] == "agent" and (receipt := _model_receipt(response)) is not None:
-                        result.stage_models["feedback"] = receipt
-        payload: dict[str, Any] = {
-            "warning_id": record.warning_id,
-            "reach_stats": reach_stats,
-            "response_state": response_state,
-            "observed_at": now_iso(),
-        }
-        if attribution is not None:
-            payload.update(attribution)
-        event = make_event(
-            source="platform.feedback",
-            action=Action.FEEDBACK_STATUS.value,
-            trace_id=trace,
-            target="platform.feedback_sink",
-            payload=payload,
-        )
-        await self._gateway.publish_to(subjects.ops("feedback", "status"), event)
-        return attribution
-
-    @staticmethod
-    def _parse_agent_feedback(payload: dict[str, Any]) -> dict[str, Any] | None:
-        """只收契约内的字段；效果分不是 0—1 的数就整份弃用（宁可没有归因，不要编一个）。"""
-        try:
-            score = float(payload["effect_score"])
-            text = str(payload["attribution"])
-        except (KeyError, TypeError, ValueError):
-            return None
-        if not 0.0 <= score <= 1.0 or not text:
-            return None
-        return {
-            "effect_score": round(score, 3),
-            "attribution": text[:500],
-            "unreached_audiences": [str(item) for item in (payload.get("unreached_audiences") or [])][:16],
-            "lag_stage": str(payload.get("lag_stage", ""))[:120],
-            "threshold_suggestion": str(payload.get("threshold_suggestion", ""))[:500],
-            "suggestion_status": str(payload.get("suggestion_status", "none")),
-            "decided_by": str(payload.get("decided_by", "local")),
-        }
-
-    @property
-    def warnings(self) -> dict[str, WarningRecord]:
-        return dict(self._warnings)

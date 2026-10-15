@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, parse_iso
-from aegis.pipeline.chain import ChainResult
+from aegis.pipeline.result import ChainResult
 
 T = TypeVar("T")
 

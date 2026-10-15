@@ -41,7 +41,8 @@ from aegis.knowledge.provider import (
     SupportsShutdown,
 )
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.chain import ChainResult, HazardResponseChain
+from aegis.pipeline.chain import HazardResponseChain
+from aegis.pipeline.result import ChainResult
 from conftest import REGION, readings_rain_burst
 
 GRAPH_URI = "neo4j+ssc://aegis_reader:sup3rs3cr3t@10.0.0.9:7687?database=neo4j"

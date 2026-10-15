@@ -31,7 +31,8 @@ from aegis.domain.messages import AgentMessage
 from aegis.integrations import build_retrieval, warm_retrieval
 from aegis.knowledge.cases import HazardCase, load_builtin_cases
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.chain import ChainResult, HazardResponseChain
+from aegis.pipeline.chain import HazardResponseChain
+from aegis.pipeline.result import ChainResult
 from aegis.retrieval.corpus import CASES_SOURCE, doc_from_case, docs_from_cases
 from aegis.retrieval.docs import LEG_LEXICAL, Provenance, RetrievedDoc
 from aegis.retrieval.embedder import HashingEmbedder

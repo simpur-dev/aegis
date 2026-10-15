@@ -30,7 +30,7 @@ from aegis.domain.messages import TelemetryReading, utc_now
 from aegis.knowledge.cases import DATASET_PROVENANCE, HazardCase, load_builtin_cases
 from aegis.knowledge.provider import KnowledgeProvider, SupportsSchemaPreparation, SupportsShutdown
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.chain import ChainResult
+from aegis.pipeline.result import ChainResult
 from aegis.storage.store import PlatformStore, StoreProtocol
 
 if TYPE_CHECKING:

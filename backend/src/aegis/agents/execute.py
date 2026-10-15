@@ -9,10 +9,10 @@
   （§3.4 防幻觉闸，与 assistant 同款 `text_guard`）；含无出处数字的分支整条弃用并记进
   `rejected_roles`，绝不"润色"成看起来安全的版本。
 - **不自称送达**：本体内环的输出里没有 `channel_results`，也不写 `released_at`——链路的
-  触达证据只认 `DeliveryDispatcher` 的真回执（§3.4/铁律 7，见 `pipeline.chain._execute`）。
+  触达证据只认 `DeliveryDispatcher` 的真回执（§3.4/铁律 7，见 `pipeline/stages.py` 的 `execute`）。
 
 受众文案的落库口径：`WarningRecord.audience_copies`（D10 只增的可选字段，`006_warning_audience_copies.sql`
-加列）承载三分支；链路只采纳【过了数字闸】的分支（`chain._adopt_agent_copy` 逐条再验一遍——
+加列）承载三分支；链路只采纳【过了数字闸】的分支（`pipeline/stages.py` 的 `_adopt_agent_copy` 逐条再验一遍——
 它是信任边界，不假定智能体已经检过）。`body_zh` 取民众分支作为公共触达面正文，另两支只进
 `audience_copies`，不改公共正文。
 """
@@ -92,7 +92,7 @@ class ExecuteAgent(AgentKit):
         branches, rejected = self._gate(result.branches, facts)
         body_bo, translation_pending = await self._translate(branches.get(self.body_role, base_zh), base_bo, request.trace_id)
         # D10 出处凭证：这一段文字是民众实际读到的，最该能被追问是谁写的。
-        # 链路只在文案真进了预警时转记它（`chain._execute`），所以这里只管如实报自己用了什么模型。
+        # 链路只在文案真进了预警时转记它（`pipeline/stages.py` 的 `execute`），所以这里只管如实报自己用了什么模型。
         return Reply(
             payload={
                 "warning_id": payload.get("warning_id", ""),

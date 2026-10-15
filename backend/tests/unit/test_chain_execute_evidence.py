@@ -16,7 +16,8 @@ import pytest
 from aegis.agents.mock import start_mock_agents
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit, WarningRecord, now_iso
-from aegis.pipeline.chain import ChainResult, HazardResponseChain
+from aegis.pipeline.result import ChainResult
+from aegis.pipeline.stages import HazardStages
 from aegis.services.risk_engine import RiskVerdict
 
 REGION = "540121"
@@ -62,7 +63,7 @@ def result() -> ChainResult:
 
 def adopt(payload: dict[str, Any]) -> tuple[WarningRecord, ChainResult]:
     out = result()
-    return HazardResponseChain._adopt_agent_copy(record(), payload, out, verdict=verdict()), out
+    return HazardStages._adopt_agent_copy(record(), payload, out, verdict=verdict()), out
 
 
 def test_自报的通道结果只留下一行事实不进交付记录() -> None:
@@ -99,7 +100,7 @@ def test_藏文缺位时不假装翻译过() -> None:
 
 
 def test_事实池把定级依据与证据引用都算进去() -> None:
-    facts = HazardResponseChain._copy_facts(record(), verdict())
+    facts = HazardStages._copy_facts(record(), verdict())
     assert "32" in facts and "1.4" in facts and "R-DEBRIS-RAIN-1" in facts and "0.9" in facts
 
 
@@ -171,7 +172,7 @@ def test_三分支都合规就都进记录() -> None:
 async def test_交付腿缺位时是released而不是造出来的delivered(container: Any) -> None:
     """dispatcher 不在场：`released_at` 可以有（平台已放行），但一条送达记录都不能有。"""
     agents = await start_mock_agents(container.transport, latency_ms=8.0, heartbeat_interval=0.05)
-    container.chain._dispatcher = None
+    container.chain.stages._dispatcher = None
     try:
         await asyncio.sleep(0.05)
         await container.transport.idle()

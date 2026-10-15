@@ -50,7 +50,8 @@ from aegis.observability.instrumentation import register_sla_budgets
 from aegis.observability.metrics import MetricsExporter
 from aegis.observability.telemetry import telemetry_status
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.chain import ChainResult, HazardResponseChain
+from aegis.pipeline.chain import HazardResponseChain
+from aegis.pipeline.result import ChainResult
 from aegis.services.assistant import AssistantActions, AssistantService
 from aegis.services.delivery import (
     ChannelAdapter,

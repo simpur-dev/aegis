@@ -30,7 +30,7 @@ from aegis.integrations import (
     start_store,
     stop_store,
 )
-from aegis.pipeline.chain import ChainResult, StageResult
+from aegis.pipeline.result import ChainResult, StageResult
 from aegis.storage.store import PlatformStore
 
 PG_DSN = "postgresql://aegis:sup3rs3cr3t@127.0.0.1:1/aegis"

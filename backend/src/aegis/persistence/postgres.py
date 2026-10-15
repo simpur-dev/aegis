@@ -61,7 +61,7 @@ from aegis.storage.store import (
 from aegis.workflow.model import WorkflowDef, WorkflowInstance
 
 if TYPE_CHECKING:  # 仅用于类型标注：ChainResult 的载荷只在写出时按方法调用取用
-    from aegis.pipeline.chain import ChainResult
+    from aegis.pipeline.result import ChainResult
 
 log = logging.getLogger("aegis.persistence")
 

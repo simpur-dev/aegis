@@ -79,7 +79,7 @@ async def verify(provider: KnowledgeProvider, cases: Sequence[HazardCase]) -> di
     """回读每条案例：返回 `case_id -> 命中的腿`（空列表表示查不回来）。
 
     走的是生产同一个 `recall`，所以这里看到的是"预案生成时能不能拿到它"，不是驱动侧的自陈。
-    切片宽度取整批条数而不是预警路径的 top-3：这里只判"在不在"，排名由 `pipeline/chain` 的
+    切片宽度取整批条数而不是预警路径的 top-3：这里只判"在不在"，排名由 `pipeline/stages` 的
     口径管——用 top-3 判在不在，会把"排在第 4"误报成"没进库"。
     """
     checked: dict[str, list[str]] = {}

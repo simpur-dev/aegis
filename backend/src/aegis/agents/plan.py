@@ -6,7 +6,7 @@
   不自造 ID/依赖。偏离基线的 task_type 如实记 `deviations` 告警，不据此塞进不合规单元。
 - 硬约束：`plan.reschedule` 的 ≤10s 预算**禁入 LLM**（§3.3 deadline 倒推，不可协商）——只走规则候选 +
   本地剧本；LLM 仅异步离线优化。LLM 缺位/异常同样回落到确定性基线，链路始终可用。
-- 每个单元 `created_by` 记本智能体（应答归属），payload 形状对齐 `chain._plan` 消费口径（task_units）。
+- 每个单元 `created_by` 记本智能体（应答归属），payload 形状对齐 `pipeline/stages.py` 的 `plan` 消费口径（task_units）。
 """
 
 from __future__ import annotations

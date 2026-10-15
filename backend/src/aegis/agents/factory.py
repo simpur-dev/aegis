@@ -4,7 +4,7 @@
 实例（可选）、共享记忆门面、注入的 detector、可选契约自证。缺哪个依赖就如实降级，不塞会谎报的替身。
 
 execute 已装配，但它【只产文案】：链路的触达证据只认平台 DeliveryDispatcher 的真回执，
-智能体自报的 channel_results 一律不采信（§3.4/铁律7，见 `pipeline.chain._execute`）。
+智能体自报的 channel_results 一律不采信（§3.4/铁律7，见 `pipeline/stages.py` 的 `execute`）。
 装配它不再等于把发送权交给智能体——这是当初扣着不装的那个理由，如今由证据规则而不是缺席来保证。
 """
 

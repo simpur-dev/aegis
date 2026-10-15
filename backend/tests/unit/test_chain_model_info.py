@@ -17,7 +17,8 @@ from aegis.config import Settings
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
 from aegis.domain.messages import ModelInfo, TelemetryReading, make_request, now_iso
 from aegis.persistence import rows
-from aegis.pipeline.chain import ChainResult, HazardResponseChain, StageResult, _model_receipt
+from aegis.pipeline.chain import HazardResponseChain
+from aegis.pipeline.result import ChainResult, StageResult, model_receipt
 
 REGION = "540121"
 TRACE = "trc_" + "0" * 16
@@ -268,7 +269,7 @@ class TestReceiptHelper:
     def test_缺子字段时只记有的(self) -> None:
         """`ModelInfo` 三个子字段都可选（缺省即未知）：转记时按 `exclude_none` 带走，不补占位字符串。"""
         response = _response(model_info=ModelInfo(model="deepseek-chat"))
-        assert _model_receipt(response) == {"agent": "assess.stub", "model": "deepseek-chat"}
+        assert model_receipt(response) == {"agent": "assess.stub", "model": "deepseek-chat"}
 
     def test_完全没带凭证返回None(self) -> None:
-        assert _model_receipt(_response(model_info=None)) is None
+        assert model_receipt(_response(model_info=None)) is None
