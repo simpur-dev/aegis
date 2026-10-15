@@ -465,6 +465,11 @@ class HazardResponseChain:
         if (verdict := self._parse_agent_assessment(response.payload, region, hits)) is not None:
             if (receipt := _model_receipt(response)) is not None:
                 result.stage_models["assess"] = receipt
+            # 双盲是增强腿：它失败时主结论照用第一遍，但这件事必须落在台账上——
+            # 不落的后果是"双盲没做成"被读成"双盲做成了且一致"（铁律 7：降级要看得见）。
+            blind = str(response.payload.get("double_blind") or "")
+            if blind.startswith("failed"):
+                result.degradations.append(f"研判增强腿失败: {blind}（主结论取第一遍）")
             return verdict, True
         result.degradations.append(f"研判结论不合契约，{fallback_note}")
         return local, False

@@ -136,7 +136,7 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 | §4.5 D9 数据飞轮（采集侧） | 部分落地 | `human_review` 一条已通（核签→真值行，真库验过）；**助手确认、演练两条没接** |
 | §4.3 D5 记忆服务 | 部分落地 | 共享命名空间已接生产（`007_agent_memory.sql` + 装配 + 治理端点）；**四类门面无人调**，消费者等 §4.2 |
 | §4.2 D4 MCP 工具层 v1 | 部分落地（工具面 + **assess 一段**的取数已切；其余四段与沙盒消费方未接） | 阶段 1 服务端：`mcp>=2.3` 作可选 extra（CI 与镜像都列了）、清单单一真源、默认面 4 项只读、写工具两把钥匙、`/mcp/` 三态（404/503/streamable-http）、鉴权与数据 API 同面。阶段 2 取数切换：`AEGIS_AGENT_CONTEXT_FACE=auto\|rest\|mcp`（`auto` 跟着部署形态走，点名 `mcp` 而没有工具面则启动当场失败），`agents/mcp_context.py` 与 `rest_context.py` 复用同一份参数推导、同一条"什么算降级"的判据，状态行 `detail.agent_context_face` 分别说清"面开着"与"取数切过去了"。真栈两档对照见 REPORT MB-6（face=mcp 时工具面台账 `calls={'cases.search':1}`、face=rest 时 `calls={}`）；方案那条过门标准"MCP 切换后门禁复绿"= **已达**。**还欠的**：方案那张消费方表里 perceive/plan 也要经 `cases.search`、沙盒经 `simulation.run`，如今只有研判切了；写工具与容器/第三方客户端形态未取证 |
-| §3.2 assess 双盲仲裁 | 部分落地 | 触发/一致上调/仲裁/跳过留痕都在，但两次评估是**串行**而非方案的"并行"；`disagreement` 写进信封后链路丢弃；**增强腿失败仍打死主结论**——仲裁两轮都不合规时异常沿 `handle()` 上抛，已合法得出的第一条研判一起丢（2026-10-12 实测 2/9 事件如此，任务 MB-7c） |
+| §3.2 assess 双盲仲裁 | 部分落地 | 触发/一致上调/仲裁/跳过留痕都在，但两次评估是**串行**而非方案的"并行"；`disagreement` 写进信封后链路丢弃；**增强腿失败已收口在增强腿**（MB-7c，2026-10-15）：第二遍或仲裁任一异常都不再穿出 `handle()`，第一遍结论照用、状态写进 `double_blind=failed_<leg>:<异常名>`，链路把它转成一条看得见的降级记录进 `chain_runs.degradations`；关键路径（第一遍定级）失败仍按原语义上抛交规则降级轨 |
 | §3.4 execute 三分支文案 | 已落地 | `audience_copies` 入库（`006` 迁移）；发送权仍在平台交付腿 |
 | §3.6/§4.4 推演沙盒 | 部分落地 | `services/simulation.py` 有 K×T/概率矩阵/超限降 K；**角色只是四个字符串、无 LLM**，DAG 节点未换成沙盒，前端无报告页 |
 | §4.7 assistant 意图解构 | 部分落地 | 多步分解在 `/assistant/plan`；`/chat` 仍是词表优先，前端没调 plan |

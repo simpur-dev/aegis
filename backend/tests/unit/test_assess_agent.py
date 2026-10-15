@@ -214,6 +214,39 @@ class TestDoubleBlind:
         assert reply.disagreement is None
         assert reply.payload["risk_level"] == 1
 
+    async def test_第二遍失败保留第一遍结论(self) -> None:
+        """增强腿（§3.2 非关键路径）炸了不许打死主结论。
+
+        改前的事实：第二遍 `chat_structured` 一抛就穿出 `handle()`，agentkit 回执 error，
+        平台把**已经到手的**第一遍结论连同整段研判降级到规则轨——真机 503 风暴里就是这样，
+        四条落库链路的 stages 全成 `mode=local`，协同成功率 0.0。
+        """
+        a, gw = agent(verdict(2, confidence=0.7, rationale="初判橙"), RuntimeError("transport: 503 Service is too busy"))
+        reply = await a.handle(_request())
+        assert len(gw.calls) == 2, "只发了两次：第二遍失败后不该再要仲裁"
+        assert reply.payload["risk_level"] == 2, "第一遍的等级必须活下来"
+        assert reply.payload["rationale"] == "初判橙"
+        assert reply.payload["double_blind"] == "failed_second:RuntimeError"
+        # 没做成比较就不能声称"一致"，也不能声称"分歧"：disagreement 只能留 None
+        assert reply.disagreement is None
+        assert reply.model_info is not None, "结论仍要带可复现凭证（D10）"
+
+    async def test_仲裁腿失败保留第一遍结论(self) -> None:
+        """分歧已经发生、仲裁调用才炸：同样收口在增强腿，取第一遍而不是丢整段。"""
+        a, gw = agent(verdict(1, rationale="初判红"), verdict(3, rationale="次判黄"), ValueError("仲裁正文不合 schema"))
+        reply = await a.handle(_request())
+        assert len(gw.calls) == 3
+        assert reply.payload["risk_level"] == 1
+        assert reply.payload["double_blind"] == "failed_arbitration:ValueError"
+        assert reply.disagreement is None, "仲裁没落地，就不能把没完成的分歧当成已判定"
+
+    async def test_第一遍失败仍上抛交平台降级轨(self) -> None:
+        """关键路径不收口：第一遍拿不到结论时维持原语义（内环异常上抛 → 规则降级轨接管）。"""
+        a, gw = agent(RuntimeError("内环超时"), verdict(1))
+        with pytest.raises(RuntimeError, match="内环超时"):
+            await a.handle(_request())
+        assert len(gw.calls) == 1
+
 
 class TestContextInjection:
     async def test_corroborator_invoked_and_context_in_prompt(self) -> None:

@@ -4,6 +4,8 @@ R1/R8/R11 的落点：定级由 `chat_structured`（1–5 枚举强约束，越�
 双盲（第二评估 + 分歧仲裁），结论自带 `model_info`（可复现）与 `disagreement`。取数经注入的
 `AssessContextProvider`（Protocol），**不碰存储层**；LLM 缺位/超时/不合规一律让内环异常上抛，
 由 agentkit 回执 error、平台规则降级轨接管（LLM 不可用≠平台不可用）。
+上抛只适用于**关键路径**（第一遍定级）：双盲是增强腿，它的失败在腿内收口成 `double_blind=failed_*`
+并保留第一遍结论——一次模型故障不该废掉已经拿到的研判。
 """
 
 from __future__ import annotations
@@ -139,41 +141,53 @@ class AssessAgent(AgentKit):
                     extra={"first_ms": round(first_ms, 1)},
                 )
             else:
-                second_started_at = time.perf_counter()
-                second = await self.llm.chat_structured(
-                    [],
-                    schema=AssessVerdict,
-                    task="arbitration",
-                    prompt_key="assess",
-                    prompt_vars=base_vars,
-                    agent_id=self.agent_id,
-                    trace_id=request.trace_id,
-                )
-                second_ms = (time.perf_counter() - second_started_at) * 1000
-                if int(second.risk_level) != int(first.risk_level):
-                    arb_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, divergence=(first, second))
-                    if self._budget_left(request, started_at) < self.blind_budget_factor * max(first_ms, second_ms):
-                        # 分歧已经发生却没时间仲裁：取更保守（等级更高=数字更小）的一条，并留痕
-                        final = first if int(first.risk_level) <= int(second.risk_level) else second
-                        disagreement = True
-                        blind_status = "arbitrated_skipped_budget"
+                # 增强腿的失败只能收口在增强腿：第一遍结论已经到手，第二/三遍任何异常都不许穿出
+                # handle()——穿出就等于用一次模型故障废掉整段研判（真机 503 风暴实测：四条链路
+                # stages 全成 mode=local、协同成功率 0.0，而第一遍结论本可以活下来）。
+                leg = "second"
+                try:
+                    second_started_at = time.perf_counter()
+                    second = await self.llm.chat_structured(
+                        [],
+                        schema=AssessVerdict,
+                        task="arbitration",
+                        prompt_key="assess",
+                        prompt_vars=base_vars,
+                        agent_id=self.agent_id,
+                        trace_id=request.trace_id,
+                    )
+                    second_ms = (time.perf_counter() - second_started_at) * 1000
+                    if int(second.risk_level) != int(first.risk_level):
+                        arb_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, divergence=(first, second))
+                        if self._budget_left(request, started_at) < self.blind_budget_factor * max(first_ms, second_ms):
+                            # 分歧已经发生却没时间仲裁：取更保守（等级更高=数字更小）的一条，并留痕
+                            final = first if int(first.risk_level) <= int(second.risk_level) else second
+                            disagreement = True
+                            blind_status = "arbitrated_skipped_budget"
+                        else:
+                            leg = "arbitration"
+                            arb = await self.llm.chat_structured(
+                                [],
+                                schema=AssessVerdict,
+                                task="arbitration",
+                                prompt_key="assess",
+                                prompt_vars=arb_vars,
+                                agent_id=self.agent_id,
+                                trace_id=request.trace_id,
+                            )
+                            final = arb
+                            disagreement = True
+                            blind_status = "arbitrated"
                     else:
-                        arb = await self.llm.chat_structured(
-                            [],
-                            schema=AssessVerdict,
-                            task="arbitration",
-                            prompt_key="assess",
-                            prompt_vars=arb_vars,
-                            agent_id=self.agent_id,
-                            trace_id=request.trace_id,
-                        )
-                        final = arb
-                        disagreement = True
-                        blind_status = "arbitrated"
-                else:
-                    final = first.model_copy(update={"confidence": min(0.99, first.confidence + self.confidence_boost)})
-                    disagreement = False
-                    blind_status = "agreed"
+                        final = first.model_copy(update={"confidence": min(0.99, first.confidence + self.confidence_boost)})
+                        disagreement = False
+                        blind_status = "agreed"
+                except Exception as exc:
+                    blind_status = f"failed_{leg}:{type(exc).__name__}"
+                    log.warning(
+                        "研判双盲增强腿失败，保留第一遍结论",
+                        extra={"leg": leg, "err": type(exc).__name__, "trace_id": request.trace_id},
+                    )
 
         result_payload = self._to_chain_payload(final, region=region, hits=hits)
         # §3.2 双盲状态如实留痕：agreed / arbitrated / skipped_deadline / skipped_budget /
