@@ -2410,3 +2410,24 @@ mode 也没重测（README 那张排障表里 `perceive/feedback = local` 那一
 **这批还没证到的**：守卫在 CI 上的实际效果——184 早于它，要等下一次带它跑的 CI 才算验；
 两条集成 job 的真实计数仍未读到（缺一个能读 Actions 日志/产物的令牌，不是代码问题）；
 分支保护依旧没开，所以"红挡合并"这件事仍然不存在。
+
+### 补：守卫已在 CI 里跑过，并顺出两条真东西（同日）
+
+推上去的 `462d4a4` 触发运行 **185**：六个 job 全绿，其中三条 job 的守卫步骤**确实执行且通过**
+（`质量门禁｜计数守卫` 0s、`NATS｜计数守卫` 0s、`PostgreSQL｜计数守卫（七秒的绿也要报数）` 0s）。
+也就是 gate / integration-nats / integration-postgres 各自满足了 `tests - skipped > 0`——
+"全体 skip 也算绿"这条路在 CI 里被关掉了。上面那句"仍未读到"随之过期：计数由 job 自己判，
+不必再靠外部读日志。
+
+顺手从**公开的 check-run annotations** 里挖出两条：
+
+1. **`enable-caching` 不是 `astral-sh/setup-uv@v4` 的输入**（合法名是 `enable-cache`），三条 job 全写错，
+   Actions 只留一条 warning、缓存静默不生效——"我声明了要缓存"与"缓存真的在"当时是两回事。
+   已改成 `enable-cache: true`，并加一条本地用例钉这个键名：把 CI 改回 `enable-caching` 会让它红（实测过）。
+2. `actions/checkout@v4` / `upload-artifact@v4` / `setup-uv@v4` 都在报 Node 20 弃用公告
+   （GitHub 把它们强制跑在 Node 24 上）。这是升级到 `@v5 / @v5 / @v6` 的信号，属依赖升级，没擅自做。
+
+**计数从此公开可读**：守卫除了打印，还把一张五行表写进 `$GITHUB_STEP_SUMMARY`。Actions 日志与产物下载
+要 OAuth（本机 git 凭证拿去调 API 是 401），而 `check-run.output.summary` 匿名可读——复核"这次真跑了
+多少条"不再依赖任何人交令牌。判负路径也写（红的时候正是最需要看见这五个数的时候）；本机没有这个
+环境变量时不落盘；已有正文只追加不覆盖（把追加改成覆盖，两条用例立刻红，实测过）。

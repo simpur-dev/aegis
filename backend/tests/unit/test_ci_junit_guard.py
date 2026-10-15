@@ -25,6 +25,53 @@ def write_xml(path: Path, body: str) -> Path:
     return path
 
 
+class TestStepSummary:
+    """计数要落到 step summary：Actions 日志与产物下载都要 OAuth，而 check-run 的 summary 公开可读。"""
+
+    def test_判负时也要把计数写进summary(self, tmp_path: Path, monkeypatch) -> None:
+        sink = tmp_path / "summary.md"
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(sink))
+        target = write_xml(tmp_path / "j.xml", '<testsuite name="pytest" tests="36" skipped="36" failures="0" errors="0"/>')
+        assert main(["guard", str(target)]) == 1
+        body = sink.read_text(encoding="utf-8")
+        assert "| 36 | 36 | 0 | 0 | 0 |" in body, "红的时候正是最需要看见这五个数的时候"
+
+    def test_通过时也写(self, tmp_path: Path, monkeypatch) -> None:
+        sink = tmp_path / "summary.md"
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(sink))
+        target = write_xml(tmp_path / "j.xml", '<testsuite name="pytest" tests="36" skipped="8" failures="0" errors="0"/>')
+        assert main(["guard", str(target)]) == 0
+        assert "| 36 | 8 | 28 | 0 | 0 |" in sink.read_text(encoding="utf-8")
+
+    def test_没有这个环境变量时不落盘(self, tmp_path: Path, monkeypatch) -> None:
+        """本机跑守卫不该在谁的工作区旁写文件。"""
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        target = write_xml(tmp_path / "j.xml", '<testsuite name="pytest" tests="4" skipped="1" failures="0" errors="0"/>')
+        assert main(["guard", str(target)]) == 0
+        assert list(tmp_path.glob("summary*")) == []
+
+    def test_已有正文时只追加不覆盖(self, tmp_path: Path, monkeypatch) -> None:
+        sink = tmp_path / "summary.md"
+        sink.write_text("既有内容\n", encoding="utf-8", newline="\n")
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(sink))
+        target = write_xml(tmp_path / "j.xml", '<testsuite name="pytest" tests="4" skipped="0" failures="0" errors="0"/>')
+        assert main(["guard", str(target)]) == 0
+        body = sink.read_text(encoding="utf-8")
+        assert body.startswith("既有内容"), "summary 是各步骤共用的，盖掉别人的那段就是毁证据"
+        assert "| 4 | 0 | 4 | 0 | 0 |" in body, body
+
+    def test_两次调用只留一个表头(self, tmp_path: Path, monkeypatch) -> None:
+        sink = tmp_path / "summary.md"
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(sink))
+        for name, attrs in (("gate.xml", 'tests="10" skipped="1"'), ("nats.xml", 'tests="4" skipped="0"')):
+            target = write_xml(tmp_path / name, f'<testsuite name="pytest" {attrs} failures="0" errors="0"/>')
+            assert main(["guard", str(target)]) == 0
+        body = sink.read_text(encoding="utf-8")
+        assert body.count("### 计数守卫") == 1, body
+        assert body.count("| 10 | 1 | 9 | 0 | 0 |") == 1
+        assert body.count("| 4 | 0 | 4 | 0 | 0 |") == 1
+
+
 class TestCiWiring:
     """守卫接在 CI 里的哪几步，也要有本地用例盯着——否则"加了守卫"这件事本身会悄悄退化。"""
 
@@ -48,6 +95,16 @@ class TestCiWiring:
             pytest_steps = [str(step.get("run") or "") for step in jobs[job]["steps"] if "uv run pytest" in str(step.get("run") or "")]
             assert pytest_steps, job
             assert all(artifact in run for run in pytest_steps), f"{job} 有 pytest 步骤没写 --junitxml={artifact}"
+
+    def test_setup_uv的输入名必须是它认得的那个(self) -> None:
+        """`enable-caching` 不是 setup-uv@v4 的输入（合法名 `enable-cache`）。
+
+        写错时 Actions 只留一条 warning annotation、缓存静默不生效——"我开了缓存"与"缓存真的在"
+        差的正是这一类拼写，2026-10-15 的运行 184 里三条 job 全中。
+        """
+        text = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        assert "enable-caching" not in text
+        assert text.count("enable-cache: true") == 3, "gate / integration-nats / integration-postgres 各一条"
 
 
 class TestGuardJudges:

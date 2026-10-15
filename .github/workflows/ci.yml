@@ -29,7 +29,7 @@ jobs:
       - name: 安装 uv
         uses: astral-sh/setup-uv@v4
         with:
-          enable-caching: true
+          enable-cache: true
 
       - name: 依赖锁必须先自洽
         # 不这一步，CI 会对活 PyPI 重解，测出来的闭包可能不是镜像（deploy/Dockerfile 用 --frozen）装的闭包。
@@ -241,7 +241,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
         with:
-          enable-caching: true
+          enable-cache: true
 
       - run: uv sync --frozen --extra dev
 
@@ -303,7 +303,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
         with:
-          enable-caching: true
+          enable-cache: true
 
       - run: uv sync --frozen --extra dev --extra postgres
 

@@ -7,9 +7,35 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+_SUMMARY_HEADER = (
+    "### 计数守卫（产物 / tests / skipped / ran / failures / errors）\n\n"
+    "| 产物 | tests | skipped | ran | failures | errors |\n"
+    "| --- | --- | --- | --- | --- | --- |\n"
+)
+
+
+def publish_summary(target: Path, counts: tuple[int, int, int, int]) -> None:
+    """把计数写进 step summary：Actions 日志与产物要 OAuth 才读得到，而 check-run 的 summary 公开可读。
+
+    "这次绿了多少条"不该只有握着令牌的人能复核——红的时候尤其要看得见。
+    """
+    sink = os.environ.get("GITHUB_STEP_SUMMARY", "")
+    if not sink:
+        return
+    path = Path(sink)
+    body = path.read_text(encoding="utf-8") if path.exists() else ""
+    tests, skipped, failures, errors = counts
+    header = "" if body.strip() else _SUMMARY_HEADER
+    path.write_text(
+        f"{body}{header}| `{target}` | {tests} | {skipped} | {tests - skipped} | {failures} | {errors} |\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def counts(path: Path) -> tuple[int, int, int, int]:
@@ -41,6 +67,8 @@ def main(argv: list[str]) -> int:
         return 1
     ran = tests - skipped
     print(f"[junit 守卫] {target}: tests={tests} skipped={skipped} ran={ran} failures={failures} errors={errors}")
+    # 判负之前先把计数发出去：红的时候正是最需要看见这五个数的时候
+    publish_summary(target, (tests, skipped, failures, errors))
     if ran <= 0:
         print(
             "红：这条 job 一条用例都没真跑（0 收集或全体 skip）——绿不代表测过东西",
