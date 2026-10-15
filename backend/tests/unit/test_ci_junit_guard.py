@@ -26,7 +26,7 @@ def write_xml(path: Path, body: str) -> Path:
 
 
 class TestStepSummary:
-    """计数要落到 step summary：Actions 日志与产物下载都要 OAuth，而 check-run 的 summary 公开可读。"""
+    """summary 通道：只服务 Actions 页面渲染（check-run API 匿名读回是空串，见 TestAnnotationChannel）。"""
 
     def test_判负时也要把计数写进summary(self, tmp_path: Path, monkeypatch) -> None:
         sink = tmp_path / "summary.md"
@@ -70,6 +70,34 @@ class TestStepSummary:
         assert body.count("### 计数守卫") == 1, body
         assert body.count("| 10 | 1 | 9 | 0 | 0 |") == 1
         assert body.count("| 4 | 0 | 4 | 0 | 0 |") == 1
+
+
+class TestAnnotationChannel:
+    """计数得发到**不要令牌就能读**的通道上：annotation 可以，step summary 不行（运行 186 实测）。"""
+
+    def test_在CI里发notice级annotation(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        target = write_xml(tmp_path / "j.xml", '<testsuite name="pytest" tests="36" skipped="8" failures="0" errors="0"/>')
+        assert main(["guard", str(target)]) == 0
+        out = capsys.readouterr().out
+        assert "::notice title=计数守卫::tests=36 skipped=8 ran=28" in out, out
+
+    def test_判负时发error级(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        target = write_xml(tmp_path / "j.xml", '<testsuite name="pytest" tests="36" skipped="36" failures="0" errors="0"/>')
+        assert main(["guard", str(target)]) == 1
+        assert "::error title=计数守卫::tests=36 skipped=36 ran=0" in capsys.readouterr().out
+
+    def test_本机不发workflow命令(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """不在 Actions 上时不许往 stdout 塞 `::` 指令——那会污染本机日志且没人消费。"""
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        target = write_xml(tmp_path / "j.xml", '<testsuite name="pytest" tests="4" skipped="0" failures="0" errors="0"/>')
+        assert main(["guard", str(target)]) == 0
+        out = capsys.readouterr().out
+        assert "::notice" not in out and "::error" not in out, out
 
 
 class TestCiWiring:

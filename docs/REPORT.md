@@ -2427,7 +2427,16 @@ mode 也没重测（README 那张排障表里 `perceive/feedback = local` 那一
 2. `actions/checkout@v4` / `upload-artifact@v4` / `setup-uv@v4` 都在报 Node 20 弃用公告
    （GitHub 把它们强制跑在 Node 24 上）。这是升级到 `@v5 / @v5 / @v6` 的信号，属依赖升级，没擅自做。
 
-**计数从此公开可读**：守卫除了打印，还把一张五行表写进 `$GITHUB_STEP_SUMMARY`。Actions 日志与产物下载
-要 OAuth（本机 git 凭证拿去调 API 是 401），而 `check-run.output.summary` 匿名可读——复核"这次真跑了
-多少条"不再依赖任何人交令牌。判负路径也写（红的时候正是最需要看见这五个数的时候）；本机没有这个
-环境变量时不落盘；已有正文只追加不覆盖（把追加改成覆盖，两条用例立刻红，实测过）。
+**"计数从此公开可读"这句是错的，改道了**。上一段我写 `$GITHUB_STEP_SUMMARY` 让计数公开可读，
+那是**没验就写的**：运行 186（带着那次改动）跑完，匿名读 `check-run.output.summary` 的长度是 **0**——
+step summary 只渲染在需要登录的 Actions 页面上，压根不是公开接口。真正匿名可读的是 **annotation**
+（`check-run.output.annotations_url`，我正是靠它挖出下面那条 `enable-caching` 的 bug），所以守卫现在
+在 Actions 里额外打一行 `::notice title=计数守卫::tests=… skipped=… ran=…`，判负时是 `::error`；
+本机不在 Actions 上则一律不发（`::` 指令混进本机 stdout 是污染）。三条用例分别钉"发 notice"、
+"判负发 error"、"本机不发"，变异实测：删掉发送段 → 红 2 条；不分环境一律发 → 红"本机不发"；
+级别写死成 notice → 红"判负发 error"。summary 那张表保留（页面上给人看），但它不再被当成复核通道。
+
+顺带回填一条运行 186 的观察：`enable-cache` 改对之后，"Unexpected input(s) 'enable-caching'"那条
+warning **消失了**（证明键名修复真生效），换来两条新的——`Failed to restore: Cache service responded
+with 400` 与 `Failed to save: <h2>Our services aren't available right now</h2>`。也就是说缓存服务当时
+本身在故障，`uv sync` 走的是无缓存路径：这条不是我方能修的，也没有让 job 变红（uv 把缓存失败当软失败）。

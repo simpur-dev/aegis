@@ -19,23 +19,27 @@ _SUMMARY_HEADER = (
 )
 
 
-def publish_summary(target: Path, counts: tuple[int, int, int, int]) -> None:
-    """把计数写进 step summary：Actions 日志与产物要 OAuth 才读得到，而 check-run 的 summary 公开可读。
+def publish(target: Path, tests: int, skipped: int, failures: int, errors: int) -> None:
+    """把计数发到 CI 外部真能读到的地方——两条通道的可达性不一样，这点是实测出来的。
 
-    "这次绿了多少条"不该只有握着令牌的人能复核——红的时候尤其要看得见。
+    `$GITHUB_STEP_SUMMARY` 只渲染在 Actions 页面上：运行 186 里 `check-run.output.summary`
+    匿名读回是空串（长度 0），所以它不算"公开可读"。`::notice::` / `::error::` 落成 annotation，
+    而 annotation 列表接口不要令牌——上一批文档写过"计数从此公开可读"，那句当时没验，这里按实测改道。
     """
+    ran = tests - skipped
     sink = os.environ.get("GITHUB_STEP_SUMMARY", "")
-    if not sink:
-        return
-    path = Path(sink)
-    body = path.read_text(encoding="utf-8") if path.exists() else ""
-    tests, skipped, failures, errors = counts
-    header = "" if body.strip() else _SUMMARY_HEADER
-    path.write_text(
-        f"{body}{header}| `{target}` | {tests} | {skipped} | {tests - skipped} | {failures} | {errors} |\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    if sink:
+        path = Path(sink)
+        body = path.read_text(encoding="utf-8") if path.exists() else ""
+        header = "" if body.strip() else _SUMMARY_HEADER
+        path.write_text(
+            f"{body}{header}| `{target}` | {tests} | {skipped} | {ran} | {failures} | {errors} |\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        level = "notice" if ran > 0 else "error"
+        print(f"::{level} title=计数守卫::tests={tests} skipped={skipped} ran={ran} failures={failures} errors={errors}")
 
 
 def counts(path: Path) -> tuple[int, int, int, int]:
@@ -68,7 +72,7 @@ def main(argv: list[str]) -> int:
     ran = tests - skipped
     print(f"[junit 守卫] {target}: tests={tests} skipped={skipped} ran={ran} failures={failures} errors={errors}")
     # 判负之前先把计数发出去：红的时候正是最需要看见这五个数的时候
-    publish_summary(target, (tests, skipped, failures, errors))
+    publish(target, tests, skipped, failures, errors)
     if ran <= 0:
         print(
             "红：这条 job 一条用例都没真跑（0 收集或全体 skip）——绿不代表测过东西",
