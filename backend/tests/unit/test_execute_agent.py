@@ -4,7 +4,7 @@
 ① 每条受众分支的数字化逐字比对事实池（`content_refs` + 平台既有文案），冒出无出处数字的分支
    整条弃用并记进 `rejected_roles`，不"润色"成看起来安全的版本；
 ② 响应面里没有 `channel_results`、没有 `released_at`：发送与回执属于平台交付腿
-   （`pipeline.chain._execute` 那侧的用例另证）。
+   （`pipeline/stages.py` 的 `execute` 那侧的用例另证）。
 """
 
 from __future__ import annotations
