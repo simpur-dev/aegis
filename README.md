@@ -88,13 +88,20 @@ cp .env.example backend/.env
 # 2) 依赖（三处：仓库根的 dev 编排、后端 uv、前端 npm）
 npm install                       # 根：只装 concurrently 一个开发依赖，专为下面那条 `npm run dev`
 cd backend && uv sync --extra dev
+#    ↑ 装 dev 就能把服务跑起来，但**跑不齐门禁**：可选子系统各自的驱动在别的 extra 里
+#      （aiomqtt 在 iot、pymysql 在 seekdb、asyncpg/pgvector 在 postgres……）。
+#      要把整棵 tests/ 跑到与 CI 同集合，用下面这一句（`--extra` 是整表替换，必须一次列全）：
+#      uv sync --extra dev --extra perf --extra postgres --extra iot --extra analytics \
+#              --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp
 cd ../frontend && npm install
 
-# 3) 全量测试（离线可跑：总线用内存实现，可选腿一律关闭）
-#    这条与 CI 用的是同一句命令，范围是 tests/ 整棵树（含 tests/perf 与 tests/integration，
-#    后者在缺 AEGIS_TEST_PG_DSN / AEGIS_TEST_NATS_URL 时自行跳过）。只跑 tests/unit 那一档
-#    子集不算门禁：2026-10-12 就是"本机子集全绿、CI 红"，红在一个本机从没进过命令的 perf 用例上。
-cd ../backend && uv run pytest -q
+# 3) 全量测试：范围是 tests/ 整棵树（含 tests/perf 与 tests/integration）
+#    只跑 tests/unit 那一档子集不算门禁：2026-10-12 就是"本机子集全绿、CI 红"，
+#    红在一个本机从没进过命令的 perf 用例上。
+#    与 CI 的同集合=三条：`--frozen` 装齐全 extras、`PYTHONHASHSEED=0`（hypothesis 那条随 seed 抖，
+#    mock 的随机种子也曾随进程变）、`--junitxml` 留计数（`-q` 叠 addopts 的 `-q` 是 `-qq`，汇总行会被吞）。
+#    只装 dev 时 integration 里 2 个无环境门的文件会真跑、其余按缺 DSN/URL 自行跳过（这是实测，不是推断）。
+cd ../backend && PYTHONHASHSEED=0 uv run pytest -q --junitxml=reports/junit-local.xml
 
 # 4) 前端类型检查与单测
 cd ../frontend && npm run typecheck && npm run test

@@ -142,7 +142,7 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 | §4.7 assistant 意图解构 | 部分落地 | 多步分解在 `/assistant/plan`；`/chat` 仍是词表优先，前端没调 plan |
 | §4.8.1 服务令牌 | 已落地（默认关是配置项，不是缺口） | 数据 API 与 MCP 工具面共用同一个 `_presented_token`，认 `X-Aegis-Token` 与 `Authorization: Bearer` 两种头（头名不一致曾让"配了令牌"与"真的在拦"脱钩，那正是这一节的原始事故）；**智能体真在请求的读端点也进了闸**（`/api/v1/cases/recall`、`/api/v1/retrieval/search`、`/api/v1/memory/shared` 读写删、新增的审计直读面），11 条变异逐条证明"摘掉任一端点的鉴权都会红"。仍欠一件：Web 端不携凭据，所以开令牌的部署里数据面板会 401（README 2.3 第 11 条） |
 | §4.5 评测服务与金标集 | 部分落地 | 门禁与出口在（`scripts/quality_gate.py`，`ci.yml` 跑）；表已加第五列**结构化输出首过率**并用真 DeepSeek 实测入基线（0.7838，按 task 分开看才是能行动的那张表）；**另三列仍为 null**：无 `eval/judge.py`、无金标数据 |
-| §4.6 D7 编排归一（chain 退役） | 未开工 | `pipeline/chain.py` 738 行仍在，无"标准五段"模板、无 parity harness；触达段两处实现口径不一 |
+| §4.6 D7 编排归一（chain 退役） | 未开工 | `pipeline/chain.py` 773 行仍在（本机实测行数），无"标准五段"模板、无 parity harness；触达段两处实现口径不一 |
 | MC 模型线（QLoRA/GPTQ/训练集导出/对照实验/论文专利） | 未开工 | 无任何落点 |
 
 一句话（口径与上表逐行对齐，不另算一套）：**MA 已收口**（欠的那个"结构化输出首过率"于 2026-10-12 实测补齐，

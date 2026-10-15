@@ -211,15 +211,24 @@ jobs:
       - name: 启动带 JetStream 的 NATS
         # 不用 services: 而是显式 docker run：services 传不进 nats-server 的命令行参数，
         # 而默认启动的 NATS 没有 JetStream——建流会失败（今晚接上真服务器才暴露出来）。
+        #
+        # 判据换过一次才对流：原写法 `grep '"enabled": ?true'` 盯的是一个**不存在的字段**——
+        # nats-server v2.10.29 的 /jsz 顶层没有 `enabled`（本机实测），于是这条 job 从写下那刻
+        # 就不可能绿：最近 20 次运行里它成功 0 次、被 skip 17 次（此前一直卡在 gate 后面没人看见）、
+        # 真跑 1 次即红。中途想改用的 `/healthz?js-enabled-only` 实测也不是判据（开不开 JS 都回 200）。
+        # 真正的信号是反向的：没开 JetStream 时 /jsz 里才会出现 `"disabled"`。
+        # 三分支本机各验过一次：有 JS→就绪；无 JS→判未就绪；端口没人听→curl 失败也判未就绪
+        # （`|| continue` 是必需的，否则"连不上"会被空响应误判成就绪）。
         run: |
           docker run -d --name aegis-nats \
             -p 127.0.0.1:4222:4222 -p 127.0.0.1:8222:8222 \
             nats:2.10-alpine -js -sd /tmp/js -m 8222
           for _ in $(seq 1 30); do
-            if curl -sf "http://127.0.0.1:8222/jsz" | grep -Eq '"enabled": ?true'; then
-              echo "JetStream 就绪"; exit 0
+            body=$(curl -sf "http://127.0.0.1:8222/jsz") || { sleep 1; continue; }
+            if printf '%s' "$body" | grep -q '"disabled"'; then
+              echo "JetStream 被服务端明确报为 disabled"; sleep 1; continue
             fi
-            sleep 1
+            echo "JetStream 就绪"; exit 0
           done
           echo "NATS JetStream 未就绪" >&2
           docker logs aegis-nats >&2
@@ -255,8 +264,12 @@ jobs:
         # 官方镜像没有 pgvector，`001_extensions.sql` 的 CREATE EXTENSION vector 会当场炸。
         # 宿主端口用 5543，避开 runner 上可能已占 5432 的 service；也不用 compose up——
         # 那会带命名卷与 restart policy，这里只需要一个跑完即弃的库进程。
+        #
+        # 路径必须带 $GITHUB_WORKSPACE：本 job 的 defaults 是 backend（第 246 行），
+        # 写相对路径 `deploy/postgres` 会被解析成 `backend/deploy/postgres`，
+        # 首跑就是那句 `unable to prepare context: path "deploy/postgres" not found`。
         run: |
-          docker build -t aegis-pg-ci deploy/postgres
+          docker build -t aegis-pg-ci "$GITHUB_WORKSPACE/deploy/postgres"
           docker run -d --name aegis-pg-ci \
             -p 127.0.0.1:5543:5432 \
             -e POSTGRES_USER=aegis -e POSTGRES_PASSWORD=ci_only_pw -e POSTGRES_DB=aegis \
