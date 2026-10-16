@@ -301,6 +301,10 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
 那句文本里，而文本不能查、不能数、不能变成待办）。`already_reviewed` 认的是 D9 那张真表
 `warning_truth_labels`（`case_id` 即 `event_id`）；没接标注面时这一格是 **null** 而不是 false——
 把"查不到"说成"没签过"，值班员会去重签一遍已经签过的。
+推演沙盒（§3.6/§4.4，演示口径非 SLA）：`POST /api/v1/simulation/run` 交 K×T 报告，MCP 侧同名工具 `simulation.run`
+（非默认面，要在 `AEGIS_MCP_TOOLS` 里点名）。两个门面给的是**同一份确定性模型**的结果，`roles.policy`
+说清这一份是 `rule` 档还是 `llm` 档；开 LLM 档要 `AEGIS_SIMULATION_ROLES_LLM=true` 且有模型凭据
+（一次 T=5 要点 20 次模型，这钱由部署方按演练需求决定）。
 MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必需的**（`/mcp` 由框架发 307，是否跟随由客户端决定）；
 开启要两步：装可选依赖 `uv sync --extra dev --extra mcp`（extras 整表替换，已有的要列全）+ `AEGIS_MCP_ENABLED=true`。配了 `AEGIS_SERVICE_TOKEN` 时这一面与数据 API
 共用同一个令牌，`X-Aegis-Token` 与 `Authorization: Bearer` 两种头都认。
@@ -319,6 +323,7 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 | 预警发布 | `/warnings` | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |
 | 流程编排 | `/workflow` | Vue Flow 画布：面板可拖 16 类、引擎注册 17 类（每一类都有引擎级分派证据，见 `tests/unit/test_workflow_node_dispatch_matrix.py`）、版本化定义与实例运行、人工决策/改参/旁路。配置里点名的 `upstream` 必须是画布上的连线，定义期就校验 |
 | 指标量测 | `/metrics` | 运行时埋点的 P50/P95/最大时延 vs 阈值判定、协同成功率、越限项 |
+| 推演沙盒 | `/simulation` | §3.6/§4.4 的报告出口：K 情景 × T 轮 → 次生灾害概率矩阵、关键时间线（**每个在场角色一列票** + 本轮汇聚生效的预案）、预案对比、成本降档说明；页顶写"角色档位"是 `rule` 还是 `llm`、实问几次回落几次，缺键报告在边界上判读失败而不是画空表；未点"发起推演"时页面一个概率数字都不出现 |
 | 智能助手 | `/assistant` | 语义交互：四类任务（查询 / 预案问答 / 演练 / 上报）、意图解构引擎（模糊指令 → 白名单动作链，LLM 只有规划权没有执行权）、流式过程帧、**执行类动作必须人工确认**（越权指令一律拒绝并留痕）；未配 LLM 时页面如实显示"语义服务未配置"而不是装可用 |
 
 ## 3. 可选子系统：接得上、退得掉、看得见

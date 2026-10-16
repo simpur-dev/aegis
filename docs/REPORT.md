@@ -2733,6 +2733,79 @@ N4 区域过滤器形同虚设→红 1；N5 去掉标注查询的条数闸门→
 本轮只证到"配了才接、没配就如实 absent"这一层；MCP 工具面还没暴露这四类读取（留在 §4.2 那批一起做）；
 `working`（工作记忆）按 §4.3 的表就是"调用方持有、门面不落库"，本轮没给它任何新东西，也没假装给了。
 
+## §4.4 推演沙盒：角色真的投票、票真的改表、报告页真的在（2026-10-16）
+
+目标那句拆成四条：`grep llm = 0`、无 `simulation/` 包、DAG 节点未换、前端无报告页。查下去还有第五条更根本的：
+**角色选什么都不会影响任何一个数字**。`_timeline` 拿的是 `config.playbook` 的缓解系数，四个角色只是
+`SimConfig.roles` 里四个字符串——就算接上 LLM，它选"封路"而声明档是"转移"，概率矩阵一位都不会动。
+那种"多角色"是包装，不是推演。所以这一节的顺序是：先让票能生效，再谈接不接模型。
+
+**票怎么进表（`aggregate_actions`）**：多数票生效；平票取缓解系数更高的一档；白名单外的票丢弃（表里没有它的
+系数，不能拿未定义档位去推数字），全被丢弃时回到本轮声明档。规则必须写死成可复算的那一种——
+"平票随机取一票"会让同一颗种子换个角色顺序就换一个概率矩阵，§3.6 的"可复现"当场作废。
+界线仍然守得住：**票只决定"用冻结表里哪一行系数"，不决定系数本身，也不决定强度**（强度由遥测推出来的
+`DebrisFlowModel` 说了算）。这条用一条用例钉住：四个角色一致投"不行动"时，本轮触发率必须逐字等于
+`secondary_trigger_probability(泥位, 0.0)`，而泥位与规则档一模一样。
+
+**角色侧搬到 `src/aegis/simulation/roles.py`**：四张画像（指挥员/救援队/受影响群众/监测员）+ `RoleAction`
+（`extra="forbid"`、`action` 逐字校验白名单、**没有任何数值字段**）+ 同一协议的两档 policy。
+"没有数值字段可填"是这一节最要紧的一处结构：它比在提示词里恳求"别编数字"可靠——模型没有地方写数字，
+就不会有数字被当成实测。白名单还要逐字写进提示词（`actions="、".join(ACTIONS)`），因为只说"取其一"时
+模型回的是"组织群众转移"这种中文描述，schema 当场拒收，这条腿结构上不可能成功——assess/plan 各栽过一次。
+
+**LLM 档的降级口径**：单次调用任何异常（超时/熔断/修复轮用尽）只塌那一轮，回落 `preferred` 并 `fallbacks += 1`，
+不把已经算出来的整份报告拖成 503（推演在演练视野，不在 SLA 热路径）；网关递回来的东西**再过一次 schema**，
+防的是"替身/降级路径递来个不是 `RoleAction` 的东西"——读 `payload.action` 之前不过闸，越界写法就直接进票箱了。
+`calls`/`fallbacks` 随报告外显成 `roles` 那一格（含 `asked`：应问次数），于是"装配漏接了一个角色"
+从"报告看起来完整"变成一句 `应问 16 次、实问 12 次：有角色没被问到`。`make_sandbox` 每次调用新建 policy，
+否则第二份推演的回落次数会带上第一次的。
+
+**DAG 与两个门面**：`container._sandbox_runner` 把沙盒接成节点要的调用口（画布手填的整数逐个夹区间），
+`services_bridge.simulate` 把报告挂进 `result["sandbox"]`，`nodes._situation_simulate` 原样带进节点输出；
+未注入或报错只降级那一格并写明原因，情景与三个既有输出键不受影响（增强腿失败收口在增强腿，与 §3.2 同一口径）。
+MCP 侧 `simulation.run` 与 REST 出口交同一份事实；工具面没接网关，所以它恒 `rule` 档——这一条由用例钉住，
+免得将来接上时没人发现形状变了。
+
+**这一步 mypy 抓到一个真 bug**：`await make_sandbox(...).run(cfg).as_dict()` 少一对括号——`await` 结合得比 `.` 松，
+那句实际是 `await (run(cfg).as_dict())`，运行期才炸。三处出口（API / MCP / 装配点）都改了，
+并在装配级用例里把 `container._sandbox_runner` 真跑一遍钉住（变异 M6 把括号去掉，9 条红、
+外加 `RuntimeWarning: coroutine 'Sandbox.run' was never awaited`）。
+
+**前端 `/simulation` 报告页**：`api/simulation.ts` 的取值域与预案白名单**现读后端 `SimulationRequest` 比对**
+（抄来的清单只能证明两份抄写一致），报告进渲染层前过 `requireSimulationReport()`——缺键/空时间线/某轮没带票/
+角色档列不出在场角色，一律判读失败而不是画空表（"显示成空表"正是多角色退化成四个字符串却看不出来的形状）；
+时间线**按报告里的在场角色动态出列**，降档时写明"请求 64 条、只跑得起 12 条"，后端那句"未实测初值"原样显示。
+
+**证据**：后端这一批 59 条新用例——`tests/unit/test_simulation.py` 21（原 10 条，角色/汇聚/票面可见性 +11）、
+`tests/unit/test_simulation_roles.py` 30（新）、`tests/unit/test_workflow_sandbox_leg.py` 15（新）、
+`tests/unit/test_mcp_tools.py` +2、`tests/api/test_mcp_api.py` +1（真握手调 `simulation.run`）、
+`tests/api/test_api.py` 的出口断言扩到 `roles`/`actions`/`applied_playbook`。
+整棵 `tests/` 带库复跑：**tests=3123 / ran=3080 / failures=0 / errors=0 / skipped=43**
+（43 条 skip 全是可选腿：nats/mqtt/zenoh/seekdb/graphiti/jaeger/prometheus，本轮新增用例一条没 skip），
+`ruff format --check src tests scripts` / `ruff check` / `mypy src` 一起绿。
+后端变异 8 条全部有牙（外壳自证锚点恰好一次 + 按字节还原，"空转 0 条"）：白名单不校验 红 6、
+抖动不计数 红 6、出口不过 schema 红 6、票不影响数字 红 1、漏接不外显 红 1、少一对括号 红 9、
+沙盒异常穿出节点 红 1、时间线退回单动作键 红 12。
+前端 `npm run typecheck` + `npx vitest run`（**868 条 / 51 文件全绿**，本轮新增 31 条）+ `npm run build` 绿；
+变异 4 条同样有牙：不装令牌拦截器 红 1、边界校验不看票 红 1、顶栏漏这一页 红 1、预检永远放行 红 3。
+**真机点验**（真 Chromium + 真后端 8321 + 真 vite 代理，`.tmp-verify/probe_simulation_page.mjs`）21 项全过：
+未点"发起推演"时页面一个概率数字都没有；点下去时间线表头出现"指挥员/救援队/受影响群众/监测员"四列、
+5 轮、预案对比三档；角色档那一格写着"应问 20 次、实问 20 次、回落 0 次｜票面即声明预案，不调模型"；
+K 敲 999 被输入框夹回 64，请求体带的是 `scenarios=64, seed=7`，页面因此写明"请求 64 条…只跑得起 12 条"
+且页顶统计位同步降到 12；横向零溢出、控制台零 error。截图 `frontend/test-results/ui-audit/simulation-page.png`。
+
+**这一轮被实测纠正的两处自我怀疑**：一是探针原先断言"越界值不该被控件夹住、要靠预检拦"，真机量出来
+`a-input-number` 自己就夹到 64——预检那一层在页面上打不出来，于是探针改成记事实（两条闸都在，先撞到的是控件），
+预检由 vitest 的四条用例与变异 F4 钉住；二是原先 `simulation.spec.ts` 的令牌用例只在测试自己注入的实例上装拦截器，
+把模块里的 `installServiceToken(http)` 删掉它照绿（F1 空转暴露的），补一条对源码的断言才真有判定力。
+
+**没证明到的**：真 LLM 档的一次完整推演没跑过（要模型凭据，且一次 T=5 要点 20 次模型）——
+本轮只证到"开关与网关都在位时确实选到 `llm` 档、抖动只塌那一轮"这一层，用的是网关替身；
+这一页没进 `e2e/ui-overlap` 的逐页版式/对比度门禁（那条批判据要单独过，比如"每页至少一个循环动画"这条现在就不满足），
+真机点验只覆盖浅色主题一屏；概率/暴露/缓解系数仍是未实测初值，§3.6 的验收口径也只到"矩阵正确性抽查"；
+`playbook_comparison` 与概率矩阵用的是声明预案那一档的系数（不逐情景跑角色），与时间线的"票后生效档"在 LLM 档下可以不一致，
+这一点写在模块 docstring 里但页面上没并排说明。
+
 
 
 
