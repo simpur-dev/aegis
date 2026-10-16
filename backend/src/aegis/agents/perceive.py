@@ -55,7 +55,7 @@ class SemanticParser(Protocol):
     """语义腿的窄接口——生产注入平台自己的 `services.semantic_parser.DisasterTextParser`。
 
     §3.1 要的是"上报文本/图像的灾种线索抽取，低置信走平台三路融合口径"。三路融合（规则/案例/
-    LLM 与证据腿）已经在 `DisasterTextParser` 里实现并被 `submit_report` 链路使用，智能体内环
+    LLM 与证据腿）已经在 `DisasterTextParser` 里实现并被上报腿（`ReportIntake.submit`）使用，智能体内环
     【不另立一套融合】——否则同一份文本会有两套结论，正是"两张皮"。这里只做委派与如实外显：
     把解析结果的 `decided_by`/`confidence`/`needs_review`/`degradations` 原样带下去。
     """

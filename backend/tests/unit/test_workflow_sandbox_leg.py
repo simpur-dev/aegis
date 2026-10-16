@@ -4,7 +4,7 @@
 K×T 概率矩阵、角色票与预案对比要进 `sandbox` 这一格。四件事必须钉住：
 
 1. 沙盒缺位/报错只降级 `sandbox` 那一格——"情景有了"不许冒充"推演跑过了"；
-2. 装配点（`container._sandbox_runner`）交出来的确实是跑到底的报告，而不是协程对象
+2. 装配点（`integrations.sandbox.sandbox_runner`）交出来的确实是跑到底的报告，而不是协程对象
    （`await x.run(cfg).as_dict()` 这种少括号写法运行期才炸，所以要用真装配跑一遍）；
 3. 画布上人手填的整数参数全部夹进区间：`scenarios=1e9` 不该变成一次跑不完的循环；
 4. 角色票在节点输出里看得见（`timeline[].actions` + `applied_playbook`），否则报告页无从渲染。
@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from aegis.config import Settings
-from aegis.container import _sandbox_runner
+from aegis.integrations.sandbox import sandbox_runner
 from aegis.services.simulation import SimConfig
 from aegis.workflow.nodes import NodeContext, WorkflowServices, default_registry
 from aegis.workflow.services_bridge import build_workflow_services
@@ -128,7 +128,7 @@ class TestAssemblyRunner:
     """真装配那一段：少一对括号、漏夹一个参数，都该在这里红而不是在运行时报错。"""
 
     async def test_默认配置跑出规则档报告与四角色票(self) -> None:
-        report = await _sandbox_runner(Settings(env="test"), None)({"risk_level": 3})
+        report = await sandbox_runner(Settings(env="test"), None)({"risk_level": 3})
 
         assert {"cost", "probability_matrix", "timeline", "playbook_comparison", "roles"} <= set(report)
         assert report["roles"]["policy"] == "rule"
@@ -138,38 +138,38 @@ class TestAssemblyRunner:
             assert row["applied_playbook"] in {"转移", "封路", "不行动"}
 
     async def test_同参数同种子逐键可复现(self) -> None:
-        runner = _sandbox_runner(Settings(env="test"), None)
+        runner = sandbox_runner(Settings(env="test"), None)
         assert await runner({"seed": 7}) == await runner({"seed": 7})
 
     async def test_scenarios_超上限被夹住并且留痕(self) -> None:
-        report = await _sandbox_runner(Settings(env="test"), None)({"scenarios": 10**9})
+        report = await sandbox_runner(Settings(env="test"), None)({"scenarios": 10**9})
 
         assert report["cost"]["requested_scenarios"] == 64, "夹在装配点做，报告里就记夹后的值"
         assert report["cost"]["effective_scenarios"] <= 64
 
     async def test_rounds_超上限决定时间线长度(self) -> None:
-        report = await _sandbox_runner(Settings(env="test"), None)({"rounds": 10**9})
+        report = await sandbox_runner(Settings(env="test"), None)({"rounds": 10**9})
         assert len(report["timeline"]) == 24
 
     async def test_token_budget_不许越过默认上限(self) -> None:
-        report = await _sandbox_runner(Settings(env="test"), None)({"token_budget": 10**9})
+        report = await sandbox_runner(Settings(env="test"), None)({"token_budget": 10**9})
         assert report["cost"]["effective_scenarios"] == SimConfig().scenarios
         assert report["cost"]["downscaled"] is False
 
     async def test_负数参数落到各自下限而不是抛错(self) -> None:
-        report = await _sandbox_runner(Settings(env="test"), None)({"scenarios": -5, "rounds": -5, "token_budget": -5})
+        report = await sandbox_runner(Settings(env="test"), None)({"scenarios": -5, "rounds": -5, "token_budget": -5})
         assert report["cost"]["requested_scenarios"] == 1
         assert len(report["timeline"]) == 1
         assert report["cost"]["effective_scenarios"] == 1
 
     async def test_开关开但网关不在位时报告说的是规则档(self) -> None:
         """不假装接了模型：`roles.policy` 与实际用的那一档同源。"""
-        report = await _sandbox_runner(Settings(env="test", simulation_roles_llm=True), None)({"risk_level": 3, "rounds": 1})
+        report = await sandbox_runner(Settings(env="test", simulation_roles_llm=True), None)({"risk_level": 3, "rounds": 1})
         assert report["roles"]["policy"] == "rule"
 
     @pytest.mark.parametrize("rain", [0, 120.5], ids=["零降雨", "极端降雨"])
     async def test_雨强由画布参数决定并写进时间线(self, rain: float) -> None:
-        report = await _sandbox_runner(Settings(env="test"), None)({"rain_base_mm": rain, "rounds": 1})
+        report = await sandbox_runner(Settings(env="test"), None)({"rain_base_mm": rain, "rounds": 1})
         row = report["timeline"][0]
         assert row["rain_mm"] <= rain + SimConfig().rain_spread_mm
         assert row["mudlevel_cm"] >= 0.0

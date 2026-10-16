@@ -42,7 +42,7 @@ aegis/
 │   │   ├── analytics/         # 分析旁路：ClickHouse 分钟物化 / DuckDB 边缘离线分析
 │   │   ├── knowledge/         # 预案案例库 + Graphiti 时序图谱（读路径不含 LLM）
 │   │   ├── retrieval/         # 混合检索：bge-m3 + reranker（ONNX int8 CPU），缺权重时按腿降级
-│   │   ├── pipeline/          # 灾害响应链路（智能体优先、平台降级）
+│   │   ├── pipeline/          # 灾害响应链路（智能体优先、平台降级）与人工上报接入腿（`report_intake.py`）
 │   │   ├── services/          # 触发规则、风险定级、任务拆解、三路融合解析、语义交互（助手，含意图解构）、预警生成、靶向触达、阈值标定；LLM 网关 v2（多模型路由/结构化输出/用量账本/Prompt 注册表）、记忆服务、推演沙盒、提示注入围栏、数字防幻觉闸、质量评测与模型卡片、数据飞轮
 │   │   ├── workflow/          # 自研 DAG 引擎（17 类节点）与 5 灾种内置模板（含案例驱动推演节点）
 │   │   ├── edge/              # 站端↔网关弱网链路（Eclipse Zenoh POC：有界缓冲 + 按序重放）

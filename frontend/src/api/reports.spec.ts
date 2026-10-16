@@ -322,14 +322,14 @@ describe('定级来源标签', () => {
 /**
  * 核签工单的两端键名（跨端漂移门禁）。
  *
- * 真源是 `container._open_report_review()` 返回的那个字典：后端改键名而前端没跟上时，
+ * 真源是 `ReportIntake._open_report_review()` 返回的那个字典：后端改键名而前端没跟上时，
  * 界面只会显示"未开出"，看上去像"这条不用核签"——把一个待办悄悄读成没有待办，
  * 是这张工单最坏的失效方式。所以这里比的是**两端的键集合**，不是两份抄写。
  */
 function backendReviewTicketKeys(): string[] {
-  const text = readRepoFile('backend', 'src', 'aegis', 'container.py')
+  const text = readRepoFile('backend', 'src', 'aegis', 'pipeline', 'report_intake.py')
   const start = text.indexOf('async def _open_report_review')
-  if (start < 0) throw new Error('container.py 里找不到 _open_report_review：开单逻辑改名或搬走了，门禁要跟着改（不是把断言删掉）')
+  if (start < 0) throw new Error('pipeline/report_intake.py 里找不到 _open_report_review：开单逻辑改名或搬走了，门禁要跟着改（不是把断言删掉）')
   const block = /\n        return \{([\s\S]*?)\n        \}/.exec(text.slice(start))
   if (!block) throw new Error('没解析到 _open_report_review 的返回字典：写法变了，这里要跟着改')
   const keys = [...block[1].matchAll(/^ {12}"([a-z_]+)":/gm)].map((match) => match[1] as string)

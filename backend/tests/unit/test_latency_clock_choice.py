@@ -27,11 +27,12 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "aegis"
 #: 参与时延测量的模块：起点、终点、相减都只能有一个时钟纪元。
 #: D7 归一后链路起点不在 `chain.py` 里了——它随盘面搬到 `pipeline/board.py`（`started_at` 字段），
 #: 所以这里跟的是"谁取时"，不是"哪个编排器"。
+#: P4 之后上报接入的取时点也不在 `container.py`（那里一行计时都没有了），跟着搬到 `pipeline/report_intake.py`。
 MEASURING_FILES = (
     "services/assistant.py",
     "services/warning_service.py",
     "pipeline/board.py",
-    "container.py",
+    "pipeline/report_intake.py",
     # MCP 工具面的每次调用也在这条纪律里：`mcp_tool_ms` 量的是毫秒级取数，
     # 换成 monotonic 就会在 Windows 上恒读 0，"工具面慢不慢"这个问题就此永绿。
     "mcp_tools/server.py",
@@ -93,9 +94,9 @@ def test_测量终点不得与起点分属两个时钟(relative: str) -> None:
 
 def test_上报接入时长不用墙上时钟() -> None:
     """`utc_now()` 差值 + `max(..., 0)` 的组合会把时钟回拨读成"0 秒接入"，考核项就此永绿。"""
-    container = _read("container.py")
-    assert "intake_seconds = max(time.perf_counter() - started, 0.0)" in container
-    assert "utc_now() - started" not in container, "接入时长又回到墙上时钟：一次 NTP 步进就能把它变成 0 或负数"
+    intake = _read("pipeline/report_intake.py")
+    assert "intake_seconds = max(time.perf_counter() - started, 0.0)" in intake
+    assert "utc_now() - started" not in intake, "接入时长又回到墙上时钟：一次 NTP 步进就能把它变成 0 或负数"
 
 
 @pytest.mark.asyncio

@@ -90,7 +90,7 @@ def build_router() -> APIRouter:
         """群防群治人工上报：文本 → 三路融合解析 → **与监测事件同一条链路**。
 
         路由只做出口翻译。解析、定级、预警生成、触达与量测全在
-        `PlatformContainer.submit_report` 一处——助手页"帮我上报"这里也调同一个入口，
+        `ReportIntake.submit` 一处——助手页"帮我上报"这里也调同一个入口，
         两条路径给出不同等级就是第二个"预警准确率"口径。
 
         上报坐标不改判据，只进证据链：`location` 原样回显，并作为一条 evidence 挂在触发命中上。
@@ -98,7 +98,7 @@ def build_router() -> APIRouter:
         if ctn.parser is None:
             raise HTTPException(status_code=503, detail={"code": "E_PARSER_UNAVAILABLE", "message": "任务解析服务未装配"})
         location = None if payload.lat is None or payload.lon is None else (payload.lon, payload.lat)
-        outcome = await ctn.submit_report(
+        outcome = await ctn.report_intake.submit(
             note=payload.note,
             region_code=payload.region_code,
             reporter=payload.reporter,

@@ -299,7 +299,7 @@ DECLARED_ONLY = "发生泥石流，请求红色预警"
 
 
 async def _open_review_ticket(client: httpx.AsyncClient, region_code: str) -> dict[str, Any]:
-    """走真接入口开一张核签工单：标注池的标记只有 `submit_report` 这条路会打，
+    """走真接入口开一张核签工单：标注池的标记只有 `ReportIntake.submit` 这条路会打，
     测试自己拼 payload 就永远测不到"工单其实没带标记"这一种失败。"""
     opened = await client.post("/api/v1/reports", json={"note": DECLARED_ONLY, "region_code": region_code, "reporter": "村民"})
     assert opened.status_code == 200, opened.text

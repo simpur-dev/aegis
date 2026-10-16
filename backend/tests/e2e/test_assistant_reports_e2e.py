@@ -101,7 +101,7 @@ async def test_上报经确认后进同一条链路且智能体优先照样成�
 
 @pytest.mark.asyncio
 async def test_低置信上报只转核签不伪装成已判定(platform: PlatformContainer) -> None:
-    result = await platform.submit_report(note=MILD_REPORT, region_code="540321", reporter="村民")
+    result = await platform.report_intake.submit(note=MILD_REPORT, region_code="540321", reporter="村民")
     assert result["human_review_required"] is True
     assert result["parse"]["decided_by"] in {"rule_declared", "none", "retrieval", "llm"}
     assert platform.report_stats["review_required"] == 1
@@ -110,7 +110,7 @@ async def test_低置信上报只转核签不伪装成已判定(platform: Platfo
 
 @pytest.mark.asyncio
 async def test_查询与预案问答两类只读任务不产生待确认动作(platform: PlatformContainer) -> None:
-    await platform.submit_report(note=HEAVY_RAIN, region_code="540121", reporter="巡护员")
+    await platform.report_intake.submit(note=HEAVY_RAIN, region_code="540121", reporter="巡护员")
 
     queried = await _ask(platform, "最近发布了哪些预警", region_code="540121")
     assert _first(queried, "proposal") is None
@@ -125,7 +125,7 @@ async def test_查询与预案问答两类只读任务不产生待确认动作(p
 
 @pytest.mark.asyncio
 async def test_越权指令被拒且平台状态一点没动(platform: PlatformContainer) -> None:
-    await platform.submit_report(note=HEAVY_RAIN, region_code="540121", reporter="巡护员")
+    await platform.report_intake.submit(note=HEAVY_RAIN, region_code="540121", reporter="巡护员")
     warnings_before = platform.store.warnings.size
     chains_before = len(platform.store.chains)
     rejections_before = len(platform.assistant.rejections)
@@ -140,7 +140,7 @@ async def test_越权指令被拒且平台状态一点没动(platform: PlatformC
 
 @pytest.mark.asyncio
 async def test_指标出口把上报腿与触达身份一起报出(platform: PlatformContainer) -> None:
-    await platform.submit_report(note=HEAVY_RAIN, region_code="540121", reporter="巡护员")
+    await platform.report_intake.submit(note=HEAVY_RAIN, region_code="540121", reporter="巡护员")
     report = platform.latency_report()
 
     assert report["metrics"]["report_intake_seconds"]["count"] == 1

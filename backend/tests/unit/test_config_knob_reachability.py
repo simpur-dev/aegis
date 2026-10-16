@@ -20,7 +20,8 @@ from pathlib import Path
 import pytest
 
 from aegis.config import Settings
-from aegis.container import create_container, default_channels
+from aegis.container import create_container
+from aegis.integrations.channels import default_channels
 
 # 声明了但故意未接线：值 → 为什么可以留着（配套必须有响亮拒绝）。新增条目等于新增技术债，需要理由。
 RESERVED: dict[str, str] = {}

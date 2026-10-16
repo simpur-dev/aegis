@@ -1,7 +1,7 @@
 """perceive 语义腿（§3.1 文本线索）的口径：委派给平台三路融合解析器，缺位与异常都要留痕。
 
 这双腿刻意【不复做融合】：规则/案例/LLM 与证据的三路融合已经在 `services.semantic_parser`
-里实现并被 `submit_report` 用着，智能体再写一套就是"同一份文本两套结论"的两张皮。
+里实现并被上报腿（`ReportIntake.submit`）用着，智能体再写一套就是"同一份文本两套结论"的两张皮。
 所以这里的断言只验三件事：委派参数原样传下去、解析结果如实外显（decided_by/confidence/
 needs_review/degradations）、以及这条腿拿不到结论时是【可见降级】而不是凭空造命中。
 """

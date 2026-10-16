@@ -109,7 +109,7 @@ async def test_标定报表把命中实测与精度未测得分开说(settings: 
     container = create_container(settings, with_simulator=False)
     await container.start()
     try:
-        await container.submit_report(
+        await container.report_intake.submit(
             note="24小时累计降雨95毫米，沟道泥位抬升1.2米",
             region_code="540121",
             reporter="巡护员",

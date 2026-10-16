@@ -8,7 +8,7 @@
 | 层 | 职责 | 代码 |
 | --- | --- | --- |
 | L0 领域内核 | 枚举、契约镜像（与 `contracts/*.schema.json` 严格同构）、**定级结论 `RiskVerdict`**、**链路产物 `ChainResult` 族**、契约校验器、错误码、配置——**不 import 任何上层包**，所有人都可依赖它 | `domain/`、`contracts.py`、`errors.py`、`config.py` |
-| L1 感知接入 | 多源采集、协议适配、时空归一、质量标记、**人工上报（群防群治）** | `connectors/`、`api/routers/drill.py`（`POST /api/v1/reports`）、`container.submit_report` |
+| L1 感知接入 | 多源采集、协议适配、时空归一、质量标记、**人工上报（群防群治）** | `connectors/`、`api/routers/drill.py`（`POST /api/v1/reports`）、`pipeline/report_intake.py`（`ReportIntake.submit`） |
 | L2 数据层 | 遥测/预警/任务/链路运行态存储；图谱与向量检索（M2 接入 Neo4j+Graphiti）；**预警规则库（版本化三态）** | `backend/src/aegis/storage/`、`persistence/sql/005_trigger_rules.sql`、`persistence/rulebook.py` |
 | L3 智能层 | 五大智能体（**外部实现**，经契约接入） | `contracts/`、`agents/`（交付落点）、`backend/src/aegis/agents/`（Mock 参考） |
 | L4 服务层 | 触发规则、定级、任务拆解、**三路融合解析（规则/检索佐证/LLM）**、预警生成、靶向触达（mock + **真实 HTTP 通道**）、**语义交互（白名单动作 + 认知镜像）**、**阈值标定闭环**、链路编排、HTTP API | `services/`、`pipeline/`、`api/` |
@@ -69,7 +69,7 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 | 调度响应 ≤2s | `stage_assess_ms` / `stage_plan_ms` | 链路分段 |
 | 重调度 ≤10s | `collab_txn`（事务口径，M2 补 `reschedule` 专项） | 网关 |
 | 接入 ≤5min | `ingest_end_to_end_seconds` | 摄取服务 |
-| 人工上报接入 ≤5min | `report_intake_seconds` | `container.submit_report`（文本→三路解析→同一条链路） |
+| 人工上报接入 ≤5min | `report_intake_seconds` | `pipeline/report_intake.py`（`ReportIntake.submit`：文本→三路解析→同一条链路） |
 | 语义交互一轮 | `assistant_reply_ms` | `services/assistant.py` |
 | 预警生成 ≤3min | `warning_generation_ms` | 预警服务 |
 | 靶向触达 ≤20min | `warning_reach_ms` | 触达/链路 |
@@ -103,7 +103,7 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 - **语义交互与人工上报（批次 B）**：`services/assistant.py` 四类任务（查询 / 预案问答 / 演练 / 上报）
   走白名单动作，执行类必须经 `/api/v1/assistant/confirm` 人工确认（一次性、带期、限本会话）；
   认知镜像复用 `rationale`/`degradations`/通道回执，LLM 只改措辞且**冒出事实之外的数字就整段弃用**。
-  `POST /api/v1/reports` 与助手"帮我上报"共用 `container.submit_report` 这一个入口，
+  `POST /api/v1/reports` 与助手"帮我上报"共用 `ReportIntake.submit` 这一个入口，
   解析后进入的是**同一条链路**（同一 trace、同一量测、同一降级留痕）。
   低置信度（等级不是阈值命中所得）时 `_open_report_review()` 用 `REPORT_REVIEW_TEMPLATE`
   自动开一张停在 `human_review` 节点的核签工单，回执带回 `review{instance_id, pending_node,

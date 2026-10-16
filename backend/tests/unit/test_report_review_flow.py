@@ -70,7 +70,7 @@ async def test_核签流程被归档后_重新注册会把开单能力带回来(
     assert active is not None and active.status == "active"
     await platform.workflow.archive(active.workflow_id)
 
-    blocked = await platform.submit_report(note=DECLARED_ONLY, region_code="540200", reporter="村民")
+    blocked = await platform.report_intake.submit(note=DECLARED_ONLY, region_code="540200", reporter="村民")
     assert blocked["human_review_required"] is True
     assert blocked["review"] is None, "归档态不该被当成可用定义——这条就是修复前的现场"
 
@@ -79,7 +79,7 @@ async def test_核签流程被归档后_重新注册会把开单能力带回来(
     assert revived is not None and revived.status == "active"
     assert revived.version == active.version + 1
 
-    opened = await platform.submit_report(note=DECLARED_ONLY, region_code="540200", reporter="村民")
+    opened = await platform.report_intake.submit(note=DECLARED_ONLY, region_code="540200", reporter="村民")
     review = opened["review"]
     assert review is not None and review["status"] == "waiting", "恢复的是开单能力，不是多一行定义"
     assert review["workflow_id"] == revived.workflow_id
@@ -97,7 +97,7 @@ async def test_取消归档核签流程后工单恢复(platform: PlatformContain
     restored = await platform.workflow.restore(active.workflow_id)
     assert restored.status == "active"
 
-    result = await platform.submit_report(note=DECLARED_ONLY, region_code="540200", reporter="村民")
+    result = await platform.report_intake.submit(note=DECLARED_ONLY, region_code="540200", reporter="村民")
     review = result["review"]
     assert review is not None, "取消归档后必须真的能开单，而不是只改回一个 status"
     assert review["workflow_id"] == active.workflow_id
@@ -105,7 +105,7 @@ async def test_取消归档核签流程后工单恢复(platform: PlatformContain
 
 @pytest.mark.asyncio
 async def test_阈值命中的上报不开核签单(platform: PlatformContainer) -> None:
-    result = await platform.submit_report(note=HEAVY_RAIN, region_code="540121", reporter="巡护员")
+    result = await platform.report_intake.submit(note=HEAVY_RAIN, region_code="540121", reporter="巡护员")
     assert result["parse"]["decided_by"] == "rule"
     assert result["human_review_required"] is False
     assert result["review"] is None
@@ -115,7 +115,7 @@ async def test_阈值命中的上报不开核签单(platform: PlatformContainer)
 @pytest.mark.asyncio
 async def test_申报等级的上报开出可签的实例(platform: PlatformContainer) -> None:
     warnings_before = platform.store.warnings.size
-    result = await platform.submit_report(note=DECLARED_ONLY, region_code="540200", reporter="村民", location=(91.1, 29.6))
+    result = await platform.report_intake.submit(note=DECLARED_ONLY, region_code="540200", reporter="村民", location=(91.1, 29.6))
     review = result["review"]
     assert result["human_review_required"] is True
     assert review and review["instance_id"] and review["pending_node"] == "review"
@@ -139,7 +139,7 @@ async def test_申报等级的上报开出可签的实例(platform: PlatformCont
 )
 async def test_核签三选一都能把工单签完(platform: PlatformContainer, choice: str, branch: str) -> None:
     """三个选项都要真签到底：只测一个的话，另两条边接错节点也不会红。"""
-    result = await platform.submit_report(note="坡面裂缝在变宽", region_code="540300", reporter="村民")
+    result = await platform.report_intake.submit(note="坡面裂缝在变宽", region_code="540300", reporter="村民")
     review = result["review"]
     assert review is not None and review["instance_id"] and review["pending_node"]
 
@@ -161,7 +161,7 @@ async def test_流程没注册时只留标志不开单(platform: PlatformContain
     assert definition is not None
     await platform.workflow.archive(definition.workflow_id)
 
-    result = await platform.submit_report(note=DECLARED_ONLY, region_code="540400", reporter="村民")
+    result = await platform.report_intake.submit(note=DECLARED_ONLY, region_code="540400", reporter="村民")
     assert result["human_review_required"] is True
     assert result["review"] is None, "开不了单要回一个明确的 None，而不是带着假 instance_id 的空壳"
     assert platform.report_stats["reviews_opened"] == 0, "开不了单就不能假装开了"

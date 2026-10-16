@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
@@ -17,7 +16,6 @@ from aegis.agents.agentkit import AgentKit
 from aegis.agents.mock import MockAgent, start_mock_agents
 from aegis.agents.runtime import build_agent_runtime, resolve_context_face
 from aegis.bus.gateway import AgentGateway
-from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.registry import AgentRegistry
 from aegis.bus.transport import BusTransport
 from aegis.config import Settings, get_settings
@@ -28,20 +26,26 @@ from aegis.connectors.weather_api import WeatherApiSource
 from aegis.contracts import ContractRegistry
 from aegis.domain.chain import ChainResult
 from aegis.domain.enums import Channel
-from aegis.domain.messages import TelemetryReading, TriggerHit, now_iso
+from aegis.domain.messages import TelemetryReading
 from aegis.integrations import (
     AnalyticsRecorder,
+    AssembledEvidence,
+    AssembledScenarios,
     IntegrationState,
     StoreBundle,
     build_analytics,
+    build_delivery_client,
     build_knowledge,
     build_mcp,
     build_memory,
     build_mqtt,
     build_retrieval,
     build_store,
+    build_transport,
     build_weather,
     close_knowledge,
+    default_channels,
+    sandbox_runner,
     start_store,
     stop_store,
     warm_knowledge,
@@ -52,31 +56,25 @@ from aegis.observability.instrumentation import register_sla_budgets
 from aegis.observability.metrics import MetricsExporter
 from aegis.observability.telemetry import telemetry_status
 from aegis.observability.tracer import Tracer
+from aegis.pipeline.report_intake import ReportIntake
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
 from aegis.services.assistant import AssistantActions, AssistantService
-from aegis.services.delivery import (
-    ChannelAdapter,
-    DeliveryDispatcher,
-    HttpChannelAdapter,
-    normalize_gateway_target,
-    parse_delivery_channels,
-)
-from aegis.services.label_flywheel import CAPTURE_MARKER, LabelFlywheel
+from aegis.services.delivery import ChannelAdapter, DeliveryDispatcher
+from aegis.services.label_flywheel import LabelFlywheel
 from aegis.services.llm_gateway import LlmGateway, build_gateway_if_configured
 from aegis.services.memory import MemoryService
 from aegis.services.risk_engine import RiskEngine
-from aegis.services.semantic_parser import DisasterTextParser, EvidenceNote, ParsedDisaster
+from aegis.services.semantic_parser import DisasterTextParser
 from aegis.services.task_parser import TaskParser
 from aegis.services.threshold_suggestions import ThresholdSuggestionService
 from aegis.services.trigger_rules import RuleEngine, rulebook_from_rows
 from aegis.services.warning_service import WarningService
 from aegis.storage.store import StoreProtocol, rule_library_port
 from aegis.workflow.engine import WorkflowEngine
-from aegis.workflow.outbound import OutboundCaller, OutboundPolicy, parse_host_list
+from aegis.workflow.outbound import OutboundCaller, OutboundPolicy
 from aegis.workflow.services_bridge import build_workflow_services
 from aegis.workflow.templates import (
-    REPORT_REVIEW_TEMPLATE,
     register_builtin_templates,
     register_report_review_template,
     register_standard_chain_template,
@@ -86,239 +84,6 @@ if TYPE_CHECKING:
     from aegis.retrieval.service import HybridRetrievalService
 
 log = logging.getLogger("aegis.container")
-
-
-def build_transport(settings: Settings) -> BusTransport:
-    if settings.bus_backend == "nats":
-        from aegis.bus.nats_bus import NatsBus  # 延迟导入：仅在启用时要求 nats 依赖
-
-        return NatsBus(settings.nats_url, stream_prefix=settings.nats_stream_prefix)
-    return InMemoryBus()
-
-
-def default_channels(settings: Settings, *, client: Any | None = None) -> dict[Channel, ChannelAdapter]:
-    """交付通道矩阵：mock 供演练与压测复现，http 才是现场触达。
-
-    `delivery_mode=http` 而网关没配齐时是**构造期失败**，不静默回落 mock：
-    把"网关没接上"读成"触达已达成"是这一型平台最贵的事故（架构铁律 7：指标必须实测、降级必须可见）。
-    """
-    if settings.delivery_mode == "mock":
-        return {
-            Channel.SMS: MockChannel(settings),
-            Channel.BEIDOU: MockChannel(settings, latency_ms=900.0, name=Channel.BEIDOU),
-            Channel.BROADCAST: MockChannel(settings, latency_ms=400.0, name=Channel.BROADCAST),
-            Channel.WECHAT: MockChannel(settings, latency_ms=250.0, name=Channel.WECHAT),
-        }
-    return build_http_channels(settings, client=client)
-
-
-def build_http_channels(settings: Settings, *, client: Any | None = None) -> dict[Channel, ChannelAdapter]:
-    """按配置拼装真实通道。主机白名单为空即整条腿不可用（口径与 `workflow/outbound.py` 一致）。"""
-    if client is None:
-        raise ValueError("delivery_mode=http 需要注入 HTTP 客户端（见 build_delivery_client）")
-    target = normalize_gateway_target(
-        settings.delivery_http_base_url,
-        allowed_hosts=parse_host_list(settings.delivery_http_allowed_hosts),
-    )
-    channels = parse_delivery_channels(settings.delivery_http_channels)
-    return {
-        channel: HttpChannelAdapter(
-            channel,
-            target.url,
-            client,
-            path=settings.delivery_http_path,
-            timeout_ms=settings.delivery_http_timeout_ms,
-        )
-        for channel in channels
-    }
-
-
-def build_delivery_client(settings: Settings, *, client: Any | None = None) -> tuple[Any | None, bool]:
-    """真实通道的 HTTP 客户端：凭据只进请求头、不跟随重定向。返回 (客户端, 是否本装配点自建)。"""
-    if settings.delivery_mode != "http":
-        return None, False
-    if client is not None:
-        return client, False
-    import httpx  # 延迟导入：只有真实通道形态才要求 httpx
-
-    headers = {"Authorization": f"Bearer {settings.delivery_http_token}"} if settings.delivery_http_token else {}
-    return (
-        httpx.AsyncClient(
-            timeout=settings.delivery_http_timeout_ms / 1000,
-            headers=headers,
-            follow_redirects=False,
-        ),
-        True,
-    )
-
-
-class AssembledEvidence:
-    """把知识层 + 检索层折成解析器认识的 `EvidenceNote`（装配点专属翻译，内核只认 Protocol）。
-
-    `typical_level` 只取案例自带的 `applies_to_levels` 中最不利（数字最小）的一档；
-    检索文档没有等级就不给等级——编一个等级出来，等于把"历史案例"降级成"我们的猜测"。
-    """
-
-    def __init__(self, *, knowledge: KnowledgeProvider | None, retrieval: HybridRetrievalService | None, settings: Settings) -> None:
-        self._knowledge = knowledge
-        self._retrieval = retrieval
-        self._settings = settings
-
-    async def corroborate(
-        self,
-        *,
-        query: str,
-        hazard_type: str | None,
-        region_code: str | None,
-        limit: int,
-    ) -> list[EvidenceNote]:
-        notes: list[EvidenceNote] = []
-        if self._knowledge is not None:
-            try:
-                matches = await self._knowledge.recall(
-                    query,
-                    hazard_type=hazard_type,
-                    region_code=region_code,
-                    limit=limit,
-                    budget_ms=self._settings.knowledge_recall_budget_ms,
-                )
-            except Exception as exc:
-                log.warning("解析佐证：知识腿降级", extra={"err": type(exc).__name__})
-                matches = []
-            for match in matches:
-                brief = match.planning_brief()
-                notes.append(
-                    EvidenceNote(
-                        source=f"case:{match.case_id}",
-                        text=str(brief.get("title") or match.case_id)[:200],
-                        hazard_type=next(iter(brief.get("hazard_types") or ()), hazard_type),
-                        typical_level=_worst_level(brief.get("applies_to_levels")),
-                        refs=(match.case_id,),
-                    )
-                )
-        if self._retrieval is not None:
-            from aegis.retrieval.service import RetrievalQuery  # 延迟导入：装配点才碰检索 I/O 面
-
-            try:
-                outcome = await self._retrieval.retrieve(
-                    RetrievalQuery(
-                        text=query,
-                        k=limit,
-                        hazard_type=hazard_type,
-                        region_code=region_code,
-                        budget_ms=self._settings.retrieval_budget_ms,
-                    )
-                )
-            except Exception as exc:
-                log.warning("解析佐证：检索腿降级", extra={"err": type(exc).__name__})
-                outcome = None
-            if outcome is not None:
-                for doc in outcome.docs:
-                    reference = doc.as_reference()
-                    notes.append(
-                        EvidenceNote(
-                            source=f"doc:{doc.doc_id}",
-                            text=str(reference.get("text") or reference.get("title") or "")[:200],
-                            hazard_type=reference.get("hazard_type"),
-                            typical_level=None,  # 检索块没有等级口径，就不臆造
-                            refs=(doc.doc_id,),
-                        )
-                    )
-        return notes
-
-
-def _worst_level(raw: object) -> int | None:
-    levels = [int(item) for item in raw if isinstance(item, (int, float)) and 1 <= int(item) <= 5] if isinstance(raw, list) else []
-    return min(levels) if levels else None
-
-
-def _sandbox_runner(settings: Settings, llm_gateway: object | None) -> Any:
-    """把推演沙盒接成 DAG 节点 `situation_simulate` 要的调用口（§4.4：节点契约不变，能力换实现）。
-
-    画布/演练给了参数就用给的，没给用配置默认。**每个参数都夹进区间**：
-    节点输入来自画布上人手填的 config，`scenarios=1e9` 不该变成一次跑不完的循环。
-    """
-    from aegis.services.simulation import SimConfig, make_sandbox
-
-    defaults = SimConfig()
-
-    async def _run(payload: dict[str, Any]) -> dict[str, Any]:
-        def _clamped_int(key: str, *, low: int, high: int) -> int:
-            raw = payload.get(key)
-            value = int(getattr(defaults, key) if raw is None else raw)
-            return max(low, min(high, value))
-
-        raw_seed = payload.get("seed")
-        cfg = SimConfig(
-            scenarios=_clamped_int("scenarios", low=1, high=64),
-            rounds=_clamped_int("rounds", low=1, high=24),
-            rain_base_mm=float(payload.get("rain_base_mm", defaults.rain_base_mm)),
-            rain_spread_mm=float(payload.get("rain_spread_mm", defaults.rain_spread_mm)),
-            playbook=str(payload.get("playbook") or defaults.playbook),
-            token_budget=_clamped_int("token_budget", low=1_000, high=defaults.token_budget),
-            seed=int(defaults.seed if raw_seed is None else raw_seed),
-        )
-        # 括号是必需的：`await x.run(cfg).as_dict()` 会被解析成 `await (x.run(cfg).as_dict())`。
-        return (await make_sandbox(settings, llm_gateway=llm_gateway).run(cfg)).as_dict()
-
-    return _run
-
-
-class AssembledScenarios:
-    """把知识层的案例命中折成推演节点要的键（装配点翻译；内核只认 `ScenarioProvider` 协议）。
-
-    刻意不捕异常：召回失败要作为 `situation_simulate` 的降级事实外显（节点侧写 `degraded`），
-    在这里圆成"空案例"就等于把图谱挂了说成"没有相似案例"。
-    图谱侧只回节点摘要（`case is None`）时，`planning_brief()` 就只有命中证据——
-    推演节点拿不到 `estimated_delay_hours` 就不输出该要素，谁也不替案例补数。
-    """
-
-    def __init__(self, *, knowledge: KnowledgeProvider, settings: Settings) -> None:
-        self._knowledge = knowledge
-        self._settings = settings
-
-    async def recall_scenarios(
-        self,
-        *,
-        hazard_type: str | None = None,
-        region_code: str | None = None,
-        risk_level: int | None = None,
-        limit: int = 3,
-    ) -> list[dict[str, Any]]:
-        query = " ".join(
-            part
-            for part in (
-                hazard_type or "",
-                region_code or "",
-                "" if risk_level is None else f"{int(risk_level)}级",
-            )
-            if part
-        )
-        matches = await self._knowledge.recall(
-            query or "山地灾害",
-            hazard_type=hazard_type,
-            region_code=region_code,
-            limit=int(limit),
-            budget_ms=self._settings.knowledge_recall_budget_ms,
-        )
-        return [brief for brief in (match.planning_brief() for match in matches) if brief.get("case_id")]
-
-
-class MockChannel:
-    def __init__(self, settings: Settings, *, name: Channel = Channel.SMS, latency_ms: float = 150.0) -> None:
-        from aegis.services.delivery import MockChannelAdapter
-
-        self._inner = MockChannelAdapter(
-            name=name,
-            latency_ms=latency_ms,
-            fail_rate=0.0,
-            receipt_latency_ms=300.0,
-            seed=settings.simulator_seed,
-        )
-        self.name = name
-
-    async def send(self, record, audiences):
-        return await self._inner.send(record, audiences)
 
 
 @dataclass
@@ -339,6 +104,14 @@ class PlatformContainer:
     workflow: WorkflowEngine
     bundle: StoreBundle
     rule_engine: RuleEngine
+    #: 人工上报这条腿的入口（P4 起独立成 `pipeline/report_intake.py`）。
+    #: 刻意做成必填字段并【不留 `container.submit_report` 委托方法】：两处都能调的入口
+    #: 迟早会长出第二套口径，而"助手页上报"与"表单上报"必须同源。
+    report_intake: ReportIntake
+    #: 人工上报这条腿的账：受理数、阈值命中所得数、转人工核签数。
+    #: 计数放在容器上而不是散在路由里，`latency_report()` 才能一次给全（指标必须可追溯到样本）。
+    #: 同一个 dict 引用也交给 `report_intake` 去加，装配点不另建第二本账。
+    report_stats: dict[str, int]
     analytics: AnalyticsRecorder | None = None
     knowledge: KnowledgeProvider | None = None
     knowledge_state: IntegrationState | None = None
@@ -371,11 +144,6 @@ class PlatformContainer:
     suggestions: ThresholdSuggestionService | None = None
     delivery_client: Any | None = None
     _owns_delivery_client: bool = False
-    #: 人工上报这条腿的账：受理数、阈值命中所得数、转人工核签数。
-    #: 计数放在容器上而不是散在路由里，`latency_report()` 才能一次给全（指标必须可追溯到样本）。
-    report_stats: dict[str, int] = field(
-        default_factory=lambda: {"submitted": 0, "measured_by_rule": 0, "review_required": 0, "reviews_opened": 0}
-    )
     #: 规则库装配事实（批次 C2）：读不到 / 有坏行都要能在外侧看到，而不是默默用另一版阈值
     rulebook_error: str | None = None
     rulebook_rejected: list[str] = field(default_factory=list)
@@ -718,150 +486,6 @@ class PlatformContainer:
             "store": self.store.snapshot(),
         }
 
-    # ---------- 人工上报（第四条接入腿，架构文档 §6.2 场景二） ----------
-
-    async def submit_report(
-        self,
-        *,
-        note: str,
-        region_code: str,
-        reporter: str = "web",
-        hazard_hint: str | None = None,
-        location: tuple[float, float] | None = None,
-    ) -> dict[str, Any]:
-        """群防群治上报 → 三路融合解析 → **同一条链路**。
-
-        这里刻意不复制一条"上报专用预警链"：解析只负责把文本变成触发命中与定级建议，
-        之后的研判、决策、预警生成、靶向触达、降级留痕与时延量测全部走链路入口 `self.chain`。
-
-        低置信度（等级不是阈值命中所得）如实外显 `human_review_required` 并计入 `report_stats`；
-        核签动作在指挥员一侧（工作流实例的 `human_review` 节点），平台不自动起实例。
-        """
-        if self.parser is None:
-            raise RuntimeError("解析服务未装配（report parser）")
-        # 时长用 perf_counter，不用 utc_now()：时钟被同步一步，`max(…, 0.0)` 就把负数
-        # 夹成一个看似合理的 0 秒，"人工上报接入 ≤5min" 这条会静默变成永绿。
-        started = time.perf_counter()
-        parsed = await self.parser.parse(note, region_code=region_code, hazard_hint=hazard_hint)
-        region = parsed.region_code or region_code
-        self.report_stats["submitted"] += 1
-        if parsed.measured_by_rule:
-            self.report_stats["measured_by_rule"] += 1
-        if parsed.needs_review:
-            self.report_stats["review_required"] += 1
-
-        hits = list(parsed.hits)
-        verdict = parsed.to_verdict()
-        if verdict is not None and not hits:
-            # 没有阈值命中也要带证据进链路：rule_id 明写 R-REPORT-*，
-            # 让下游一眼看出这一条的等级来自申报值或建议值，不是测量值。
-            hits = [
-                TriggerHit(
-                    rule_id=f"R-REPORT-{parsed.decided_by.upper()}",
-                    hazard_type=parsed.hazard_type.value,
-                    region_code=region,
-                    evidence_refs=[f"reporter={reporter}", f"note={parsed.text[:120]}"],
-                    score=max(0.05, min(1.0, parsed.confidence)),
-                )
-            ]
-        if location is not None and verdict is not None:
-            lon, lat = location
-            # 坐标只作证据，不参与判据：它进 evidence_refs，不进任何一条阈值。
-            hits = [
-                *hits,
-                TriggerHit(
-                    rule_id="R-REPORT-LOC",
-                    hazard_type=parsed.hazard_type.value,
-                    region_code=region,
-                    evidence_refs=[f"loc={round(lon, 6)},{round(lat, 6)}", f"reporter={reporter}"],
-                    score=1.0,
-                ),
-            ]
-        if verdict is not None and not verdict.hits:
-            # 定级结论必须带上它自己的证据，否则状态面上的 `risk.evidence_refs` 是空的，
-            # 事后没人能回答"这条等级凭什么"——R-REPORT-* 前缀就是"非阈值测量"的标记。
-            verdict.hits = list(hits)
-        result = await self.chain.process(
-            [],
-            region_code=region,
-            preset_hits=hits,
-            preset_verdict=verdict,
-            intake="report",
-        )
-        intake_seconds = max(time.perf_counter() - started, 0.0)
-        self.tracer.record(
-            "report_intake_seconds",
-            intake_seconds,
-            trace_id=result.trace_id,
-            outcome="ok" if result.ok else "degraded",
-        )
-        review = (
-            await self._open_report_review(parsed=parsed, region=region, reporter=reporter, location=location, result=result)
-            if parsed.needs_review
-            else None
-        )
-        return {
-            "parse": parsed.as_dict(),
-            "human_review_required": parsed.needs_review,
-            "review": review,
-            "intake_seconds": round(intake_seconds, 3),
-            "chain": result.as_dict(),
-        }
-
-    async def _open_report_review(
-        self,
-        *,
-        parsed: ParsedDisaster,
-        region: str,
-        reporter: str,
-        location: tuple[float, float] | None,
-        result: ChainResult,
-    ) -> dict[str, Any] | None:
-        """低置信度上报开一张人工核签工单（架构文档 §6.2 场景二的后半段）。
-
-        开单不拦发布：预警照发（漏报的代价高于误报，且判定过程已在 `degradations` 里留痕），
-        核签判的是"这条结论是否按现状生效"。签完的结果进工作流实例台账，供阈值标定回看。
-        工单在接入时延量测点**之后**才开：≤5min 这项判的是"上报到链路完成"，
-        把等人签字的时间算进去就等于用人的节奏污染机器的口径。
-        """
-        definition = self.workflow.latest_definition(REPORT_REVIEW_TEMPLATE["name"])
-        if definition is None or definition.status != "active":
-            log.warning("核签流程未注册：低置信度上报只留下 human_review_required 标志")
-            return None
-        detail = await self.workflow.start(
-            definition.workflow_id,
-            trace_id=result.trace_id,
-            payload={
-                # 这两项是给数据飞轮用的：`capture_label` 声明"这一单裁决的是某条结论成不成立"，
-                # `observed_at` 给出真值的观测时刻（工单就在处理该上报的时刻开出，即上报处理时刻）
-                "capture_label": CAPTURE_MARKER,
-                "observed_at": now_iso(),
-                "region_code": region,
-                "reporter": reporter,
-                "note": parsed.text[:500],
-                "hazard_type": parsed.hazard_type.value,
-                "risk_level": None if parsed.risk_level is None else int(parsed.risk_level),
-                "confidence": parsed.confidence,
-                "decided_by": parsed.decided_by,
-                "why_review": list(parsed.degradations),
-                "warning_id": result.warning.warning_id if result.warning else None,
-                "event_id": result.event_id,
-                "location": None if location is None else [location[0], location[1]],
-            },
-        )
-        self.report_stats["reviews_opened"] += 1
-        return {
-            "workflow_id": definition.workflow_id,
-            "instance_id": detail.get("instance_id"),
-            "status": detail.get("status"),
-            "pending_node": next(
-                (str(node.get("node_id")) for node in detail.get("nodes", []) if node.get("state") == "awaiting_human"),
-                None,
-            ),
-            "options": ["approve", "adjust", "reject"],
-            "decision_endpoint": "/api/v1/workflow/instances/{instance_id}/nodes/{node_id}/decision",
-        }
-
 
 def create_container(
     settings: Settings | None = None,
@@ -1000,7 +624,7 @@ def create_container(
             # 案例驱动推演的注入位：知识腿没装配就留 None，节点侧显式降级而不是回退到 ±1 启发式
             scenario_provider=AssembledScenarios(knowledge=knowledge, settings=cfg) if knowledge is not None else None,
             # §4.4：推演沙盒接进 DAG 节点。LLM 角色档由 `simulation_roles_llm` 决定，默认规则档。
-            sandbox_runner=_sandbox_runner(cfg, gateway_llm),
+            sandbox_runner=sandbox_runner(cfg, gateway_llm),
             run_chain_stage=stations,
         ),
         tracer=tracer,
@@ -1010,6 +634,8 @@ def create_container(
     # handle_agent_message / warnings）都不改——调用点（`/api/v1/drill/run`、人工上报腿、
     # 演练与报表脚本、总线订阅）要的只是这个形状；改的是"段的先后由谁决定"。
     chain = WorkflowChain(stages, workflow, stations=stations, on_result=on_result)
+    # 人工上报这本账只有一个出处：容器读它出报表，受理腿写它记样本，两边拿的是同一个 dict。
+    report_stats = {"submitted": 0, "measured_by_rule": 0, "review_required": 0, "reviews_opened": 0}
     container = PlatformContainer(
         settings=cfg,
         transport=bus,
@@ -1025,6 +651,8 @@ def create_container(
         workflow=workflow,
         bundle=bundle,
         rule_engine=rule_engine,
+        report_intake=ReportIntake(parser=parser, chain=chain, tracer=tracer, workflow=workflow, report_stats=report_stats),
+        report_stats=report_stats,
         analytics=analytics,
         knowledge=knowledge,
         knowledge_state=knowledge_state,
@@ -1085,7 +713,7 @@ def _assistant_actions(
 ) -> AssistantActions:
     """助手动作到平台既有服务的桥——全部是薄翻译，没有第二条实现。
 
-    读侧直接取内存读视图，演练复用 `IngestService`，上报复用 `PlatformContainer.submit_report`。
+    读侧直接取内存读视图，演练复用 `IngestService`，上报复用 `ReportIntake.submit`。
     所以助手嘴上说的等级、数字与大屏上的必然同源（架构铁律 4）。
     """
 
@@ -1158,7 +786,7 @@ def _assistant_actions(
         reporter: str = "web-assistant",
         hazard_hint: str | None = None,
     ) -> dict[str, Any]:
-        return await container.submit_report(note=note, region_code=region_code, reporter=reporter, hazard_hint=hazard_hint)
+        return await container.report_intake.submit(note=note, region_code=region_code, reporter=reporter, hazard_hint=hazard_hint)
 
     return AssistantActions(
         list_warnings=list_warnings,

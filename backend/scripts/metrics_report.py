@@ -381,7 +381,7 @@ async def run(
         submitted = reviewed = with_warning = 0
         for index in range(reports):
             text, region = REPORT_SAMPLES[index % len(REPORT_SAMPLES)]
-            outcome = await container.submit_report(note=text, region_code=region, reporter=f"metrics-report-{index + 1}")
+            outcome = await container.report_intake.submit(note=text, region_code=region, reporter=f"metrics-report-{index + 1}")
             submitted += 1
             reviewed += 1 if outcome["human_review_required"] else 0
             with_warning += 1 if outcome["chain"]["warning_id"] else 0
