@@ -197,8 +197,8 @@ describe('错误外显：后端原文不许被翻译', () => {
    * 否则值班员要先做一次中英对照才知道刚才动的是哪一格。
    */
   it('后端 ReportIn 的每个字段都有中文标签（新增字段不许漏）', () => {
-    const text = readRepoFile('backend', 'src', 'aegis', 'api', 'app.py')
-    const block = text.slice(text.indexOf('class ReportIn'), text.indexOf('def get_container'))
+    const text = readRepoFile('backend', 'src', 'aegis', 'api', 'routers', 'drill.py')
+    const block = text.slice(text.indexOf('class ReportIn'), text.indexOf('def build_router'))
     const fields = [...block.matchAll(/^\s{4}([a-z_]+)\s*:\s/gm)].map((m) => m[1] as string)
     expect(fields.length, '解析不到 ReportIn 的字段：写法变了要一起改这条门禁').toBeGreaterThanOrEqual(6)
     for (const field of fields) {
@@ -210,11 +210,11 @@ describe('错误外显：后端原文不许被翻译', () => {
    * 表单标题里写着"2..64 字，后端校验"，那这些数就得真是那些数。
    *
    * 抄来的上限最坏的地方是悄悄过期：后端把正文从 2000 调到 800，前端还按 2000 放行，
-   * 症状是"贴着标题写的字数上报却总失败"。这里不写死期望值，直接读 `app.py` 的 `ReportIn`。
+   * 症状是"贴着标题写的字数上报却总失败"。这里不写死期望值，直接读后端 `ReportIn` 的定义处。
    */
   it('REPORT_LIMITS 与后端 ReportIn 逐条对账', () => {
-    const text = readRepoFile('backend', 'src', 'aegis', 'api', 'app.py')
-    const block = text.slice(text.indexOf('class ReportIn'), text.indexOf('def get_container'))
+    const text = readRepoFile('backend', 'src', 'aegis', 'api', 'routers', 'drill.py')
+    const block = text.slice(text.indexOf('class ReportIn'), text.indexOf('def build_router'))
     const line = (field: string): string => {
       const match = block.match(new RegExp(`^[ \\t]+${field}: .*$`, 'm'))
       if (match === null) throw new Error(`ReportIn 里没有 ${field} 这一格：口径变了，门禁要跟着改`)

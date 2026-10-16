@@ -4,21 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
 from aegis.domain.messages import new_trace_id
 from aegis.services.label_flywheel import CAPTURE_MARKER
 from aegis.workflow.engine import WorkflowEngine, WorkflowValidationError
 from aegis.workflow.model import RetryPolicy
-
-
-def get_container(request: Request) -> PlatformContainer:
-    container: PlatformContainer | None = getattr(request.app.state, "container", None)
-    if container is None:
-        raise HTTPException(status_code=503, detail="平台尚未就绪")
-    return container
 
 
 class _TrimsText:

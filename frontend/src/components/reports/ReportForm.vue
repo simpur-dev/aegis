@@ -7,8 +7,8 @@
  * 每一路各自说了什么（`legs`）、哪里在降级（`degradations`）。只回一个"提交成功"
  * 就等于把平台已经说清楚的事实又咽回去了。
  *
- * 校验交给后端（`app.py:54-62` 的 `ReportIn`）：前端不另立一套判据，只把 422 的原文摊出来。
- * 唯一在这里做的判断是"只填了一个坐标"——后端会把整段坐标当没填（`app.py:431`），
+ * 校验交给后端（`api/routers/drill.py` 的 `ReportIn`）：前端不另立一套判据，只把 422 的原文摊出来。
+ * 唯一在这里做的判断是"只填了一个坐标"——后端会把整段坐标当没填（`api/routers/drill.py`），
  * 不提示就是骗用户"定位已发出"。
  */
 import { message } from 'ant-design-vue'
@@ -202,7 +202,7 @@ function reset(): void {
         </a-col>
       </a-row>
       <div v-if="halfCoordinate" class="hint" data-testid="coordinate-warning">
-        只填了半边坐标：后端按「未定位」处理（app.py:431），这一条不会带上经纬度证据。
+        只填了半边坐标：后端按「未定位」处理（`api/routers/drill.py`），这一条不会带上经纬度证据。
       </div>
       <div v-if="duplicateSubmit" class="hint" data-testid="duplicate-warning">
         这条区划 + 正文刚刚已经受理（回执在下面）。原样再发一次会产出第二条重复预警，

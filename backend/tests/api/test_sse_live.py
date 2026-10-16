@@ -129,9 +129,9 @@ class TestLiveServer:
         而页头的 SSE 徽标仍然写着"事件流已连接"——浏览器不知道上游死了。
         心跳得是一帧真的事件，前端才有"多久没动静"这个判断的依据。
         """
-        from aegis.api import app as app_module
+        from aegis.api.routers import stream as stream_module
 
-        monkeypatch.setattr(app_module, "_SSE_KEEPALIVE_SECONDS", 0.3)
+        monkeypatch.setattr(stream_module, "_SSE_KEEPALIVE_SECONDS", 0.3)
         frames: list[str] = []
         async with live.stream("GET", "/api/v1/events/stream") as response:
             assert response.status_code == 200

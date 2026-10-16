@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
 from aegis.services.assistant import AssistantService
 
@@ -53,13 +54,6 @@ class PlanRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2_000)
     region_code: str | None = Field(default=None, pattern=r"^[0-9A-Z]{6,24}$")
     hazard_hint: str | None = Field(default=None, max_length=64)
-
-
-def get_container(request: Request) -> PlatformContainer:
-    container: PlatformContainer | None = getattr(request.app.state, "container", None)
-    if container is None:
-        raise HTTPException(status_code=503, detail="平台尚未就绪")
-    return container
 
 
 def _assistant(container: PlatformContainer) -> AssistantService:

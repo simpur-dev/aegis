@@ -8,7 +8,7 @@
 - 只读：不发任何写请求，不触发任何副作用（案例入库那条腿明确不进自动链路）；
 - 某条腿 503 / 超时 / 非 2xx → 该腿【留白】并把原因放进 `ctx["degraded"]`，由 assess 原样带进
   响应（对齐"降级必须可见"），绝不把"没查到"写成"查过了没有"，也绝不拿空上下文继续装作有佐证；
-- 端点与查询参数取自 `api/app.py` 的真实路由（`/api/v1/cases/recall`、`/api/v1/retrieval/search`），
+- 端点与查询参数取自 `api/routers/knowledge.py` 的真实路由（`/api/v1/cases/recall`、`/api/v1/retrieval/search`），
   单测用 `httpx.MockTransport` 发真请求、走真解析：不起服务、不假造返回体。
 """
 

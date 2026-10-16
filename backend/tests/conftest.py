@@ -48,6 +48,19 @@ except ImportError:  # pragma: no cover
 REGION = "540121"
 
 
+def api_surface(app: Any) -> dict[str, set[str]]:
+    """从装配好的 app 取"客户端看见的那张 API 表"：`{路径: {方法}}`，只含 `/api/` 之下。
+
+    别改成遍历 `app.routes`：FastAPI 0.141 的 `include_router` 在路由表里留的是 `_IncludedRouter`
+    包装（端点藏在 `original_router.routes` 里），直接遍历只能数出包装、数不出端点。
+    那样"每条业务 API 都默认过闸""知识层只有一个写入口"这类门禁会数出比真实少的条数——
+    覆盖面缩水而表现是全绿，正是要防的那种坏（P3 把端点搬进 routers/ 后实测：路由表从 51 条数成 15 条）。
+    """
+    return {
+        path: {method.upper() for method in operations} for path, operations in app.openapi()["paths"].items() if path.startswith("/api/")
+    }
+
+
 async def chain_entry(
     stages: HazardStages,
     *,

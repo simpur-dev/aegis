@@ -21,6 +21,7 @@ from aegis.config import Settings
 from aegis.container import create_container
 from aegis.persistence import geo
 from aegis.storage.store import SupportsGeoQueries, geo_query_port
+from conftest import api_surface
 
 BASE = "http://testserver"
 
@@ -164,11 +165,8 @@ class TestCapabilityIsVisible:
         # 契约门禁按方法判定；这里钉住"空间查询不写任何东西"。
         container = create_container(base_settings(), with_simulator=False)
         app = create_app(container.settings, container=container)
-        get_paths = {route.path for route in app.routes if "GET" in (getattr(route, "methods", None) or set())}
+        surface = api_surface(app)
+        get_paths = {path for path, methods in surface.items() if "GET" in methods}
         assert set(GEO_PATHS) <= get_paths
-        write_paths: set[str] = set()
-        for route in app.routes:
-            methods = getattr(route, "methods", None) or set()
-            if methods & {"POST", "PUT", "PATCH", "DELETE"}:
-                write_paths.add(route.path)
+        write_paths = {path for path, methods in surface.items() if methods & {"POST", "PUT", "PATCH", "DELETE"}}
         assert not [path for path in write_paths if path.startswith("/api/v1/geo/")]

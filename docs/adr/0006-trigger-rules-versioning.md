@@ -3,7 +3,7 @@
 - 状态：已采纳
 - 日期：2026-10-03
 - 相关：`services/trigger_rules.py`、`services/risk_engine.py`、`persistence/sql/005_trigger_rules.sql`、
-  `persistence/rulebook.py`、`services/calibration.py`、`api/app.py`（`/api/v1/rules*`）、对应批次见《课题6_完善计划》C2/C3
+  `persistence/rulebook.py`、`services/calibration.py`、`api/routers/rules.py`（`/api/v1/rules*`）、对应批次见《课题6_完善计划》C2/C3
 
 ## 背景
 

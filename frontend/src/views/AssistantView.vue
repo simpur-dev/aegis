@@ -10,7 +10,7 @@
  *    不许把"我没点"显示成"已经撤销"；
  * 3. **能力面读不到 ≠ 一切正常**。`llm_configured=false` 明说"语义服务未配置：仅规则词表可用"，
  *    接口失败明说"读不到"，503（腿没装配）与 404（出口未启用）是两句话
- *    （`assistant_api.py:57-63` 与 `app.py:538-541`）。
+ *    （`assistant_api.py` 的 `_assistant` 与 `api/app.py` 的 `if cfg.assistant_enabled:`）。
  */
 import { message } from 'ant-design-vue'
 import { computed, onMounted, ref } from 'vue'

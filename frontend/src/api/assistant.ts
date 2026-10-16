@@ -8,7 +8,7 @@
  * - 路由四条形：`GET /capabilities`（assistant_api.py:70）、`POST /chat`（:75）、
  *   `POST /confirm`（:104）、`GET /sessions/{session_id}`（:110）；
  * - 出口开关是配置面的：`AEGIS_ASSISTANT_ENABLED=false` 时整段路由**不挂载**
- *   （app.py:538-541），此时四条都读成 404；语义腿没装配时是 503 +
+ *   （`api/app.py` 的 `if cfg.assistant_enabled:`），此时四条都读成 404；语义腿没装配时是 503 +
  *   `detail.code = "E_ASSISTANT_UNAVAILABLE"`（assistant_api.py:57-63）。
  *   两者都得原样外显成"这个出口不存在/这条腿没接上"，不许渲染成"没有回复"；
  * - 请求体 `extra="forbid"`（assistant_api.py:33）：多一个字段就是 422，

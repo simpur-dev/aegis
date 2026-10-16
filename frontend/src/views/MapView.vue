@@ -139,7 +139,7 @@ function rejectedReason(result: PromiseSettledResult<unknown>): unknown {
   return result.status === 'rejected' ? result.reason : null
 }
 
-/** 区域过滤走后端真实查询参数（app.py 的 telemetry/warnings 都收 region_code），不在前端假过滤。 */
+/** 区域过滤走后端真实查询参数（`api/routers/` 的 telemetry/warnings 都收 region_code），不在前端假过滤。 */
 async function load(): Promise<void> {
   loading.value = true
   const seq = ++loadSeq

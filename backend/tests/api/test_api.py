@@ -20,7 +20,7 @@ from aegis.container import PlatformContainer, create_container
 from aegis.domain.chain import ChainResult
 from aegis.domain.messages import new_event_id, utc_now
 from aegis.pipeline.board import ChainBoard
-from conftest import REGION
+from conftest import REGION, api_surface
 
 BASE = "http://testserver"
 
@@ -137,7 +137,7 @@ class TestOpsEndpoints:
         """§4.8.1：`RestAssessContext` 逐条请求的就是这几个路径。
 
         漏一个的表现是"配了令牌"与"真的在拦"脱钩——客户端认真带 Bearer、服务端认真不校验，
-        而同一份数据经 MCP 工具面取时反倒被拦（`app.py` 的 MCP 闸共用 `_presented_token`）。
+        而同一份数据经 MCP 工具面取时反倒被拦（`api/app.py` 的 MCP 闸与数据面共用同一个 `deps.presented_token`）。
         两个面同一口径，才是这一节原本要的东西。
         """
         cfg = Settings(
@@ -405,8 +405,8 @@ def _token_settings() -> Settings:
 
 
 def _api_paths(app: Any) -> list[str]:
-    """从路由表本身取业务 API 路径：这条门禁的覆盖面因此跟着路由表长，不靠人记得挂闸。"""
-    return sorted({str(route.path) for route in app.routes if str(getattr(route, "path", "")).startswith("/api/")})
+    """从装配好的对外契约面取业务 API 路径：这条门禁的覆盖面因此跟着路由表长，不靠人记得挂闸。"""
+    return sorted(api_surface(app))
 
 
 #: 永不结束的响应（事件流）：ASGITransport 要把响应体读完才返回，这类路径只能验"不带凭据必 401"

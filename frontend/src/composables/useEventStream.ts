@@ -10,7 +10,7 @@ export interface StreamEvent {
   ts: string
 }
 
-/** 后端每 15 秒发一帧心跳（`app.py` 的 keep-alive）；这里按两刻多钟判"没动静"。 */
+/** 后端每 15 秒发一帧心跳（`api/routers/stream.py` 的 keep-alive）；这里按两刻多钟判"没动静"。 */
 const HEARTBEAT_MS = 15_000
 const SILENCE_TIMEOUT_MS = HEARTBEAT_MS * 2.5
 const WATCHDOG_MS = 5_000

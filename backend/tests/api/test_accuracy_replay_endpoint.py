@@ -22,6 +22,7 @@ from aegis.api.app import create_app
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
 from aegis.persistence.replay import ReplayCase, ReplayDataset, measure
+from conftest import api_surface
 
 BASE = "http://testserver"
 SINCE = "2026-09-01T00:00:00+00:00"
@@ -214,5 +215,5 @@ class TestDegradedStorage:
     async def test_这个端点是只读的_知识层与外呼那几条写入口不受影响(self) -> None:
         ctn: PlatformContainer = create_container(base_settings(), with_simulator=False)
         app = create_app(ctn.settings, container=ctn)
-        gets = {route.path for route in app.routes if "GET" in (getattr(route, "methods", None) or set())}
+        gets = {path for path, methods in api_surface(app).items() if "GET" in methods}
         assert "/api/v1/accuracy/replay" in gets

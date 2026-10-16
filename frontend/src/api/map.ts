@@ -1,5 +1,5 @@
 /**
- * 「一张图」地图页专用契约层（后端 `backend/src/aegis/api/app.py` 的前端视图）。
+ * 「一张图」地图页专用契约层（后端 `backend/src/aegis/api/routers/` 的前端视图）。
  *
  * 与 `@/api/workflow.ts` 同一隔离边界：自带 axios 实例与错误包装，**不**从 `@/api/client` 导入符号，
  * 这样其他 agent 改动通用客户端时不会波及这里（并行开发的隔离边界）。
@@ -7,7 +7,7 @@
  * 后端事实（决定本模块能声明什么字段，不臆造）：
  * - 带坐标的实体只存在于 Postgres 表 `monitoring_stations`
  *   （`persistence/geo.py:31` 的 STATION_FIELDS + `geom`，geom 文本口径见 `geo.py:71` point_text），
- *   经 `GET /api/v1/stations`（`api/app.py:171`）开放：只有维表真的写了经纬度才返回坐标，
+ *   经 `GET /api/v1/stations`（`api/routers/data.py` 的 `list_stations`）开放：只有维表真的写了经纬度才返回坐标，
  *   报过数但未登记的站返回 `lon/lat = null`。区划与灾面**没有**后端路由，只能取离线静态资产；
  *   坐标缺失时上层降级为「未定位」，而不是按区划中心猜一个经纬度；
  * - `GET /api/v1/telemetry` 的 `TelemetryReading` 只有 `station_id`/`region_code`，无经纬度；
@@ -131,7 +131,7 @@ export interface WarningsResponse extends Counted<WarningRecord> {}
 
 export interface StationsResponse extends Counted<StationDto> {}
 
-/** `GET /api/v1/events`：`{ items: ChainSummary[] }`（app.py:159-164）。 */
+/** `GET /api/v1/events`：`{ items: ChainSummary[] }`（`api/routers/warnings.py` 的 `list_events`）。 */
 export interface EventsResponse {
   items: ChainSummary[]
 }

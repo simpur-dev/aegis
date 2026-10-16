@@ -40,9 +40,9 @@ interface BackendField {
 }
 
 function backendSimulationFields(): BackendField[] {
-  const text = readRepoFile('backend', 'src', 'aegis', 'api', 'app.py')
+  const text = readRepoFile('backend', 'src', 'aegis', 'api', 'routers', 'drill.py')
   const start = text.indexOf('class SimulationRequest(BaseModel):')
-  if (start < 0) throw new Error('app.py 里找不到 SimulationRequest：类名变了就改门禁，别把断言删掉')
+  if (start < 0) throw new Error('routers/drill.py 里找不到 SimulationRequest：类名变了就改门禁，别把断言删掉')
   const body = text.slice(start, text.indexOf('\nclass ', start + 10))
   // Python 允许 `10_000_000` 这种下划线分隔写法，`Number()` 读不出来：先剥掉。
   const num = (raw: string | undefined): number | undefined => (raw === undefined ? undefined : Number(raw.replace(/_/g, '')))

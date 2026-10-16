@@ -25,6 +25,7 @@ from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
 from aegis.knowledge.cases import HazardCase
 from aegis.knowledge.provider import LearnOutcome
+from conftest import api_surface
 
 BASE = "http://testserver"
 RECALL = "/api/v1/cases/recall"
@@ -137,7 +138,7 @@ class TestEndpoint:
         # 所以知识层只允许这一个 POST 入口。
         container = create_container(base_settings(), with_simulator=False)
         app = create_app(container.settings, container=container)
-        posts = {route.path for route in app.routes if "POST" in (getattr(route, "methods", None) or set()) and "/knowledge" in route.path}
+        posts = {path for path, methods in api_surface(app).items() if "POST" in methods and "/knowledge" in path}
         assert posts == {"/api/v1/knowledge/cases"}
 
     async def test_召回端点只读_一个字节都不写图谱(self, container: PlatformContainer) -> None:

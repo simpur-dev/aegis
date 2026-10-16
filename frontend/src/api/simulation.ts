@@ -1,12 +1,12 @@
 /**
- * 推演沙盒契约层（后端 `POST /api/v1/simulation/run`，`backend/src/aegis/api/app.py:962-986`）。
+ * 推演沙盒契约层（后端 `POST /api/v1/simulation/run`，`backend/src/aegis/api/routers/drill.py` 的 `simulation_run`）。
  *
  * 隔离边界同 `@/api/reports.ts` / `@/api/workflow.ts`：自带 axios 实例与错误包装，
  * **不**从 `@/api/client` 导入符号；凭据由 `installServiceToken` 统一携带（§4.8.1：
  * 开了服务令牌的部署里，不带凭据的这一页会整页 401）。
  *
  * 后端事实（决定这里能声明什么）：
- * - 入参 `SimulationRequest`（app.py:68-77）逐格有 `ge/le`，越界是 422，不是前端裁一刀再发；
+ * - 入参 `SimulationRequest`（`api/routers/drill.py`）逐格有 `ge/le`，越界是 422，不是前端裁一刀再发；
  * - `playbook` 是 `^(转移|封路|不行动)$` 的字面白名单，同义改写（"组织转移"）会被拒收；
  * - 概率矩阵/时间线/预案对比/角色档都由确定性模型算出，`note` 那句"未实测初值"是后端给的，
  *   前端**原样显示**、不改写也不删——删掉它就把演示口径说成了现场达标；
@@ -72,9 +72,9 @@ async function dispatch<T>(instance: AxiosInstance, config: AxiosRequestConfig):
   }
 }
 
-// ---------- 请求体（app.py:68-77 逐格抄来） ----------
+// ---------- 请求体（`api/routers/drill.py` 的 SimulationRequest 逐格抄来） ----------
 
-/** 取值域：逐格抄自 `SimulationRequest` 的 `ge/le`（`api/simulation.spec.ts` 现读 app.py 比对）。 */
+/** 取值域：逐格抄自 `SimulationRequest` 的 `ge/le`（`api/simulation.spec.ts` 现读 `api/routers/drill.py` 比对）。 */
 export const SIMULATION_LIMITS = {
   rain_base_mm: { min: 0, max: 500 },
   rain_spread_mm: { min: 0, max: 200 },
@@ -83,7 +83,7 @@ export const SIMULATION_LIMITS = {
   token_budget: { min: 1, max: 10_000_000 },
 } as const
 
-/** 后端默认值（app.py:71-77 各格的 `Field default`）：表单初值与缺格回落都取它，前端不自估任何数。 */
+/** 后端默认值（`api/routers/drill.py` 各格的 `Field default`）：表单初值与缺格回落都取它，前端不自估任何数。 */
 export const SIMULATION_DEFAULTS: SimulationBody = {
   rain_base_mm: 40,
   rain_spread_mm: 25,

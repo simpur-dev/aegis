@@ -1,7 +1,7 @@
 """REST 取数门面（§3/§6"五智能体 API 版"）：发的是真请求，降级的是真原因，不假造返回体。
 
 用例经可注入的 client 工厂把 `httpx.MockTransport` 换进去（与 `connectors/weather_api.py` 同款
-DI），所以请求行、查询参数、鉴权头都是真发出去的；响应体按 `api/app.py` 两个路由的真实形状给回
+DI），所以请求行、查询参数、鉴权头都是真发出去的；响应体按 `api/routers/knowledge.py` 两个路由的真实形状给回
 （`items` / `detail`）。这里能证明"内环确实只经 HTTP 取数、拿不到时如实留白且原因外显"，
 不能证明线上延迟与命中率——那属于 MA 出口门禁的现场实测。
 """

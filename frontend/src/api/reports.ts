@@ -1,13 +1,13 @@
 /**
- * 人工上报契约层（后端 `POST /api/v1/reports`，`backend/src/aegis/api/app.py:416-439`）。
+ * 人工上报契约层（后端 `POST /api/v1/reports`，`backend/src/aegis/api/routers/drill.py` 的 `submit_report`）。
  *
  * 隔离边界同 `@/api/workflow.ts` / `@/api/map.ts`：自带 axios 实例与错误包装，
  * **不**从 `@/api/client` 导入符号。
  *
  * 后端事实（决定这里能声明什么）：
- * - 请求体 `ReportIn`（app.py:54-62）：`reporter` 2..64、`region_code` `^[0-9A-Z]{6,24}$`、
+ * - 请求体 `ReportIn`（`api/routers/drill.py`）：`reporter` 2..64、`region_code` `^[0-9A-Z]{6,24}$`、
  *   `note` 4..2000、`lat` ±90、`lon` ±180，越界就是 422，**不是**前端裁一刀再发；
- * - 解析服务没装配时是 503 + `detail.code = "E_PARSER_UNAVAILABLE"`（app.py:429-430）；
+ * - 解析服务没装配时是 503 + `detail.code = "E_PARSER_UNAVAILABLE"`（`api/routers/drill.py` 的 `submit_report`）；
  * - 返回的 `parse` 就是三路融合结果 `ParsedDisaster.as_dict()`
  *   （`services/semantic_parser.py:185-204`）：`legs` 是每一路的原始结论，冲突与降级
  *   各成一份清单（semantic_parser.py:11-13 定死的口径：规则 > 检索佐证 > LLM，
@@ -94,7 +94,7 @@ async function dispatch<T>(instance: AxiosInstance, config: AxiosRequestConfig):
   }
 }
 
-// ---------- 请求体（app.py:54-62） ----------
+// ---------- 请求体（`api/routers/drill.py` 的 ReportIn） ----------
 
 export interface ReportInputDto {
   reporter: string
@@ -120,7 +120,7 @@ export interface ReportDraftDto {
 
 /**
  * 白名单收敛：`lat`/`lon` 要么都带要么都不带——这不是前端加的规矩，是后端的口径
- * （app.py:431 `None if payload.lat is None or payload.lon is None`）：只有一个值时
+ * （`api/routers/drill.py` 的 `None if payload.lat is None or payload.lon is None`）：只有一个值时
  * 后端整段按"没定位"处理。表单侧另有提示，免得用户以为坐标发出去了。
  *
  * 文本字段一律先裁首尾空白再发：`"    "`（四个空格）满足 `note` 的 min_length=4，
@@ -143,10 +143,10 @@ export function toReportBody(input: ReportDraftDto): ReportInputDto {
 }
 
 /**
- * 上报表单的取值域，逐条抄自后端 `ReportIn`（app.py:58-63）。
+ * 上报表单的取值域，逐条抄自后端 `ReportIn`（`api/routers/drill.py`）。
  *
  * 表单标题里本来就写着"2..64 字，后端校验"——写着上限却不拦住，等于让人敲完
- * 七十个字再吃一次 422。数值不写死在测试里：`api/reports.spec.ts` 现读 app.py 比对。
+ * 七十个字再吃一次 422。数值不写死在测试里：`api/reports.spec.ts` 现读 `api/routers/drill.py` 比对。
  */
 export const REPORT_LIMITS = {
   reporter: { min: 2, max: 64 },
