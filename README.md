@@ -271,11 +271,16 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
     另外这一面读到的数与 REST 同源，也**继承同一个待修缺陷**：新起的进程 `telemetry.query` 回 `count=0`
     （第 7 条那个"读视图不回填"；同一进程、同一参数的 `GET /api/v1/telemetry` 也回 0，而库里 `telemetry_readings` 有 453628 行），
     所以别把工具面的 0 读成"MCP 没接上库"。
-11. **配了 `AEGIS_SERVICE_TOKEN` 之后，Web 端会开始吃 401**。鉴权面覆盖的是"取数与审计"这一整层：
-    `/api/v1/telemetry`、`/api/v1/stations`、三条 `/geo/*`、`/api/v1/cases/recall`、`/api/v1/retrieval/search`、
-    `/api/v1/memory/shared`（读写删）、`/api/v1/audit/chain/{trace_id}`，以及 MCP 工具面——两个面共用同一个令牌、
-    认 `X-Aegis-Token` 与 `Authorization: Bearer` 两种头。**前端目前没有带凭据的机制**，所以开令牌的部署里
-    地图/数据面板会空（这不是回归，是把"配了令牌"与"真的在拦"对齐的代价）；要么给前端配凭据，要么就别开。
+11. **配了 `AEGIS_SERVICE_TOKEN` 之后，业务 API 整面都要凭据，前端也带得上**。闸是一条 HTTP 中间件，
+    口径只有一句"路径在 `/api/` 下就要凭据"，认 `X-Aegis-Token` 与 `Authorization: Bearer` 两种头；
+    MCP 工具面 `/mcp/` 自成一闸、共用同一枚令牌。`/healthz`、`/readyz`、`/metrics`、`/docs` 不吃闸——
+    容器探针与 Prometheus 不该带业务凭据。上一版是在 11 条路由上手工挂 `dependencies=`，
+    于是"配了令牌"与"真的在拦"其实是两件事（`/api/v1/warnings`、`/api/v1/rules/*`、`/api/v1/reports`
+    谁都能读写）；现在判据从路由表取路径逐条指认，新增端点默认被覆盖。
+    前端在每页内容底部的"服务令牌"一行粘贴一次（存本机 localStorage），此后取数请求、事件流、
+    智能体 SSE 全部带上；被 401 时那一行会红着提示重新粘贴。**令牌明文存在这台浏览器里**，
+    共用机器上别拿高权限令牌去填——取舍与替代方案见 `docs/REPORT.md` 的 §4.8.1 一节。
+    改了鉴权面之后跑 `backend/scripts/smoke_service_token.py`（真进程真端口，19 项检查，不进 CI）。
 12. **重启后 `GET /api/v1/events` 是空的，但审计端点不是**：前者读进程内视图（第 7 条同源），后者
     `GET /api/v1/audit/chain/{trace_id}` 直读 `chain_runs`。要查"这条预警当时是哪个模型、哪版 prompt 产的"，
     用后者——2026-10-12 实测：重启后事件列表读到 0 条，同一 trace 经审计端点仍 `found=true` 且五段凭证齐全。
