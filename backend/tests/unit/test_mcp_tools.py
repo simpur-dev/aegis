@@ -113,7 +113,7 @@ class TestRegistration:
     def test_没注入实现的能力不注册而记为缺席(self) -> None:
         server, state = _build(sources=ToolSources(telemetry=_ok))  # type: ignore[arg-type]
         assert list(_listed(server)) == ["telemetry.query"]
-        assert set(state.absent) == {"retrieval.search", "cases.search", "memory.search"}
+        assert set(state.absent) == {"retrieval.search", "cases.search", "memory.search", "memory.categories"}
         assert "memory.write" not in state.absent, "没被点名的写工具压根不在期望集里，不该混进缺席读数"
 
     def test_点名要求暴露未注入实现的能力时报缺席(self) -> None:
@@ -186,6 +186,82 @@ class TestCalls:
         assert state.calls == {}
 
 
+@needs_mcp
+class TestCallLatency:
+    """§4.2 那句"工具即审计面（调用留 trace）"的账：每次调用要有时延样本，工具维度要读得到。
+
+    两份账各有读者——账本里那条 `mcp_tool_ms` 是给 `/metrics`、报表与违约判定用的（聚合线），
+    `state.latency` 里按工具分开的那份是给状态行与取证脚本用的（工具维度）。
+    只留一份就会缺另一件事：只有聚合线就答不出"哪个工具慢"，只有进程内那份就没人能告警。
+    """
+
+    def test_一次成功调用两份账各留一条(self) -> None:
+        from aegis.observability.tracer import Tracer
+
+        tracer = Tracer()
+        server, state = _build(tracer=tracer)
+        asyncio.run(server.call_tool("telemetry.query", {"region_code": "540121"}))
+        assert tracer.ledger.stats("mcp_tool_ms").count == 1, "调用没进账本：/metrics 与报表里这条腿是空的"
+        summary = state.latency_summary()
+        assert list(summary) == ["telemetry.query"], summary
+        assert {"count", "p50", "p95", "max"} <= set(summary["telemetry.query"])
+        assert summary["telemetry.query"]["count"] == 1
+
+    def test_读数不是恒零(self) -> None:
+        """时钟选错时这条读成 0（Windows 的 `monotonic` 步进 15.6 ms，见 `test_latency_clock_choice.py`）。"""
+
+        async def sleepy(args: dict[str, Any]) -> dict[str, Any]:
+            await asyncio.sleep(0.002)
+            return {"count": 0}
+
+        server, state = _build(sources=ToolSources(telemetry=sleepy), allowed_tools=["telemetry.query"])  # type: ignore[arg-type]
+        asyncio.run(server.call_tool("telemetry.query", {"region_code": "540121"}))
+        measured = state.latency["telemetry.query"][0]
+        assert measured > 0.0, f"一次 2 ms 的取数量出 {measured} ms：这个计时点等于没在测"
+
+    def test_失败的那次也算一次调用并留样本(self) -> None:
+        """3 s 后失败的取数若不在时延里出现，p95 就只描述"顺利的那些次"——那正是最该看见的一类。"""
+        from aegis.observability.tracer import Tracer
+
+        tracer = Tracer()
+        server, state = _build(sources=_sources(retrieval=_boom), tracer=tracer)
+        with pytest.raises(Exception, match="检索腿断了"):
+            asyncio.run(server.call_tool("retrieval.search", {"query": "泥石流"}))
+        assert tracer.ledger.stats("mcp_tool_ms", outcome="error").count == 1
+        assert tracer.ledger.stats("mcp_tool_ms", outcome="ok").count == 0
+        assert len(state.latency["retrieval.search"]) == 1
+        assert state.failures == {"retrieval.search": 1}
+
+    def test_协议层就拒掉的调用不留下任何一份账(self) -> None:
+        """类型不符的实参根本没进端口：把它算成一次工具调用会虚增时延样本与调用数。"""
+        from mcp.server.mcpserver.exceptions import ToolError  # 协议层的错从这里来（见 `test_参数类型不符…`）
+
+        from aegis.observability.tracer import Tracer
+
+        tracer = Tracer()
+        server, state = _build(sources=ToolSources(telemetry=_ok), tracer=tracer)  # type: ignore[arg-type]
+        with pytest.raises(ToolError, match="validation error"):
+            asyncio.run(server.call_tool("telemetry.query", {"region_code": 540121}))
+        assert tracer.ledger.stats("mcp_tool_ms").count == 0
+        assert state.latency == {} and state.calls == {}
+
+    def test_没给tracer时进程内那份账照样成立(self) -> None:
+        """记时延不是挂载工具面的前置条件；缺 tracer 只该让账本少一条线，不该让调用炸掉。"""
+        server, state = _build()
+        asyncio.run(server.call_tool("telemetry.query", {"region_code": "540121"}))
+        assert len(state.latency["telemetry.query"]) == 1
+
+    def test_每工具样本有上界不随调用数线性涨(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import aegis.mcp_tools.server as mcp_server
+
+        monkeypatch.setattr(mcp_server, "LATENCY_KEEP", 3)
+        server, state = _build()
+        for _ in range(5):
+            asyncio.run(server.call_tool("telemetry.query", {"region_code": "540121"}))
+        assert len(state.latency["telemetry.query"]) == 3, "长命 server 的进程内样本要留上界，不然内存随调用数涨"
+        assert state.calls == {"telemetry.query": 5}, "上界只管样本，不能把调用计数也截掉"
+
+
 class TestSimulationSourceNeedsNoSdk:
     """沙盒实现这一头不碰 SDK：没装可选腿时它照样该能跑、形状照样要说清"是谁选的"。"""
 
@@ -248,7 +324,7 @@ class TestOptionalLegStaysOptional:
 
     def test_状态字典形状稳定(self) -> None:
         state = McpServerState(exposed=["a"], absent=["b"], calls={"a": 1}, failures={}, last_error="")
-        assert set(state.as_dict()) == {"exposed_tools", "absent_tools", "calls", "failures", "last_error"}
+        assert set(state.as_dict()) == {"exposed_tools", "absent_tools", "calls", "failures", "last_error", "latency_ms"}
 
     def test_装配入口只收关键字(self) -> None:
         """位置传参会让 container 里的实参错位（sources 与 allowed_tools 换位的失败最难查）。"""

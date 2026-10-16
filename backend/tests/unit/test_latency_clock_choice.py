@@ -32,6 +32,9 @@ MEASURING_FILES = (
     "services/warning_service.py",
     "pipeline/board.py",
     "container.py",
+    # MCP 工具面的每次调用也在这条纪律里：`mcp_tool_ms` 量的是毫秒级取数，
+    # 换成 monotonic 就会在 Windows 上恒读 0，"工具面慢不慢"这个问题就此永绿。
+    "mcp_tools/server.py",
 )
 
 

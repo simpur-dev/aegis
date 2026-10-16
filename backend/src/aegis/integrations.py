@@ -781,6 +781,7 @@ def build_mcp(
     retrieval: object | None = None,
     knowledge: object | None = None,
     memory: object | None = None,
+    tracer: Any | None = None,
 ) -> McpAssembly:
     """装配 MCP 工具层（§4.2 / D4）：把平台既有能力按清单暴露成标准工具，本层不写业务。
 
@@ -793,6 +794,10 @@ def build_mcp(
     `mcp_tools` 里写了清单外的名字 → 装配期就 ValueError：一个不会被任何工具消费的旋钮，比启动失败贵得多
     （同 `store_backend=postgres` 而 DSN 空的那条口径）。这条校验在关闭状态下也做，避免"关着的时候配错、
     打开那天才炸"。
+
+    `tracer`（装配点给的时延账本）让"工具即审计面（调用留 trace）"落到样本上：每次调用一条
+    `mcp_tool_ms`，按工具的分位数在状态行里。不给 tracer 时工具面照常工作，只是那条线不进账本——
+    记时延不是挂载工具面的前置条件，但没给它就别声称"调用留了 trace"。
     """
     from aegis.mcp_tools import exposed_names, mcp_available
     from aegis.mcp_tools.manifest import TOOL_MANIFEST
@@ -836,6 +841,7 @@ def build_mcp(
         retrieval=_mcp_retrieval_source(retrieval) if retrieval is not None else None,
         cases=_mcp_knowledge_source(knowledge, settings) if knowledge is not None else None,
         memory_search=_mcp_memory_search_source(memory) if memory is not None else None,
+        memory_categories=_mcp_memory_categories_source(memory) if memory is not None else None,
         memory_write=_mcp_memory_write_source(memory) if memory is not None else None,
         simulation=_mcp_simulation_source(settings),
     )
@@ -844,6 +850,7 @@ def build_mcp(
         allowed_tools=requested,
         allow_write_tools=settings.mcp_allow_write_tools,
         server_name="aegis",
+        tracer=tracer,
     )
     detail: dict[str, object] = {
         **state.as_dict(),
@@ -936,6 +943,48 @@ def _mcp_memory_search_source(memory: object):
             limit=max(1, min(int(args.get("limit") or 5), 100)),
         )
         return {"count": len(rows), "items": [row.model_dump(mode="json") for row in rows]}
+
+    return _call
+
+
+def _mcp_memory_categories_source(memory: object):
+    """§4.3 四类记忆门面（情景/语义/知识 + 那条不外泄的工作记忆）经工具面读：三类各回独立状态。
+
+    存在的理由是 §4.3 那句"绝不把『没接上』读成『没有相关记忆』"目前只有 REST 一个读者：
+    外部客户端与智能体只能拿到 `memory.search` 那三个 shared kind，够不到 provider 面。
+    字段口径与 `GET /api/v1/memory/categories` 一致（`connected` / `items` / `note` 原样带出），
+    这里不折叠成一张 items 清单——一折叠，三种现场就又成了一种。
+    """
+
+    async def _call(args: dict[str, Any]) -> dict[str, Any]:
+        from aegis.domain.enums import HazardType
+
+        query = str(args.get("query") or "")
+        if not query:
+            # 与那条 GET 的 `min_length=1` 同口径：空查询在三条 provider 上各回一次"没命中"，
+            # 看着像读到了东西而实际上谁也没被问；协议层拒掉比让它跑一趟更诚实。
+            raise ValueError("query 不能为空（与 GET /api/v1/memory/categories 的 min_length=1 同一句）")
+        if len(query) > 200:
+            raise ValueError(f"query 长度上限 200，收到 {len(query)}")
+        hazard = args.get("hazard_type") or None
+        if hazard is not None:
+            try:
+                hazard = HazardType(hazard).value
+            except ValueError:
+                raise ValueError(f"hazard_type 不在冻结枚举里，收到 {hazard!r}") from None
+        result = await memory.read_categories(  # type: ignore[attr-defined]
+            query,
+            region_code=args.get("region_code") or None,
+            hazard_type=hazard,
+            # 上界与该端点的 `limit: le=10` 对齐：两条门面读同一个 provider 同一个预算，条数不该差
+            limit=max(1, min(int(args.get("limit") or 3), 10)),
+        )
+        return {
+            "query": query,
+            "driver": getattr(memory, "backend", "unknown"),
+            "categories": result,
+            "disconnected": sorted(name for name, entry in result.items() if not entry.get("connected")),
+        }
 
     return _call
 

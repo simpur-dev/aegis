@@ -41,6 +41,7 @@ const INDICATOR_LABELS: Record<string, string> = {
   // 而"阈值 300"那一列对秒制指标的含义只能靠标签说清楚
   report_intake_seconds: '人工上报接入端到端时延（秒制）',
   assistant_reply_ms: '语义交互一轮耗时',
+  mcp_tool_ms: 'MCP 工具面单次调用',
 }
 
 /** 横幅里那条计量条/环的宽度：没取到账本或算不出成功率时返回 null（条子留空，不画半条）。 */

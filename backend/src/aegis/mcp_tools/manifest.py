@@ -74,6 +74,15 @@ TOOL_MANIFEST: tuple[ToolSpec, ...] = (
         defaults={"limit": 5},
     ),
     ToolSpec(
+        name="memory.categories",
+        summary="§4.3 四类记忆门面：一次查询同时看见每类『接没接、读到什么、为什么是空』（三类各回独立状态）",
+        read_only=True,
+        source="MemoryService.read_categories（与 GET /api/v1/memory/categories 同一个门面）",
+        source_attr="memory_categories",
+        params={"query": str, "region_code": str, "hazard_type": str, "limit": int},
+        defaults={"limit": 3},
+    ),
+    ToolSpec(
         name="memory.write",
         summary="共享记忆写侧：落一条研判/教训进 agent_memory（record_id 与 valid_at 由服务端生成）",
         read_only=False,

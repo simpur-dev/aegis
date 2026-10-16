@@ -906,12 +906,14 @@ def create_container(
     retrieval, retrieval_state = build_retrieval(cfg, tracer, store=bundle.durability)
     memory, memory_state = build_memory(store=bundle.store, retrieval=retrieval, knowledge=knowledge, settings=cfg)
     # MCP 工具层要在检索/知识/记忆都装配完之后再建：它只是把这些既有端口换个协议面暴露出去。
+    # tracer 也要一起给：§4.2 那句"调用留 trace"靠的是账本，不是靠工具面的调用计数。
     mcp = build_mcp(
         settings=cfg,
         store=bundle.store,
         retrieval=retrieval,
         knowledge=knowledge,
         memory=memory,
+        tracer=tracer,
     )
     mqtt_source, mqtt_state = build_mqtt(cfg)
     weather_source, weather_state = build_weather(cfg, client=weather_client)

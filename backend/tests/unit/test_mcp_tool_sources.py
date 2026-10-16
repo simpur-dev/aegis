@@ -19,6 +19,7 @@ import pytest
 from aegis.config import Settings
 from aegis.integrations import (
     _mcp_knowledge_source,
+    _mcp_memory_categories_source,
     _mcp_memory_search_source,
     _mcp_memory_write_source,
     _mcp_retrieval_source,
@@ -57,6 +58,13 @@ class SpyMemory:
     def __init__(self) -> None:
         self.read: dict[str, Any] = {}
         self.write: dict[str, Any] = {}
+        self.categories: dict[str, Any] = {}
+        self.categories_result: dict[str, dict[str, object]] = {
+            "episodic": {"connected": True, "items": [{"case_id": "c1"}], "note": ""},
+            "semantic": {"connected": True, "items": [], "note": "接了，但这句查询没命中"},
+            "knowledge": {"connected": False, "items": [], "note": "该记忆类未接入（装配点没给这条腿）"},
+        }
+        self.backend = "spy"
 
     async def read_shared(self, **kwargs: Any) -> list[Any]:
         self.read.update(kwargs)
@@ -65,6 +73,10 @@ class SpyMemory:
     async def write_shared(self, **kwargs: Any) -> str:
         self.write.update(kwargs)
         return "ignored"
+
+    async def read_categories(self, query: str, **kwargs: Any) -> dict[str, dict[str, object]]:
+        self.categories.update({"query": query, **kwargs})
+        return dict(self.categories_result)
 
 
 def _run(awaitable: Any) -> Any:
@@ -155,3 +167,44 @@ class TestMemoryWriteSource:
         )
         assert memory.write["record_id"] != "client-chosen", memory.write
         assert not str(memory.write["valid_at"]).startswith("1999"), memory.write
+
+
+class TestMemoryCategoriesSource:
+    """§4.3 四类记忆门面经工具面出去的那一条：三种现场（没接 / 没命中 / 读错）必须还是三种。"""
+
+    def test_每类的状态原样带出_没接的那类被点名(self) -> None:
+        """折叠成一张 items 清单就等于把"这条腿没接"说成"没查到相关记忆"——§4.3 明令禁止的那件事。"""
+        memory = SpyMemory()
+        out = _run(_mcp_memory_categories_source(memory)({"query": "泥石流", "region_code": "540121", "limit": 3}))
+        assert out["categories"] == memory.categories_result
+        assert out["disconnected"] == ["knowledge"], out
+        assert memory.categories["region_code"] == "540121"
+
+    def test_limit上界与端点一致(self) -> None:
+        """`GET /api/v1/memory/categories` 是 `limit: le=10`：两条门面读同一个 provider，条数不该差。"""
+        memory = SpyMemory()
+        _run(_mcp_memory_categories_source(memory)({"query": "泥石流", "limit": 9}))
+        assert memory.categories["limit"] == 9, memory.categories
+        _run(_mcp_memory_categories_source(memory)({"query": "泥石流", "limit": 10_000}))
+        assert memory.categories["limit"] == 10, memory.categories
+
+    def test_空查询当场拒_端点那条min_length在这里同口径(self) -> None:
+        """空串会让三条 provider 各回一次"没命中"，看着像读到了东西而实际上谁也没被问。"""
+        memory = SpyMemory()
+        with pytest.raises(ValueError, match="query"):
+            _run(_mcp_memory_categories_source(memory)({"query": "", "limit": 3}))
+        assert memory.categories == {}
+
+    def test_超长查询也拒_别让工具面比端点宽松(self) -> None:
+        memory = SpyMemory()
+        with pytest.raises(ValueError, match="200"):
+            _run(_mcp_memory_categories_source(memory)({"query": "泥" * 201}))
+        assert memory.categories == {}
+
+    def test_灾种不在枚举里时当场拒_provider不收一个猜不到的值(self) -> None:
+        memory = SpyMemory()
+        with pytest.raises(ValueError, match="hazard_type"):
+            _run(_mcp_memory_categories_source(memory)({"query": "泥石流", "hazard_type": "随便写的灾种"}))
+        assert memory.categories == {}
+        _run(_mcp_memory_categories_source(memory)({"query": "泥石流", "hazard_type": "debris_flow"}))
+        assert memory.categories["hazard_type"] == "debris_flow"

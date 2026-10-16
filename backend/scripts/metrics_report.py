@@ -56,6 +56,9 @@ TIER_OF_METRIC: dict[str, str] = {
     "warning_generation_ms": "端到端档",
     "warning_reach_ms": "端到端档",
     "assistant_reply_ms": "端到端档",
+    # 工具面单次调用：课题6 没有为它定考核线，所以只进档位表、不进 INDICATORS（同 llm_call_ms）。
+    # 但它必须被归一次档：没有档位的样本在报表里是"没人认领的数"，取证时说不清它跟谁比。
+    "mcp_tool_ms": "取数档（单次工具调用）",
     "ingest_end_to_end_seconds": "接入档",
     "report_intake_seconds": "接入档",
 }

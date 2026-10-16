@@ -233,11 +233,52 @@ class TestHandshake:
     async def test_真握手能列工具并调到只读工具(self) -> None:
         async with _live_server(_settings(mcp_enabled=True, http_port=_free_port())) as base_url, _mcp_session(base_url) as session:
             names = {tool.name for tool in (await session.list_tools()).tools}
-            assert {"telemetry.query", "cases.search", "memory.search"} <= names
+            assert {"telemetry.query", "cases.search", "memory.search", "memory.categories"} <= names
             assert "memory.write" not in names and "simulation.run" not in names
             result = await session.call_tool("telemetry.query", {"region_code": "540121", "limit": 5})
             assert result.is_error is False
             assert '"ok": true' in result.content[0].text
+
+    async def test_四类记忆门面经工具面读得到三种现场(self) -> None:
+        """§4.3：`connected=false`（这条腿没接）与"接了但没命中"必须是两种读数，工具面不许把它们折成一个空表。
+
+        这一条走的是真握手 + 真装配点，所以它还钉住另一件事：容器没给 provider 时，
+        外部客户端读到的是"哪一类没接"，而不是一个看不出原因的 `items: []`。
+        """
+        settings = _settings(mcp_enabled=True, mcp_tools="memory.categories", http_port=_free_port())
+        async with _live_server(settings) as base_url, _mcp_session(base_url) as session:
+            result = await session.call_tool("memory.categories", {"query": "泥石流", "region_code": "540121", "limit": 2})
+        assert result.is_error is False, result.content
+        body = json.loads(result.content[0].text)
+        categories = body["categories"]
+        assert set(categories) >= {"episodic", "semantic", "knowledge"}, categories
+        for name, entry in categories.items():
+            assert {"connected", "items", "note"} <= set(entry), f"{name} 的三态被折掉了：{entry}"
+        assert body["disconnected"] == sorted(n for n, e in categories.items() if not e["connected"]), body
+
+    async def test_调用留痕既是状态行也是时延账本(self) -> None:
+        """§4.2 那句"工具即审计面（调用留 trace）"的端到端面：一次真调用要在三处留下可读的账。
+
+        状态行给工具维度（哪个工具、几次、多慢），账本给聚合线，`/metrics` 给外部抓取方。
+        只验进程内那一份不够——"留了 trace"最后要能被别人独立复核；
+        而只验 `/metrics` 也不够：那条线没有工具维度，答不出"是哪个工具慢"。
+        """
+        port = _free_port()
+        async with (
+            _live_server(_settings(mcp_enabled=True, http_port=port)) as base_url,
+            _mcp_session(base_url) as session,
+            httpx.AsyncClient(base_url=base_url, timeout=20.0) as probe,
+        ):
+            for _ in range(3):
+                assert (await session.call_tool("telemetry.query", {"region_code": "540121", "limit": 5})).is_error is False
+            integrations = (await probe.get("/api/v1/integrations")).json()
+            metrics = (await probe.get("/metrics")).text
+        row = next(item for item in integrations["items"] if item["name"] == "mcp")
+        latency = row["detail"]["latency_ms"]
+        assert latency["telemetry.query"]["count"] == 3, latency
+        assert row["detail"]["calls"] == {"telemetry.query": 3}
+        line = next((entry for entry in metrics.splitlines() if 'aegis_latency_ms_count{metric="mcp_tool_ms"}' in entry), "")
+        assert line.endswith(" 3.0"), f"三次调用没进对外指标出口：{line!r}"
 
     async def test_只给灾种时案例召回按中文名问与REST同句回退(self) -> None:
         """`GET /api/v1/cases/recall` 在 `q` 空时用灾种中文名去问 provider，工具面必须问同一次。
