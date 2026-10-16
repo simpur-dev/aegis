@@ -1,11 +1,12 @@
 import { mount } from '@vue/test-utils'
 import axios, { AxiosError } from 'axios'
-import { defineComponent, nextTick } from 'vue'
-import { describe, expect, it, vi } from 'vitest'
+import { defineComponent } from 'vue'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createApiClient } from './client'
+import { authRejected, clearServiceToken, setServiceToken } from './serviceToken'
 import { HAZARD_LABELS, RISK_LABELS } from './types'
-import { useEventStream } from '@/composables/useEventStream'
+import { useEventStream, type StreamResponse } from '@/composables/useEventStream'
 
 /** 每个用例注入独立适配器：不依赖真实后端，也不会污染其他用例。 */
 function clientWith(handler: (url: string) => { status: number; data: unknown }) {
@@ -183,100 +184,182 @@ describe('契约常量与后端口径一致', () => {
     expect(Object.keys(RISK_LABELS)).toHaveLength(5)
   })
 })
+/**
+ * `useEventStream` 的替身 fetch：一帧一帧往里推，没有就先等——与真 SSE 的"读一条等一条"同形。
+ *
+ * 为什么不再是 `EventSource` 的桩：这条流改成 `fetch` 了（要能带服务令牌头），
+ * 桩的形态因此跟着换；`latest` / `forceStatus` 保留下来，测试仍然能逐条指着"第几条流"说话。
+ */
+class FakeStream {
+  static latest: FakeStream | null = null
+  /** 下一条流以这个状态码回应（200 = 正常）。用来演"开了令牌但没填对"的现场。 */
+  static forceStatus = 200
 
-describe('useEventStream', () => {
-  class FakeEventSource {
-    static latest: FakeEventSource | null = null
-    onopen: (() => void) | null = null
-    onmessage: ((event: { data: string }) => void) | null = null
-    onerror: (() => void) | null = null
-    closed = false
-    constructor() {
-      FakeEventSource.latest = this
-    }
-    close(): void {
-      this.closed = true
-    }
-    emit(data: unknown): void {
-      this.onmessage?.({ data: JSON.stringify(data) })
-    }
-    raw(data: string): void {
-      this.onmessage?.({ data })
+  readonly headers: Record<string, string>
+  aborted = false
+  private readonly status: number
+  private pending: string[] = []
+  private waiting: ((chunk: { done: boolean; value?: Uint8Array }) => void) | null = null
+
+  constructor(init?: { headers?: Record<string, string>; signal?: AbortSignal }) {
+    this.headers = { ...(init?.headers ?? {}) }
+    this.status = FakeStream.forceStatus
+    init?.signal?.addEventListener('abort', () => {
+      this.aborted = true
+      this.pending = []
+      this.waiting?.({ done: true })
+      this.waiting = null
+    })
+    FakeStream.latest = this
+  }
+
+  /** 推一段原始文本：可以多帧，也可以是半帧（半帧用来验"跨 chunk 的帧不被吞"）。 */
+  push(text: string): void {
+    this.pending.push(text)
+    this.drain()
+  }
+
+  emit(event: unknown): void {
+    this.push(`data: ${JSON.stringify(event)}\n\n`)
+  }
+
+  private drain(): void {
+    while (this.waiting !== null && this.pending.length > 0) {
+      const next = this.pending.shift() as string
+      const settle = this.waiting
+      this.waiting = null
+      settle({ done: false, value: new TextEncoder().encode(next) })
     }
   }
 
-  const Host = defineComponent({
-    setup() {
-      return useEventStream(2)
-    },
-    render: () => null,
-  })
-
-  it('解析事件并按上限丢弃旧事件', async () => {
-    vi.stubGlobal('EventSource', FakeEventSource)
-    const wrapper = mount(Host)
-    const source = FakeEventSource.latest as unknown as FakeEventSource
-
-    for (let i = 0; i < 5; i += 1) {
-      source.emit({ subject: 'platform.alert', trace_id: `t${i}`, payload: { warning_id: `w${i}` }, ts: 'now' })
+  private read(): Promise<{ done: boolean; value?: Uint8Array }> {
+    if (this.pending.length > 0) {
+      const next = this.pending.shift() as string
+      return Promise.resolve({ done: false, value: new TextEncoder().encode(next) })
     }
-    await nextTick()
+    if (this.aborted) return Promise.resolve({ done: true })
+    return new Promise((resolve) => {
+      this.waiting = resolve
+    })
+  }
 
-    const vm = wrapper.vm as unknown as { events: { payload: { warning_id: string } }[] }
-    expect(vm.events).toHaveLength(2)
-    expect(vm.events[0].payload.warning_id).toBe('w4')
+  get response(): StreamResponse {
+    if (this.status !== 200) return { ok: false, status: this.status, body: null }
+    return { ok: true, status: this.status, body: { getReader: () => ({ read: () => this.read() }) } }
+  }
+}
 
+let seenPaths: string[] = []
+
+function fetchStream(path: string, init?: { headers?: Record<string, string>; signal?: AbortSignal }): Promise<StreamResponse> {
+  seenPaths.push(path)
+  return Promise.resolve(new FakeStream(init).response)
+}
+
+const Host = defineComponent({
+  setup() {
+    return useEventStream(2, fetchStream)
+  },
+  render: () => null,
+})
+
+/**
+ * 微任务冲刷：读一条等一条的循环里，每一帧要好几步 await 才落到 `events`。
+ * 步数给足——掐着算会测出"事件没进来"这种假红，而那是最难查的一类红。
+ */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 50; i += 1) await Promise.resolve()
+}
+
+/** 卸载放进 finally：一条用例断言失败时不许把共享的那条流留给后面的用例（否则一处红变成处处红）。 */
+async function withStream(run: (ctx: { vm: Record<string, unknown>; source: FakeStream }) => Promise<void>): Promise<void> {
+  const wrapper = mount(Host)
+  await flush()
+  try {
+    await run({ vm: wrapper.vm as unknown as Record<string, unknown>, source: FakeStream.latest as FakeStream })
+  } finally {
     wrapper.unmount()
-    expect(source.closed).toBe(true)
-    vi.unstubAllGlobals()
+    await flush()
+  }
+}
+
+describe('useEventStream', () => {
+  beforeEach(() => {
+    seenPaths = []
+    FakeStream.latest = null
+    FakeStream.forceStatus = 200
+    clearServiceToken()
+    authRejected.value = false
   })
 
-  it('非法 JSON 载荷不崩，记录错误', async () => {
-    vi.stubGlobal('EventSource', FakeEventSource)
-    const wrapper = mount(Host)
-    const source = FakeEventSource.latest as unknown as FakeEventSource
+  it('解析事件并按上限丢弃旧事件', () =>
+    withStream(async ({ vm, source }) => {
+      for (let i = 0; i < 5; i += 1) source.emit({ subject: 'platform.alert', trace_id: `t${i}`, payload: { warning_id: `w${i}` }, ts: 'now' })
+      await flush()
 
-    source.raw('not-json')
-    await nextTick()
+      const events = vm.events as { payload: { warning_id: string } }[]
+      expect(events).toHaveLength(2)
+      expect(events[0].payload.warning_id).toBe('w4')
+    }))
 
-    const vm = wrapper.vm as unknown as { events: unknown[]; lastError: string | null }
-    expect(vm.events).toHaveLength(0)
-    expect(vm.lastError).toContain('解析失败')
-    wrapper.unmount()
-    vi.unstubAllGlobals()
-  })
+  it('跨 chunk 的半帧不吞事件，也不把半帧当载荷解析', () =>
+    withStream(async ({ vm, source }) => {
+      source.push('data: {"subject":"platform.alert","tra')
+      await flush()
+      expect(vm.events).toHaveLength(0)
+
+      source.push('ce_id":"t9","payload":{"warning_id":"w9"},"ts":"now"}\n\n')
+      await flush()
+      expect(vm.events).toHaveLength(1)
+      expect(vm.lastError, '半帧不该被当成一条坏载荷').toBeNull()
+    }))
+
+  it('非法 JSON 载荷不崩，记录错误', () =>
+    withStream(async ({ vm, source }) => {
+      source.push('data: not-json\n\n')
+      await flush()
+      expect(vm.events).toHaveLength(0)
+      expect(vm.lastError).toContain('解析失败')
+    }))
 
   /**
    * 全应用只该有一条流：顶栏徽标是一份，页面里再要实时事件是第二份——浏览器对同一来源
    * 的并发连接有限（HTTP/1.1 是 6 条），多开一条就在挤占取数请求的位置。
    */
   it('两个使用者共用一条流；最后一个卸载才关，之后再挂是全新一条', async () => {
-    vi.stubGlobal('EventSource', FakeEventSource)
     const first = mount(Host)
     const second = mount(Host)
-    const source = FakeEventSource.latest as unknown as FakeEventSource
+    await flush()
+    const source = FakeStream.latest as FakeStream
+    expect(seenPaths, '两条流就违背了引用计数共享的初衷').toHaveLength(1)
+    const eventsOf = (wrapper: typeof first): unknown[] => (wrapper.vm as unknown as { events: unknown[] }).events
 
-    source.emit({ subject: 'platform.alert', trace_id: 't1', payload: { warning_id: 'w1' }, ts: 'now' })
-    await nextTick()
-    const a = first.vm as unknown as { events: unknown[] }
-    const b = second.vm as unknown as { events: unknown[] }
-    expect(a.events).toHaveLength(1)
-    expect(b.events).toHaveLength(1)
+    try {
+      source.emit({ subject: 'platform.alert', trace_id: 't1', payload: { warning_id: 'w1' }, ts: 'now' })
+      await flush()
+      expect(eventsOf(first)).toHaveLength(1)
+      expect(eventsOf(second)).toHaveLength(1)
 
-    first.unmount()
-    expect(source.closed, '还有一个使用者在，不该关流').toBe(false)
-    source.emit({ subject: 'platform.alert', trace_id: 't2', payload: { warning_id: 'w2' }, ts: 'now' })
-    await nextTick()
-    expect(b.events).toHaveLength(2)
-
-    second.unmount()
-    expect(source.closed, '最后一个使用者走了还不关流，就是漏了一条长连接').toBe(true)
+      first.unmount()
+      expect(source.aborted, '还有一个使用者在，不该关流').toBe(false)
+      source.emit({ subject: 'platform.alert', trace_id: 't2', payload: { warning_id: 'w2' }, ts: 'now' })
+      await flush()
+      expect(eventsOf(second)).toHaveLength(2)
+    } finally {
+      second.unmount()
+      await flush()
+    }
+    expect(source.aborted, '最后一个使用者走了还不关流，就是漏了一条长连接').toBe(true)
 
     const third = mount(Host)
-    expect(FakeEventSource.latest, '重新挂载应当另起一条流').not.toBe(source)
-    expect((third.vm as unknown as { events: unknown[] }).events, '新一条流不许带着上一条的历史').toHaveLength(0)
-    third.unmount()
-    vi.unstubAllGlobals()
+    await flush()
+    try {
+      expect(FakeStream.latest, '重新挂载应当另起一条流').not.toBe(source)
+      expect((third.vm as unknown as { events: unknown[] }).events, '新一条流不许带着上一条的历史').toHaveLength(0)
+    } finally {
+      third.unmount()
+      await flush()
+    }
   })
 
   /**
@@ -284,60 +367,93 @@ describe('useEventStream', () => {
    * 浏览器不会因为上游死了而报错，而原先的保活是注释帧，JS 根本收不到，前端连
    * "多久没动静"的依据都没有。现在后端发真心跳，前端据此判死并重连。
    */
-  it('心跳帧只当"流还活着"的证据，不进时间线', async () => {
-    vi.stubGlobal('EventSource', FakeEventSource)
-    const wrapper = mount(Host)
-    const source = FakeEventSource.latest as unknown as FakeEventSource
-    source.onopen?.()
-    source.emit({ type: 'heartbeat', ts: '2026-10-04T15:00:00+00:00' })
-    await nextTick()
-    const vm = wrapper.vm as unknown as { events: unknown[]; connected: boolean }
-    expect(vm.events).toHaveLength(0)
-    expect(vm.connected).toBe(true)
-    wrapper.unmount()
-    vi.unstubAllGlobals()
-  })
+  it('心跳帧只当"流还活着"的证据，不进时间线', () =>
+    withStream(async ({ vm, source }) => {
+      source.emit({ type: 'heartbeat', ts: '2026-10-04T15:00:00+00:00' })
+      await flush()
+      expect(vm.events).toHaveLength(0)
+      expect(vm.connected).toBe(true)
+    }))
 
   it('心跳静默就判死并另起一条流，不再抱着僵尸流说"已连接"', async () => {
     vi.useFakeTimers()
-    vi.stubGlobal('EventSource', FakeEventSource)
+    const wrapper = mount(Host)
     try {
-      const wrapper = mount(Host)
-      const first = FakeEventSource.latest as unknown as FakeEventSource
-      first.onopen?.()
+      await vi.advanceTimersByTimeAsync(0)
+      const first = FakeStream.latest as FakeStream
       const vm = wrapper.vm as unknown as { connected: boolean; stalled: boolean }
       expect(vm.connected).toBe(true)
 
-      vi.advanceTimersByTime(40_000)
-      expect(vm.stalled, '两刻多钟没心跳，这条流已经是僵尸').toBe(true)
-      expect(vm.connected).toBe(false)
-      expect(first.closed).toBe(true)
-      expect(FakeEventSource.latest).not.toBe(first)
-      wrapper.unmount()
+      // 20 秒还没到判死线（15s 心跳的两刻多钟 = 37.5s）：这时掐流就是反应过度
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(vm.stalled, '没到静默线就判死，会把正常抖动的流掐掉').toBe(false)
+      expect(first.aborted).toBe(false)
+
+      // 过了线：这条僵尸流必须被掐掉并另起一条。新一条连上之后 stalled 归位是设计，
+      // 所以这里断言的是"判死并另起"这个动作本身，不是那一瞬间的旗标。
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(first.aborted, '两刻多钟没心跳还不掐流，就是抱着僵尸流说"已连接"').toBe(true)
+      expect(FakeStream.latest).not.toBe(first)
     } finally {
+      wrapper.unmount()
       vi.useRealTimers()
-      vi.unstubAllGlobals()
     }
   })
 
   it('一路有心跳就不判死（空转一小时也是连着）', async () => {
     vi.useFakeTimers()
-    vi.stubGlobal('EventSource', FakeEventSource)
+    const wrapper = mount(Host)
     try {
-      const wrapper = mount(Host)
-      const source = FakeEventSource.latest as unknown as FakeEventSource
-      source.onopen?.()
+      await vi.advanceTimersByTimeAsync(0)
+      const source = FakeStream.latest as FakeStream
       const vm = wrapper.vm as unknown as { connected: boolean; stalled: boolean }
       for (let minute = 0; minute < 6; minute += 1) {
-        vi.advanceTimersByTime(15_000)
+        await vi.advanceTimersByTimeAsync(15_000)
         source.emit({ type: 'heartbeat', ts: 'tick' })
+        await vi.advanceTimersByTimeAsync(0)
       }
       expect(vm.stalled).toBe(false)
       expect(vm.connected).toBe(true)
-      wrapper.unmount()
     } finally {
+      wrapper.unmount()
       vi.useRealTimers()
-      vi.unstubAllGlobals()
     }
   })
+
+  /** §4.8.1：这条流以前用 EventSource，带不了请求头——开了服务令牌的部署里它只能永久裸奔。 */
+  it('带上服务令牌发起，路径仍是那一条事件流', async () => {
+    setServiceToken('s3cr3t')
+    const wrapper = mount(Host)
+    await flush()
+    try {
+      const source = FakeStream.latest as FakeStream
+      expect(seenPaths).toEqual(['/api/v1/events/stream'])
+      expect(source.headers['X-Aegis-Token']).toBe('s3cr3t')
+      expect(source.headers['Accept'], 'SSE 要显式声明接的是什么').toBe('text/event-stream')
+    } finally {
+      wrapper.unmount()
+      await flush()
+    }
+  })
+
+  it('令牌不对时说出 401 是令牌问题，不谎称后端挂了', async () => {
+    FakeStream.forceStatus = 401
+    const wrapper = mount(Host)
+    await flush()
+    try {
+      const vm = wrapper.vm as unknown as { connected: boolean; lastError: string | null }
+      expect(vm.connected).toBe(false)
+      expect(vm.lastError).toContain('401')
+      expect(vm.lastError, '401 的处置动作是填令牌，不是等后端恢复').toContain('令牌')
+    } finally {
+      wrapper.unmount()
+      await flush()
+    }
+  })
+
+  it('未带令牌时不硬塞一个空头（后端把空凭据与无凭据一视同仁）', () =>
+    withStream(async ({ source }) => {
+      expect(source.headers['X-Aegis-Token']).toBeUndefined()
+    }))
 })
+

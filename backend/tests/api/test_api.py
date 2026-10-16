@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 import pytest
@@ -350,5 +351,109 @@ class TestChainAuditEndpoint:
                 url = f"/api/v1/audit/chain/trc_{'0' * 16}"
                 assert (await c.get(url)).status_code == 401, "审计行里有模型/Prompt 版本与结论，裸放着就是把 D10 的凭证泄露面开大"
                 assert (await c.get(url, headers={"X-Aegis-Token": "s3cr3t"})).status_code == 503
+        finally:
+            await ctn.shutdown()
+
+
+def _token_settings() -> Settings:
+    return Settings(
+        env="test",
+        bus_backend="memory",
+        store_backend="memory",
+        simulator_enabled=False,
+        delivery_mode="mock",
+        service_token="s3cr3t",
+    )
+
+
+def _api_paths(app: Any) -> list[str]:
+    """从路由表本身取业务 API 路径：这条门禁的覆盖面因此跟着路由表长，不靠人记得挂闸。"""
+    return sorted({str(route.path) for route in app.routes if str(getattr(route, "path", "")).startswith("/api/")})
+
+
+#: 永不结束的响应（事件流）：ASGITransport 要把响应体读完才返回，这类路径只能验"不带凭据必 401"
+#: （那是中间件在进应用之前就答的），验不了"带对凭据后不是 401"——那半截由其余路由逐条覆盖。
+STREAMING_PATHS = frozenset({"/api/v1/events/stream"})
+
+
+async def _status(client: httpx.AsyncClient, path: str, headers: dict[str, str]) -> int:
+    """取一次状态码，并给"某条路由把请求挂住"留一个会说话的红。"""
+
+    async def probe() -> int:
+        return (await client.get(path, headers=headers)).status_code
+
+    try:
+        return await asyncio.wait_for(probe(), timeout=10.0)
+    except TimeoutError as exc:
+        raise AssertionError(f"{path} 读了 10 秒还没结束：非流式路由不该这样，流式路由要登记进 STREAMING_PATHS") from exc
+
+
+class TestTokenGateCoversWholeApiSurface:
+    """§4.8.1：鉴权面只认"这是不是业务 API"，不认"这条路由有没有人记得挂依赖"。
+
+    上一版是在 11 条路由上手工挂 `dependencies=`，于是 `/api/v1/warnings`、`/api/v1/rules/*`、
+    `/api/v1/reports`、`/api/v1/simulation/run` 与整条 workflow/assistant 路由在配了令牌的部署里
+    其实谁都能读写——文档那句"配了令牌就在拦"只对手工挂过的那几条成立。判据改从路由表取路径
+    逐条指认之后，新增端点默认被覆盖，漏挂这件事结构上不可能再发生。
+    """
+
+    async def test_每一条api路由不带凭据都是401(self) -> None:
+        cfg = _token_settings()
+        ctn = create_container(cfg, with_simulator=False)
+        await ctn.start()
+        try:
+            app = create_app(cfg, container=ctn)
+            paths = _api_paths(app)
+            assert len(paths) >= 25, f"路由表里只数到 {len(paths)} 条业务路由：路由形状变了，这条门禁要跟着改（不是把断言删掉）"
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE) as c:
+                for path in paths:
+                    assert await _status(c, path, {}) == 401, f"{path} 裸奔：配了令牌却谁都不拦"
+        finally:
+            await ctn.shutdown()
+
+    async def test_带对凭据后不是鉴权失败(self) -> None:
+        """正向对照：只验"不带都 401"会放过一个永远返回 401 的闸——那也照样"绿"。"""
+        cfg = _token_settings()
+        ctn = create_container(cfg, with_simulator=False)
+        await ctn.start()
+        try:
+            app = create_app(cfg, container=ctn)
+            paths = _api_paths(app)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE) as c:
+                for path in paths:
+                    if path in STREAMING_PATHS:
+                        continue
+                    for header in ({"X-Aegis-Token": "s3cr3t"}, {"authorization": "Bearer s3cr3t"}):
+                        status = await _status(c, path, header)
+                        assert status != 401, f"{path} 带着正确凭据仍被拒（{header}）：鉴权面把合法客户端也挡了"
+                covered = len([path for path in paths if path not in STREAMING_PATHS])
+                assert covered >= len(paths) - 2, f"只逐条验了 {covered}/{len(paths)} 条，跳过的比例大到盖住了真缺口"
+        finally:
+            await ctn.shutdown()
+
+    async def test_运维探针与指标抓取仍然免鉴权(self) -> None:
+        """`/healthz`、`/readyz`、`/metrics` 不在 `/api/` 下：容器探针和 Prometheus 不该带业务凭据。"""
+        cfg = _token_settings()
+        ctn = create_container(cfg, with_simulator=False)
+        await ctn.start()
+        try:
+            app = create_app(cfg, container=ctn)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE) as c:
+                assert (await c.get("/healthz")).status_code == 200
+                assert (await c.get("/readyz")).status_code == 200
+                assert (await c.get("/metrics")).status_code == 200
+        finally:
+            await ctn.shutdown()
+
+    async def test_未配令牌时业务面照常开放(self) -> None:
+        """默认形态不变：`service_token=""` 时这条闸不存在（装配/演练/本机前端都不受影响）。"""
+        cfg = Settings(env="test", bus_backend="memory", store_backend="memory", simulator_enabled=False, delivery_mode="mock")
+        ctn = create_container(cfg, with_simulator=False)
+        await ctn.start()
+        try:
+            app = create_app(cfg, container=ctn)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE) as c:
+                assert (await c.get("/api/v1/warnings")).status_code == 200
+                assert (await c.get("/api/v1/workflow/definitions")).status_code == 200
         finally:
             await ctn.shutdown()

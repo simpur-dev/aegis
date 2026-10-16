@@ -9,6 +9,7 @@ import type {
   WarningRecord,
 } from './types'
 import { describeValidationDetail, type FieldLabels } from '@/utils/validationDetail'
+import { installServiceToken } from '@/api/serviceToken'
 
 export class ApiError extends Error {
   readonly status: number
@@ -23,6 +24,7 @@ export class ApiError extends Error {
 }
 
 const http = axios.create({ baseURL: '/', timeout: 20_000 })
+installServiceToken(http)
 
 /**
  * 时延账本必须自带单位声明——这是指标页能正确渲染的前提，不是可选项。

@@ -22,8 +22,10 @@ import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from '
 
 import type { HazardType, RiskLevel, StageResult } from './types'
 import { describeValidationDetail } from '@/utils/validationDetail'
+import { installServiceToken } from '@/api/serviceToken'
 
 const http = axios.create({ baseURL: '/', timeout: 30_000 })
+installServiceToken(http)
 
 export const REPORT_ENDPOINT = '/api/v1/reports'
 

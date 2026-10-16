@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aegis import __version__
@@ -219,18 +220,33 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         allow_headers=["*"],
     )
 
-    def require_data_token(request: Request) -> None:
-        """§4.8.1 数据 API 服务令牌：配了才校验（常量时间比对），未配则开放——不破坏既有装配/演练/前端调用。
-        智能体经数据 API 与 MCP 工具面取数共用这一鉴权面与同一个头名口径（`_presented_token`）。"""
-        token = cfg.service_token
-        if not token:
-            return
+    @app.middleware("http")
+    async def enforce_service_token(request: Request, call_next: Any) -> Any:
+        """§4.8.1：配了 `service_token` 就整个业务 API 面都要带凭据（常量时间比对）；没配则照旧开放。
+
+        为什么用中间件而不是逐条路由挂 `dependencies=`：那种写法已经证明会漏——29 条业务路由里
+        只有 11 条挂了闸，`/api/v1/warnings`、`/api/v1/rules/*`、`/api/v1/reports`、
+        `/api/v1/simulation/run` 与整条 workflow/assistant 路由在"配了令牌"的部署里其实谁都能读写，
+        而文档说的"配了令牌就在拦"只在挂上的那几条上成立。一条口径只留一个执行点：
+        `/api/` 之下默认全要凭据，新增端点不会因为忘了挂而裸奔。
+        运维探针（`/healthz`、`/readyz`）、Prometheus 抓取（`/metrics`）与文档不在 `/api/` 下，
+        天然开放；`/mcp/` 工具面在 ASGI 包层里自闸（同一把令牌、同一个 `_presented_token`）。
+        CORS 预检不带凭据也不该带，按 `OPTIONS` 放行给 CORSMiddleware 处理。
+        """
+        if not cfg.service_token or request.method == "OPTIONS" or not request.url.path.startswith("/api/"):
+            return await call_next(request)
         presented = _presented_token(request.headers)
-        if not presented or not secrets.compare_digest(presented, token):
-            raise HTTPException(
+        if not presented or not secrets.compare_digest(presented, cfg.service_token):
+            return JSONResponse(
                 status_code=401,
-                detail={"code": "E_UNAUTHORIZED", "message": "数据 API 需要有效服务令牌（X-Aegis-Token 或 Authorization: Bearer）"},
+                content={
+                    "detail": {
+                        "code": "E_UNAUTHORIZED",
+                        "message": "业务 API 需要有效服务令牌（X-Aegis-Token 或 Authorization: Bearer）",
+                    }
+                },
             )
+        return await call_next(request)
 
     @app.get("/healthz", tags=["ops"])
     async def healthz() -> dict[str, Any]:
@@ -262,7 +278,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "all_enabled": all(state.enabled for state in rows),
         }
 
-    @app.get("/api/v1/cases/recall", tags=["knowledge"], dependencies=[Depends(require_data_token)])
+    @app.get("/api/v1/cases/recall", tags=["knowledge"])
     async def recall_cases(
         ctn: PlatformContainer = Depends(get_container),
         q: str = Query(default="", max_length=300),
@@ -314,7 +330,6 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
     @app.get(
         "/api/v1/retrieval/search",
         tags=["knowledge"],
-        dependencies=[Depends(require_data_token)],
         responses={503: {"description": "检索层未启用"}},
     )
     async def search_context(
@@ -395,7 +410,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             **report.as_dict(),
         }
 
-    @app.get("/api/v1/stations", tags=["data"], dependencies=[Depends(require_data_token)])
+    @app.get("/api/v1/stations", tags=["data"])
     async def list_stations(
         ctn: PlatformContainer = Depends(get_container),
         region_code: str | None = Query(default=None, pattern=r"^[0-9A-Z]{6,24}$"),
@@ -411,7 +426,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         rows = await ctn.store.list_stations(region_code=region_code, limit=limit)
         return {"count": len(rows), "items": rows}
 
-    @app.get("/api/v1/geo/stations-within", tags=["data"], dependencies=[Depends(require_data_token)])
+    @app.get("/api/v1/geo/stations-within", tags=["data"])
     async def geo_stations_within(
         ctn: PlatformContainer = Depends(get_container),
         lon: float = Query(..., ge=-180.0, le=180.0),
@@ -433,7 +448,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         query = {"lon": lon, "lat": lat, "radius_m": radius, "limit": limit}
         return {"driver": "postgis", "query": query, "count": len(items), "items": items}
 
-    @app.get("/api/v1/geo/stations-in-polygon", tags=["data"], dependencies=[Depends(require_data_token)])
+    @app.get("/api/v1/geo/stations-in-polygon", tags=["data"])
     async def geo_stations_in_polygon(
         ctn: PlatformContainer = Depends(get_container),
         polygon: str = Query(..., min_length=14, description="POLYGON/MULTIPOLYGON 的 WKT（SRID=4326，经度在前）"),
@@ -454,7 +469,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "items": items,
         }
 
-    @app.get("/api/v1/geo/hazard-trace", tags=["data"], dependencies=[Depends(require_data_token)])
+    @app.get("/api/v1/geo/hazard-trace", tags=["data"])
     async def geo_hazard_trace(
         ctn: PlatformContainer = Depends(get_container),
         polygon: str = Query(..., min_length=14),
@@ -549,7 +564,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "off_bookrule_hits": {key: value for key, value in hits.items() if ctn.rule_engine.rule_by_id(key) is None},
         }
 
-    @app.get("/api/v1/telemetry", tags=["data"], dependencies=[Depends(require_data_token)])
+    @app.get("/api/v1/telemetry", tags=["data"])
     async def list_telemetry(
         ctn: PlatformContainer = Depends(get_container),
         station_id: str | None = None,
@@ -642,7 +657,6 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
     @app.get(
         "/api/v1/audit/chain/{trace_id}",
         tags=["ops"],
-        dependencies=[Depends(require_data_token)],
         responses={503: {"description": "持久层不是 postgres：台账直读面只在真库形态提供"}},
     )
     async def audit_chain(
@@ -696,7 +710,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "note": "模型/版本来自真实路由配置与已迁入的版本化 prompt；训练集与评测分未做即 None，不冒充达标。",
         }
 
-    @app.get("/api/v1/memory/shared", tags=["memory"], dependencies=[Depends(require_data_token)])
+    @app.get("/api/v1/memory/shared", tags=["memory"])
     async def memory_shared(
         ctn: PlatformContainer = Depends(get_container),
         kind: SharedKind | None = None,
@@ -733,7 +747,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "stats": dict(ctn.memory.stats),
         }
 
-    @app.post("/api/v1/memory/shared", tags=["memory"], status_code=201, dependencies=[Depends(require_data_token)])
+    @app.post("/api/v1/memory/shared", tags=["memory"], status_code=201)
     async def memory_write(
         payload: MemoryIn,
         ctn: PlatformContainer = Depends(get_container),
@@ -754,7 +768,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         )
         return {"record_id": written, "driver": ctn.memory.backend, "embedded": ctn.memory.embedder_ready}
 
-    @app.delete("/api/v1/memory/shared/{record_id}", tags=["memory"], dependencies=[Depends(require_data_token)])
+    @app.delete("/api/v1/memory/shared/{record_id}", tags=["memory"])
     async def memory_forget(
         record_id: str,
         ctn: PlatformContainer = Depends(get_container),

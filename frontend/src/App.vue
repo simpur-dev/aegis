@@ -5,6 +5,7 @@ import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 
 import api from '@/api/client'
+import ServiceTokenBar from '@/components/ServiceTokenBar.vue'
 import { useEventStream } from '@/composables/useEventStream'
 import { antdTheme } from '@/theme/antd'
 import { useTheme } from '@/theme/useTheme'
@@ -165,6 +166,8 @@ const statusTitle = computed<string>(() =>
 
       <main class="main-content">
         <router-view />
+        <!-- 服务令牌条常驻页脚：一台机器填一次，但"这台开了鉴权"必须每页都说得出口（§4.8.1） -->
+        <ServiceTokenBar />
         <!-- 页脚跟着内容走，不钉在视口底：钉着的话每一页都永久吃掉一条，
              而编排页那种"占满一屏"的布局还要去猜它的高度 -->
         <footer class="footer">

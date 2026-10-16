@@ -12,8 +12,10 @@ import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from '
 
 import type { EdgeDef, JsonValue, NodeDef, NodeState, OnFailure, RetryPolicy, WorkflowDef } from '@/utils/graph'
 import { describeValidationDetail } from '@/utils/validationDetail'
+import { installServiceToken } from '@/api/serviceToken'
 
 const http = axios.create({ baseURL: '/', timeout: 20_000 })
+installServiceToken(http)
 
 export class WorkflowApiError extends Error {
   readonly status: number

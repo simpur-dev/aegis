@@ -22,6 +22,7 @@ import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from '
 
 import type { ChainSummary, TelemetryReading, WarningRecord } from './types'
 import { describeValidationDetail, type FieldLabels } from '@/utils/validationDetail'
+import { installServiceToken } from '@/api/serviceToken'
 
 /** 一张图只发查询参数，这一层的字段叫法与通用客户端一致。 */
 const MAP_QUERY_LABELS: FieldLabels = {
@@ -32,6 +33,7 @@ const MAP_QUERY_LABELS: FieldLabels = {
 }
 
 const http = axios.create({ baseURL: '/', timeout: 20_000 })
+installServiceToken(http)
 
 export class MapApiError extends Error {
   readonly status: number

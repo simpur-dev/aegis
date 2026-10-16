@@ -17,6 +17,8 @@
 
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios'
 
+import { installServiceToken } from '@/api/serviceToken'
+
 export interface IntegrationRow {
   readonly name: string
   readonly enabled: boolean
@@ -110,7 +112,9 @@ export class IntegrationsApiError extends Error {
 }
 
 export async function fetchIntegrations(instance?: AxiosInstance): Promise<IntegrationSnapshot> {
-  const http: AxiosInstance = instance ?? axios.create({ baseURL: '/', timeout: 8_000 })
+  // 自己造的实例才装拦截器：注入实例是调用方的（测试给的是只有 `request()` 的替身，
+  // 那里没有 interceptors 可装）。真实调用方一律不注入，走的就是带凭据的这一条。
+  const http: AxiosInstance = instance ?? installServiceToken(axios.create({ baseURL: '/', timeout: 8_000 }))
   const config: AxiosRequestConfig = { url: '/api/v1/integrations', method: 'get' }
   try {
     const response = await http.request<IntegrationSnapshot>(config)
