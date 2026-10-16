@@ -874,7 +874,7 @@ def create_container(
     analytics = AnalyticsRecorder(analytics_sink, driver=analytics_state.driver, settings=cfg) if analytics_sink is not None else None
     knowledge, knowledge_state = build_knowledge(cfg, tracer)
     retrieval, retrieval_state = build_retrieval(cfg, tracer, store=bundle.durability)
-    memory, memory_state = build_memory(store=bundle.store, retrieval=retrieval)
+    memory, memory_state = build_memory(store=bundle.store, retrieval=retrieval, knowledge=knowledge, settings=cfg)
     # MCP 工具层要在检索/知识/记忆都装配完之后再建：它只是把这些既有端口换个协议面暴露出去。
     mcp = build_mcp(
         settings=cfg,

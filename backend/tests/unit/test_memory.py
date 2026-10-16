@@ -61,17 +61,39 @@ class TestMemoryService:
         assert rows[0].record_id == rid and rows[0].disagreement is True
         assert await svc.forget(rid) is True
 
-    async def test_read_categories_degrades_missing_and_failing_providers(self) -> None:
+    async def test_read_categories把没接_没命中_读挂了分成三种事实(self) -> None:
+        """§4.3 的纪律落在字段上：这三件事都回 `[]` 就等于在骗读的人。
+
+        旧契约（三类各一张列表）正是那枚骗人的形状——`semantic=[]` 既可能是"检索腿挂了"，
+        也可能是"这台压根没装检索腿"，而两者的处置动作完全相反（修 vs 装）。
+        """
+
         class OkProvider:
             async def recall(self, query, *, region_code=None, hazard_type=None, limit=3):
                 return [{"id": "case:1"}]
+
+        class EmptyProvider:
+            async def recall(self, query, *, region_code=None, hazard_type=None, limit=3):
+                return []
 
         class BoomProvider:
             async def recall(self, query, *, region_code=None, hazard_type=None, limit=3):
                 raise RuntimeError("图谱挂了")
 
-        svc = MemoryService(InMemoryAgentMemory(), episodic=OkProvider(), semantic=BoomProvider())
+        svc = MemoryService(InMemoryAgentMemory(), episodic=OkProvider(), semantic=BoomProvider(), knowledge=EmptyProvider())
         result = await svc.read_categories("泥石流", region_code="540121")
-        assert result["episodic"] == [{"id": "case:1"}]
-        assert result["semantic"] == []  # provider 抛错 → 如实降级为空，不阻断
-        assert result["knowledge"] == []  # 未接入 → 空（不是"没有相关内容"的伪装）
+        assert result["episodic"] == {"connected": True, "items": [{"id": "case:1"}], "note": ""}
+        assert result["semantic"]["connected"] is True and "RuntimeError" in result["semantic"]["note"]
+        assert result["semantic"]["items"] == [], "降级那一格仍要回空条目，但不能没有原因"
+        assert result["knowledge"]["connected"] is True and result["knowledge"]["items"] == []
+        assert "没命中" in result["knowledge"]["note"], "接了但没命中，得与『没接』分得开"
+
+    async def test_未接入的那一类连着也要说没接(self) -> None:
+        svc = MemoryService(InMemoryAgentMemory(), episodic=None, semantic=None, knowledge=None)
+        result = await svc.read_categories("泥石流")
+        assert {name: value["connected"] for name, value in result.items()} == {
+            "episodic": False,
+            "semantic": False,
+            "knowledge": False,
+        }
+        assert all("未接入" in str(value["note"]) for value in result.values()), result

@@ -855,6 +855,37 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "note": "模型/版本来自真实路由配置与已迁入的版本化 prompt；训练集与评测分未做即 None，不冒充达标。",
         }
 
+    @app.get("/api/v1/memory/categories", tags=["memory"])
+    async def memory_categories(
+        ctn: PlatformContainer = Depends(get_container),
+        q: str = Query(default="", min_length=1, max_length=200, description="一句自然语言查询，三类各读各的"),
+        region_code: str | None = Query(default=None, pattern=r"^[0-9A-Z]{6,24}$"),
+        hazard_type: HazardType | None = None,
+        limit: int = Query(default=3, ge=1, le=10),
+    ) -> dict[str, Any]:
+        """§4.3 四类记忆门面的读者：一次查询同时看见每一类"接没接、读到什么、为什么是空"。
+
+        修前的形状是两头都空：装配点一个 provider 都没给，而 `read_categories()` 在仓里
+        没有任何生产调用方——"四类记忆统一门面"这句话于是既没有底也没有出口。
+        这里把它接成真的出口，并把 §4.3 自己定的纪律落到字段上：
+        **`connected=false`（这条腿没接）与"接了但没命中"不是一回事**，都回空列表就等于在骗读的人。
+        """
+        memory = ctn.memory
+        if memory is None:
+            raise HTTPException(status_code=503, detail={"code": "E_MEMORY_UNAVAILABLE", "message": "记忆服务未装配（memory）"})
+        categories = await memory.read_categories(
+            q,
+            region_code=region_code,
+            hazard_type=None if hazard_type is None else hazard_type.value,
+            limit=limit,
+        )
+        return {
+            "query": q,
+            "driver": memory.backend,
+            "categories": categories,
+            "shared": {"backend": memory.backend, "stats": dict(memory.stats)},
+        }
+
     @app.get("/api/v1/memory/shared", tags=["memory"])
     async def memory_shared(
         ctn: PlatformContainer = Depends(get_container),

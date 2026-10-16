@@ -139,3 +139,39 @@ async def test_状态面里有记忆这一行(memory_pair: tuple[httpx.AsyncClie
     rows = {row.name: row for row in container.integration_status()}
     assert "memory" in rows, "记忆门面不在状态面上，部署方就无法知道它是内存档还是库档"
     assert rows["memory"].driver == "memory"
+
+
+CATEGORIES = "/api/v1/memory/categories"
+
+
+async def test_四类门面有了对外出口_每类说清接没接(memory_pair: tuple[httpx.AsyncClient, PlatformContainer]) -> None:
+    """修前 `read_categories()` 没有任何生产调用方——"统一门面"既没底也没出口。
+
+    这里断的是**默认部署的真实形状**：案例腿在（情景记忆 connected），
+    没配图谱 URI 所以知识记忆 absent，检索腿按默认关着。
+    把 absent 与"读了没结果"混成一个空列表，就是这个端点存在的理由。
+    """
+    client, container = memory_pair
+    body = (await client.get(CATEGORIES, params={"q": "泥石流 540121", "region_code": "540121"})).json()
+    assert body["driver"] == container.memory.backend
+    categories = body["categories"]
+    assert set(categories) == {"episodic", "semantic", "knowledge"}
+    assert categories["episodic"]["connected"] is True
+    assert categories["knowledge"]["connected"] is False, "没配图谱却报 connected，等于把案例库冒充成图谱命中"
+    for name, item in categories.items():
+        assert isinstance(item["items"], list), name
+        assert (item["note"] == "") == bool(item["items"]) or not item["connected"], f"{name} 的空要有原因：{item}"
+
+
+async def test_空查询串在进门之前就被拒(memory_pair: tuple[httpx.AsyncClient, PlatformContainer]) -> None:
+    """`q` 为空时三类都会返回"没命中"，那是一条**看起来成功的假事实**——所以 min_length=1。"""
+    client, _ = memory_pair
+    assert (await client.get(CATEGORIES, params={"q": ""})).status_code == 422
+    assert (await client.get(CATEGORIES, params={"q": "泥石流", "region_code": " lowercase"})).status_code == 422
+
+
+async def test_状态行把三类接没接也报出来(memory_pair: tuple[httpx.AsyncClient, PlatformContainer]) -> None:
+    _, container = memory_pair
+    rows = {row.name: row for row in container.integration_status()}
+    assert rows["memory"].detail["categories"]["episodic"] == "connected", rows["memory"].detail
+    assert rows["memory"].detail["categories"]["knowledge"] == "absent"

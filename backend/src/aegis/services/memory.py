@@ -16,7 +16,8 @@
 跨事件、跨智能体的经验闭环（§3.2 memory.search 同区域历史研判）。
 
 边界（铁律 3）：内核 services 不 import 存储腿/可选腿；提供者、共享存储与嵌入器都是注入的窄 Protocol，
-缺位即如实降级（该记忆类未接入返回空，嵌入失败计入 `stats`），绝不把"没接上"读成"没有相关记忆"。
+缺位即如实降级（`read_categories` 把"这条腿没接""接了但没命中""读了但出错"分成三种事实返回，
+嵌入失败计入 `stats`），绝不把"没接上"读成"没有相关记忆"。
 删除/修正走显式接口（记忆可治理）。
 """
 
@@ -244,19 +245,29 @@ class MemoryService:
             return None
         return list(vectors[0])
 
-    # ---------- 四类记忆读取门面（情景/语义/知识；缺位如实为空） ----------
+    # ---------- 四类记忆读取门面（情景/语义/知识；缺位、空命中、降级是三种事实） ----------
 
     async def read_categories(
         self, query: str, *, region_code: str | None = None, hazard_type: str | None = None, limit: int = 3
-    ) -> dict[str, list[dict[str, object]]]:
-        result: dict[str, list[dict[str, object]]] = {}
+    ) -> dict[str, dict[str, object]]:
+        """每一类各自回一个**带状态**的结果，而不是三张可能为空的列表。
+
+        为什么要单独说这件事：门面原本对三种完全不同的现场都回 `[]`——
+        ① 这条记忆类压根没接线、② 接了但这次没命中、③ 接了且读它时出错了。
+        §4.3 自己定的纪律就是"绝不把'没接上'读成'没有相关记忆'"，
+        而一个空列表恰好把这两件事说成了同一件。现在 `connected` 与 `note` 是分开的字段，
+        读者（`/api/v1/memory/categories`）第一次有可能回答"这台为什么读不出图谱"。
+        """
+        result: dict[str, dict[str, object]] = {}
         for name, provider in self._providers.items():
             if provider is None:
-                result[name] = []  # 该记忆类未接入：如实空，不伪装成"没有相关内容"。
+                result[name] = {"connected": False, "items": [], "note": "该记忆类未接入（装配点没给这条腿）"}
                 continue
             try:
-                result[name] = await provider.recall(query, region_code=region_code, hazard_type=hazard_type, limit=limit)
+                items = await provider.recall(query, region_code=region_code, hazard_type=hazard_type, limit=limit)
             except Exception as exc:
                 log.warning("记忆门面某一类降级", extra={"category": name, "err": type(exc).__name__})
-                result[name] = []
+                result[name] = {"connected": True, "items": [], "note": f"读取降级: {type(exc).__name__}"}
+            else:
+                result[name] = {"connected": True, "items": list(items), "note": "" if items else "接了，但这句查询没命中"}
         return result

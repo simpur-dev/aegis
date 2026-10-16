@@ -331,3 +331,101 @@ async def test_嵌入失败只降级不断链并且计数() -> None:
     assert record_id
     assert service.stats["嵌入失败"] == 1 and service.stats["写入"] == 1, "算不出向量是事实，但这条记忆必须仍然落下"
     assert service.embedder_ready is True, "腿是在的，只是这一次算失败——两件事不能混成一个布尔"
+
+
+class _Case:
+    """长得像 `CaseMatch`：门面要的是 `planning_brief()` 那份映射，不是对象本身。"""
+
+    def __init__(self, case_id: str) -> None:
+        self.case_id = case_id
+
+    def planning_brief(self) -> dict[str, object]:
+        return {"case_id": self.case_id}
+
+
+class _KnowledgeLeg:
+    def __init__(self, *, primary: object | None = None) -> None:
+        self.calls: list[dict[str, object]] = []
+        if primary is not None:
+            self.primary = primary  # 只有降级链（即配了图谱 URI）才有这一头
+
+    async def recall(self, query: str, **kw: object) -> list[_Case]:
+        self.calls.append({"query": query, **kw})
+        return [_Case("C-1")]
+
+
+class _GraphitiLeg:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def recall(self, query: str, **kw: object) -> list[_Case]:
+        self.calls.append({"query": query, **kw})
+        return [_Case("G-9")]
+
+
+class _Doc:
+    def as_reference(self) -> dict[str, object]:
+        return {"doc_id": "D-1"}
+
+
+class _Outcome:
+    def __init__(self) -> None:
+        self.docs = [_Doc()]
+        self.degradations: list[object] = []
+
+
+class _RetrievalLeg:
+    def __init__(self) -> None:
+        self.calls: list[object] = []
+
+    async def retrieve(self, query: object) -> _Outcome:
+        self.calls.append(query)
+        return _Outcome()
+
+
+def _legs() -> tuple[_KnowledgeLeg, _RetrievalLeg]:
+    return _KnowledgeLeg(), _RetrievalLeg()
+
+
+@pytest.mark.asyncio
+async def test_装配点把三类记忆接进门面_图谱缺位时那类如实未接() -> None:
+    """§4.3 那句"四类记忆统一门面"此前两头都是空的：装配点一个 provider 都没给，
+    而 `read_categories()` 在仓里没有任何生产调用方。这里钉住"接上"与"接不上要说什么"。"""
+    from aegis.integrations import build_memory
+
+    knowledge, retrieval = _legs()
+    service, state = build_memory(store=None, retrieval=retrieval, knowledge=knowledge)
+    assert state.detail["categories"] == {"episodic": "connected", "semantic": "connected", "knowledge": "absent"}
+    result = await service.read_categories("泥石流", region_code="540121", hazard_type="debris_flow")
+    assert result["episodic"] == {"connected": True, "items": [{"case_id": "C-1"}], "note": ""}
+    assert result["semantic"]["items"] == [{"doc_id": "D-1"}]
+    assert result["knowledge"]["connected"] is False, "没配图谱就是把内存案例库冒充成图谱命中"
+
+
+@pytest.mark.asyncio
+async def test_配了图谱时知识那一类走图谱而不是案例库() -> None:
+    from aegis.integrations import build_memory
+
+    graphiti = _GraphitiLeg()
+    knowledge, retrieval = _legs()
+    knowledge.primary = graphiti  # type: ignore[attr-defined]
+    service, state = build_memory(store=None, retrieval=retrieval, knowledge=knowledge)
+    assert state.detail["categories"]["knowledge"] == "connected"
+    result = await service.read_categories("冰湖水位")
+    assert result["knowledge"]["items"] == [{"case_id": "G-9"}]
+    assert graphiti.calls and graphiti.calls[0]["query"] == "冰湖水位"
+
+
+@pytest.mark.asyncio
+async def test_适配器不吞过滤条件与预算() -> None:
+    """区域/灾种被丢掉的表现是"跨区经验串进本区预案"，而预算丢了就是 SLA 那格没人守。"""
+    from aegis.integrations import build_memory
+
+    knowledge, retrieval = _legs()
+    service, _ = build_memory(store=None, retrieval=retrieval, knowledge=knowledge)
+    await service.read_categories("泥石流", region_code="540121", hazard_type="debris_flow", limit=2)
+    called = knowledge.calls[0]
+    assert called["region_code"] == "540121" and called["hazard_type"] == "debris_flow" and called["limit"] == 2
+    assert isinstance(called["budget_ms"], float) and called["budget_ms"] > 0
+    query = retrieval.calls[0]
+    assert getattr(query, "region_code", None) == "540121" and getattr(query, "k", None) == 2
