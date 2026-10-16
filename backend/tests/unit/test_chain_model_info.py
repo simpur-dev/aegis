@@ -14,10 +14,10 @@ from __future__ import annotations
 from typing import Any
 
 from aegis.config import Settings
+from aegis.domain.chain import ChainResult, StageResult, model_receipt
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
 from aegis.domain.messages import ModelInfo, TelemetryReading, make_request, now_iso
 from aegis.persistence import rows
-from aegis.pipeline.result import ChainResult, StageResult, model_receipt
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import WorkflowChain
 from conftest import chain_entry

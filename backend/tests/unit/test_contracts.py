@@ -9,7 +9,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
-from aegis.bus.gateway import ContractRegistry
+from aegis.contracts import ContractRegistry
 from aegis.domain.enums import Action, MessageKind
 from aegis.domain.messages import AgentMessage, ModelInfo, StandardizedTaskUnit, make_request
 from aegis.errors import ErrorCode, SchemaInvalidError

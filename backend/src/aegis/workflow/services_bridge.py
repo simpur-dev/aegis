@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, TriggerHit, WarningRecord, make_event, now_iso
-from aegis.services.risk_engine import RiskVerdict
+from aegis.domain.verdict import RiskVerdict
 from aegis.workflow.nodes import WorkflowServices
 
 if TYPE_CHECKING:

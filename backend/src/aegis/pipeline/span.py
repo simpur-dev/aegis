@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from aegis.domain.chain import ChainResult
 from aegis.observability import instrumentation
-from aegis.pipeline.result import ChainResult
 
 
 async def run_under_root(

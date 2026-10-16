@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from aegis.agents.agentkit import AgentKit
 from aegis.agents.mock import MockAgent, start_mock_agents
 from aegis.agents.runtime import build_agent_runtime, resolve_context_face
-from aegis.bus.gateway import AgentGateway, ContractRegistry
+from aegis.bus.gateway import AgentGateway
 from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.registry import AgentRegistry
 from aegis.bus.transport import BusTransport
@@ -25,6 +25,8 @@ from aegis.connectors.base import DataSource, IngestService
 from aegis.connectors.mqtt import MqttSource
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.connectors.weather_api import WeatherApiSource
+from aegis.contracts import ContractRegistry
+from aegis.domain.chain import ChainResult
 from aegis.domain.enums import Channel
 from aegis.domain.messages import TelemetryReading, TriggerHit, now_iso
 from aegis.integrations import (
@@ -50,7 +52,6 @@ from aegis.observability.instrumentation import register_sla_budgets
 from aegis.observability.metrics import MetricsExporter
 from aegis.observability.telemetry import telemetry_status
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.result import ChainResult
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
 from aegis.services.assistant import AssistantActions, AssistantService

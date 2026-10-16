@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from aegis.agents.plan import PlanAgent
-from aegis.bus.gateway import ContractRegistry
 from aegis.config import get_settings
+from aegis.contracts import ContractRegistry
 from aegis.domain.enums import AgentType
 from aegis.domain.messages import make_request
 from aegis.services.model_cards import build_model_cards

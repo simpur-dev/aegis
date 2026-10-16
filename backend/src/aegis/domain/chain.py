@@ -2,8 +2,13 @@
 
 这是**对外口径**（API、前端 `types.ts`、`chain_runs` 落库映射、报表都读它），
 D7 编排归一明确要求"退役 chain 之后这些形状不变"，所以把它单独成模块：
-段实现（`stages.py`）与编排器（`workflow_chain.py`）、工作流节点共用同一份产物定义，
+段实现（`pipeline/stages.py`）与编排器（`pipeline/workflow_chain.py`）、工作流节点共用同一份产物定义，
 谁都不许另立一个"看起来一样"的结果类。
+
+为什么住在 `domain/` 而不是 `pipeline/`：它是纯数据契约，而读它的不止链路——
+`storage`/`persistence` 要按它落台账、`api` 要按它回话。放在 pipeline 里，
+那些下游就得反向 import 应用层（这正是本次搬家要消灭的那四条边）。
+它只依赖 `domain` 自己的枚举、契约镜像与 `verdict.RiskVerdict`，符合"domain 不依赖任何 aegis 包"。
 """
 
 from __future__ import annotations
@@ -12,10 +17,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aegis.domain.messages import AgentMessage, StandardizedTaskUnit, TriggerHit, WarningRecord
-from aegis.services.risk_engine import RiskVerdict
+from aegis.domain.verdict import RiskVerdict
 
 #: 五段的名字与顺序。名字本身是契约：指标样本名由 `f"stage_{name}_ms"` 派生，
-#: 改一个字符串就等于悄悄改了指标准径（见 `integrations.chain_facts`）。
+#: 改一个字符串就等于悄悄改了指标准径（见 `integrations.analytics.chain_facts`）。
 STAGE_ORDER = ("perceive", "assess", "plan", "execute", "feedback")
 
 

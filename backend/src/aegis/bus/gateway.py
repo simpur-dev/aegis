@@ -16,15 +16,13 @@ from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
-
-from jsonschema import Draft202012Validator
 
 from aegis.bus import subjects
 from aegis.bus.naming import consumer_name
 from aegis.bus.registry import AgentRegistry
 from aegis.bus.transport import BusTransport
+from aegis.contracts import ContractRegistry
 from aegis.domain.enums import Action, AgentType, MessageKind, RiskLevel
 from aegis.domain.messages import (
     AgentMessage,
@@ -41,15 +39,12 @@ from aegis.errors import (
     DeadlineExceededError,
     ErrorCode,
     NoCapableAgentError,
-    SchemaInvalidError,
     UnregisteredActionError,
 )
 from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
 
 log = logging.getLogger("aegis.bus.gateway")
-
-_DEFAULT_CONTRACTS_DIR = Path(__file__).resolve().parents[4] / "contracts"
 
 ResultHandler = Callable[[AgentMessage], Awaitable[None]]
 
@@ -76,55 +71,6 @@ class TxnRecord:
             "at": self.at,
             "error_code": self.error_code,
         }
-
-
-class ContractRegistry:
-    """加载并缓存契约 Schema；校验错误只取首要路径，便于回执定位。"""
-
-    def __init__(self, contracts_dir: Path | str | None = None) -> None:
-        root = Path(contracts_dir or _DEFAULT_CONTRACTS_DIR)
-        if not root.is_dir():
-            raise FileNotFoundError(f"契约目录不存在: {root}")
-        self._root = root
-        self._message = _load_validator(root / "agent_message.v1.schema.json")
-        self._stu = _load_validator(root / "stu.v1.schema.json")
-
-    @property
-    def contracts_dir(self) -> Path:
-        return self._root
-
-    def validate_message(self, data: dict[str, Any]) -> None:
-        if error := _first_error(self._message, data):
-            raise SchemaInvalidError(
-                f"消息不合契约: {error.message}",
-                detail={"path": error.json_path, "schema": "agent_message.v1"},
-            )
-
-    def validate_stu(self, data: dict[str, Any]) -> None:
-        if error := _first_error(self._stu, data):
-            raise SchemaInvalidError(
-                f"STU 不合契约: {error.message}",
-                detail={"path": error.json_path, "schema": "stu.v1"},
-            )
-
-    def stu_errors(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """批量校验：返回 [{index, path, error}]，全空即合法。"""
-        found: list[dict[str, Any]] = []
-        for index, item in enumerate(items):
-            if error := _first_error(self._stu, item):
-                found.append({"index": index, "path": error.json_path, "error": error.message})
-        return found
-
-
-def _load_validator(path: Path) -> Draft202012Validator:
-    schema = json.loads(path.read_text(encoding="utf-8"))
-    Draft202012Validator.check_schema(schema)
-    return Draft202012Validator(schema)
-
-
-def _first_error(validator: Draft202012Validator, data: dict[str, Any]) -> Any | None:
-    errors = sorted(validator.iter_errors(data), key=lambda e: e.json_path)
-    return errors[0] if errors else None
 
 
 def _message_payload(message: AgentMessage) -> dict[str, Any]:

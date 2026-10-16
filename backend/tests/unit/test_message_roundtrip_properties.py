@@ -15,8 +15,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
-from aegis.bus.gateway import AegisError, ContractRegistry
+from aegis.bus.gateway import AegisError
 from aegis.bus.transport import decode, encode
+from aegis.contracts import ContractRegistry
 from aegis.domain.enums import RefType
 from aegis.domain.messages import AgentMessage, Ref, make_event
 

@@ -27,7 +27,7 @@ from aegis.domain.messages import (
     make_error,
     make_response,
 )
-from aegis.services.risk_engine import RiskVerdict
+from aegis.domain.verdict import RiskVerdict
 from aegis.services.task_parser import TaskParser
 
 log = logging.getLogger("aegis.agents.mock")

@@ -22,9 +22,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from aegis.bus import subjects
-from aegis.bus.gateway import AgentGateway, ContractRegistry
+from aegis.bus.gateway import AgentGateway
 from aegis.bus.registry import AgentRegistry
 from aegis.config import Settings, get_settings
+from aegis.contracts import ContractRegistry
+from aegis.domain.chain import STAGE_ORDER, ChainResult, StageResult, model_receipt
 from aegis.domain.enums import Action, AgentType, HazardType, RiskLevel
 from aegis.domain.messages import (
     AgentMessage,
@@ -35,14 +37,14 @@ from aegis.domain.messages import (
     make_event,
     now_iso,
 )
+from aegis.domain.verdict import RiskVerdict
 from aegis.errors import AegisError
 from aegis.knowledge.provider import CaseMatch, KnowledgeProvider
 from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.board import ChainBoard
-from aegis.pipeline.result import STAGE_ORDER, ChainResult, StageResult, model_receipt
 from aegis.services.delivery import AllChannelsFailedError, DeliveryDispatcher
-from aegis.services.risk_engine import RiskEngine, RiskVerdict
+from aegis.services.risk_engine import RiskEngine
 from aegis.services.task_parser import TaskParser
 from aegis.services.text_guard import invented_numbers
 from aegis.services.trigger_rules import RuleEngine

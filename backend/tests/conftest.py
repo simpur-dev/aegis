@@ -9,15 +9,16 @@ from typing import Any
 
 import pytest
 
-from aegis.bus.gateway import AgentGateway, ContractRegistry
+from aegis.bus.gateway import AgentGateway
 from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.registry import AgentRegistry
 from aegis.config import Settings, get_settings
 from aegis.container import PlatformContainer, create_container
+from aegis.contracts import ContractRegistry
+from aegis.domain.chain import ChainResult
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, now_iso, utc_now
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.result import ChainResult
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
 from aegis.workflow.engine import WorkflowEngine
@@ -175,7 +176,7 @@ def risk_payload(level: RiskLevel = RiskLevel.ORANGE, **overrides: Any) -> dict[
 
 def sample_verdict(level: RiskLevel = RiskLevel.RED, hazard: HazardType = HazardType.DEBRIS_FLOW) -> Any:
     from aegis.domain.messages import TriggerHit
-    from aegis.services.risk_engine import RiskVerdict
+    from aegis.domain.verdict import RiskVerdict
 
     hits = [
         TriggerHit(rule_id="R-DEBRIS-RAIN-1", hazard_type=hazard.value, region_code=REGION, score=0.9),

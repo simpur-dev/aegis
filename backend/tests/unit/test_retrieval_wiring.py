@@ -21,17 +21,18 @@ import pytest
 from aegis.agents.mock import MockAgent
 from aegis.api.app import create_app
 from aegis.bus import subjects
-from aegis.bus.gateway import AgentGateway, ContractRegistry
+from aegis.bus.gateway import AgentGateway
 from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.registry import AgentRegistry
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
+from aegis.contracts import ContractRegistry
+from aegis.domain.chain import ChainResult
 from aegis.domain.enums import Action, AgentType
 from aegis.domain.messages import AgentMessage
 from aegis.integrations import build_retrieval, warm_retrieval
 from aegis.knowledge.cases import HazardCase, load_builtin_cases
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.result import ChainResult
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import WorkflowChain
 from aegis.retrieval.corpus import CASES_SOURCE, doc_from_case, docs_from_cases

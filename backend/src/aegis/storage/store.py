@@ -13,8 +13,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
+from aegis.domain.chain import ChainResult
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, parse_iso
-from aegis.pipeline.result import ChainResult
 
 T = TypeVar("T")
 

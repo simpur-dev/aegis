@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from aegis.config import Settings, get_settings
 from aegis.domain.enums import Channel, HazardType, RiskLevel
 from aegis.domain.messages import WarningRecord, new_event_id, new_trace_id
+from aegis.domain.verdict import RiskVerdict
 from aegis.observability.tracer import Tracer
-from aegis.services.risk_engine import RiskVerdict
 
 log = logging.getLogger("aegis.services.warning")
 

@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from aegis.domain.chain import ChainResult, StageResult
 from aegis.domain.enums import HazardType, OwnerRole, RiskLevel, TaskType
 from aegis.domain.messages import (
     FallbackMode,
@@ -34,7 +35,6 @@ from aegis.domain.messages import (
 )
 from aegis.persistence.errors import ConnectionFailedError, QueryFailedError, VectorEmbeddingError
 from aegis.persistence.postgres import PostgresStore
-from aegis.pipeline.result import ChainResult, StageResult
 
 DSN = os.getenv("AEGIS_TEST_PG_DSN", "")
 pytestmark = pytest.mark.skipif(not DSN, reason="未设置 AEGIS_TEST_PG_DSN，跳过真实 Postgres 测试")

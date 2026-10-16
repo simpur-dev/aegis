@@ -8,8 +8,8 @@ import json
 import pytest
 from opentelemetry.trace import StatusCode
 
-from aegis.bus.gateway import ContractRegistry
 from aegis.config import Settings
+from aegis.contracts import ContractRegistry
 from aegis.domain.enums import Action, MessageKind
 from aegis.domain.messages import AgentMessage, now_iso
 from aegis.errors import SchemaInvalidError

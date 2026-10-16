@@ -1,9 +1,14 @@
 """架构依赖铁律的守卫（《课题6_项目架构设计》v3.0 §5.2，铁律 3 / 4）。
 
 规则不是愿景：这里用 AST 把源码的 import 与调用事实量出来，违反即红。
-取证基线（2026-10-03，v3.0 编写前对 src/aegis 全量 grep 复核）：
+取证基线（2026-10-03 首次全量 grep 复核；2026-10-16 结构重构 P1 之后重测）：
 
-- ``domain/`` 对 aegis.* 的 import 为 0——domain 是枚举与契约镜像的唯一真源，不依赖任何包；
+- ``domain/`` 对 aegis.* 的 import 为 0（包内互引除外）——它是枚举、契约镜像、定级结论
+  （``verdict.RiskVerdict``）与链路产物（``chain.ChainResult`` 族）的唯一真源；
+- ``storage/ persistence/`` 对 ``aegis.pipeline`` 的 import 为 0（P1 之前有 3 处：
+  ``storage/store.py`` 运行时 + ``persistence/{rows,postgres}.py`` 的 TYPE_CHECKING）；
+- ``services/`` 对 ``aegis.bus`` 的 import 为 0（P1 之前有 2 处，只为拿契约校验器）；
+  校验器现在是顶层 ``aegis/contracts.py``，与 ``errors.py`` 同级；
 - ``bus/ storage/ services/ workflow/ observability/`` 对可选腿包
   （persistence/analytics/knowledge/retrieval/edge/connectors）的 import 为 0；
 - ``pipeline/`` 对可选腿的**模块级** import 只有 ``aegis.knowledge.provider``
@@ -130,3 +135,45 @@ def test_铁律3_腿的构建函数只从装配点调用() -> None:
         "可选腿的 build_* 只能从 container.py / integrations.py / scripts 运维入口（或腿包内部）调用，"
         "散落调用点会让'内核不依赖腿的 I/O'失守:\n" + "\n".join(violations)
     )
+
+
+#: 2026-10-16 结构重构 P1 立下的两条：反向依赖修完就要锁住，否则下一次"顺手 import 一下更方便"
+#: 会把它原样长回来（这两条边在重构前都是真的：storage/persistence 够得着 pipeline，services 够得着 bus）。
+FORBIDDEN_EDGES = {
+    "storage": {"pipeline"},
+    "persistence": {"pipeline"},
+    "services": {"bus"},
+}
+
+
+def test_依赖方向_下游不得反向够上层() -> None:
+    """`storage`/`persistence` 只向下依赖 domain；`services` 不依赖总线。
+
+    修法是搬家而不是加壳：链路产物住在 `domain/chain.py`、契约校验器住在 `aegis/contracts.py`，
+    下游拿到的是同源的纯数据/纯校验，不必再向上 import 应用层模块。
+    """
+    violations = []
+    for pkg, forbidden in sorted(FORBIDDEN_EDGES.items()):
+        for path in _iter_py(SRC / pkg):
+            module_level, deferred = _aegis_imports(_parse(path), pkg)
+            for lineno, mod in sorted(module_level | deferred):
+                if len(mod.split(".")) > 1 and mod.split(".")[1] in forbidden:
+                    violations.append(f"{path.relative_to(SRC)}:{lineno} -> {mod}")
+    assert not violations, (
+        "反向依赖回来了（下游 import 上层）。要拿上游的类型：把纯数据/纯校验下沉到 domain 或顶层 contracts，"
+        "别在这里 import 上层模块:\n" + "\n".join(violations)
+    )
+
+
+def test_契约目录的深度跟着模块位置走() -> None:
+    """`aegis/contracts.py` 里那个 `parents[3]` 是随文件位置算的：再搬一次家就会静默指错目录。
+
+    这里不猜深度，直接问装配出来的目录是不是仓库根那份 `contracts/`（里面有 schema 文件）。
+    """
+    from aegis.contracts import ContractRegistry
+
+    registry = ContractRegistry()
+    assert registry.contracts_dir.name == "contracts", registry.contracts_dir
+    assert registry.contracts_dir.is_dir(), f"契约目录不存在：{registry.contracts_dir}"
+    assert list(registry.contracts_dir.glob("*.schema.json")), f"契约目录里没有 schema：{registry.contracts_dir}"
+    assert (registry.contracts_dir / "agent_message.v1.schema.json").is_file()

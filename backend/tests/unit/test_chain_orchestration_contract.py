@@ -20,9 +20,9 @@ from typing import Any
 import pytest
 
 from aegis.agents.mock import start_mock_agents
+from aegis.domain.chain import STAGE_ORDER, ChainResult
 from aegis.domain.messages import new_event_id, new_trace_id
 from aegis.pipeline.board import ChainBoard
-from aegis.pipeline.result import STAGE_ORDER, ChainResult
 from aegis.pipeline.workflow_chain import STANDARD_CHAIN_TEMPLATE, WorkflowChain
 from conftest import REGION, readings_rain_burst
 

@@ -17,12 +17,12 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from aegis.domain.chain import ChainResult
 from aegis.domain.messages import AgentMessage, TelemetryReading, TriggerHit, WarningRecord, new_event_id, new_trace_id
+from aegis.domain.verdict import RiskVerdict
 from aegis.pipeline.board import ChainBoard, ChainBoards
-from aegis.pipeline.result import ChainResult
 from aegis.pipeline.span import run_under_root
 from aegis.pipeline.stages import HazardStages
-from aegis.services.risk_engine import RiskVerdict
 from aegis.workflow.engine import WorkflowEngine
 
 #: 标准五段模板名（定义在 `workflow/templates.py` 的 `standard_chain_template`）。

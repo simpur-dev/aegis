@@ -1,47 +1,20 @@
 """风险定级引擎：把规则命中折算为统一 1-5 级风险口径（等级数字越小越危险）。
 
 降级路径的唯一事实来源：研判智能体缺位/超时时，平台以此产出可用的定级结论。
+结论本身（`RiskVerdict`）是纯数据，住在 `domain/verdict.py`——这里只留"怎么算出来"的那一半。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime
 
 from aegis.domain.enums import HazardType, RiskLevel
-from aegis.domain.messages import TriggerHit, now_iso
+from aegis.domain.messages import TriggerHit
+from aegis.domain.verdict import RiskVerdict
 from aegis.services.trigger_rules import Rule, RuleEngine
 
 # 佐证数量对置信度的增益上限（单条规则命中不足以给出高置信）
 _CORROBORATION_GAIN = 0.15
-
-
-@dataclass(slots=True)
-class RiskVerdict:
-    hazard_type: HazardType
-    region_code: str
-    risk_level: RiskLevel
-    confidence: float
-    rationale: str
-    hits: list[TriggerHit] = field(default_factory=list)
-    assessed_at: str = field(default_factory=now_iso)
-    assessed_by: str = "platform.risk_engine"
-    #: §3.5 的低置信护栏。此前它只在 `rationale` 那句"（建议人工核签：置信度 …）"里活着，
-    #: 于是全仓只有生产者、没有读者——一个布尔变成一列事实，值班员才可能有一张待办清单。
-    human_review_suggested: bool = False
-
-    def as_payload(self) -> dict[str, object]:
-        return {
-            "hazard_type": self.hazard_type.value,
-            "region_code": self.region_code,
-            "risk_level": int(self.risk_level),
-            "confidence": round(self.confidence, 4),
-            "rationale": self.rationale,
-            "evidence_refs": [e for hit in self.hits for e in hit.evidence_refs],
-            "assessed_at": self.assessed_at,
-            "assessed_by": self.assessed_by,
-            "human_review_suggested": self.human_review_suggested,
-        }
 
 
 class RiskEngine:

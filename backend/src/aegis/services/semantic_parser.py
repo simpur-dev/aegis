@@ -25,8 +25,9 @@ from typing import Any, Protocol
 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, TriggerHit
+from aegis.domain.verdict import RiskVerdict
 from aegis.services.prompt_guard import fence_untrusted
-from aegis.services.risk_engine import RiskEngine, RiskVerdict
+from aegis.services.risk_engine import RiskEngine
 from aegis.services.trigger_rules import RuleEngine
 
 log = logging.getLogger("aegis.services.semantic_parser")

@@ -12,10 +12,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from aegis.domain.chain import STAGE_ORDER, ChainResult, StageResult
 from aegis.domain.messages import TelemetryReading, TriggerHit
+from aegis.domain.verdict import RiskVerdict
 from aegis.errors import AegisError, ErrorCode
-from aegis.pipeline.result import STAGE_ORDER, ChainResult, StageResult
-from aegis.services.risk_engine import RiskVerdict
 
 
 class ChainBoardMissing(AegisError):

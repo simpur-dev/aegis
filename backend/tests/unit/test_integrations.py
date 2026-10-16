@@ -19,6 +19,7 @@ import pytest
 from aegis.analytics.port import AnalyticsSinkError, FactRow
 from aegis.config import Settings
 from aegis.container import create_container
+from aegis.domain.chain import ChainResult, StageResult
 from aegis.domain.messages import TelemetryReading
 from aegis.integrations import (
     AnalyticsRecorder,
@@ -30,7 +31,6 @@ from aegis.integrations import (
     start_store,
     stop_store,
 )
-from aegis.pipeline.result import ChainResult, StageResult
 from aegis.storage.store import PlatformStore
 
 PG_DSN = "postgresql://aegis:sup3rs3cr3t@127.0.0.1:1/aegis"

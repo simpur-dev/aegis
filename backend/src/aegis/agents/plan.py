@@ -18,11 +18,11 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from aegis.agents.agentkit import AgentKit, Reply
-from aegis.bus.gateway import ContractRegistry
+from aegis.contracts import ContractRegistry
 from aegis.domain.enums import Action, HazardType, RiskLevel, TaskType
 from aegis.domain.messages import AgentMessage, ModelInfo, TriggerHit
+from aegis.domain.verdict import RiskVerdict
 from aegis.services.prompt_guard import fence_untrusted
-from aegis.services.risk_engine import RiskVerdict
 from aegis.services.task_parser import TaskParser
 
 _EVENT_ID_RE = re.compile(r"^evt_[0-9a-f]{12}$")

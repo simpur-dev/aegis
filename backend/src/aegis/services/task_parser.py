@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aegis.bus.gateway import ContractRegistry
 from aegis.config import Settings, get_settings
+from aegis.contracts import ContractRegistry
 from aegis.domain.enums import FallbackMode, HazardType, OwnerRole, RefType, RiskLevel, TaskType
 from aegis.domain.messages import DataRef, StandardizedTaskUnit, new_event_id
+from aegis.domain.verdict import RiskVerdict
 from aegis.errors import SchemaInvalidError
-from aegis.services.risk_engine import RiskVerdict
 
 
 @dataclass(frozen=True, slots=True)

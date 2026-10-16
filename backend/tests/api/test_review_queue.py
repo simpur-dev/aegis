@@ -19,11 +19,11 @@ import pytest
 from aegis.api.app import create_app
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
+from aegis.domain.chain import ChainResult, StageResult
 from aegis.domain.enums import HazardType, RiskLevel
-from aegis.pipeline.result import ChainResult, StageResult
+from aegis.domain.verdict import RiskVerdict
 from aegis.pipeline.stages import HazardStages
 from aegis.services.review_queue import case_ids, pending_items
-from aegis.services.risk_engine import RiskVerdict
 
 REGION = "540121"
 PATH = "/api/v1/review/pending"

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from aegis.bus.gateway import ContractRegistry
 from aegis.config import Settings
+from aegis.contracts import ContractRegistry
 from aegis.services.model_cards import build_model_cards
 from aegis.services.prompt_registry import PromptRegistry
 from aegis.services.quality_eval import QualityMetrics, regression_gate, stu_legality_rate

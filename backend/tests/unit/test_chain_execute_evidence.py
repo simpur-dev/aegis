@@ -14,11 +14,11 @@ from typing import Any
 import pytest
 
 from aegis.agents.mock import start_mock_agents
+from aegis.domain.chain import ChainResult
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit, WarningRecord, now_iso
-from aegis.pipeline.result import ChainResult
+from aegis.domain.verdict import RiskVerdict
 from aegis.pipeline.stages import HazardStages
-from aegis.services.risk_engine import RiskVerdict
 
 REGION = "540121"
 

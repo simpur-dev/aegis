@@ -26,9 +26,9 @@ import pytest
 
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
+from aegis.domain.chain import ChainResult
 from aegis.domain.messages import new_event_id
 from aegis.pipeline.board import ChainBoard
-from aegis.pipeline.result import ChainResult
 from aegis.workflow.engine import WorkflowValidationError
 from aegis.workflow.nodes import default_registry
 from conftest import REGION, readings_rain_burst

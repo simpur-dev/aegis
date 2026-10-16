@@ -268,7 +268,7 @@ export interface ReportRiskDto {
   assessed_by: string
 }
 
-/** `ChainResult.as_dict()`（backend `pipeline/result.py`，字段清单以那里为准）。 */
+/** `ChainResult.as_dict()`（backend `domain/chain.py`，字段清单以那里为准）。 */
 export interface ReportChainDto {
   trace_id: string
   event_id: string

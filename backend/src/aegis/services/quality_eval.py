@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from aegis.bus.gateway import ContractRegistry
+from aegis.contracts import ContractRegistry
 
 
 def stu_legality_rate(task_units: list[dict[str, Any]], contracts: ContractRegistry) -> tuple[float, int]:

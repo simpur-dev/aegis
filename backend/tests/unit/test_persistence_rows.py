@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from aegis.domain.chain import ChainResult, StageResult
 from aegis.domain.enums import OwnerRole, RefType, RiskLevel, TaskType
 from aegis.domain.messages import (
     DataRef,
@@ -25,7 +26,6 @@ from aegis.domain.messages import (
 )
 from aegis.persistence import rows
 from aegis.persistence.errors import MappingError
-from aegis.pipeline.result import ChainResult, StageResult
 from aegis.workflow.model import EdgeDef, InstanceStatus, NodeDef, NodeRun, NodeState, RetryPolicy, WorkflowDef, WorkflowInstance
 
 # 与建表列一致（002_schema.sql + 006 增列；不含生成列/默认列），用于 arity 对照断言

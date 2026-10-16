@@ -27,10 +27,11 @@ import nats
 import pytest
 
 from aegis.bus import subjects
-from aegis.bus.gateway import AgentGateway, ContractRegistry
+from aegis.bus.gateway import AgentGateway
 from aegis.bus.nats_bus import _STREAMS, NatsBus  # 删流要照同一份清单来，测试里不抄第二份
 from aegis.bus.registry import AgentRegistry
 from aegis.config import Settings
+from aegis.contracts import ContractRegistry
 from aegis.domain.enums import Action, AgentType, RiskLevel
 from aegis.domain.messages import AgentMessage, CapabilityRegistration, make_response
 from aegis.errors import BusNotReadyError

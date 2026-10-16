@@ -17,9 +17,9 @@ from aegis.api.app import create_app
 from aegis.config import Settings
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.container import PlatformContainer, create_container
+from aegis.domain.chain import ChainResult
 from aegis.domain.messages import new_event_id, utc_now
 from aegis.pipeline.board import ChainBoard
-from aegis.pipeline.result import ChainResult
 from conftest import REGION
 
 BASE = "http://testserver"

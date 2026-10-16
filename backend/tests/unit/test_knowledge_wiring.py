@@ -20,12 +20,14 @@ from aegis import integrations
 from aegis.agents.mock import MockAgent
 from aegis.api.app import create_app
 from aegis.bus import subjects
-from aegis.bus.gateway import AgentGateway, ContractRegistry
+from aegis.bus.gateway import AgentGateway
 from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.registry import AgentRegistry
 from aegis.config import Settings
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.container import PlatformContainer, create_container
+from aegis.contracts import ContractRegistry
+from aegis.domain.chain import ChainResult
 from aegis.domain.enums import Action, AgentType, HazardType
 from aegis.domain.messages import AgentMessage, utc_now
 from aegis.integrations import build_knowledge, close_knowledge, target_of, warm_knowledge
@@ -41,7 +43,6 @@ from aegis.knowledge.provider import (
     SupportsShutdown,
 )
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.result import ChainResult
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import WorkflowChain
 from conftest import REGION, chain_entry, readings_rain_burst

@@ -9,9 +9,10 @@ from datetime import timedelta
 import pytest
 
 from aegis.bus import subjects
-from aegis.bus.gateway import AgentGateway, ContractRegistry, TxnRecord
+from aegis.bus.gateway import AgentGateway, TxnRecord
 from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.registry import AgentRegistry
+from aegis.contracts import ContractRegistry
 from aegis.domain.enums import Action, AgentType, MessageKind, RiskLevel
 from aegis.domain.messages import (
     AgentMessage,

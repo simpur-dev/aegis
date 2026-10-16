@@ -1,4 +1,4 @@
-from aegis.bus.gateway import AgentGateway, ContractRegistry, TxnRecord
+from aegis.bus.gateway import AgentGateway, TxnRecord
 from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.nats_bus import NatsBus
 from aegis.bus.registry import AgentEntry, AgentRegistry
@@ -9,7 +9,6 @@ __all__ = [
     "AgentGateway",
     "AgentRegistry",
     "BusTransport",
-    "ContractRegistry",
     "InMemoryBus",
     "NatsBus",
     "Subscription",
