@@ -2824,6 +2824,60 @@ K 敲 999 被输入框夹回 64，请求体带的是 `scenarios=64, seed=7`，�
 `playbook_comparison` 与概率矩阵用的是声明预案那一档的系数（不逐情景跑角色），与时间线的"票后生效档"在 LLM 档下可以不一致，
 这一点写在模块 docstring 里但页面上没并排说明。
 
+## D7 第 4 步：chain 退役——把"和另一条路径一样"换成"和基线一样"（2026-10-16）
+
+**这一拍删的是那句"双编排路径"**：`pipeline/chain.py`（第三拍后只剩 91 行，D7 立项时实测 859 行）已 `git rm`，
+容器上的 `chain` 这个名字底下就是 `WorkflowChain`（`pipeline/workflow_chain.py`，155 行）。
+形状沿用所以调用点一行没改——6 处：`api/app.py` 的 `/api/v1/drill/run`、`container.py` 的人工上报腿与总线订阅回调与 `process_many`、
+`scripts/drill.py` 与 `scripts/metrics_report.py` 各一处。**"退役不改口径"靠的是这个形状，不是靠承诺**，
+所以它必须被量一遍而不是被说一句。
+
+**护栏换了形式**：parity 用例（10 条，比的是两条路径的差）退役成 `tests/unit/test_chain_orchestration_contract.py`（12 条，比的是**对字面基线的相等**）。
+基线不是手挑的"看着顺眼"的值：2026-10-16 用 `.tmp-verify/dump_chain_baseline.py` 在两条路径都还在的时候各跑一遍、确认投影相等之后，
+取固定顺序那一份的输出逐字段抄进来（三档：规则轨 / 无触发命中 / 替身智能体轨）。
+另把 5 个直构链路的测试文件（`test_chain_model_info` / `test_chain_blind_leg` / `test_knowledge_wiring` / `test_retrieval_wiring` /
+`contract/test_feedback_closed_loop`）改成共用一个 `conftest.chain_entry`——它起**真引擎 + 真标准五段模板**，
+刻意不留"单测专用的简化路径"：留了就等于测试里绕开生产实际走的那张图，图坏了单测仍能绿。
+替身智能体那两行降级（自报通道结果未采信、反馈结论不合契约）原样留在基线里——退役不许把它们"修没"，那才是事故。
+
+**判定力重新量一次：八条变异**（外壳 `.tmp-verify/mutate_chain_retirement.py`，日志 `.tmp-verify/mutation-chain-retirement.log`）
+N1 早退判据反过来红 6 条；N2 汇聚器不给节点 branch 红 5 条；N3 起图失败不收盘红 1 条；N4 无命中不补 skipped 红 1 条；
+N5 节点丢掉段留下的可读原因红 1 条；N6 节点超时与段事务脱钩红 1 条；N7 反馈段时延样本记到别段名下红 2 条；
+N8 `/readyz` 不再报链路占用的资源红 2 条。空转 0 条、还原后残留干净。**其中三条是第一轮在骗人**：
+① N5 原写法"节点丢掉 `NodeOutcome.branch`"整批绿——引擎读的是 `run.output["branch"]`，而 `ChainStations` 早已把同一个值写进段产物，
+`setdefault` 永不生效，那一格是死代码；换成"丢掉段的 note"立刻有反应，并顺出一条更值钱的断言：画布上答"这一段为什么这样"靠的是节点 `notes`，
+所以 `test_实例真的跑完五段` 现在要求 notes 里真的带着"命中 1 条""触达回执已归档"。
+② N7 原写法改的是 `instrumentation.span(...)`（OTel 那一头），而账本样本由 `self._tracer.span("stage_feedback_ms")` 记——锚点落错文件，整批绿是外壳在骗人。
+③ N8 第一次报的是"rc=4 红 0 条"却被判成通过：`-k 'readyz or 盘面'` 被 `split()` 拆成三个参数，pytest 把 `or` 当成路径，
+用法错误的退出码非零，看着就像"改坏了所以红"。判据从此只认 **rc==1 且至少红一条**，其余一律进"外壳坏"清单
+（这是"计数要从产物取、外壳必须自证"那条老规矩第四次应验：`rc≠0` 不是判据，红条数才是）。
+
+**真栈复取证**（`.tmp-verify/real_stack_dag_evidence.py`，NATS JetStream + 一次性 Postgres:5545）：跑一条链路，
+从 `chain_runs` 读回那一行的五段（名/mode/ok/note，id 归一）与 `risk` 五元组，**逐项等于同一份字面基线**——
+脚本按文件加载契约用例取 `BASELINE`，不手抄第二份，否则"跟测试比"这句话就虚了。
+引擎留底里该 trace 的实例 `succeeded`、五个节点全是 `chain_stage`；跑完 `open_boards=0`、`held=1 / capacity=128 / evicted=0`。
+反向对照 `EVIDENCE_NEGATIVE=1`（故意把基线第一段 note 改成"命中 7 条"）当场打印"库=[…] 基线=[…"并退出 1，判据自己先被验了一遍。
+**库里 `workflow_instances` 与 `workflow_node_states` 两张表都是 0 行**（同一晚 `chain_runs` 有 2 行，就是正常那次与反向对照那次）：
+这不是退役带出来的回归，而是 ADR-0003 写明后置的那笔账（`save_workflow_instance` 全仓零调用方 → 任务 #53），
+取证脚本把它的缺失如实打印成一行，而不是让一个已知缺口读成"通过"。
+
+**顺手补掉的外显欠账**：`/readyz` 增加 `chain` 一块（`open_boards` / `traces` / `held` / `capacity` / `evicted`），
+`ChainBoards.snapshot()` 与 `WorkflowEngine.instance_stats` 第一次有了生产读者——上一拍那条"盘面快照只有 parity 用例在读"
+的欠账（写在 `board.py` 注释里等着跟退役一起做）就此收口，注释也改成真读者。两条新用例：一块齐、故意漏收一张盘时当场看得见。
+
+**这一批没证明到的**：① 工作流实例账本仍不落库（#53），所以"这段是第几次 attempt、每个节点多久"只能从进程内留底查，重启即失
+（`workflow_instances` 与 `workflow_node_states` 两张表实测都是 0 行，见上一段）；② DAG 路径的墙钟成本没跟固定顺序比过——退役后没有对照物，也不该为量测再造一条，
+指标口径由"五段 `stage_*_ms` 各 +1、多区域只多一条感知样本"那两条契约用例守住；③ `/readyz` 的 `chain` 一块前端没渲染
+（`client.ts` 的类型接上了，页面上看不见，值班员要自己 curl）；④ 真栈取证只跑规则轨（`agent_runtime=off`、`delivery_mode=mock`），
+`mode=agent` 那两档的真栈形态没有重跑，替身智能体档的证据仍停在装配级。
+
+**门禁**（本机，整棵 `tests/`，含 Postgres 那条腿）：`ruff format --check src tests scripts` / `ruff check` / `mypy src` 全绿，
+`PYTHONHASHSEED=0 uv run pytest -q --junitxml` 由 `scripts/ci_junit_guard.py` 计数 **tests=3127 / skipped=43 / ran=3084 / failures=0 / errors=0**；
+前端 `npm run typecheck` 通过、`npx vitest run` **868 passed / 51 files**、`npm run build` 成功（53.63 s）。
+**取这组数之前作废了一次**：第一遍跑到一半时我改了 `container.py` 的两行注释——仓里有几条守卫是**读源码文本**下判定的
+（时钟守卫 `test_latency_clock_choice.py` 逐文件读源码文本、连 `container.py` 都在清单里，前端 `serviceToken.spec` 扫拦截器装配点），
+边跑边改源码，那份绿就不是这一版的绿，所以杀掉重跑。这类错误记下来是为了下次不当它没有。
+
 
 
 

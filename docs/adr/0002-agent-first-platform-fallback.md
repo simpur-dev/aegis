@@ -2,7 +2,7 @@
 
 - 状态：已采纳
 - 日期：2026-09-29
-- 相关：`pipeline/chain.py`、`services/`
+- 相关：`pipeline/stages.py`（双轨的段实现）、`pipeline/workflow_chain.py`（编排入口；原 `pipeline/chain.py` 已于 2026-10-16 退役）、`services/`
 
 ## 背景
 
