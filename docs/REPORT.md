@@ -2607,4 +2607,61 @@ deadline 那句原样留着），跑出来 rc=0——**变异外壳自己坏了�
 冒烟脚本与用例里那两串（`s3cr3t-token` / `s3cr3t`）是 fixture 值、随代码进仓，不是任何真实凭据——
 真实令牌仍然只走一次性环境变量或 gitignored 的 `.env`，这条口径没因为加了脚本而松动。
 
+## §3.5 后半截接通：阈值建议入账 → 人工确认 → 规则库长出新版本 → 引擎真的装载（2026-10-16）
+
+验收那格写的是"修正建议→确认→落地的闭环留痕演示"。修前的形状：反馈智能体早就产出
+`threshold_suggestion` + `suggestion_status=pending_human_review`，但这两个键只活在这两处——
+`ops.feedback.status` 是瞬时指标，段注里那句"｜建议 pending_human_review"是一段字符串。
+**没有任何地方能回答"现在挂着哪几条、谁确认过、改成了多少"**，所以 §3.5 是"只产不消"。
+
+**数字由人给，不由模型给**（这条是整个设计的支点）。模型交出来的是一条*理由*（≤500 字的文本），
+把它解析成阈值就等于让一次 LLM 输出直接改动判据，而方案明写着"只进建议，落地走人工确认"。
+所以确认端点的载荷是 `rule_id + metric + threshold + decided_by + expected_version`：
+人给数、人署名、人指明"我是对着哪一版看的"。这样也不需要改 prompt，MB-7b 的首过率基线因此不动。
+
+**一笔事务，四步全成或全不成**（`persistence/postgres.py::confirm_threshold_suggestion`）：
+锁建议行 → `FOR UPDATE` 取 active 规则并核对 `expected_version` → 换阈值、退役旧版、插入新版、销账。
+顺序与拒绝理由都写在代码注释里，三条最要紧的：
+- `expected_version` 对不上就 409——不是 400：调用方参数没错，错在"它依据的现场已经不是现场"。
+  没有这一格，一个人可以凭三周前看到的 v2 覆盖掉别人刚改出来的 v5；
+- 指标不在这条规则里就拒（并把可用指标列表回给人）。放过它就等于往判据里塞一条从没有过的条件，
+  而报表上它和"真的调过阈值"长得一模一样；同名指标出现两次也拒——改哪一条不该由数组顺序决定；
+- 台账里的 `before_value / after_value / new_version` 与 `trigger_rules` 的实际行**互相对得上**，
+  这是"留痕"能被第三方复核的那一步；只断"接口回了 200"证不了它。
+
+**库改了而判据没换 = 一个可见的中间态**。确认之后服务层从库重读 active 集合并 `rule_engine.reload(...)`；
+装上与没装上分开报（`engine_loaded` + 一句原因）。顺序不能反：先换引擎再写库，库里那一笔一旦回滚，
+内存已经按新阈值判过级了，就成了"库说 v3、引擎按 v4 出结论"。
+
+**铁律 3 在这一节真的挡了一次**。第一版把行模型建在 `persistence/suggestions.py` 里、服务层去 import 它，
+全量门禁直接红：`services/threshold_suggestions.py -> aegis.persistence.suggestions`——
+产建议的是内核环，存它是可选腿，形状必须住在 `domain`。于是 `ThresholdSuggestion` 落在
+`domain/messages.py`（与 `AgentMemoryRecord` 对 007 的姿势一致），并配一条**列名逐列比对建表语句**的门禁，
+`test_行模型与建表语句逐列对得上`。这条不是装饰：本轮真的靠它发现过一次漂移风险。
+
+**证据分档**（真库那份是这一节的重点）：
+- 装配级（无库也跑）：`tests/api/test_suggestions_api.py` 8 条 + `tests/unit/test_threshold_suggestions.py` 15 条
+  + `tests/contract/test_feedback_closed_loop.py` 新增 2 条（建议真交给台账、没台账时段注说清为什么没入账）；
+- 真 Postgres（本机一次性容器 `aegis-gate-pg`，端口 5545，用完即删）：`tests/integration/test_suggestions_live.py` 10 条全过。
+  本文件只种自己的规则 `R-LIVEGATE-1`、只删自己的 `trace_id`，不 TRUNCATE、不碰内置 9 条种子；
+  整棵 `tests/` 在这台带库的形态下：**tests=3044 / ran=3001 / failures=0 / errors=0 / skipped=43**
+  （不带 DSN 的那一轮是 skipped=85；上一批的基线 3009，涨的 35 条正是本节新增的 15+8+10+2）。
+  `ruff format --check src tests scripts` / `ruff check src tests scripts` / `mypy src` 一起绿；
+- 迁移：`sql/008_threshold_suggestions.sql` 首轮应用后 `store.migrate()` 两次都返回空，
+  `schema_migrations` 台账的有序清单加了一项（那条断言本来就是让人"改动时看得见"的）；
+- 变异 7 条（`backend/.tmp-verify/mutate_suggestion_loop.py`）逐条只红它对应的那条判据：
+  指标不在规则里改成"自己加一条"→ 红 1；已被裁决的建议再裁也收 → 红 1；不看 `expected_version` → 红 1；
+  反馈段不再交台账 → 红 2；效果分缺席折成 0.0 → 红 1；空白建议也收下 → 红 1；缺台账也放行到服务层 → 红 2。
+  外壳自己也被校验过：锚点必须恰好一次、按字节还原、跑完逐文件比对干净。
+  **踩到一次真实的坑**：`domain/messages.py` 是 CRLF 而本轮新文件是 LF，多行锚点写死 `\n` 时 M5a 一次都没打中，
+  表现出来像"这条判据没判定力"——外壳按目标文件真实行尾拼锚之后才红得干净。
+
+**这一批没证明到的事**（不当成已做）：
+真栈 NATS+Postgres 上跑一整条生产链路、由反馈智能体自然产出一条建议再确认——本轮是"测试自己种一条建议"，
+入账那一步在生产链路上的真机演示还没做；`human_review_suggested`（低置信转人工）**仍然只有生产者**，
+那是 §3.5 剩下的另一半（任务 #16）；前端看不见这条清单，值班员目前要用 curl 或接口文档操作；
+并发双确认的锁行为只由真库那条"第二次裁决失败"证明，没做压力形态；规则库 `note` 里追加的
+"被 vN 取代"文案是给人读的，不是可聚合的字段。
+
+
 

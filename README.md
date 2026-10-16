@@ -290,6 +290,10 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
 接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`
 装配事实（哪条腿在跑、哪条腿是瘸的）`http://localhost:8000/api/v1/integrations`——`/dashboard` 页底有同源面板
 告警链路取证口径 `deploy/observability/README.md`
+阈值建议闭环（§3.5 后半截，要 postgres 才有）：`GET /api/v1/feedback/suggestions` 看待确认清单、
+`POST .../{id}/confirm` 由人给出新阈值并长出 `trigger_rules` 新版本（`reviewer`=签字人、`calibration_basis` 回指建议号）、
+`POST .../{id}/reject` 驳回留痕。确认的载荷里**数字由人给**，模型那条只是理由；`expected_version` 防的是
+"凭三周前看到的那一屏覆盖掉别人刚改的判断"。没接 Postgres 时三条一律 503 并说清缺哪条腿。
 MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必需的**（`/mcp` 由框架发 307，是否跟随由客户端决定）；
 开启要两步：装可选依赖 `uv sync --extra dev --extra mcp`（extras 整表替换，已有的要列全）+ `AEGIS_MCP_ENABLED=true`。配了 `AEGIS_SERVICE_TOKEN` 时这一面与数据 API
 共用同一个令牌，`X-Aegis-Token` 与 `Authorization: Bearer` 两种头都认。
