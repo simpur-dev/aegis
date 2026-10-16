@@ -45,12 +45,14 @@ from aegis.persistence.accuracy import (
     MAX_WINDOW_SECONDS,
     accuracy_replay_port,
     check_lead_window,
+    label_lookup_port,
     parse_moment,
 )
 from aegis.persistence.errors import AccuracyArgumentError, QueryArgumentError
 from aegis.persistence.replay import MIN_FIELD_CASES, ReplayDataset, measure
 from aegis.persistence.suggestions import SuggestionArgumentError, SuggestionConflictError
 from aegis.services.calibration import RuleSample, calibration_report, collect_rule_hits
+from aegis.services.review_queue import case_ids, pending_items
 from aegis.services.threshold_suggestions import ThresholdSuggestionService
 from aegis.storage.store import geo_query_port, rule_library_port
 
@@ -737,6 +739,35 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             location=location,
         )
         return {"report": {"reporter": payload.reporter, "region_code": payload.region_code, "location": location}, **outcome}
+
+    @app.get("/api/v1/review/pending", tags=["warning"])
+    async def review_pending(
+        ctn: PlatformContainer = Depends(get_container),
+        limit: int = Query(default=200, ge=1, le=2_000, description="回看多少条链路台账样本"),
+        region_code: str | None = Query(default=None, pattern=r"^[0-9A-Z]{6,24}$"),
+    ) -> dict[str, Any]:
+        """§3.5 低置信护栏的读者：智能体说"这条要人看"，这里就是那张待办清单。
+
+        修前这一格只活在 `rationale` 的一句文本里——文本不能查询、不能计数、不能变成待办，
+        于是护栏报了没人接。现在它是 `chain_runs.risk` 里的一列事实，与台账同源。
+        `already_reviewed` 看的是 D9 那张真表（`warning_truth_labels`，`case_id` 即 `event_id`）：
+        没接标注面时它是 **null**，不是 false——把"查不到"说成"没签过"，值班员会重签一遍已经签过的。
+        """
+        rows = list(ctn.store.chains.latest(int(limit)))
+        items = pending_items(rows, region_code=region_code)
+        port = label_lookup_port(ctn.store)
+        if port is None:
+            return {
+                "count": len(items),
+                "ledger_rows": len(rows),
+                "label_state": "unavailable",
+                "label_state_reason": "当前存储后端不提供真值标注面（内存读视图没有 warning_truth_labels）",
+                "items": items,
+            }
+        signed = await port.labelled_case_ids(case_ids(items))
+        for item in items:
+            item["already_reviewed"] = str(item["event_id"]) in signed
+        return {"count": len(items), "ledger_rows": len(rows), "label_state": "ok", "items": items}
 
     @app.get("/api/v1/warnings", tags=["warning"])
     async def list_warnings(

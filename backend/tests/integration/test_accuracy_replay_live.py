@@ -19,7 +19,8 @@ import pytest
 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import WarningRecord, utc_now
-from aegis.persistence.accuracy import DEFAULT_WINDOW_SECONDS
+from aegis.persistence.accuracy import DEFAULT_WINDOW_SECONDS, MAX_CASE_LOOKUP
+from aegis.persistence.errors import AccuracyArgumentError
 from aegis.persistence.postgres import PostgresStore
 from aegis.persistence.replay import ReplayDataset, measure
 
@@ -256,3 +257,27 @@ class TestReplayHTTPEndpointOnRealDB:
                 await conn.execute("delete from warning_truth_labels where case_id like 'ACC-HTTP-%'")
             await http.aclose()
             await ctn.shutdown()
+
+
+class Test待办清单的已签状态:
+    """§3.5 那张待办清单的 `already_reviewed` 只认真表里真有的那一行——所以它在真库上量。
+
+    内存形态下这一格是 null（端点已经有用例覆盖），真库形态必须能给出真假两值，
+    否则"签没签过"在最常用的那种部署里永远是未知。
+    """
+
+    async def test_只认库里真存在的那个case(self, store: PostgresStore) -> None:
+        moment = utc_now()
+        await store.put_warning_labels([_label(case_id="evt-signed-1", observed_at=moment, truth=True)])
+        signed = await store.labelled_case_ids(["evt-signed-1", "evt-没人签过"])
+        assert signed == {"evt-signed-1"}, signed
+
+    async def test_空入参不下SQL(self, store: PostgresStore) -> None:
+        assert await store.labelled_case_ids([]) == set()
+        assert await store.labelled_case_ids(["", None]) == set(), "空 case_id 不该被送去比对"
+
+    async def test_一次问太多就拒(self, store: PostgresStore) -> None:
+        """清单页拉全库标注比"慢查询"更糟：它把"这一条签过没有"变成一次内存爆炸。"""
+        too_many = [f"evt-{index}" for index in range(MAX_CASE_LOOKUP + 1)]
+        with pytest.raises(AccuracyArgumentError):
+            await store.labelled_case_ids(too_many)

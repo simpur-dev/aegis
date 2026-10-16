@@ -81,6 +81,24 @@ def accuracy_replay_port(store: object) -> SupportsAccuracyReplay | None:
     return store if isinstance(store, SupportsAccuracyReplay) else None
 
 
+#: 待办清单要能说"这一条有没有人已签过真值"：`case_id` 就是链路里的 `event_id`
+#: （`services/label_flywheel.py::label_from_review` 就是这么落库的，两处必须同一口径）。
+LABELLED_QUERY = "SELECT DISTINCT case_id FROM warning_truth_labels WHERE case_id = ANY($1::text[])"
+#: 一次问多少个 case_id：一张待办页不该把整库的标注拉过来比。
+MAX_CASE_LOOKUP = 500
+
+
+@runtime_checkable
+class SupportsLabelLookup(Protocol):
+    """只读的真值标注存在性查询。与回放同一句理由：不在内存里伪造第二套口径。"""
+
+    async def labelled_case_ids(self, case_ids: Sequence[str]) -> set[str]: ...
+
+
+def label_lookup_port(store: object) -> SupportsLabelLookup | None:
+    return store if isinstance(store, SupportsLabelLookup) else None
+
+
 def check_lead_window(seconds: float) -> int:
     """配对窗必须是正的有限秒数且不超上限：0 窗永远配不上，超大窗会把不相干的预警算成命中。"""
     value = float(seconds)

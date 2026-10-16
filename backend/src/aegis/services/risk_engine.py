@@ -26,6 +26,9 @@ class RiskVerdict:
     hits: list[TriggerHit] = field(default_factory=list)
     assessed_at: str = field(default_factory=now_iso)
     assessed_by: str = "platform.risk_engine"
+    #: §3.5 的低置信护栏。此前它只在 `rationale` 那句"（建议人工核签：置信度 …）"里活着，
+    #: 于是全仓只有生产者、没有读者——一个布尔变成一列事实，值班员才可能有一张待办清单。
+    human_review_suggested: bool = False
 
     def as_payload(self) -> dict[str, object]:
         return {
@@ -37,6 +40,7 @@ class RiskVerdict:
             "evidence_refs": [e for hit in self.hits for e in hit.evidence_refs],
             "assessed_at": self.assessed_at,
             "assessed_by": self.assessed_by,
+            "human_review_suggested": self.human_review_suggested,
         }
 
 

@@ -390,6 +390,9 @@ class HazardStages:
             rationale=str(payload.get("rationale", ""))[:1000] or "智能体结论",
             hits=hits,
             assessed_by=str(payload.get("assessed_by", "assess.agent")),
+            # 缺席就是"没转人工"：这一格的语义是智能体自己有没有提出护栏，
+            # 与 §3.2 那个 `disagreement` 的三态不同——那里"没评估"绝不能读成"评估过且一致"。
+            human_review_suggested=bool(payload.get("human_review_suggested", False)),
         )
 
     # ---------- ③ 决策 ----------

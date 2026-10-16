@@ -524,6 +524,23 @@ class PostgresStore:
         async with self.acquire() as conn:
             return await accuracy.put_labels(conn, rows)
 
+    async def labelled_case_ids(self, case_ids: Sequence[str]) -> set[str]:
+        """这批 `case_id` 里哪些已经有人签过真值标注（待办清单据此说"已消解"）。
+
+        空入参直接回空集，不下 SQL：`= ANY('{}')` 需要显式类型注解，为一条不会发生的路径
+        写特例不如把短路放在这里。超过 `MAX_CASE_LOOKUP` 也拒绝——清单页拉全库标注
+        比慢查询更糟，它会把"这一条签过没有"变成一次内存爆炸。
+        """
+        ids = [str(case_id) for case_id in case_ids if case_id is not None and str(case_id)]
+        if not ids:
+            return set()
+        if len(ids) > accuracy.MAX_CASE_LOOKUP:
+            raise accuracy.AccuracyArgumentError(f"一次最多查 {accuracy.MAX_CASE_LOOKUP} 个 case_id", detail={"requested": len(ids)})
+        await self.connect()
+        async with self.acquire() as conn:
+            rows = await conn.fetch(accuracy.LABELLED_QUERY, ids)
+            return {str(row["case_id"]) for row in rows}
+
     async def accuracy_replay_cases(
         self,
         *,
