@@ -289,6 +289,8 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
 
 接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`
 装配事实（哪条腿在跑、哪条腿是瘸的）`http://localhost:8000/api/v1/integrations`——`/dashboard` 页底有同源面板
+四类记忆门面的读出口 `http://localhost:8000/api/v1/memory/categories?q=`（每类分开说"这条腿没接"与"接了但没命中"；
+`memory` 那一行的 `detail.categories` 是不查询就能看见的接没接）
 告警链路取证口径 `deploy/observability/README.md`
 阈值建议闭环（§3.5 后半截，要 postgres 才有）：`GET /api/v1/feedback/suggestions` 看待确认清单、
 `POST .../{id}/confirm` 由人给出新阈值并长出 `trigger_rules` 新版本（`reviewer`=签字人、`calibration_basis` 回指建议号）、
