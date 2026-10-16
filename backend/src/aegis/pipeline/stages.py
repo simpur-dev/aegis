@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway, ContractRegistry
@@ -92,6 +92,24 @@ class _AssessOutcome:
         return f"；{head}（{label}）"
 
 
+class SuggestionSink(Protocol):
+    """反馈段把"待人工确认的阈值建议"交给谁——由装配点注入，内核不认识持久层。
+
+    返回一句**状态**而不是布尔："没这张表"、"台账自己拒了"、"库里写不进去"是三件不同的事，
+    压成一个 False 就等于把降级藏进返回值里（铁律 7：降级要看得见）。
+    """
+
+    async def record(
+        self,
+        *,
+        trace_id: str,
+        attribution: dict[str, Any],
+        warning_id: str = "",
+        region_code: str = "",
+        hazard_type: str = "",
+    ) -> str: ...
+
+
 class HazardStages:
     """五段的执行体：每段自己写自己的账，交给编排器的就是那条 `StageResult`。"""
 
@@ -111,6 +129,7 @@ class HazardStages:
         agent_hit_window: int = 512,
         knowledge: KnowledgeProvider | None = None,
         retrieval: HybridRetrievalService | None = None,
+        suggestions: SuggestionSink | None = None,
     ) -> None:
         self._gateway = gateway
         self._registry = registry
@@ -126,6 +145,7 @@ class HazardStages:
         self._warnings: dict[str, WarningRecord] = {}
         self._knowledge = knowledge
         self._retrieval = retrieval
+        self._suggestions = suggestions
 
     @property
     def settings(self) -> Settings:
@@ -695,7 +715,7 @@ class HazardStages:
         """
         async with instrumentation.span("stage_feedback_ms", trace_id=trace) as span:
             with self._tracer.span("stage_feedback_ms", trace_id=trace) as sp:
-                attribution = await self._feedback(result.warning, trace, result)
+                attribution, suggestion_ledger = await self._feedback(result.warning, trace, result)
             instrumentation.set_attributes(span, span_attrs={"aegis.reach_expected": result.warning is not None})
         return StageResult(
             "feedback",
@@ -703,22 +723,27 @@ class HazardStages:
             True,
             sp.finished_ms or 0.0,
             # 归因结论要点进台账：`chain_runs.stages` 是事后唯一还能查到的地方
-            self._feedback_note(attribution),
+            self._feedback_note(attribution, suggestion_ledger),
             model_info=result.stage_models.get("feedback"),
         )
 
     @staticmethod
-    def _feedback_note(attribution: dict[str, Any] | None) -> str:
+    def _feedback_note(attribution: dict[str, Any] | None, suggestion_ledger: str = "none") -> str:
         if attribution is None:
             return "触达回执已归档"
-        return (
+        head = (
             f"触达回执已归档｜效果分 {attribution['effect_score']:.3f}"
             f"｜归因腿 {attribution['decided_by']}｜建议 {attribution['suggestion_status']}"
         )
+        if attribution["suggestion_status"] != "pending_human_review":
+            return head
+        # 建议"挂着待谁确认"必须能说出口：只在 ops 瞬时指标里过一遍，值班员下次看见它就没了
+        return f"{head}｜建议入账 {suggestion_ledger}"
 
-    async def _feedback(self, record: WarningRecord | None, trace: str, result: ChainResult) -> dict[str, Any] | None:
+    async def _feedback(self, record: WarningRecord | None, trace: str, result: ChainResult) -> tuple[dict[str, Any] | None, str]:
+        """归因结论 + 一句"这条建议入账了没有"。第二个返回值进段注，不进取证载荷。"""
         if record is None:
-            return None
+            return None, "none"
         deliveries = record.deliveries
         delivered = sum(1 for d in deliveries if d.status in ("delivered", "retried"))
         failed = sum(1 for d in deliveries if d.status == "failed")
@@ -777,7 +802,26 @@ class HazardStages:
             payload=payload,
         )
         await self._gateway.publish_to(subjects.ops("feedback", "status"), event)
-        return attribution
+        return attribution, await self._record_suggestion(attribution, record, trace)
+
+    async def _record_suggestion(self, attribution: dict[str, Any] | None, record: WarningRecord, trace: str) -> str:
+        """把"待人工确认"的阈值建议交给台账；没这条腿、或台账自己不收，都要能说出是哪一种。
+
+        放在发布事件**之后**：入账失败不许拖走已经归好因的 ops 事件——那条是 §3.5 的凭据，
+        而这一笔只是让它可被消解。`attribution is None`（降级轨没有归因）也算"没有建议可入账"，
+        不是错误。
+        """
+        if attribution is None or attribution["suggestion_status"] != "pending_human_review":
+            return "none"
+        if self._suggestions is None:
+            return "skipped_no_sink"
+        return await self._suggestions.record(
+            trace_id=trace,
+            attribution=attribution,
+            warning_id=record.warning_id,
+            region_code=record.region_codes[0] if record.region_codes else "",
+            hazard_type=record.hazard_type,
+        )
 
     @staticmethod
     def _parse_agent_feedback(payload: dict[str, Any]) -> dict[str, Any] | None:

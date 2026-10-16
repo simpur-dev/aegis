@@ -150,6 +150,7 @@ class TestMigrations:
             "005_trigger_rules.sql",
             "006_warning_audience_copies.sql",
             "007_agent_memory.sql",
+            "008_threshold_suggestions.sql",
         ]
 
 

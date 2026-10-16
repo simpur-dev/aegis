@@ -68,6 +68,7 @@ from aegis.services.memory import MemoryService
 from aegis.services.risk_engine import RiskEngine
 from aegis.services.semantic_parser import DisasterTextParser, EvidenceNote, ParsedDisaster
 from aegis.services.task_parser import TaskParser
+from aegis.services.threshold_suggestions import ThresholdSuggestionService
 from aegis.services.trigger_rules import RuleEngine, rulebook_from_rows
 from aegis.services.warning_service import WarningService
 from aegis.storage.store import StoreProtocol, rule_library_port
@@ -334,6 +335,9 @@ class PlatformContainer:
     assistant: AssistantService | None = None
     #: 数据飞轮（D9）：人工核签 → `warning_truth_labels` 的投递面；存储没有标注面时如实"未沉淀"
     labels: LabelFlywheel | None = None
+    #: 阈值建议闭环（§3.5 后半截）：入账 → 人工确认 → `trigger_rules` 新版本 → 引擎装载。
+    #: 装配点自建，所以它总在；`available` 为假时端点如实 503，不假装收下过建议。
+    suggestions: ThresholdSuggestionService | None = None
     delivery_client: Any | None = None
     _owns_delivery_client: bool = False
     #: 人工上报这条腿的账：受理数、阈值命中所得数、转人工核签数。
@@ -913,6 +917,8 @@ def create_container(
         settings=cfg,
         translator=gateway_llm.translate if gateway_llm is not None and gateway_llm.available else None,
     )
+    # 阈值建议闭环要在链路之前建好：反馈段拿它当入账口，端点拿它当唯一读写面。
+    suggestions = ThresholdSuggestionService(store=store, rule_engine=rule_engine)
     chain = HazardResponseChain(
         HazardStages(
             gateway=gateway,
@@ -927,6 +933,7 @@ def create_container(
             dispatcher=dispatcher,
             knowledge=knowledge,
             retrieval=retrieval,
+            suggestions=suggestions,
         ),
         on_result=on_result,
     )
@@ -997,6 +1004,7 @@ def create_container(
         weather_state=weather_state,
         outbound=outbound,
         labels=LabelFlywheel(store),
+        suggestions=suggestions,
         simulator=simulator,
         parser=parser,
         llm_gateway=gateway_llm,

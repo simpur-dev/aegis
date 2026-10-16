@@ -556,6 +556,87 @@ class PostgresStore:
         async with self.acquire() as conn:
             return await rulebook.fetch_rules(conn, status=status, hazard_type=hazard_type, limit=limit)
 
+    async def put_threshold_suggestion(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """阈值建议入账，并**从库里读回**那一行（写进去的形状由库说了算）。"""
+        from aegis.persistence import suggestions
+
+        await self.connect()
+        async with self.acquire() as conn:
+            return await suggestions.put_suggestion(conn, row)
+
+    async def threshold_suggestions(self, *, status: str = "pending_human_review", limit: int = 100) -> list[dict[str, Any]]:
+        from aegis.persistence import suggestions
+
+        await self.connect()
+        async with self.acquire() as conn:
+            return await suggestions.fetch_suggestions(conn, status=status, limit=limit)
+
+    async def reject_threshold_suggestion(self, *, suggestion_id: str, decided_by: str, note: str = "") -> dict[str, Any]:
+        """驳回也是留痕的一种：写明谁驳的、为什么，而不是把那一行从待确认清单里抹掉。"""
+        from aegis.persistence import suggestions
+
+        await self.connect()
+        async with self.acquire() as conn, conn.transaction():
+            await suggestions.require_pending(conn, suggestion_id)
+            sql, params = suggestions.build_reject(suggestion_id=suggestion_id, decided_by=decided_by, note=note)
+            decided = await suggestions.execute_decide(conn, sql, params, suggestion_id=suggestion_id)
+            if decided is None:
+                raise suggestions.SuggestionConflictError("驳回没有生效：这条建议已不是待确认状态", detail={"suggestion_id": suggestion_id})
+            return decided
+
+    async def confirm_threshold_suggestion(
+        self,
+        *,
+        suggestion_id: str,
+        rule_id: str,
+        metric: str,
+        threshold: float,
+        decided_by: str,
+        note: str = "",
+        expected_version: int,
+    ) -> dict[str, Any]:
+        """人工确认 → 规则库新版本，与建议销账在**同一个事务**里（§3.5 后半截的落点）。
+
+        事务顺序不是随手排的：先锁建议行（并发确认时后一个必须看见前一个改过的状态），
+        再 `FOR UPDATE` 取当前 active 的规则行并按 `expected_version` 核对——
+        核对不上就说明"提交者看到的现场"已经不是现场了，宁可拒绝这一票，
+        也不能让一个人凭三周前看到的 v2 把别人刚改出来的 v5 覆盖掉。
+        换阈值、退役旧版、插入新版、销账四步全成或全不成。
+        """
+        from aegis.persistence import suggestions
+
+        signer = suggestions.check_signer(decided_by)
+        await self.connect()
+        async with self.acquire() as conn, conn.transaction():
+            await suggestions.require_pending(conn, suggestion_id)
+            active = await conn.fetchrow(suggestions.LOCK_ACTIVE_RULE, rule_id)
+            if active is None:
+                raise suggestions.SuggestionArgumentError(
+                    f"规则 {rule_id} 没有生效版本：确认要写新版本，得先有当前生效的那一版", detail={"rule_id": rule_id}
+                )
+            if int(active["version"]) != int(expected_version):
+                raise suggestions.SuggestionConflictError(
+                    f"当前生效的是 v{active['version']}，不是提交时看到的 v{expected_version}：请重新对照后再确认",
+                    detail={"rule_id": rule_id, "actual_version": int(active["version"])},
+                )
+            conditions = suggestions.parse_conditions(active["conditions"])
+            new_conditions, before = suggestions.apply_threshold(conditions, metric=metric, threshold=threshold)
+            statements = suggestions.build_decide_statements(
+                suggestion_id=suggestion_id,
+                decided_by=signer,
+                note=note,
+                active=dict(active),
+                new_conditions=new_conditions,
+                before=before,
+                threshold=float(threshold),
+            )
+            for sql, params in statements:
+                await conn.execute(sql, *params)
+            decided = await suggestions.fetch_one(conn, suggestion_id)
+            if decided is None:
+                raise suggestions.SuggestionConflictError("确认后读不回这条建议", detail={"suggestion_id": suggestion_id})
+            return decided
+
     async def list_stations(self, *, region_code: str | None = None, limit: int = 500) -> list[dict[str, object]]:
         """站点清单：维表行（有名称与坐标）优先，再用"报过数但不在维表"的站点补齐。
 

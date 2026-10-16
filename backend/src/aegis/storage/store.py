@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
@@ -382,6 +382,38 @@ class SupportsRuleLibrary(Protocol):
 
 def rule_library_port(store: object) -> SupportsRuleLibrary | None:
     return store if isinstance(store, SupportsRuleLibrary) else None
+
+
+@runtime_checkable
+class SupportsThresholdSuggestions(Protocol):
+    """阈值建议台账（§3.5 后半截）的可选能力面：入账、读清单、确认落地、驳回。
+
+    同样不进 `StoreProtocol`——理由与规则库那一面相同：内存读视图里"确认之后写一个新版本"
+    没有对应的事实可写。让内存实现假装收下建议，表现就是值班员按了确认、台账上写着已确认，
+    而判据一个字都没变。缺这条能力时端点如实 503。
+    """
+
+    async def put_threshold_suggestion(self, row: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    async def threshold_suggestions(self, *, status: str = "pending_human_review", limit: int = 100) -> list[dict[str, Any]]: ...
+
+    async def confirm_threshold_suggestion(
+        self,
+        *,
+        suggestion_id: str,
+        rule_id: str,
+        metric: str,
+        threshold: float,
+        decided_by: str,
+        note: str = "",
+        expected_version: int,
+    ) -> dict[str, Any]: ...
+
+    async def reject_threshold_suggestion(self, *, suggestion_id: str, decided_by: str, note: str = "") -> dict[str, Any]: ...
+
+
+def suggestion_ledger_port(store: object) -> SupportsThresholdSuggestions | None:
+    return store if isinstance(store, SupportsThresholdSuggestions) else None
 
 
 def _to_iso(moment: datetime | str | None) -> str | None:

@@ -120,7 +120,7 @@ def _feedback_agent(bus: InMemoryBus, *, llm: Any, memory: Any, agent_cls: Any =
     )
 
 
-def _chain(gateway: Any, registry: Any, contracts: Any, settings: Settings) -> HazardResponseChain:
+def _chain(gateway: Any, registry: Any, contracts: Any, settings: Settings, suggestions: Any = None) -> HazardResponseChain:
     return HazardResponseChain(
         HazardStages(
             gateway=gateway,
@@ -131,8 +131,21 @@ def _chain(gateway: Any, registry: Any, contracts: Any, settings: Settings) -> H
                 {Channel.SMS: MockChannelAdapter(name=Channel.SMS, latency_ms=1.0, receipt_latency_ms=1.0)},
                 Tracer(),
             ),
+            suggestions=suggestions,
         )
     )
+
+
+class _RecordingSink:
+    """假台账：收下建议并回一句状态，同时把收到的载荷留着让人断言。"""
+
+    def __init__(self, *, answer: str = "stored:sug_aaaabbbbcccc") -> None:
+        self.answer = answer
+        self.seen: list[dict[str, Any]] = []
+
+    async def record(self, **kw: Any) -> str:
+        self.seen.append(kw)
+        return self.answer
 
 
 async def _quiesce(bus: InMemoryBus) -> None:
@@ -190,6 +203,51 @@ class TestFeedbackClosedLoop:
         finally:
             await agent.stop()
             await gateway.close()
+
+    async def test_待确认建议经装配口入账且段注说清入账状态(
+        self, bus: InMemoryBus, gateway: Any, registry: Any, contracts: Any, settings: Settings
+    ) -> None:
+        """§3.5 后半截的前半段：建议不能只活在段注那句字符串里，得有个地方待着等人消。
+
+        这里断的是**装配口被真调用**与**载荷齐了**（trace / warning_id / 区域 / 效果分），
+        至于台账里那一行到底写没写进去，是 `tests/integration/test_suggestions_live.py` 在真库上量的。
+        """
+        sink = _RecordingSink()
+        agent = _feedback_agent(bus, llm=AttributionLLM(), memory=None)
+        await _bring_up(bus, gateway, agent)
+        try:
+            result = await _chain(gateway, registry, contracts, settings, suggestions=sink).process(
+                [_reading()], region_code=REGION, preset_hits=[_hit()]
+            )
+        finally:
+            await agent.stop()
+            await gateway.close()
+        stage = result.stage("feedback")
+        assert stage is not None and "建议入账 stored:sug_aaaabbbbcccc" in stage.note, stage.note
+        assert len(sink.seen) == 1, sink.seen
+        sent = sink.seen[0]
+        assert sent["trace_id"] and sent["warning_id"] == result.warning.warning_id
+        assert sent["region_code"] == REGION and sent["hazard_type"]
+        # `sent["attribution"]` 是归因那一整包，里层的 `attribution` 才是正文文本
+        body = sent["attribution"]
+        assert body["attribution"], "入账要带归因正文：只有一条建议文本，人无法判断该不该确认"
+        assert 0.0 <= body["effect_score"] <= 1.0
+        assert body["threshold_suggestion"], "入账的就是那条建议文本，不能只带个状态串"
+
+    async def test_没装配台账这条腿时段注要说明为什么没入账(
+        self, bus: InMemoryBus, gateway: Any, registry: Any, contracts: Any, settings: Settings
+    ) -> None:
+        """`store_backend=memory` 的现场也必须能一句话看懂"建议没地方去"，而不是静默丢掉。"""
+        agent = _feedback_agent(bus, llm=AttributionLLM(), memory=None)
+        await _bring_up(bus, gateway, agent)
+        try:
+            result = await _chain(gateway, registry, contracts, settings).process([_reading()], region_code=REGION, preset_hits=[_hit()])
+        finally:
+            await agent.stop()
+            await gateway.close()
+        stage = result.stage("feedback")
+        assert stage is not None and "建议入账 skipped_no_sink" in stage.note, stage.note
+        assert "建议入账 none" not in stage.note, "有 pending 建议却报 none 是假事实"
 
     async def test_反馈智能体不在册时段仍为本地且无人被派发(
         self, bus: InMemoryBus, gateway: Any, registry: Any, contracts: Any, settings: Settings

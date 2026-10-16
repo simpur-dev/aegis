@@ -388,6 +388,49 @@ def new_memory_record_id() -> str:
     return "mem_" + secrets.token_hex(8)
 
 
+def new_suggestion_id() -> str:
+    return "sug_" + secrets.token_hex(6)
+
+
+class ThresholdSuggestion(BaseModel):
+    """一条待人工确认的阈值建议。字段与 `sql/008_threshold_suggestions.sql` 逐列对应。
+
+    为什么这个形状住在 domain 而不是 persistence（铁律 3）：产它的是反馈段（内核环），
+    存它的是可选腿。把行形状放在腿里，内核就得 import 那条腿——"没接 Postgres 的形态"
+    会因为一个数据结构而起不来，那不是腿的能力，是耦合。
+
+    `effect_score` 允许 None：**缺席与 0 分是两件事**。0 分是一个结论（完全没效果），
+    None 是一个事实（没测到）。把它折成 0 等于替现场报出一个没发生过的判断。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    suggestion_id: str = Field(min_length=4, max_length=64)
+    trace_id: str = Field(min_length=4, max_length=64)
+    warning_id: str = Field(default="", max_length=64)
+    region_code: str = Field(default="", max_length=24)
+    hazard_type: str = Field(default="", max_length=32)
+    suggestion: str = Field(min_length=1, max_length=500, pattern=r"\S")
+    attribution: str = Field(default="", max_length=500)
+    lag_stage: str = Field(default="", max_length=120)
+    effect_score: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    def as_row(self) -> dict[str, object]:
+        """给持久层的行值（字段名与 SQL 列同名；裁决侧的格子由库侧默认，不在这里编）。"""
+        return {
+            "suggestion_id": self.suggestion_id,
+            "trace_id": self.trace_id,
+            "warning_id": self.warning_id,
+            "region_code": self.region_code,
+            "hazard_type": self.hazard_type,
+            "suggestion": self.suggestion,
+            "attribution": self.attribution,
+            "lag_stage": self.lag_stage,
+            "effect_score": self.effect_score,
+            "status": "pending_human_review",
+        }
+
+
 class AgentMemoryRecord(BaseModel):
     """共享命名空间里的一条记忆。字段即 §4.3 定义的群体认知实体，与 `007_agent_memory.sql` 逐列对应。"""
 
