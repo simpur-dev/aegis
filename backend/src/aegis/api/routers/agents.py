@@ -32,8 +32,8 @@ def build_router() -> APIRouter:
 
     @router.get("/api/v1/agents/model-cards", tags=["agent"])
     async def model_cards(ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
-        from aegis.services.model_cards import build_model_cards
-        from aegis.services.prompt_registry import PromptRegistry
+        from aegis.services.llm.model_cards import build_model_cards
+        from aegis.services.llm.prompt_registry import PromptRegistry
 
         cards = build_model_cards(ctn.settings, PromptRegistry.builtin())
         return {

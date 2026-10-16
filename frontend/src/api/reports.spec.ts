@@ -3,7 +3,7 @@
  *
  * 手法与 `components/map/api.spec.ts` 一致（注入 axios 桩适配器，全程离线）。
  * 另外把 `ParseLeg` 的取值集合钉在后端源上：三路融合的腿名是解析器的对外语义
- * （`services/semantic_parser.py` 的 `LEG_*` 常量），前端抄一份改名的清单就等于把
+ * （`services/interpret/semantic_parser.py` 的 `LEG_*` 常量），前端抄一份改名的清单就等于把
  * "等级从哪一路来"这件事又翻译了一次。
  */
 
@@ -51,7 +51,7 @@ function clientWith(handler: (config: AxiosRequestConfig) => { status: number; d
 
 /** 从装配面源码里解析三路融合的腿名集合：真源在后端，不在这里抄。 */
 function backendLegNames(): string[] {
-  const text = readRepoFile('backend', 'src', 'aegis', 'services', 'semantic_parser.py')
+  const text = readRepoFile('backend', 'src', 'aegis', 'services', 'interpret', 'semantic_parser.py')
   const declared = [...text.matchAll(/^LEG_[A-Z_]+ = "([a-z_]+)"$/gm)].map((match) => match[1] as string)
   if (declared.length === 0) {
     throw new Error('semantic_parser.py 里一个 LEG_ 常量都没解析到：写法变了，门禁得跟着改（不是把断言删掉）')

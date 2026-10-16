@@ -28,7 +28,7 @@ def typed(agents: Any) -> set[str]:
 
 
 async def test_real内环拿到的是容器那一份共享记忆门面(settings: Any) -> None:
-    """§4.3 的闭环靠的就是这一行注入：装配点漏了 `memory=`，`services/memory.py` 写得再全
+    """§4.3 的闭环靠的就是这一行注入：装配点漏了 `memory=`，`services/memory/memory.py` 写得再全
     也只是死代码——assess 的读写腿与 feedback 的教训写入全部走 `if self.memory is not None`，
     于是"共享记忆"这句话只在测试里成立（2026-10-12 对盘实测就是这个状态）。"""
     container = await boot(settings.model_copy(update={"agent_runtime": "real"}))

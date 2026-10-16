@@ -9,7 +9,7 @@ from aegis.domain.enums import Channel, HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit
 from aegis.domain.verdict import RiskVerdict
 from aegis.observability.tracer import Tracer
-from aegis.services.warning_service import AUDIENCE_MATRIX, CHANNEL_MATRIX, WarningService
+from aegis.services.response.warning_service import AUDIENCE_MATRIX, CHANNEL_MATRIX, WarningService
 
 REGION = "540121"
 

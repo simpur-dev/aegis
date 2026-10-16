@@ -28,9 +28,9 @@ from pydantic import BaseModel, Field
 from aegis.config import Settings, get_settings
 from aegis.domain.enums import HazardType
 from aegis.observability.tracer import Tracer
-from aegis.services.semantic_parser import DisasterTextParser, detect_hazard, extract_region
-from aegis.services.task_parser import PLAYBOOKS
-from aegis.services.text_guard import number_tokens
+from aegis.services.interpret.semantic_parser import DisasterTextParser, detect_hazard, extract_region
+from aegis.services.interpret.text_guard import number_tokens
+from aegis.services.response.task_parser import PLAYBOOKS
 
 _MAX_SESSIONS = 200
 _MAX_TURNS = 20

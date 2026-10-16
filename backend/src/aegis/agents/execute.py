@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from aegis.agents.agentkit import AgentKit, Reply
 from aegis.domain.messages import AgentMessage, ModelInfo
-from aegis.services.text_guard import invented_numbers
+from aegis.services.interpret.text_guard import invented_numbers
 
 ROLES = ("decision_lead", "responder", "residents")
 ROLE_CN = {"decision_lead": "决策领导", "responder": "救援队", "residents": "民众"}

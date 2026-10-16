@@ -16,7 +16,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from aegis.services.trigger_rules import Rule
+from aegis.services.rules.trigger_rules import Rule
 
 #: 一条规则至少要有这么多"真值 + 命中"的对照样本，才允许对它下误报结论。
 MIN_RULE_SAMPLES = 3

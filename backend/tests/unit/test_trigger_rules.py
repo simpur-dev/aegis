@@ -9,7 +9,7 @@ import pytest
 
 from aegis.domain.enums import HazardType
 from aegis.domain.messages import TelemetryReading
-from aegis.services.trigger_rules import (
+from aegis.services.rules.trigger_rules import (
     AGGREGATIONS,
     Condition,
     Rule,

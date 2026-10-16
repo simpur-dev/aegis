@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from aegis.domain.messages import now_iso
-from aegis.services.memory import AgentMemoryRecord, InMemoryAgentMemory, MemoryService, new_memory_record_id
+from aegis.services.memory.memory import AgentMemoryRecord, InMemoryAgentMemory, MemoryService, new_memory_record_id
 
 
 async def _mem(mem: InMemoryAgentMemory, kind: str, content: str, *, region: str | None = "540121", agent: str = "assess.x") -> str:

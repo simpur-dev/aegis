@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
 from aegis.domain.messages import new_trace_id
-from aegis.services.label_flywheel import CAPTURE_MARKER
+from aegis.services.memory.label_flywheel import CAPTURE_MARKER
 from aegis.workflow.engine import WorkflowEngine, WorkflowValidationError
 from aegis.workflow.model import RetryPolicy
 

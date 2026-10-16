@@ -20,7 +20,7 @@ from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.container import create_container
 from aegis.domain.enums import Action, AgentType
 from aegis.domain.messages import TelemetryReading, make_event, new_trace_id, utc_now
-from aegis.services.trigger_rules import RuleEngine
+from aegis.services.rules.trigger_rules import RuleEngine
 
 TRACE = "trc_" + "8" * 16
 

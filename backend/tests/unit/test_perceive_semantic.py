@@ -15,7 +15,7 @@ from aegis.agents.factory import build_real_agents
 from aegis.agents.perceive import PerceiveAgent, SemanticParser, StationAnomaly
 from aegis.domain.enums import AgentType, HazardType
 from aegis.domain.messages import TriggerHit, make_request, now_iso
-from aegis.services.semantic_parser import DisasterTextParser
+from aegis.services.interpret.semantic_parser import DisasterTextParser
 
 REGION = "540121"
 

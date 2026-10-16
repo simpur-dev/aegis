@@ -36,8 +36,8 @@ from aegis.config import LlmModelRoute, Settings, get_settings
 from aegis.domain.messages import now_iso
 from aegis.errors import AegisError, ErrorCode
 from aegis.observability.tracer import Tracer, percentile
-from aegis.services.prompt_registry import PromptRegistry
-from aegis.services.quality_eval import structured_first_pass_rate
+from aegis.services.llm.prompt_registry import PromptRegistry
+from aegis.services.llm.quality_eval import structured_first_pass_rate
 
 log = logging.getLogger("aegis.services.llm")
 

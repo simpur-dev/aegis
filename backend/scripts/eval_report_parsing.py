@@ -6,7 +6,7 @@
     uv run python -m scripts.eval_report_parsing --with-llm      # 接上 LLM 裁决腿（需 AEGIS_LLM_API_KEY）
     uv run python -m scripts.eval_report_parsing --json out.json # 落盘给 REPORT 引用
 
-口径写在 `aegis.services.parsing_eval`（测试也调它）：本脚本只负责取数据集、打印、退出码，
+口径写在 `aegis.services.llm.parsing_eval`（测试也调它）：本脚本只负责取数据集、打印、退出码，
 不在这里再算一遍准确率——两份算式迟早对不上账。
 """
 
@@ -19,8 +19,8 @@ import sys
 from pathlib import Path
 
 from aegis.config import get_settings
-from aegis.services.llm_gateway import build_gateway_if_configured
-from aegis.services.parsing_eval import MIN_CASES, evaluate, load_dataset
+from aegis.services.llm.llm_gateway import build_gateway_if_configured
+from aegis.services.llm.parsing_eval import MIN_CASES, evaluate, load_dataset
 
 DEFAULT_DATASET = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "report_parsing_cases.jsonl"
 

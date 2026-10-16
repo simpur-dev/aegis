@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
-from aegis.services.assistant import AssistantService
+from aegis.services.interpret.assistant import AssistantService
 
 log = logging.getLogger("aegis.api.assistant")
 

@@ -20,8 +20,8 @@ from aegis.domain.chain import ChainResult
 from aegis.domain.messages import TriggerHit, now_iso
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.workflow_chain import WorkflowChain
-from aegis.services.label_flywheel import CAPTURE_MARKER
-from aegis.services.semantic_parser import DisasterTextParser, ParsedDisaster
+from aegis.services.interpret.semantic_parser import DisasterTextParser, ParsedDisaster
+from aegis.services.memory.label_flywheel import CAPTURE_MARKER
 from aegis.workflow.engine import WorkflowEngine
 from aegis.workflow.templates import REPORT_REVIEW_TEMPLATE
 

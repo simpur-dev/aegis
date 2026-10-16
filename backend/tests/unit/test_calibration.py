@@ -10,7 +10,7 @@ from dataclasses import replace
 from typing import Any
 
 from aegis.domain.enums import HazardType, RiskLevel
-from aegis.services.calibration import (
+from aegis.services.rules.calibration import (
     LOW_PRECISION,
     MIN_RULE_SAMPLES,
     VERDICT_MEASURED_OK,
@@ -21,7 +21,7 @@ from aegis.services.calibration import (
     calibration_report,
     collect_rule_hits,
 )
-from aegis.services.trigger_rules import RuleEngine
+from aegis.services.rules.trigger_rules import RuleEngine
 
 
 def _rule(rule_id: str = "R-DEBRIS-RAIN-1") -> Any:

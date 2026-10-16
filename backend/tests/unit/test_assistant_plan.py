@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from aegis.config import Settings
-from aegis.services.assistant import AssistantService, PlanDecomposition, PlanStep
+from aegis.services.interpret.assistant import AssistantService, PlanDecomposition, PlanStep
 
 
 class StubLLM:

@@ -13,8 +13,8 @@ from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
 from aegis.domain.enums import HazardType
 from aegis.persistence.suggestions import SuggestionArgumentError, SuggestionConflictError
-from aegis.services.calibration import RuleSample, calibration_report, collect_rule_hits
-from aegis.services.threshold_suggestions import ThresholdSuggestionService
+from aegis.services.rules.calibration import RuleSample, calibration_report, collect_rule_hits
+from aegis.services.rules.threshold_suggestions import ThresholdSuggestionService
 from aegis.storage.store import rule_library_port
 
 

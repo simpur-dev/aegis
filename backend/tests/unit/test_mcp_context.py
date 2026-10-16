@@ -88,7 +88,7 @@ class TestFaceChoice:
     async def test_门面按选择装配_两条路各走各的(self) -> None:
         """`build_agent_runtime` 里这条选择是唯一的分叉点，装配错了没人会再发现。"""
         from aegis.agents.runtime import build_agent_runtime
-        from aegis.services.trigger_rules import RuleEngine
+        from aegis.services.rules.trigger_rules import RuleEngine
 
         common: dict[str, Any] = {
             "rule_engine": RuleEngine(),

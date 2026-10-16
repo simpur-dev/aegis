@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from aegis.domain.enums import HazardType, RiskLevel
-from aegis.services.semantic_parser import (
+from aegis.services.interpret.semantic_parser import (
     CEILING_WITHOUT_RULE,
     LEG_LLM,
     LEG_RETRIEVAL,

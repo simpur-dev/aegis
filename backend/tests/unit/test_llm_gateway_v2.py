@@ -14,13 +14,13 @@ from pydantic import BaseModel, Field, field_validator
 
 from aegis.config import Settings
 from aegis.observability.tracer import Tracer
-from aegis.services.llm_gateway import (
+from aegis.services.llm.llm_gateway import (
     LlmGateway,
     LlmUnavailableError,
     MalformedLlmOutputError,
     build_gateway_if_configured,
 )
-from aegis.services.prompt_registry import PromptRegistry, PromptTemplate
+from aegis.services.llm.prompt_registry import PromptRegistry, PromptTemplate
 
 
 class FakeMessage:

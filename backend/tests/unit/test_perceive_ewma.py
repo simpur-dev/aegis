@@ -13,7 +13,7 @@ import pytest
 from aegis.agents.perceive import EwmaDriftDetector, PerceiveAgent
 from aegis.domain.enums import AgentType, HazardType
 from aegis.domain.messages import TriggerHit, now_iso
-from aegis.services.trigger_rules import default_rulebook
+from aegis.services.rules.trigger_rules import default_rulebook
 
 STATION = "ST-A0001"
 REGION = "540121"

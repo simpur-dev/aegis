@@ -7,8 +7,8 @@ from typing import Any
 from aegis.agents.feedback import FeedbackAgent, FeedbackAttribution
 from aegis.domain.enums import AgentType
 from aegis.domain.messages import make_request
-from aegis.services.llm_gateway import MalformedLlmOutputError
-from aegis.services.memory import InMemoryAgentMemory, MemoryService
+from aegis.services.llm.llm_gateway import MalformedLlmOutputError
+from aegis.services.memory.memory import InMemoryAgentMemory, MemoryService
 
 TRACE = "trc_" + "5" * 16
 

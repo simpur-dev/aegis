@@ -43,12 +43,12 @@ from aegis.knowledge.provider import CaseMatch, KnowledgeProvider
 from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.board import ChainBoard
-from aegis.services.delivery import AllChannelsFailedError, DeliveryDispatcher
-from aegis.services.risk_engine import RiskEngine
-from aegis.services.task_parser import TaskParser
-from aegis.services.text_guard import invented_numbers
-from aegis.services.trigger_rules import RuleEngine
-from aegis.services.warning_service import WarningService
+from aegis.services.interpret.text_guard import invented_numbers
+from aegis.services.response.delivery import AllChannelsFailedError, DeliveryDispatcher
+from aegis.services.response.task_parser import TaskParser
+from aegis.services.response.warning_service import WarningService
+from aegis.services.rules.risk_engine import RiskEngine
+from aegis.services.rules.trigger_rules import RuleEngine
 
 if TYPE_CHECKING:
     # 只在类型面出现：段实现运行时不 import 检索层（装配层守住"内核不依赖持久/检索实现"这条边界）。

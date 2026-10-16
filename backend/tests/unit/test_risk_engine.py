@@ -6,7 +6,7 @@ import pytest
 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit
-from aegis.services.risk_engine import RiskEngine
+from aegis.services.rules.risk_engine import RiskEngine
 
 
 def hit(rule_id: str, hazard: str = "debris_flow", region: str = "540121", score: float = 1.0) -> TriggerHit:

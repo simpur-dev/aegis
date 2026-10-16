@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aegis.services.text_guard import invented_numbers, number_tokens
+from aegis.services.interpret.text_guard import invented_numbers, number_tokens
 
 
 class TestNumberTokens:

@@ -11,7 +11,7 @@ from aegis.bus.inmemory import InMemoryBus
 from aegis.bus.transport import BusTransport
 from aegis.config import Settings
 from aegis.domain.enums import Channel
-from aegis.services.delivery import (
+from aegis.services.response.delivery import (
     ChannelAdapter,
     HttpChannelAdapter,
     normalize_gateway_target,
@@ -86,7 +86,7 @@ def build_delivery_client(settings: Settings, *, client: Any | None = None) -> t
 
 class MockChannel:
     def __init__(self, settings: Settings, *, name: Channel = Channel.SMS, latency_ms: float = 150.0) -> None:
-        from aegis.services.delivery import MockChannelAdapter
+        from aegis.services.response.delivery import MockChannelAdapter
 
         self._inner = MockChannelAdapter(
             name=name,

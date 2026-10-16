@@ -20,7 +20,7 @@ from aegis.agents.perceive import EwmaDriftDetector, StationAnomaly
 from aegis.agents.rest_context import RestAssessContext
 from aegis.bus.transport import BusTransport
 from aegis.domain.messages import TelemetryReading
-from aegis.services.trigger_rules import RuleEngine
+from aegis.services.rules.trigger_rules import RuleEngine
 
 
 def resolve_context_face(requested: str, *, mcp_url: str) -> str:

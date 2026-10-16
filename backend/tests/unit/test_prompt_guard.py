@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aegis.services.prompt_guard import contains_guardrail, fence_fields, fence_untrusted
+from aegis.services.llm.prompt_guard import contains_guardrail, fence_fields, fence_untrusted
 
 _CLOSE = "<<<END_AEGIS_DATA>>>"
 

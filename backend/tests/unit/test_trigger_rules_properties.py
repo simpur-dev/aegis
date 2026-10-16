@@ -13,7 +13,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from aegis.domain.messages import TelemetryReading
-from aegis.services.trigger_rules import RuleEngine, RuleEvaluation, default_rulebook
+from aegis.services.rules.trigger_rules import RuleEngine, RuleEvaluation, default_rulebook
 
 METRICS = ["rainfall_mm_h", "mud_level_cm", "soil_moisture_pct", "vibration_count", "displacement_mm"]
 REGIONS = ["540121", "540122", "540127"]

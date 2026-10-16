@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from aegis.services.semantic_parser import ParsedDisaster, detect_hazard, detect_level, extract_metrics, extract_region
+from aegis.services.interpret.semantic_parser import ParsedDisaster, detect_hazard, detect_level, extract_metrics, extract_region
 
 METRIC_TOLERANCE = 0.01
 MIN_CASES = 30
@@ -254,7 +254,7 @@ def _rate(numerator: int, denominator: int) -> float:
 
 async def evaluate(dataset: EvalDataset, *, with_llm: bool = False, llm: Any | None = None, evidence: Any | None = None) -> EvalReport:
     """跑一遍解析评测。默认只量确定性腿（规则 + 词表），带 `llm` 时才把裁决腿接上。"""
-    from aegis.services.semantic_parser import DisasterTextParser
+    from aegis.services.interpret.semantic_parser import DisasterTextParser
 
     parser = DisasterTextParser(llm=llm if with_llm else None, evidence=evidence if with_llm else None)
     outcomes: list[CaseOutcome] = []

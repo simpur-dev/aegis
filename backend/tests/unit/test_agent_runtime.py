@@ -18,7 +18,7 @@ from aegis.agents.rest_context import RestAssessContext
 from aegis.agents.runtime import RuleEngineDetector, build_agent_runtime
 from aegis.domain.enums import AgentType
 from aegis.domain.messages import TelemetryReading, now_iso
-from aegis.services.trigger_rules import RuleEngine
+from aegis.services.rules.trigger_rules import RuleEngine
 
 REGION = "540121"
 

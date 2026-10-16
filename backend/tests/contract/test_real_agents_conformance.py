@@ -124,7 +124,7 @@ class TestGate4Error:
         self, bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry
     ) -> None:
         from aegis.errors import AegisError
-        from aegis.services.llm_gateway import MalformedLlmOutputError
+        from aegis.services.llm.llm_gateway import MalformedLlmOutputError
 
         llm = FakeLLM([], raises=MalformedLlmOutputError("坏输出"))
         agent = _assess(llm)

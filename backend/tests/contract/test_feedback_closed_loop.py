@@ -21,8 +21,8 @@ from aegis.domain.messages import TelemetryReading, TriggerHit, now_iso
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import WorkflowChain
-from aegis.services.delivery import DeliveryDispatcher, MockChannelAdapter
-from aegis.services.memory import InMemoryAgentMemory, MemoryService
+from aegis.services.memory.memory import InMemoryAgentMemory, MemoryService
+from aegis.services.response.delivery import DeliveryDispatcher, MockChannelAdapter
 from conftest import chain_entry
 
 REGION = "540121"

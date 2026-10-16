@@ -29,8 +29,8 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "aegis"
 #: 所以这里跟的是"谁取时"，不是"哪个编排器"。
 #: P4 之后上报接入的取时点也不在 `container.py`（那里一行计时都没有了），跟着搬到 `pipeline/report_intake.py`。
 MEASURING_FILES = (
-    "services/assistant.py",
-    "services/warning_service.py",
+    "services/interpret/assistant.py",
+    "services/response/warning_service.py",
     "pipeline/board.py",
     "pipeline/report_intake.py",
     # MCP 工具面的每次调用也在这条纪律里：`mcp_tool_ms` 量的是毫秒级取数，
@@ -69,7 +69,7 @@ def test_同一条测量链上不得混用两个时钟纪元() -> None:
     """预警生成段收的是**盘面**给的链路起点：起点与终点必须同为 perf_counter。"""
     board = _read("pipeline/board.py")
     stages = _read("pipeline/stages.py")
-    draft = _read("services/warning_service.py")
+    draft = _read("services/response/warning_service.py")
     assert "started_at: float = field(default_factory=time.perf_counter)" in board, (
         "链路起点不再用 perf_counter：下游的减法就成了跨纪元相减"
     )

@@ -18,9 +18,9 @@ from aegis.agents.assess import AssessAgent, AssessVerdict
 from aegis.config import Settings
 from aegis.domain.enums import AgentType, HazardType
 from aegis.domain.messages import make_request, now_iso
-from aegis.services.llm_gateway import LlmGateway, MalformedLlmOutputError
-from aegis.services.memory import InMemoryAgentMemory, MemoryService, new_memory_record_id
-from aegis.services.prompt_registry import PromptRegistry
+from aegis.services.llm.llm_gateway import LlmGateway, MalformedLlmOutputError
+from aegis.services.llm.prompt_registry import PromptRegistry
+from aegis.services.memory.memory import InMemoryAgentMemory, MemoryService, new_memory_record_id
 
 TRACE = "trc_" + "7" * 16
 REQUEST_PAYLOAD = {"region_code": "540121", "hits": [{"rule_id": "R-DEBRIS-RAIN-1", "hazard_type": "debris_flow", "score": 0.9}]}

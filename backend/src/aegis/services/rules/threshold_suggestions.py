@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from aegis.domain.messages import ThresholdSuggestion, new_suggestion_id
-from aegis.services.trigger_rules import RuleEngine, rulebook_from_rows
+from aegis.services.rules.trigger_rules import RuleEngine, rulebook_from_rows
 from aegis.storage.store import SupportsRuleLibrary, SupportsThresholdSuggestions, rule_library_port, suggestion_ledger_port
 
 #: 台账里 `status` 的默认读法：值班员要看的从来都是"还挂着的那些"。

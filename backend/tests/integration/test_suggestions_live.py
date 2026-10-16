@@ -22,8 +22,8 @@ import pytest
 from aegis.domain.messages import ThresholdSuggestion, new_suggestion_id
 from aegis.persistence.postgres import PostgresStore
 from aegis.persistence.suggestions import SuggestionArgumentError, SuggestionConflictError
-from aegis.services.threshold_suggestions import ThresholdSuggestionService
-from aegis.services.trigger_rules import RuleEngine, rulebook_from_rows
+from aegis.services.rules.threshold_suggestions import ThresholdSuggestionService
+from aegis.services.rules.trigger_rules import RuleEngine, rulebook_from_rows
 
 DSN = os.getenv("AEGIS_PG_DSN") or os.getenv("AEGIS_TEST_PG_DSN", "")
 pytestmark = pytest.mark.skipif(not DSN, reason="未设置 AEGIS_TEST_PG_DSN / AEGIS_PG_DSN，跳过真实 Postgres 测试")

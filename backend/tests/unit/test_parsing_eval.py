@@ -15,7 +15,8 @@ from typing import Any
 import pytest
 
 from aegis.domain.enums import HazardType
-from aegis.services.parsing_eval import (
+from aegis.services.interpret.semantic_parser import ParsedDisaster
+from aegis.services.llm.parsing_eval import (
     EvalDatasetError,
     evaluate,
     lexical_baseline,
@@ -23,7 +24,6 @@ from aegis.services.parsing_eval import (
     parse_case,
     score_case,
 )
-from aegis.services.semantic_parser import ParsedDisaster
 
 DATASET = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "report_parsing_cases.jsonl"
 

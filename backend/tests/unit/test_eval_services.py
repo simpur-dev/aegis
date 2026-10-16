@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from aegis.config import Settings
 from aegis.contracts import ContractRegistry
-from aegis.services.model_cards import build_model_cards
-from aegis.services.prompt_registry import PromptRegistry
-from aegis.services.quality_eval import QualityMetrics, regression_gate, stu_legality_rate
+from aegis.services.llm.model_cards import build_model_cards
+from aegis.services.llm.prompt_registry import PromptRegistry
+from aegis.services.llm.quality_eval import QualityMetrics, regression_gate, stu_legality_rate
 
 
 async def _legal_units() -> list[dict]:

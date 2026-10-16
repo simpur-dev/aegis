@@ -17,7 +17,7 @@ import pytest
 
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
-from aegis.services.assistant import AssistantEvent
+from aegis.services.interpret.assistant import AssistantEvent
 
 HEAVY_RAIN = "24小时累计降雨95毫米，沟道泥位抬升1.2米，下游约300人受威胁"
 MILD_REPORT = "坡面有新鲜裂缝并掉下几块石头，暂无其它数据"

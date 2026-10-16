@@ -23,7 +23,7 @@ from aegis.domain.chain import ChainResult, StageResult
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.verdict import RiskVerdict
 from aegis.pipeline.stages import HazardStages
-from aegis.services.review_queue import case_ids, pending_items
+from aegis.services.memory.review_queue import case_ids, pending_items
 
 REGION = "540121"
 PATH = "/api/v1/review/pending"

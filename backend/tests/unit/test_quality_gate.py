@@ -18,7 +18,7 @@ import yaml
 from scripts.quality_gate import _COLUMNS, _load_baseline, _load_usage, current_quality, main, plan_playbook_stu_units
 
 from aegis.contracts import ContractRegistry
-from aegis.services.quality_eval import QualityMetrics, regression_gate, structured_first_pass_rate, stu_legality_rate
+from aegis.services.llm.quality_eval import QualityMetrics, regression_gate, structured_first_pass_rate, stu_legality_rate
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BASELINE = REPO_ROOT / "backend" / "baselines" / "quality_baseline.json"

@@ -3,7 +3,7 @@
 三条不可让的口径（P0「预警信息生成时间 ≤3min，且 LLM 不进检索回路」的落地方式）：
 
 1. **LLM 不在回路里。** 本模块的依赖只有嵌入协议、进程内倒排索引、`persistence.vectors` 的
-   真 SQL 路径与交叉编码器协议；import 图上没有 `aegis.services.llm_gateway`，也没有 `aegis.api`。
+   真 SQL 路径与交叉编码器协议；import 图上没有 `aegis.services.llm.llm_gateway`，也没有 `aegis.api`。
    预警生成侧拿到的是已经排好序的上下文块，检索阶段一次 LLM 调用都不发生。
 2. **预算优先于完整性。** `budget_ms` 到点就交卷：跑完的腿照常出结果，超时的腿被取消并记一条
    degradation。检索的运行故障永不冒泡进预警路径——预警宁可用降级上下文生成，也不能因为

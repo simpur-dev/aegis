@@ -25,8 +25,8 @@ from pydantic import BaseModel, Field
 from aegis.agents.agentkit import AgentKit, Reply
 from aegis.domain.messages import AgentMessage, ModelInfo, now_iso
 from aegis.errors import AegisError
-from aegis.services.memory import MemoryService, new_memory_record_id
-from aegis.services.prompt_guard import fence_untrusted
+from aegis.services.llm.prompt_guard import fence_untrusted
+from aegis.services.memory.memory import MemoryService, new_memory_record_id
 
 log = logging.getLogger("aegis.agents.feedback")
 

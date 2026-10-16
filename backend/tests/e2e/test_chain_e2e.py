@@ -17,7 +17,7 @@ from aegis.connectors.base import DataSource
 from aegis.container import PlatformContainer, create_container
 from aegis.domain.enums import AgentType, Channel, RiskLevel
 from aegis.domain.messages import DeliveryAttempt
-from aegis.services.delivery import ChannelAdapter
+from aegis.services.response.delivery import ChannelAdapter
 
 REGIONS = ("540121", "540221", "540321")
 

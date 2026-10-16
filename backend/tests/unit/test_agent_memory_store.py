@@ -249,7 +249,7 @@ async def test_删除按受影响行数说话(status: str, expected: bool) -> No
 
 @pytest.mark.asyncio
 async def test_进程内后端与库侧同口径_无向量的行不参与向量序() -> None:
-    from aegis.services.memory import InMemoryAgentMemory
+    from aegis.services.memory.memory import InMemoryAgentMemory
 
     store = InMemoryAgentMemory()
     plain = _record(record_id="mem_plain", content="没有向量的一条")
@@ -265,7 +265,7 @@ async def test_进程内后端与库侧同口径_无向量的行不参与向量�
 async def test_同id重写是修正不是追加第二条_与库侧upsert同口径() -> None:
     """Postgres 侧靠 `ON CONFLICT (record_id) DO UPDATE`；这一档如果只 append，
     "治理"在内存部署下就变成"攒出两句互相矛盾的经验"，而调用方看不出差别。"""
-    from aegis.services.memory import InMemoryAgentMemory
+    from aegis.services.memory.memory import InMemoryAgentMemory
 
     store = InMemoryAgentMemory()
     await store.write(_record(record_id="mem_x", content="第一句"))
@@ -307,7 +307,7 @@ def test_嵌入腿在场时装配点把模型名带进门面() -> None:
 
 
 def test_嵌入腿缺位时门面如实报未就绪() -> None:
-    from aegis.services.memory import InMemoryAgentMemory, MemoryService
+    from aegis.services.memory.memory import InMemoryAgentMemory, MemoryService
 
     service = MemoryService(InMemoryAgentMemory())
     assert service.embedder_ready is False and service.backend == "memory"
@@ -316,7 +316,7 @@ def test_嵌入腿缺位时门面如实报未就绪() -> None:
 
 @pytest.mark.asyncio
 async def test_嵌入失败只降级不断链并且计数() -> None:
-    from aegis.services.memory import InMemoryAgentMemory, MemoryService
+    from aegis.services.memory.memory import InMemoryAgentMemory, MemoryService
 
     class _Boom:
         model_id = "boom"

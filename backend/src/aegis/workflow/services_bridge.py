@@ -20,10 +20,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from aegis.bus.gateway import AgentGateway
-    from aegis.services.delivery import DeliveryDispatcher
-    from aegis.services.risk_engine import RiskEngine
-    from aegis.services.trigger_rules import RuleEngine
-    from aegis.services.warning_service import WarningService
+    from aegis.services.response.delivery import DeliveryDispatcher
+    from aegis.services.response.warning_service import WarningService
+    from aegis.services.rules.risk_engine import RiskEngine
+    from aegis.services.rules.trigger_rules import RuleEngine
     from aegis.storage.store import StoreProtocol
     from aegis.workflow.outbound import OutboundCaller
 

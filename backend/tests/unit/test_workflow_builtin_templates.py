@@ -17,7 +17,7 @@ import pytest
 from aegis.config import Settings
 from aegis.domain.enums import HazardType
 from aegis.observability.tracer import Tracer
-from aegis.services.trigger_rules import default_rulebook
+from aegis.services.rules.trigger_rules import default_rulebook
 from aegis.workflow.engine import WorkflowEngine
 from aegis.workflow.model import NodeDef, WorkflowDef
 from aegis.workflow.nodes import default_registry

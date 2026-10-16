@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from aegis.persistence.accuracy import LABEL_COLUMNS, normalize_label
-from aegis.services.label_flywheel import CAPTURE_MARKER, LabelFlywheel, label_from_review
+from aegis.services.memory.label_flywheel import CAPTURE_MARKER, LabelFlywheel, label_from_review
 
 OBSERVED = "2026-10-11T03:21:44.500Z"
 

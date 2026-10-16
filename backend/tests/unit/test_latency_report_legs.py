@@ -35,7 +35,7 @@ def test_mock_形态下触达数字标明是演练口径() -> None:
 
 def test_真实通道形态下逐通道带出发送与失败计数() -> None:
     from aegis.domain.enums import Channel
-    from aegis.services.delivery import HttpChannelAdapter
+    from aegis.services.response.delivery import HttpChannelAdapter
 
     adapter = HttpChannelAdapter(Channel.SMS, "https://gw.example.com", client=object())
     report = create_container(
@@ -60,7 +60,7 @@ def test_上报腿与阈值版本同在一份出口里() -> None:
 
 @pytest.mark.asyncio
 async def test_语义交互这条腿既被记录也被判() -> None:
-    """`assistant_reply_ms` 全平台只有一个记账点（`services/assistant.py`）。
+    """`assistant_reply_ms` 全平台只有一个记账点（`services/interpret/assistant.py`）。
 
     两头都要钉：出口里有样本（否则 ≤3s 那句话没有可对账的数字）、账本里有预算
     （否则样本永远不产生违约计数，"达标"只是因为没人判过）。本机无 LLM 凭据时这条腿

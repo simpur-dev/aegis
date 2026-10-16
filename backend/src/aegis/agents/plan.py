@@ -22,8 +22,8 @@ from aegis.contracts import ContractRegistry
 from aegis.domain.enums import Action, HazardType, RiskLevel, TaskType
 from aegis.domain.messages import AgentMessage, ModelInfo, TriggerHit
 from aegis.domain.verdict import RiskVerdict
-from aegis.services.prompt_guard import fence_untrusted
-from aegis.services.task_parser import TaskParser
+from aegis.services.llm.prompt_guard import fence_untrusted
+from aegis.services.response.task_parser import TaskParser
 
 _EVENT_ID_RE = re.compile(r"^evt_[0-9a-f]{12}$")
 _VALID_TASK_TYPES = frozenset(t.value for t in TaskType)

@@ -25,7 +25,7 @@ from aegis.agents.plan import PlanAgent
 from aegis.contracts import ContractRegistry
 from aegis.domain.enums import AgentType
 from aegis.domain.messages import make_request
-from aegis.services.quality_eval import QualityMetrics, regression_gate, structured_first_pass_rate, stu_legality_rate
+from aegis.services.llm.quality_eval import QualityMetrics, regression_gate, structured_first_pass_rate, stu_legality_rate
 
 TRACE = "trc_" + "0" * 16
 

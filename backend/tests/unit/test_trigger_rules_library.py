@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 
 from aegis.domain.enums import HazardType, RiskLevel
-from aegis.services.risk_engine import RiskEngine
-from aegis.services.trigger_rules import (
+from aegis.services.rules.risk_engine import RiskEngine
+from aegis.services.rules.trigger_rules import (
     SEED_CALIBRATION_BASIS,
     Condition,
     RuleEngine,

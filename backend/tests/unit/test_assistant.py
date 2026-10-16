@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from aegis.config import Settings
-from aegis.services.assistant import ACTION_SPECS, ACTION_WHITELIST, AssistantActions, AssistantService, out_of_scope
+from aegis.services.interpret.assistant import ACTION_SPECS, ACTION_WHITELIST, AssistantActions, AssistantService, out_of_scope
 
 WARNING_ROW: dict[str, Any] = {
     "warning_id": "wrn_0123456789abcdef0123",

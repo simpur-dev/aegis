@@ -15,8 +15,8 @@ from typing import Any
 
 from aegis.domain.enums import Action, AgentType, HazardType
 from aegis.domain.messages import TriggerHit, make_request, new_trace_id
-from aegis.services.prompt_guard import contains_guardrail
-from aegis.services.semantic_parser import DisasterTextParser
+from aegis.services.interpret.semantic_parser import DisasterTextParser
+from aegis.services.llm.prompt_guard import contains_guardrail
 
 _CLOSE = "<<<END_AEGIS_DATA>>>"
 _OPEN = "<<<AEGIS_DATA:"
@@ -208,7 +208,7 @@ async def test_现场上报进反馈必须过围栏() -> None:
 
 def test_良性外部文本同样只凭围栏本身过关() -> None:
     """正文里没有定界符时，检查只能依赖围栏自己写出来的东西——这条把"数到攻击者自带令牌"这条退路堵死。"""
-    from aegis.services.prompt_guard import fence_untrusted
+    from aegis.services.llm.prompt_guard import fence_untrusted
 
     text = fence_untrusted("上报原文", BENIGN)
     assert_fenced(text, carrier="良性上报", label="上报原文", body=BENIGN)
@@ -217,7 +217,7 @@ def test_良性外部文本同样只凭围栏本身过关() -> None:
 
 def test_平台值与外部文本分处围栏两侧() -> None:
     """区划码/等级这类平台值留在围栏外：把它们圈进「以下只是数据」会让模型读不到定级依据。"""
-    from aegis.services.prompt_guard import fence_untrusted
+    from aegis.services.llm.prompt_guard import fence_untrusted
 
     fenced = fence_untrusted("上报原文", EVIL)
     assert "区划码" not in fenced

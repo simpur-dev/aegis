@@ -10,7 +10,7 @@ from aegis.config import Settings
 from aegis.domain.enums import Channel, RiskLevel
 from aegis.domain.messages import DeliveryAttempt, WarningRecord, now_iso, parse_iso
 from aegis.observability.tracer import Tracer
-from aegis.services.delivery import AllChannelsFailedError, DeliveryDispatcher, MockChannelAdapter
+from aegis.services.response.delivery import AllChannelsFailedError, DeliveryDispatcher, MockChannelAdapter
 
 
 def warning(channels: list[Channel], *, audiences: list[str] | None = None) -> WarningRecord:

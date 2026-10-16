@@ -29,7 +29,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from aegis.agents.agentkit import AgentKit, Reply
 from aegis.domain.messages import AgentMessage, parse_iso
-from aegis.services.trigger_rules import Rule
+from aegis.services.rules.trigger_rules import Rule
 
 
 @dataclass(slots=True)

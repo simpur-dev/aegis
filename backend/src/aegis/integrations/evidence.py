@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from aegis.config import Settings
 from aegis.integrations.shared import log
 from aegis.knowledge.provider import KnowledgeProvider
-from aegis.services.semantic_parser import EvidenceNote
+from aegis.services.interpret.semantic_parser import EvidenceNote
 
 if TYPE_CHECKING:
     from aegis.retrieval.service import HybridRetrievalService

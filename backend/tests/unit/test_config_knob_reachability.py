@@ -134,7 +134,7 @@ class TestDeliveryChannelAssembly:
 
 def _dispatcher(channels: object) -> object:
     from aegis.observability.tracer import Tracer
-    from aegis.services.delivery import DeliveryDispatcher
+    from aegis.services.response.delivery import DeliveryDispatcher
 
     return DeliveryDispatcher(channels, Tracer())  # type: ignore[arg-type]
 

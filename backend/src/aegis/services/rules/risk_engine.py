@@ -11,7 +11,7 @@ from datetime import datetime
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit
 from aegis.domain.verdict import RiskVerdict
-from aegis.services.trigger_rules import Rule, RuleEngine
+from aegis.services.rules.trigger_rules import Rule, RuleEngine
 
 # 佐证数量对置信度的增益上限（单条规则命中不足以给出高置信）
 _CORROBORATION_GAIN = 0.15

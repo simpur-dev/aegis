@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
 from aegis.persistence.accuracy import label_lookup_port
-from aegis.services.review_queue import case_ids, pending_items
+from aegis.services.memory.review_queue import case_ids, pending_items
 
 
 def build_router() -> APIRouter:

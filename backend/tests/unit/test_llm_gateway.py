@@ -14,13 +14,13 @@ from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit
 from aegis.domain.verdict import RiskVerdict
 from aegis.observability.tracer import Tracer
-from aegis.services.llm_gateway import (
+from aegis.services.llm.llm_gateway import (
     LlmGateway,
     LlmUnavailableError,
     MalformedLlmOutputError,
     build_gateway_if_configured,
 )
-from aegis.services.warning_service import WarningService
+from aegis.services.response.warning_service import WarningService
 
 
 def sample_verdict(level: RiskLevel = RiskLevel.RED, hazard: HazardType = HazardType.DEBRIS_FLOW) -> RiskVerdict:

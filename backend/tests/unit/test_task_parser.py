@@ -10,7 +10,7 @@ from aegis.contracts import ContractRegistry
 from aegis.domain.enums import FallbackMode, HazardType, OwnerRole, RiskLevel, TaskType
 from aegis.domain.messages import TriggerHit
 from aegis.domain.verdict import RiskVerdict
-from aegis.services.task_parser import MONITOR, PLAYBOOKS, REPORT, VERIFY, WARN, TaskParser
+from aegis.services.response.task_parser import MONITOR, PLAYBOOKS, REPORT, VERIFY, WARN, TaskParser
 
 REGION = "540121"
 

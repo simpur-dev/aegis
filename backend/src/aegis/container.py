@@ -59,17 +59,17 @@ from aegis.observability.tracer import Tracer
 from aegis.pipeline.report_intake import ReportIntake
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
-from aegis.services.assistant import AssistantActions, AssistantService
-from aegis.services.delivery import ChannelAdapter, DeliveryDispatcher
-from aegis.services.label_flywheel import LabelFlywheel
-from aegis.services.llm_gateway import LlmGateway, build_gateway_if_configured
-from aegis.services.memory import MemoryService
-from aegis.services.risk_engine import RiskEngine
-from aegis.services.semantic_parser import DisasterTextParser
-from aegis.services.task_parser import TaskParser
-from aegis.services.threshold_suggestions import ThresholdSuggestionService
-from aegis.services.trigger_rules import RuleEngine, rulebook_from_rows
-from aegis.services.warning_service import WarningService
+from aegis.services.interpret.assistant import AssistantActions, AssistantService
+from aegis.services.interpret.semantic_parser import DisasterTextParser
+from aegis.services.llm.llm_gateway import LlmGateway, build_gateway_if_configured
+from aegis.services.memory.label_flywheel import LabelFlywheel
+from aegis.services.memory.memory import MemoryService
+from aegis.services.response.delivery import ChannelAdapter, DeliveryDispatcher
+from aegis.services.response.task_parser import TaskParser
+from aegis.services.response.warning_service import WarningService
+from aegis.services.rules.risk_engine import RiskEngine
+from aegis.services.rules.threshold_suggestions import ThresholdSuggestionService
+from aegis.services.rules.trigger_rules import RuleEngine, rulebook_from_rows
 from aegis.storage.store import StoreProtocol, rule_library_port
 from aegis.workflow.engine import WorkflowEngine
 from aegis.workflow.outbound import OutboundCaller, OutboundPolicy

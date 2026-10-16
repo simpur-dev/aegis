@@ -92,7 +92,7 @@ def build_memory(
     嵌入腿（`retrieval.embedder`）可选注入：没配权重时向量就是没算，行以 NULL 存着，
     读侧退到"过滤 + 时序"；这里不拿随机向量冒充语义命中。
     """
-    from aegis.services.memory import InMemoryAgentMemory, MemoryService  # 内核门面，延迟导入以保持装配层为唯一入口
+    from aegis.services.memory.memory import InMemoryAgentMemory, MemoryService  # 内核门面，延迟导入以保持装配层为唯一入口
 
     cfg = settings or get_settings()
     port: Any = None

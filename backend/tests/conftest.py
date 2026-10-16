@@ -206,7 +206,7 @@ def sample_verdict(level: RiskLevel = RiskLevel.RED, hazard: HazardType = Hazard
 
 
 def sample_units(level: RiskLevel = RiskLevel.RED, hazard: HazardType = HazardType.DEBRIS_FLOW) -> list[Any]:
-    from aegis.services.task_parser import TaskParser
+    from aegis.services.response.task_parser import TaskParser
 
     return TaskParser().parse(sample_verdict(level, hazard))
 
