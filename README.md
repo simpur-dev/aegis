@@ -11,7 +11,8 @@
   均由本仓库承载——智能体自建于 `backend/src/aegis/agents/`（agentkit 契约壳 + LLM 内环），
   按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入总线；外部团队的实现按同一契约接入，`agents/` 是交付落点
 - 架构依据：五层+一基座（实现态见 `docs/architecture.md`），融合"一张图 + 一总线 + 四预"扩展；
-  LLM 智能体化升级（对齐 MA-RIAEW）见 `docs/课题6_架构升级方案.md`，决策记录 `docs/adr/0007`
+  LLM 智能体化升级（对齐 MA-RIAEW）见 `docs/课题6_架构升级方案.md`，决策记录 `docs/adr/0007`；
+  模块边界与分层归位（2026-10-16 P1–P6）见决策记录 `docs/adr/0008`
 - 理论框架：MA-RIAEW（多智能体协同赋能的突发事件风险情报感知及预警模式）
 - 所有验收数字与"还没测到的"都记在 `docs/REPORT.md`（含可复跑的取证命令），不写进本文件
 

@@ -2955,6 +2955,67 @@ T6 记忆类 limit 上界与端点脱钩（10→100）→ 红 1 条；T7 三态�
 6 条时延 + 5 条 `memory.categories` 的 source 契约 + 2 条 api 端到端 + 时钟守卫新增的 3 档参数化）；
 前端 `npm run typecheck` 通过、`npx vitest run` **868 passed / 51 files**（本轮只加一个指标标签，没新增用例）、`npm run build` 成功（51.79 s）。
 
+## 结构重构 P1–P6：模块边界与分层归位（2026-10-16）
+
+用户反馈"项目非常乱、架构非常不清晰"，追问后把痛点定在**代码结构：模块边界与分层**。
+先审计再动手，审计结论是"问题不是依赖成环"：包级方向基本正确，`domain` 零依赖这条铁律真的成立
+（`test_architecture_rules.py` 一直在机器判定）。乱的是四类可数的形状缺陷：
+四条反向依赖、两个上帝文件（`integrations.py` 1059 行 / `container.py` 1174 行 68 字段）、
+一个 1125 行 37 条路由的 `api/app.py`、一个 21 模块平铺的 `services/`。
+方案与批准记录在 `C:\Users\34928\.qoder-cn\plans\misty-delta-finch.md`，落地成六笔独立提交，
+决策与被拒备选写进 **ADR-0008**。
+
+**这一步的判据是"行为零变化"**，所以每笔都留了可核对的等价性证据，而不是"看起来一样"：
+
+| 笔 | 做了什么 | 等价性怎么证的（实测） | 变异检查 |
+| --- | --- | --- | --- |
+| P1 `8b2028d` | `RiskVerdict` → `domain/verdict.py`、`pipeline/result.py` → `domain/chain.py`、`ContractRegistry` → 顶层 `contracts.py`（契约目录深度 `parents[4]`→`[3]`）；四条反向依赖归零并加 AST 守卫 | 代码体 `diff` 逐字一致；新守卫两条 | 3 条（含把 `parents[3]` 改回 `[4]`），各红 1 |
+| P2 `5c97f67` | 装配中心成包：`integrations/` 11 → 14 个模块，门面 `__all__` 补上漏掉的三个出口 | AST 比对新旧顶层定义：**45 个函数/类 + 5 个模块常量，丢失 0、新增 0** | 2 条（装配点外调用 `build_graphiti`、`ASSEMBLY_PACKAGES` 改成不存在的包名），各红 1 |
+| P3 `fc2008f` | `api/app.py` 1125 → 192 行只留装配；37 条端点进 `api/routers/` 九块；`deps.py` 收掉 `get_container` 的三份重复实现 | AST 比对 **59 个定义**等式成立；另比 `openapi()` 摊平后 **1539 个叶子逐项相等、54 条路径集合相同** | 3 条（几何面多一条 POST、知识层多一条 POST、闸一律放行），各红≥1 |
+| P4 `ce576a1` | 人工上报腿整体搬成 `pipeline/report_intake.py`（容器 1174 → 803 行）；通道矩阵/两张翻译表/沙盒调用口归 `integrations/`；调用点 17 处改口且**不留委托方法** | 方法体逐字搬（`self.*` 名字保留，只改类头与注入） | 3 条（起点换纪元、相减换纪元、工单键改名），红 1/2/1 |
+| P5 `0f7d92e` | `services/` 21 模块 → 五组子包 + `simulation.py` 平铺；19 个 `git mv`、128 处 import、70 个文件 | `git` 记录 19 个 rename，内容相似度 96–100%；日志名一律不动 | 3 条（预警段换纪元红 2、守卫路径改回旧路径红 3、后端腿名改值→前端红 1） |
+| P6 本笔 | ADR-0008、架构文档路径指针、本节实测记录；真栈复跑取证 | 见下 | 反向对照随取证一起做 |
+
+**三条自己被抓住的坑，都写进来当账**（这类坑的特点是"不抓住就是静默永绿"）：
+
+1. **`include_router` 让路由表门禁静默缩水**（P3）。FastAPI 0.141 的 `include_router` 在 `app.routes`
+   里留的是 `_IncludedRouter` 包装，端点藏在 `original_router.routes`。三处"遍历 `app.routes` 数端点"的
+   判据因此从 **51 条业务路径数成 15 条**——覆盖面缩水而表现是全绿。三条用例当场红（不是我改绿的），
+   判据改从对外契约面取（`conftest.api_surface` 读 `openapi()["paths"]`），覆盖反而变严。
+   M2 那一枪专门打这件事：把守卫里的路径改回搬家前的旧路径，它必须红，不许"读不到文件"静默通过。
+2. **`write_text` 在 Windows 上把 LF 写成 CRLF**（P3/P5）。仓库 `.gitattributes` 是 `* text=auto eol=lf`，
+   而前端有按文本比对源码的守卫（`simulation.spec.ts` 用 `/\n/` 拼的正则、`reports.spec.ts` 的腿名正则带 `$` 锚）。
+   行尾一漂，前者当场红、后者会**解析到零个常量再抛错**。变异外壳因此全改成 bytes 读写，
+   并自带"还原后逐字一致 + 行尾仍是 LF"两条自检；改名文件在第一次行尾扫描里因 `git status` 的
+   `old -> new` 没解析而被漏掉 8 个，补扫后重跑全部门禁。
+3. **codemod 的二次命中**（P5）。旧路径 `aegis.services.memory` 是新路径 `aegis.services.memory.memory`
+   的前缀，同一行被替换两次，产出 `aegis.services.memory.memory.label_flywheel` 这种废路径。
+   表现是整棵 tests/ 收不起来（`ModuleNotFoundError`，rc=4）——**在报任何"绿"之前**就红了，
+   修回 6 处并重排 import。
+
+**门禁**（每笔独立跑，跑一半不改仓库文件；本机，整棵 `tests/` 含 Postgres 那条腿）：
+`ruff format --check` / `ruff check` / `mypy src` 全绿；
+`PYTHONHASHSEED=0 uv run pytest -q --junitxml` 由 `scripts/ci_junit_guard.py` 计数，
+**P2/P3/P4/P5 四笔逐字相同：tests=3145 / skipped=43 / ran=3102 / failures=0 / errors=0**
+——P1 之前的基线是 3143（§4.2 那一拍记的数），P1 净增 2 条新守卫用例（`test_依赖方向_下游不得反向够上层`、
+`test_契约目录的深度跟着模块位置走`），此后搬运不增删用例，这正是"行为零变化"应有的形状。
+前端每笔都跑（P2–P5 各命中至少一处读后端源码的守卫）：typecheck 通过、**vitest 868 passed / 51 files**、build 成功。
+一次 P2 全套里 `tests/perf::test_publish_throughput` 红过一轮，单跑绿、随后全套复跑也绿：
+是积压任务 #52 那条负载敏感的绝对阈值，不是本次搬运带来的回归。
+
+**真栈复跑取证（P6 收尾项，P1 动过链路产物路径）**：NATS JetStream + 一次性 Postgres（scratch 库）上跑一条链，
+从 `chain_runs` 读回的五段（名/mode/ok/note）与定级五元组**逐字等于**装配级字面基线
+（比 5 段 × 4 项 + 定级 5 项），引擎留底里五个节点都是 `chain_stage` 且 succeeded，跑完盘面 `open_boards=0`；
+反向对照 `EVIDENCE_NEGATIVE=1` 故意把基线一处 "命中 1 条" 改成 "命中 7 条"，当场报"不等"并退出 1。
+顺带再确认一次已知缺口 **#53**：`workflow_instances` 行数=0，实例只在进程内留底（`save_workflow_instance` 全仓无调用方）。
+
+**规模前后**（`BEFORE` 取 `fa2c348`，`AFTER` 取当前工作树，同一脚本量的）：
+装配中心 1059 行/1 文件 → 1442 行/14 文件（最大 `integrations/mcp.py` 285）；
+HTTP API 层 1611 行/4 文件（`app.py` 独占 1125）→ 1802 行/15 文件（最大新增件 `routers/rules.py` 206）；
+装配容器 1174 → 803 行；服务层 5284 行/21 平铺 → 5279 行/5 子包+1 平铺（最大 `interpret/assistant.py` 955，内容未改）；
+`backend/src/aegis` 合计 130 文件/32286 行 → 162 文件/32744 行。
+净增的 458 行全是每个新模块的头部说明与各自 import——这是这次归位的代价，说死在这儿。
+
 
 
 

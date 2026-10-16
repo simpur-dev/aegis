@@ -70,7 +70,7 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 | 重调度 ≤10s | `collab_txn`（事务口径，M2 补 `reschedule` 专项） | 网关 |
 | 接入 ≤5min | `ingest_end_to_end_seconds` | 摄取服务 |
 | 人工上报接入 ≤5min | `report_intake_seconds` | `pipeline/report_intake.py`（`ReportIntake.submit`：文本→三路解析→同一条链路） |
-| 语义交互一轮 | `assistant_reply_ms` | `services/assistant.py` |
+| 语义交互一轮 | `assistant_reply_ms` | `services/interpret/assistant.py` |
 | 预警生成 ≤3min | `warning_generation_ms` | 预警服务 |
 | 靶向触达 ≤20min | `warning_reach_ms` | 触达/链路 |
 
@@ -100,7 +100,7 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 - **可观测**：OpenTelemetry 链路（应用生命周期装配）+ 自研时延账本 + Prometheus 规则求值 +
   Alertmanager 分发与抑制；`GET /api/v1/integrations` 把九条腿
   （store/analytics/knowledge/retrieval/mqtt/weather/outbound/delivery/tracing）的启用与降级事实对外报出。
-- **语义交互与人工上报（批次 B）**：`services/assistant.py` 四类任务（查询 / 预案问答 / 演练 / 上报）
+- **语义交互与人工上报（批次 B）**：`services/interpret/assistant.py` 四类任务（查询 / 预案问答 / 演练 / 上报）
   走白名单动作，执行类必须经 `/api/v1/assistant/confirm` 人工确认（一次性、带期、限本会话）；
   认知镜像复用 `rationale`/`degradations`/通道回执，LLM 只改措辞且**冒出事实之外的数字就整段弃用**。
   `POST /api/v1/reports` 与助手"帮我上报"共用 `ReportIntake.submit` 这一个入口，
@@ -110,10 +110,10 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
   options, decision_endpoint}`，三态签核走**既有**的 `/api/v1/workflow/.../decision`；
   该模板刻意不进 `BUILTIN_TEMPLATES`（那份清单的口径是"5 灾种处置剧本"），也刻意不含
   `warning_publish` 节点——预警在进链路时已按判据发过，重复发布会把触达数字翻倍。
-- **任务智能解析与规则库（批次 C）**：`services/semantic_parser.py` 三路融合
+- **任务智能解析与规则库（批次 C）**：`services/interpret/semantic_parser.py` 三路融合
   （规则腿为唯一判据；检索佐证只加置信；LLM 只提建议且逐字段过白名单），冲突消解固定为
   规则 > 检索 > LLM 且三腿原始结论全部留痕；`trigger_rules` 表把阈值版本化
-  （ADR-0006，同 `rule_id` 只允许一条 active），`services/calibration.py` 出分规则命中/误报对照与
+  （ADR-0006，同 `rule_id` 只允许一条 active），`services/rules/calibration.py` 出分规则命中/误报对照与
   修订建议（`applied` 恒 false）。解析能力由 `tests/fixtures/report_parsing_cases.jsonl`（33 例）
   + `scripts/eval_report_parsing.py` 量出可复跑的准确率，合成集不自称官方口径。
 - **一张图**：Cesium + 自建 quantized-mesh 地形 + PMTiles 离线底图（不依赖 Ion/谷歌），
@@ -132,7 +132,7 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 
 | 阶段项 | 状态 | 证据 / 缺什么 |
 | --- | --- | --- |
-| §4.1 LLM 网关 v2（路由/结构化输出/用量账本/Prompt 注册表） | 已落地 | `services/llm_gateway.py`、`services/prompt_registry.py`；prompt 版本进 `model_info`，并由链路**逐段转记**到 `chain_runs.stages[].model_info`（2026-10-12 补齐：此前凭证只活在总线信封里，全仓 0 处读取，README 那句"随结论入库"是空的）。口径：智能体不声明就没有这个键（`exclude_none`，平台不代填 "unknown"），execute 段只在【文案真的进了预警】时记——被数字闸全拦回的那一程产出的是平台模板。读面：`GET /api/v1/audit/chain/{trace_id}` 直读库，实测重启后 `/api/v1/events` 读 0 条而它仍 `found=true` |
+| §4.1 LLM 网关 v2（路由/结构化输出/用量账本/Prompt 注册表） | 已落地 | `services/llm/llm_gateway.py`、`services/llm/prompt_registry.py`；prompt 版本进 `model_info`，并由链路**逐段转记**到 `chain_runs.stages[].model_info`（2026-10-12 补齐：此前凭证只活在总线信封里，全仓 0 处读取，README 那句"随结论入库"是空的）。口径：智能体不声明就没有这个键（`exclude_none`，平台不代填 "unknown"），execute 段只在【文案真的进了预警】时记——被数字闸全拦回的那一程产出的是平台模板。读面：`GET /api/v1/audit/chain/{trace_id}` 直读库，实测重启后 `/api/v1/events` 读 0 条而它仍 `found=true` |
 | §3 五智能体上总线（agentkit + 三态运行时） | 已落地 | `agents/`、`AEGIS_AGENT_RUNTIME=mock\|real\|off`，real 与 mock 互斥 |
 | §5 验收口径分档（调度档 / LLM 档 / 端到端） | 已落地 | `sla_agent_txn_ms`，报表带 `口径档` 列；数见 REPORT |
 | §4.5 D9 数据飞轮（采集侧） | 部分落地 | `human_review` 一条已通（核签→真值行，真库验过）；**助手确认、演练两条没接** |
@@ -140,7 +140,7 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 | §4.2 D4 MCP 工具层 v1 | 部分落地（工具面 7 项清单 + **研判取数已切** + 四类记忆已出得去 + 四档取证已做：容器形态、独立实现客户端、第三方 Inspector、逐工具时延） | 阶段 1 服务端：`mcp>=2.3` 作可选 extra（CI 与镜像都列了）、清单单一真源（共 7 项）、默认面 5 项只读（`telemetry.query`/`retrieval.search`/`cases.search`/`memory.search`/`memory.categories`；`simulation.run` 与写工具 `memory.write` 要显式点名，且实际能列出几项还取决于对应腿装配没有）、写工具两把钥匙、`/mcp/` 三态（404/503/streamable-http）、鉴权与数据 API 同面。阶段 2 取数切换：`AEGIS_AGENT_CONTEXT_FACE=auto\|rest\|mcp`（`auto` 跟着部署形态走，点名 `mcp` 而没有工具面则启动当场失败），`agents/mcp_context.py` 与 `rest_context.py` 复用同一份参数推导与同一条"什么算降级"的判据，状态行 `detail.agent_context_face` 分别说清"面开着"与"取数切过去了"。真栈两档对照见 REPORT MB-6；**"调用留 trace"于 2026-10-16 有了实现**：每次调用按工具留最近 200 条毫秒样本（状态行 `detail.latency_ms[工具]={count,p50,p95,max}`）+ 账本一条聚合线 `mcp_tool_ms`（`outcome=ok\|error`，失败也留样本，协议层按 schema 拒掉的不算一次调用）；`mcp_tools/server.py` 也因此进了时钟守卫的 `MEASURING_FILES`。§4.3 四类记忆经 `memory.categories` 出得来，`connected`/`items`/`note` 三态原样带出并附 `disconnected` 名单。**取证**（详见 REPORT 同名一节）：只用 httpx 的独立 JSON-RPC 客户端与官方 SDK 客户端在同一次部署里读数同档（容器形态服务端 p50 0.010—0.178 ms、客户端墙钟 p50 6.27—7.33 ms——差值几乎全是传输与握手，不是取数）；容器里令牌三档实测无/错=401、对=200。**仍欠**：① 第三方客户端只测到 MCP 项目自家的 Inspector CLI 一种产品（它列出 5 项、`annotations` 解读正确、`cases.search`/`memory.categories` 出真读数，三种记忆现场在外链上仍是三种；还撞出它把纯数字实参猜成 int 而被我们 schema 层拒——同一条纪律在第三方客户端上成立），各家客户端对 annotations/分页/资源面的实现差异未测；② `retrieval.search` 那一路的真检索腿在两次取证里都没装配（要嵌入模型/服务），它只在用例注入替身的形态下绿过；③ **perceive/plan 没有"自己取数"这条腿可切**——平台在派发时就把上下文塞进信封（`pipeline/stages.py:441-442` 的 `reference_cases`/`retrieved_context`），把自家进程内的服务调用绕一圈 HTTP 是倒退；工具面对这两段的真实意义是给**独立进程的智能体与外部客户端**一个标准口拿同一批能力（沙盒经 `simulation.run` 已是这种消费方）；④ `mcp_tool_ms` 没设考核线、没进告警；⑤ 工具面这层没接 OTel 跨度，只有账本 |
 | §3.2 assess 双盲仲裁 | 部分落地（2026-10-15 补齐"并行两腿"与"分歧进台账"） | 触发/一致上调/仲裁/跳过留痕都在；**两条腿现在真的同时发车**——触发条件（初始定级 ≤2）长在模型的第一份结论上，那是第二腿发车前拿不到的，所以预触发用的是平台 dispatch 前就有的事实（`rule_level` 随请求交给智能体），规则轨没报红/橙时仍按原口径在模型报出后**补跑**第二腿：覆盖面不减，只是那一程串行；`double_blind_mode`（parallel/serial）与 `disagreement`（三态：一致/不一致/老应答没带这一格）都进了研判段的 note，也就是进了 `chain_runs` 台账。**增强腿失败已收口在增强腿**（MB-7c）：第二遍或仲裁任一异常都不再穿出 `handle()`，第一遍结论照用、状态写进 `double_blind=failed_<leg>:<异常名>`。**仍欠**：分歧率的可统计口径（现在只在段注里，不是能聚合的一列）、定级一致率与"建议人工核签"门限的金标实测（见 §3.2 验收行） |
 | §3.4 execute 三分支文案 | 已落地 | `audience_copies` 入库（`006` 迁移）；发送权仍在平台交付腿 |
-| §3.5 feedback 归因闭环 | 部分落地（派发于 2026-10-15 接上；阈值建议→人工确认→规则库新版本于 2026-10-16 接上） | 链路在汇总触达回执后 dispatch `feedback.attribute`，采纳的归因/效果分/阈值建议一起进段台账与 `ops.feedback.status`，教训由内环写共享记忆。修前的形状是"五个内环都在册、feedback 一个请求也收不到"：该段只广播不派发，于是 §3.5 的三件事在真栈上发生 0 次（2026-10-15 真库读回 `agent_memory` 里 lesson 恒 0 行），而单测直调 `handle()` 全绿看不出来。判据：效果分缺席或不在 0—1 内整份弃用并留痕；`decided_by=local` 那一程不记模型凭证；反馈腿失败只塌自己，已发布的预警不收回。**仍欠**：阈值建议的闭环已于 2026-10-16 接通（入账 → 人工确认 → `trigger_rules` 新版本 → 引擎装载，见 `services/threshold_suggestions.py` 与 `sql/008_threshold_suggestions.sql`），`human_review_suggested` 也已于同日有了读者（`RiskVerdict` 一列事实 + `GET /api/v1/review/pending`，签没签过看 `warning_truth_labels` 那张真表）；**仍欠的是外显**——这两份清单前端都看不见，值班员目前只能经接口取数 |
+| §3.5 feedback 归因闭环 | 部分落地（派发于 2026-10-15 接上；阈值建议→人工确认→规则库新版本于 2026-10-16 接上） | 链路在汇总触达回执后 dispatch `feedback.attribute`，采纳的归因/效果分/阈值建议一起进段台账与 `ops.feedback.status`，教训由内环写共享记忆。修前的形状是"五个内环都在册、feedback 一个请求也收不到"：该段只广播不派发，于是 §3.5 的三件事在真栈上发生 0 次（2026-10-15 真库读回 `agent_memory` 里 lesson 恒 0 行），而单测直调 `handle()` 全绿看不出来。判据：效果分缺席或不在 0—1 内整份弃用并留痕；`decided_by=local` 那一程不记模型凭证；反馈腿失败只塌自己，已发布的预警不收回。**仍欠**：阈值建议的闭环已于 2026-10-16 接通（入账 → 人工确认 → `trigger_rules` 新版本 → 引擎装载，见 `services/rules/threshold_suggestions.py` 与 `sql/008_threshold_suggestions.sql`），`human_review_suggested` 也已于同日有了读者（`RiskVerdict` 一列事实 + `GET /api/v1/review/pending`，签没签过看 `warning_truth_labels` 那张真表）；**仍欠的是外显**——这两份清单前端都看不见，值班员目前只能经接口取数 |
 | §3.6/§4.4 推演沙盒 | 部分落地（2026-10-16 接上角色内环、汇聚器、DAG 节点与报告页） | `services/simulation.py` 的 K×T/概率矩阵/超限降 K 口径不变；角色侧搬到新包 `simulation/roles.py`：四个 ephemeral 角色（指挥员/救援队/受影响群众/监测员）每轮各出一票，`RoleAction` **只有档位与理由、没有数值字段**（结构上不能发明数字，这比在提示词里恳求"别编数"可靠），白名单逐字写进提示词（assess/plan 都栽过"只说取其一"结果模型回中文描述）；`RulePolicy` 是默认档（离线可复算），`LlmRolePolicy` 要 `AEGIS_SIMULATION_ROLES_LLM=true` 且网关在位，单次抖动只塌那一轮并记一次 `fallbacks`、不把整份报告拖成 503，出口回来的东西再过一次 schema；`aggregate_actions` 把四票折成本轮生效预案（多数票、平票取缓解更高的一档、白名单外的票丢弃）——票只决定"用表里哪一行冻结系数"，不决定系数本身。报告新增 `roles` 一格（policy / 在场角色与立场 / 应问·实问·回落 / 漏接时自带 note），DAG 节点 `situation_simulate` 经装配点注入的 `sandbox_runner` 带出 `output.sandbox`（未注入或失败只降级那一格并写明原因，画布参数逐个夹进区间），前端 `/simulation` 报告页把矩阵/时间线（每个在场角色一列）/预案对比/角色档摊开，并在边界上拒绝缺键报告。验收口径仍是 §3.6 那句"矩阵正确性抽查、演示非 SLA"，概率/缓解系数为未实测初值。**仍欠**：真 LLM 档只量到 T=2（8 次调用、6.62 s、零回落、`task=simulation` 首过率 1.0；同参数下规则档 0.0135 s，
 同一泥位上两档给出 0.1029 与 0.1821 两个触发率——票改表、模型不改数），T=5 与 K 拉满的墙钟/成本未量；
 这一页未纳入 `e2e/ui-overlap` 的逐页版式门禁（真机点验 21 项只覆盖浅色主题一屏） |

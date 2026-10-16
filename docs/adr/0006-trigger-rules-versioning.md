@@ -2,8 +2,9 @@
 
 - 状态：已采纳
 - 日期：2026-10-03
-- 相关：`services/trigger_rules.py`、`services/risk_engine.py`、`persistence/sql/005_trigger_rules.sql`、
-  `persistence/rulebook.py`、`services/calibration.py`、`api/routers/rules.py`（`/api/v1/rules*`）、对应批次见《课题6_完善计划》C2/C3
+- 相关：`services/rules/trigger_rules.py`、`services/rules/risk_engine.py`、`persistence/sql/005_trigger_rules.sql`、
+  `persistence/rulebook.py`、`services/rules/calibration.py`、`api/routers/rules.py`（`/api/v1/rules*`）、对应批次见《课题6_完善计划》C2/C3
+  （路径为 2026-10-16 结构重构 P1/P3/P5 之后的位置，机制与本决策不变，见 ADR-0008）
 
 ## 背景
 
