@@ -210,7 +210,7 @@ docker compose --env-file .env -f deploy/docker-compose.yml exec backend python 
 | `delivery` / `tracing` 行 | `mock` / `local` | 这两条默认就不是真的；触达时间与链路取证都属于演练口径 |
 | psql 扩展 | `postgis 3.5.2`、`vector 0.8.6` | 报 `extension not available` ⇒ 镜像不是本仓 `deploy/postgres` 构建出来的（2.3 第 5 条） |
 | 链路各段 mode | 容器内 `POST /api/v1/reports` 实测：`assess/plan/execute = agent`（53/1903/3313ms），`perceive/feedback = local`——这一档是 2026-10-15 反馈腿派发接通**之前**的形状。接通后本机真栈（NATS + scratch Postgres + real 运行时，一条上报链）从库里读回：`feedback = agent`、19.538ms、note `触达回执已归档｜效果分 0.820｜归因腿 local｜建议 none`，同轮 `agent_memory` 落 1 行 `lesson`（refs 挂本次 `warning_id`）；该轮 `assess/plan/execute` 因供应商 503 落本地轨 | 全 `local` 而 `/api/v1/agents` 又 `online=0` ⇒ 智能体没注册或已停跳（看下一行）；只有 `feedback=local` 而别段是 `agent` ⇒ 反馈内环报错或归因不合契约，去看 `degradations` 里"反馈…"那一条 |
-| `mcp` 行 | 模板默认 `AEGIS_MCP_ENABLED=false` ⇒ `driver=disabled`，此时 `/mcp/` 是 404（这一格读的是模板与装配代码，容器形态本轮未重测） | 改成 true 后这一行应为 `streamable-http`；读到 `absent` ⇒ 镜像里的 extras 少了 `mcp`（`deploy/Dockerfile` 那行 `uv sync` 会整表替换 extras，列漏一个就静默降级） |
+| `mcp` 行 | 模板默认 `AEGIS_MCP_ENABLED=false` ⇒ `driver=disabled`，此时 `/mcp/` 是 404（容器形态已于 2026-10-16 实测：改成 true 后 `driver=streamable-http`，独立客户端与 SDK 客户端都握到手，配令牌时无/错令牌=401、对令牌=200） | 改成 true 后读到 `absent` ⇒ 镜像里的 extras 少了 `mcp`（`deploy/Dockerfile` 那行 `uv sync` 会整表替换 extras，列漏一个就静默降级）。**注意镜像过期也是这一格**：本轮实测那台现成镜像是改动之前构建的，`find_spec("mcp")` 为 None，而读 Dockerfile 文本的守卫用例照样绿——改过 extras 必须重建镜像并从容器里读这一行确认 |
 | 智能体注册 | `GET /api/v1/agents` 实测回 `online=5`、id 是 `assess.mock01` 等五条 | 后缀就是档位：`.mock01` 是替身、`.real01` 是真内环；`online=0` 而 items 仍有五条 ⇒ 心跳停更但条目在册（见 2.3 第 8 条） |
 
 容器里的智能体档由**仓库根 `.env`** 的 `AEGIS_AGENT_RUNTIME` 决定（模板给的是 `mock`，所以实测那五条是
@@ -311,6 +311,11 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 真智能体的佐证取数走哪张门面由 `AEGIS_AGENT_CONTEXT_FACE` 决定（`auto`（默认）/ `rest` / `mcp`，见 `.env.example`）：
 `auto` 跟着部署形态走——本进程装得出工具面就走 MCP，否则继续走 REST 兼容面；显式点 `mcp` 而没有工具面时**启动当场失败**，
 不静退回 REST。当前生效的那一张写在 `/api/v1/integrations` 的 `mcp` 行 `detail.agent_context_face`。
+工具面清单共 7 项，默认只送 5 项只读（`simulation.run` 与唯一的写工具 `memory.write` 要显式点名，后者还要 `AEGIS_MCP_ALLOW_WRITE_TOOLS=true` 这把第二钥匙）；
+§4.3 那四类记忆经 `memory.categories` 出得来，`connected`/`items`/`note` 三种现场是分开的三个字段——**"这条腿没接"与"接了但没命中"不是一回事**。
+每次调用都留时延：状态行 `detail.latency_ms[工具]` 给 count/p50/p95/max，账本另有一条聚合线 `mcp_tool_ms`（失败的调用也算一次，`outcome=error`）。
+2026-10-16 容器形态实测（规则档、各工具 15 次）：服务端 p50 0.010—0.178 ms，而客户端墙钟 p50 6.27—7.33 ms——
+**差值几乎全在往返与协议握手，不在取数本身**，所以要给智能体换门面之前先想清楚这一毫秒数换不换得起。
 
 
 ### Web 页面（纯 Web，响应式，无原生移动端）

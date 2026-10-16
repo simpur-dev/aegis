@@ -2878,6 +2878,72 @@ N8 `/readyz` 不再报链路占用的资源红 2 条。空转 0 条、还原后�
 （时钟守卫 `test_latency_clock_choice.py` 逐文件读源码文本、连 `container.py` 都在清单里，前端 `serviceToken.spec` 扫拦截器装配点），
 边跑边改源码，那份绿就不是这一版的绿，所以杀掉重跑。这类错误记下来是为了下次不当它没有。
 
+## §4.2 工具面补齐与三档取证：调用留 trace 真的留了、四类记忆真出得去、容器与独立客户端都握上手（2026-10-16）
+
+**这一拍先补两处"文档说有、代码里没有"**：
+① §4.2 那句"工具即审计面（调用留 trace）"——`mcp_tools/server.py` 只有 calls/failures 两个计数，
+整层 grep 不到一处 `perf_counter`/tracer（是实测，不是印象）。所以"留 trace"当时只是"留了次数"，
+工具面慢不慢、哪一次慢，平台答不出来，任务 #29 的"工具时延未取证"也就无从取。
+② §4.3 四类记忆门面当时只有 REST 一个读者（`GET /api/v1/memory/categories`）；工具面上的
+`memory.search`/`memory.write` 只够到 `assessment|disagreement|lesson` 那三个 shared kind，够不到 provider 面。
+
+**改了什么**（行数本机 `grep -c ""` 实测）：
+- `mcp_tools/server.py`（164 → 225 行）：一次调用记两份账。`state.latency` 按工具留最近 200 条毫秒样本
+  （`LATENCY_KEEP`，状态行据此给 `latency_ms[工具] = {count,p50,p95,max}`），账本另记一条聚合线 `mcp_tool_ms`
+  （`outcome=ok|error`）。**故意不做"每工具一条指标名"**：工具名乘出七条序列，而指标目录（SLA 预算、
+  报表档位、前端标签表）是按固定名单登记的，动态名字只会长出没人认领的序列——工具维度留在状态行，
+  聚合线留在账本，两边读者各有各的读法。失败同样留样本：一次 3 s 后失败的取数若不在时延里，
+  p95 就只描述"顺利的那些次"。协议层按 schema 拒掉的调用**两份都不记**（它没进端口，不算一次工具调用）。
+  `tracer` 由装配点注入；没给也只是账本少一条线，不为此造一个假账本、也不让调用炸掉。
+- `manifest.py` + `integrations.py`：新增只读工具 `memory.categories`（清单 6 → 7 项），绑 `MemoryService.read_categories`，
+  参数表与上界逐条对齐那条 GET（`limit ≤10`、`q` 非空且 ≤200、灾种过枚举校验）；
+  **`connected` / `items` / `note` 三态原样带出**，另给一份 `disconnected` 名单——把它们折成一张 items 清单，
+  就正好犯下 §4.3 自己禁止的那件事："把这条腿没接读成没查到相关记忆"。
+- `tests/unit/test_latency_clock_choice.py`：把 `mcp_tools/server.py` 加进 `MEASURING_FILES`——
+  这条腿量的是毫秒级取数，Windows 上换成 `monotonic`（步进 15.6 ms）会恒读 0，`mcp_tool_ms` 就此永绿。
+- 前端 `MetricsView.vue` 补 `mcp_tool_ms` 的中文标签；`scripts/metrics_report.py` 给它归一个"取数档（单次工具调用）"
+  （只进档位表、不进 `INDICATORS`：课题6 没为它定考核线，同 `llm_call_ms`）。
+
+**判定力实测：八条变异**（外壳 `.tmp-verify/mutate_mcp_trace.py`，日志 `.tmp-verify/mutation-mcp-trace.log`）
+T1 账本那份不记 → 红 3 条；T2 失败被记成 ok → 红 1 条；T3 进程内样本不设上界 → 红 1 条；
+T4 起表换成 `monotonic` → 红 1 条（红在时钟守卫，不是红在时延断言）；T5 状态行不再带 latency 摘要 → 红 1 条；
+T6 记忆类 limit 上界与端点脱钩（10→100）→ 红 1 条；T7 三态被折成一张清单 → 红 2 条；T8 空查询照样发给 provider → 红 1 条。
+空转 0、外壳坏 0、还原后残留干净。**T8 第一轮是外壳自己坏**：锚点 `if not query:` 在 `integrations.py` 里有三处，
+外壳按规矩拒绝执行（rc=2）而不是"改了别处也算红"——这条纪律前面几批写过，这次是它第一次真的挡住一次假绿。
+
+**取证三档**（`.tmp-verify/mcp_evidence.py`，两份日志 `mcp-evidence-local.log` / `mcp-evidence-container.log`）：
+- **独立实现互操作**：仓里所有真握手用例用的都是官方 SDK——两边同一份实现，测不出服务端是否与 SDK 强耦合。
+  这一支另写了一个**只用 httpx** 的最小 streamable-HTTP JSON-RPC 客户端（initialize → notifications/initialized →
+  tools/list → tools/call，自己接 `mcp-session-id`，自己解 SSE 里的 `data:` 行），对本机进程与容器都握手成功、
+  列到 5 项工具、每项调 15 次全部 `isError=false`。口径要说准：**这证明的是"与另一份独立实现互操作"，
+  不是"某个第三方产品接上了"**；后者需要真实第三方客户端，仍未取证。
+- **容器形态**：先拿现成的 `aegis-backend:latest` 试，`importlib.util.find_spec("mcp")` 是 **None**，
+  容器里 mcp 行 `driver=absent`（`/mcp/` 回 503 `E_MCP_UNAVAILABLE`）——而那条"CI 与镜像都装了这一腿"的
+  守卫用例全绿，因为它读的是 `deploy/Dockerfile` 的**文本**，管得住"清单写没写"，管不住"机器上那份镜像
+  是不是清单之后重建的"。这记成待修缺陷 #57。重建镜像（`aegis-backend:mcp-evidence`，720 MB，本次实测装得上 mcp）后：
+  healthz 200、协议 2025-06-18 握手成功、`tools/list` 5 项、令牌三档实测 **无令牌 401 / 错令牌 401 / 对令牌 200**。
+- **工具时延**（规则档，不挂 LLM，各 15 次）：容器形态服务端 p50 `telemetry.query` 0.010 / `memory.search` 0.010 /
+  `cases.search` 0.171 / `memory.categories` 0.178 / `simulation.run` 0.104 ms，p95 最高 0.385 ms；
+  客户端墙钟 p50 6.27—7.33 ms（**往返与协议开销是平台内取数的 40—600 倍**，这句是这份数据里最该被引用的一条：
+  "经不经过工具面"的差别几乎全在传输与握手上，不在取数本身）。本机进程形态同档：服务端 p50 0.015—0.441 ms、
+  客户端 p50 9.45—29.38 ms。SDK 客户端对照（5 次中位数）6.98—8.83 ms，与自研那份同档，
+  脚本里带一条"两种客户端差出 3 倍以上就报"的判据——没报。
+  账本聚合线核对：`aegis_latency_ms_count{metric="mcp_tool_ms"}` = 75.0 = 5 工具 × 15 次，两端都对得上。
+
+**没证明到的**：① `retrieval.search` 在这两次取证里都不在面上——本机与容器都没装配检索腿（要嵌入模型/服务），
+所以那一路工具只在**用例注入替身**的形态下绿过；② 第三方 MCP 客户端产品（Inspector 之类）没做互测，
+本轮只做到"独立实现"；③ 时延样本 n=15、单次部署形态、`delivery_mode=mock`，p95/max 抖动大（客户端 max 30—76 ms），
+不足以支撑任何"达标/不达标"的结论，只够回答"量得到量不到、差在传输还是差在取数"；④ `mcp_tool_ms` 没设考核线，
+也就没进告警规则；⑤ 时延是**服务端**与**客户端墙钟**两份，没做 Jaeger 跨度级归因（工具面这层没接 OTel 跨度，
+只进了账本）。
+
+**门禁**（本机，整棵 `tests/`，含 Postgres 那条腿；这一遍从头到尾没动过仓库文件）：
+`ruff format --check src tests scripts` / `ruff check` / `mypy src` 全绿，
+`PYTHONHASHSEED=0 uv run pytest -q --junitxml` 由 `scripts/ci_junit_guard.py` 计数
+**tests=3143 / skipped=43 / ran=3100 / failures=0 / errors=0**（上一拍 3127/3084，这一拍净增 16 条：
+6 条时延 + 5 条 `memory.categories` 的 source 契约 + 2 条 api 端到端 + 时钟守卫新增的 3 档参数化）；
+前端 `npm run typecheck` 通过、`npx vitest run` **868 passed / 51 files**（本轮只加一个指标标签，没新增用例）、`npm run build` 成功（51.79 s）。
+
 
 
 
