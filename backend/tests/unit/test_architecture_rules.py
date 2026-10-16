@@ -14,7 +14,7 @@
 - ``pipeline/`` 对可选腿的**模块级** import 只有 ``aegis.knowledge.provider``
   （KnowledgeProvider 协议 + CaseMatch 数据类）；检索层引用只出现在
   TYPE_CHECKING 与函数体内（延迟导入，见 chain.py 头部注释）；
-- 可选腿的 ``build_*`` 构建函数，生产调用点只有 ``container.py`` / ``integrations.py``
+- 可选腿的 ``build_*`` 构建函数，生产调用点只有装配点（``container.py`` 与 ``integrations/`` 包）
   与 ``backend/scripts`` 运维入口（ingest_cases 等走同一装配点），此外只允许腿包内部自用。
 
 改这些规则的唯一方式是先改架构文档、再改这里——两者必须一起过评审。
@@ -31,7 +31,10 @@ SCRIPTS = BACKEND / "scripts"
 
 OPTIONAL_LEGS = {"persistence", "analytics", "knowledge", "retrieval", "edge", "connectors"}
 KERNEL_CORE = {"bus", "storage", "services", "workflow", "observability"}
-ASSEMBLY_FILES = {"container.py", "integrations.py"}
+#: 装配身份按**路径**认，不按文件名认：P2 把 `integrations.py` 拆成了包，
+#: "只有装配点能调 build_*" 这条纪律属于整个包，不是那一个已不存在的文件。
+ASSEMBLY_MODULE_NAMES = {"container.py"}
+ASSEMBLY_PACKAGES = {"integrations"}
 
 
 def _iter_py(root: Path) -> list[Path]:
@@ -114,9 +117,25 @@ def test_铁律3_pipeline对可选腿只允许知识协议模块与延迟导入(
     assert not violations, "\n".join(violations)
 
 
+def _is_assembly(path: Path) -> bool:
+    """这条源码路径是不是装配点（container.py 或 integrations 包内任何模块）。
+
+    按绝对路径判定，不用 `relative_to(SRC)`：扫描面还包含 `scripts/`，那里根本不在 SRC 下，
+    拿 SRC 做基准会让脚本目录里的调用点在"判身份"这一步就抛 ValueError。
+    """
+    if path.name in ASSEMBLY_MODULE_NAMES:
+        return True
+    return any(path.parent.is_relative_to(SRC / pkg) for pkg in sorted(ASSEMBLY_PACKAGES))
+
+
 def test_铁律3_腿的构建函数只从装配点调用() -> None:
     builders = _build_functions_defined_in_legs()
     assert builders, "没扫到任何腿内 build_* 函数——扫描器坏了，这条守卫在空转"
+    # 白名单自己也要被验一遍：目录改名后它匹配不到任何文件，守卫会静默变成"谁都不许调用"
+    # 或（更糟）在别处被放宽成永绿。这里要求两个装配面都真实存在且有内容。
+    assembly_paths = [p for p in _iter_py(SRC) if _is_assembly(p)]
+    assert any(p.relative_to(SRC).name == "container.py" for p in assembly_paths), "container.py 不在了：装配点白名单失效"
+    assert any(p.relative_to(SRC).parts[0] == "integrations" for p in assembly_paths), "integrations 包不在了：装配点白名单失效"
     violations = []
     scanned = [*_iter_py(SRC), *_iter_py(SCRIPTS)]
     for path in scanned:
@@ -128,11 +147,11 @@ def test_铁律3_腿的构建函数只从装配点调用() -> None:
                 continue
             defined_in = builders[node.func.id]
             same_leg = defined_in.parent == path.parent
-            if path.name in ASSEMBLY_FILES or SCRIPTS in path.parents or same_leg:
+            if _is_assembly(path) or SCRIPTS in path.parents or same_leg:
                 continue
             violations.append(f"{rel}:{node.lineno} 调用 {node.func.id}（定义于 {defined_in.relative_to(BACKEND)}）")
     assert not violations, (
-        "可选腿的 build_* 只能从 container.py / integrations.py / scripts 运维入口（或腿包内部）调用，"
+        "可选腿的 build_* 只能从装配点（container.py / integrations 包）/ scripts 运维入口（或腿包内部）调用，"
         "散落调用点会让'内核不依赖腿的 I/O'失守:\n" + "\n".join(violations)
     )
 

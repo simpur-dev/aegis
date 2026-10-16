@@ -273,7 +273,7 @@ class TestSimulationSourceNeedsNoSdk:
         那时该改的是这条断言，而不是让"配了没生效"继续没人发现。
         """
         from aegis.config import Settings
-        from aegis.integrations import _mcp_simulation_source
+        from aegis.integrations.mcp import _mcp_simulation_source
 
         call = _mcp_simulation_source(Settings(env="test", simulation_roles_llm=True))
         out = asyncio.run(call({"rounds": 2, "scenarios": 2}))
@@ -284,7 +284,7 @@ class TestSimulationSourceNeedsNoSdk:
     def test_工具面的情景条数被夹住(self) -> None:
         """外部客户端给 `scenarios=1e9`：这条腿是公开面，循环上限必须在装配点就成立。"""
         from aegis.config import Settings
-        from aegis.integrations import _mcp_simulation_source
+        from aegis.integrations.mcp import _mcp_simulation_source
 
         out = asyncio.run(_mcp_simulation_source(Settings(env="test"))({"scenarios": 10**9, "rounds": 10**9}))
         assert out["cost"]["requested_scenarios"] <= 24

@@ -1,7 +1,7 @@
 /**
  * 装配事实（`GET /api/v1/integrations`）的前端契约层。
  *
- * 后端把"哪条腿在跑、哪条腿是瘸的"做成了一等公民（`backend/src/aegis/integrations.py`），
+ * 后端把"哪条腿在跑、哪条腿是瘸的"做成了一等公民（`backend/src/aegis/integrations/`），
  * 但只有接口能看见等于现场没人看得见：大屏值守时要判断"预案为什么变慢"，
  * 第一眼看的就是这个面板，而不是去翻日志。
  *

@@ -10,6 +10,7 @@
 
 import { readFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
+import { readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const MAX_UPWARDS = 6
@@ -86,11 +87,21 @@ function backendSpecFlags(): BackendSpecFlag[] {
   return found
 }
 
-/** 从装配面源码里解析出对外报出的腿名（状态行的唯一真源：`IntegrationState(name=...)`）。 */
+/** 从装配面源码里解析出对外报出的腿名（状态行的唯一真源：`IntegrationState(name=...)`）。
+ *
+ * 装配面从 2026-10-16 起是一个包（`backend/src/aegis/integrations/*.py`，P2 拆分），
+ * 所以这里扫目录而不是盯某一个文件名——盯文件名的门禁在搬家后会静默读到零个装配行。
+ */
 export function backendIntegrationLegs(): string[] {
   const found = new Set<string>()
-  for (const file of ['integrations.py', 'container.py']) {
-    const text = readRepoFile('backend', 'src', 'aegis', file)
+  const root = repoRoot()
+  const assemblyDir = join(root, 'backend', 'src', 'aegis', 'integrations')
+  const files = readdirSync(assemblyDir)
+    .filter((name) => name.endsWith('.py'))
+    .map((name) => join(assemblyDir, name))
+  if (files.length === 0) throw new Error(`装配包目录是空的（或不存在）：${assemblyDir}`)
+  const texts = [...files, join(root, 'backend', 'src', 'aegis', 'container.py')].map((file) => readFileSync(file, 'utf-8'))
+  for (const text of texts) {
     for (const match of text.matchAll(/IntegrationState\(\s*name="([a-z_]+)"/g)) found.add(match[1] as string)
   }
   if (found.size === 0) {

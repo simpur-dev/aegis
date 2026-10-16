@@ -328,7 +328,7 @@ class TestHandshake:
         ① 失败不许伪装成成功正文（客户端会照 ok=false 之外的字段解析，然后以为"平台里没资料"）；
         ② 状态行的调用/失败/成因必须是**运行期真值**——装配时刻的快照会把"刚刚失败过"永远读成 0 笔。
         """
-        import aegis.integrations as igs
+        import aegis.integrations.mcp as igs  # 工具面装配与它的私有 source 现在住在这个模块
 
         def _failing(_store: object):
             async def _call(args: dict[str, Any]) -> dict[str, Any]:

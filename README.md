@@ -29,7 +29,8 @@ aegis/
 ├── backend/
 │   ├── src/aegis/
 │   │   ├── config.py          # 运行配置与考核指标阈值口径（唯一配置面）
-│   │   ├── integrations.py    # 可选子系统的唯一装配点：内核不 import 任何可选后端
+│   │   ├── contracts.py       # 契约校验器（读仓库根 contracts/*.schema.json），与 errors.py 同级
+│   │   ├── integrations/      # 可选子系统的唯一装配点（一条腿一个模块）：内核不 import 任何可选后端
 │   │   ├── container.py       # 平台装配与指标量测出口
 │   │   ├── logging.py         # 结构化 JSON 日志 + trace_id 上下文
 │   │   ├── errors.py          # 类型化错误码（与规范 §5 对齐）
@@ -333,7 +334,7 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 
 ## 3. 可选子系统：接得上、退得掉、看得见
 
-平台内核（总线/网关/链路/工作流）不 import 任何可选后端；`integrations.py` 是唯一装配点。
+平台内核（总线/网关/链路/工作流）不 import 任何可选后端；`integrations/` 包是唯一装配点。
 "没装 extra / 连不上后端 / 配置关闭"三种情况都不改变链路语义，只改变状态表里的一行事实——
 **"装配时跳过"与"跑起来后降级"必须是两行不同的事实**，否则运维只能靠猜。
 

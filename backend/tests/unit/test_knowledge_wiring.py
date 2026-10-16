@@ -495,7 +495,7 @@ class TestKnowledgeSchemaWarmup:
             await ctn.shutdown()
 
     async def test_预热超时不拖住启动(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(integrations, "KNOWLEDGE_SCHEMA_TIMEOUT_SECONDS", 0.01)
+        monkeypatch.setattr(integrations.knowledge, "KNOWLEDGE_SCHEMA_TIMEOUT_SECONDS", 0.01)
         provider = FallbackKnowledgeProvider(primary=SchemaStub(delay_ms=400), fallback=InMemoryKnowledgeProvider(cases=[]))
         reason = await warm_knowledge(provider)
         assert reason is not None and reason.startswith("schema_timeout")
@@ -560,7 +560,7 @@ class TestKnowledgeShutdown:
         assert "schema_error" not in row.detail
 
     async def test_关闭超时不拖住停服(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(integrations, "KNOWLEDGE_CLOSE_TIMEOUT_SECONDS", 0.01)
+        monkeypatch.setattr(integrations.knowledge, "KNOWLEDGE_CLOSE_TIMEOUT_SECONDS", 0.01)
         provider = FallbackKnowledgeProvider(primary=CloseStub(delay_ms=400), fallback=InMemoryKnowledgeProvider(cases=[]))
         reason = await close_knowledge(provider)
         assert reason is not None and reason.startswith("close_timeout")

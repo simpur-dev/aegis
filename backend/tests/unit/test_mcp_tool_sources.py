@@ -5,7 +5,7 @@
 所以这里的断言全部对着 **provider 收到的实参**，不是对着返回条数——条数在内置预案库上
 常常两种问法都给得出东西，抓不出分叉（这条是变异检查实测出来的：第一版用例就是这么假绿的）。
 
-source 是装配点的私有函数：这里直连它们，是因为要看的正是"发出去的那个调用长什么样"，
+source 是 `integrations/mcp.py` 里的私有函数（P2 起装配层成包）：这里直连它们，是因为要看的正是"发出去的那个调用长什么样"，
 绕开 server 反而更准（server 侧的形状由 `test_mcp_tools.py` 与 `test_mcp_api.py` 覆盖）。
 """
 
@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from aegis.config import Settings
-from aegis.integrations import (
+from aegis.integrations.mcp import (
     _mcp_knowledge_source,
     _mcp_memory_categories_source,
     _mcp_memory_search_source,
