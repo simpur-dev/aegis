@@ -2878,7 +2878,7 @@ N8 `/readyz` 不再报链路占用的资源红 2 条。空转 0 条、还原后�
 （时钟守卫 `test_latency_clock_choice.py` 逐文件读源码文本、连 `container.py` 都在清单里，前端 `serviceToken.spec` 扫拦截器装配点），
 边跑边改源码，那份绿就不是这一版的绿，所以杀掉重跑。这类错误记下来是为了下次不当它没有。
 
-## §4.2 工具面补齐与三档取证：调用留 trace 真的留了、四类记忆真出得去、容器与独立客户端都握上手（2026-10-16）
+## §4.2 工具面补齐与四档取证：调用留 trace 真的留了、四类记忆真出得去、容器/独立实现/第三方产品都握上手（2026-10-16）
 
 **这一拍先补两处"文档说有、代码里没有"**：
 ① §4.2 那句"工具即审计面（调用留 trace）"——`mcp_tools/server.py` 只有 calls/failures 两个计数，
@@ -2911,7 +2911,7 @@ T6 记忆类 limit 上界与端点脱钩（10→100）→ 红 1 条；T7 三态�
 空转 0、外壳坏 0、还原后残留干净。**T8 第一轮是外壳自己坏**：锚点 `if not query:` 在 `integrations.py` 里有三处，
 外壳按规矩拒绝执行（rc=2）而不是"改了别处也算红"——这条纪律前面几批写过，这次是它第一次真的挡住一次假绿。
 
-**取证三档**（`.tmp-verify/mcp_evidence.py`，两份日志 `mcp-evidence-local.log` / `mcp-evidence-container.log`）：
+**取证四档**（`.tmp-verify/mcp_evidence.py`，日志 `mcp-evidence-local.log` / `mcp-evidence-container.log` / `mcp-evidence-inspector.md`）：
 - **独立实现互操作**：仓里所有真握手用例用的都是官方 SDK——两边同一份实现，测不出服务端是否与 SDK 强耦合。
   这一支另写了一个**只用 httpx** 的最小 streamable-HTTP JSON-RPC 客户端（initialize → notifications/initialized →
   tools/list → tools/call，自己接 `mcp-session-id`，自己解 SSE 里的 `data:` 行），对本机进程与容器都握手成功、
@@ -2929,10 +2929,21 @@ T6 记忆类 limit 上界与端点脱钩（10→100）→ 红 1 条；T7 三态�
   客户端 p50 9.45—29.38 ms。SDK 客户端对照（5 次中位数）6.98—8.83 ms，与自研那份同档，
   脚本里带一条"两种客户端差出 3 倍以上就报"的判据——没报。
   账本聚合线核对：`aegis_latency_ms_count{metric="mcp_tool_ms"}` = 75.0 = 5 工具 × 15 次，两端都对得上。
+- **第三方客户端产品**（同日补测，`.tmp-verify/mcp-evidence-inspector.md`）：装 `@modelcontextprotocol/inspector` 2.11.0 的 CLI
+  （MCP 项目自家的客户端产品，与我们的服务端不同实现栈），对着上面那台容器跑通：
+  `tools/list` 出 5 项且 `annotations` 被正确解出（`readOnlyHint:true / destructiveHint:false / openWorldHint:false`）、
+  `tools/call cases.search` 得 `ok:true, count:2` 的真正文、`tools/call memory.categories` 把**三种现场在外链上读成三种**
+  （`episodic{connected:true,…}` 与 `semantic/knowledge{connected:false, note:"该记忆类未接入（装配点没给这条腿）"}`，
+  并附 `disconnected:["knowledge","semantic"]`）。顺带撞出一条对使用者有用的事实：
+  inspector 的 `--tool-arg key=value` 会把纯数字**猜成 int**，`region_code=540121` 于是被我们服务端在 schema 层拒掉
+  （`isError:true` + `Input should be a valid string [input_type=int]`）——这一条同时是正向证据：
+  "类型不符不进端口"这条纪律对第三方客户端同样成立。**过程里犯的一个操作错**：第一次把 inspector 装在了仓库里的子目录，
+  npm 顺着工作区把依赖写进了仓库根的 `package.json`/`package-lock.json`（+2428 行锁文件）——已 `git checkout` 那两个文件还原、
+  `npm prune` 清掉多余包，之后改装到仓库外的临时目录并在取完证后删除。教训：给取证装第三方客户端，一律装到工作区外。
 
 **没证明到的**：① `retrieval.search` 在这两次取证里都不在面上——本机与容器都没装配检索腿（要嵌入模型/服务），
-所以那一路工具只在**用例注入替身**的形态下绿过；② 第三方 MCP 客户端产品（Inspector 之类）没做互测，
-本轮只做到"独立实现"；③ 时延样本 n=15、单次部署形态、`delivery_mode=mock`，p95/max 抖动大（客户端 max 30—76 ms），
+所以那一路工具只在**用例注入替身**的形态下绿过；② 第三方客户端只测到 MCP 项目自家的 Inspector CLI **一种产品**，
+没测各家客户端（它们对 `annotations`、分页、资源面的实现差异不在这一轮射程内）；③ 时延样本 n=15、单次部署形态、`delivery_mode=mock`，p95/max 抖动大（客户端 max 30—76 ms），
 不足以支撑任何"达标/不达标"的结论，只够回答"量得到量不到、差在传输还是差在取数"；④ `mcp_tool_ms` 没设考核线，
 也就没进告警规则；⑤ 时延是**服务端**与**客户端墙钟**两份，没做 Jaeger 跨度级归因（工具面这层没接 OTel 跨度，
 只进了账本）。
