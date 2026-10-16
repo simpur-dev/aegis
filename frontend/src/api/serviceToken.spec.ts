@@ -5,6 +5,8 @@
  *    开了令牌的部署里那一条链永远 401，而其它页面看起来正常，于是没人怀疑是凭据。
  */
 
+import { readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -17,7 +19,7 @@ import {
   setServiceToken,
   tokenHeaders,
 } from './serviceToken'
-import { readRepoFile } from '@/testing/repoSource'
+import { readRepoFile, repoRoot } from '@/testing/repoSource'
 
 /** 记下最后一次真正发出去的请求头（不碰网络：adapter 直接回 200）。 */
 function probeInstance(): { instance: AxiosInstance; sent: () => Record<string, string> } {
@@ -107,11 +109,27 @@ describe('axios 拦截器', () => {
 })
 
 describe('覆盖面：谁发请求谁带凭据', () => {
-  /** 每个 api 模块自带 axios 实例是刻意的隔离边界，但"隔离"不该等于"漏了鉴权"。 */
-  const MODULES = ['client', 'reports', 'workflow', 'assistant', 'map', 'integrations']
+  /**
+   * 每个 api 模块自带 axios 实例是刻意的隔离边界，但"隔离"不该等于"漏了鉴权"。
+   *
+   * 这份名单原来是手抄的六个模块名——加一个模块（推演沙盒就是第七个）时没人回来加它，
+   * 于是"覆盖面"退化成"抄写一致性"：新模块裸奔，门禁照样绿。改成扫目录：
+   * 凡是自己 `axios.create(` 的模块都必须装拦截器，不认列表。
+   */
+  function instanceOwningModules(): string[] {
+    const dir = join(repoRoot(), 'frontend', 'src', 'api')
+    return readdirSync(dir)
+      .filter((name) => name.endsWith('.ts') && !name.endsWith('.spec.ts') && !name.endsWith('.d.ts'))
+      .filter((name) => readRepoFile('frontend', 'src', 'api', name).includes('axios.create('))
+      .map((name) => name.replace(/\.ts$/, ''))
+  }
 
-  it('六个 api 模块都装了令牌拦截器', () => {
-    for (const name of MODULES) {
+  it('扫得到足够多的模块：扫描为空就是外壳坏了，不是"没有漏点"', () => {
+    expect(instanceOwningModules().length).toBeGreaterThanOrEqual(7)
+  })
+
+  it('凡是自建 axios 实例的 api 模块都装了令牌拦截器', () => {
+    for (const name of instanceOwningModules()) {
       const source = readRepoFile('frontend', 'src', 'api', `${name}.ts`)
       expect(source, `${name}.ts 没装拦截器：开了令牌的部署里它那条链必 401`).toContain('installServiceToken(')
     }

@@ -40,6 +40,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '指标量测' },
   },
   {
+    path: '/simulation',
+    name: 'simulation',
+    component: () => import('./views/SimulationView.vue'),
+    meta: { title: '推演沙盒' },
+  },
+  {
     path: '/assistant',
     name: 'assistant',
     component: () => import('./views/AssistantView.vue'),

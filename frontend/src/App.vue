@@ -20,6 +20,7 @@ const pages = [
   { key: 'map', to: '/map', label: '一张图' },
   { key: 'workflow', to: '/workflow', label: '流程编排' },
   { key: 'metrics', to: '/metrics', label: '指标量测' },
+  { key: 'simulation', to: '/simulation', label: '推演沙盒' },
   { key: 'assistant', to: '/assistant', label: '智能助手' },
 ] as const
 
