@@ -19,10 +19,11 @@ from aegis.config import Settings
 from aegis.domain.enums import Action, AgentType, Channel, HazardType
 from aegis.domain.messages import TelemetryReading, TriggerHit, now_iso
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.chain import HazardResponseChain
 from aegis.pipeline.stages import HazardStages
+from aegis.pipeline.workflow_chain import WorkflowChain
 from aegis.services.delivery import DeliveryDispatcher, MockChannelAdapter
 from aegis.services.memory import InMemoryAgentMemory, MemoryService
+from conftest import chain_entry
 
 REGION = "540121"
 TRACE = "trc_" + "9" * 16
@@ -120,8 +121,8 @@ def _feedback_agent(bus: InMemoryBus, *, llm: Any, memory: Any, agent_cls: Any =
     )
 
 
-def _chain(gateway: Any, registry: Any, contracts: Any, settings: Settings, suggestions: Any = None) -> HazardResponseChain:
-    return HazardResponseChain(
+async def _chain(gateway: Any, registry: Any, contracts: Any, settings: Settings, suggestions: Any = None) -> WorkflowChain:
+    return await chain_entry(
         HazardStages(
             gateway=gateway,
             registry=registry,
@@ -183,7 +184,9 @@ class TestFeedbackClosedLoop:
         ops = await _capture_ops(bus)
         await _bring_up(bus, gateway, agent)
         try:
-            result = await _chain(gateway, registry, contracts, settings).process([_reading()], region_code=REGION, preset_hits=[_hit()])
+            result = await (await _chain(gateway, registry, contracts, settings)).process(
+                [_reading()], region_code=REGION, preset_hits=[_hit()]
+            )
             stage = result.stage("feedback")
             assert stage is not None and stage.mode == "agent", "反馈段必须由在册智能体产出：只广播不派发就是这次要修的洞"
             assert "效果分" in stage.note and "pending_human_review" in stage.note, stage.note
@@ -216,7 +219,7 @@ class TestFeedbackClosedLoop:
         agent = _feedback_agent(bus, llm=AttributionLLM(), memory=None)
         await _bring_up(bus, gateway, agent)
         try:
-            result = await _chain(gateway, registry, contracts, settings, suggestions=sink).process(
+            result = await (await _chain(gateway, registry, contracts, settings, suggestions=sink)).process(
                 [_reading()], region_code=REGION, preset_hits=[_hit()]
             )
         finally:
@@ -241,7 +244,9 @@ class TestFeedbackClosedLoop:
         agent = _feedback_agent(bus, llm=AttributionLLM(), memory=None)
         await _bring_up(bus, gateway, agent)
         try:
-            result = await _chain(gateway, registry, contracts, settings).process([_reading()], region_code=REGION, preset_hits=[_hit()])
+            result = await (await _chain(gateway, registry, contracts, settings)).process(
+                [_reading()], region_code=REGION, preset_hits=[_hit()]
+            )
         finally:
             await agent.stop()
             await gateway.close()
@@ -254,7 +259,9 @@ class TestFeedbackClosedLoop:
     ) -> None:
         await gateway.start()
         try:
-            result = await _chain(gateway, registry, contracts, settings).process([_reading()], region_code=REGION, preset_hits=[_hit()])
+            result = await (await _chain(gateway, registry, contracts, settings)).process(
+                [_reading()], region_code=REGION, preset_hits=[_hit()]
+            )
             stage = result.stage("feedback")
             assert stage is not None and stage.mode == "local"
             assert stage.note == "触达回执已归档", stage.note
@@ -270,7 +277,9 @@ class TestFeedbackClosedLoop:
         agent = _feedback_agent(bus, llm=None, memory=None, agent_cls=BadFeedbackAgent)
         await _bring_up(bus, gateway, agent)
         try:
-            result = await _chain(gateway, registry, contracts, settings).process([_reading()], region_code=REGION, preset_hits=[_hit()])
+            result = await (await _chain(gateway, registry, contracts, settings)).process(
+                [_reading()], region_code=REGION, preset_hits=[_hit()]
+            )
             assert any("反馈结论不合契约" in note for note in result.degradations), result.degradations
             stage = result.stage("feedback")
             assert stage is not None and stage.mode == "local", "没有可信效果分就宁可不记，不许编一个"
@@ -287,7 +296,9 @@ class TestFeedbackClosedLoop:
         )
         await _bring_up(bus, gateway, agent)
         try:
-            result = await _chain(gateway, registry, contracts, settings).process([_reading()], region_code=REGION, preset_hits=[_hit()])
+            result = await (await _chain(gateway, registry, contracts, settings)).process(
+                [_reading()], region_code=REGION, preset_hits=[_hit()]
+            )
             assert any("反馈结论不合契约" in note for note in result.degradations), result.degradations
             stage = result.stage("feedback")
             assert stage is not None and stage.mode == "local" and "效果分" not in stage.note, stage.note
@@ -301,7 +312,9 @@ class TestFeedbackClosedLoop:
         agent = _feedback_agent(bus, llm=None, memory=None, agent_cls=BoomFeedbackAgent)
         await _bring_up(bus, gateway, agent)
         try:
-            result = await _chain(gateway, registry, contracts, settings).process([_reading()], region_code=REGION, preset_hits=[_hit()])
+            result = await (await _chain(gateway, registry, contracts, settings)).process(
+                [_reading()], region_code=REGION, preset_hits=[_hit()]
+            )
             assert any("反馈归因降级" in note for note in result.degradations), result.degradations
             assert result.warning is not None, "预警早已发布：反馈腿的故障不能把它收回"
             assert result.ok, "反馈段的失败收口在反馈段，整条链仍算走通（与研判增强腿同一条判据）"
@@ -318,7 +331,9 @@ class TestFeedbackClosedLoop:
         agent = _feedback_agent(bus, llm=llm, memory=memory)
         await _bring_up(bus, gateway, agent)
         try:
-            result = await _chain(gateway, registry, contracts, settings).process([_reading()], region_code=REGION, preset_hits=[_hit()])
+            result = await (await _chain(gateway, registry, contracts, settings)).process(
+                [_reading()], region_code=REGION, preset_hits=[_hit()]
+            )
             stage = result.stage("feedback")
             assert stage is not None and stage.mode == "agent" and "归因腿 local" in stage.note, stage.note
             assert llm.calls == [], "网关判不可用时不该还去敲它一次"

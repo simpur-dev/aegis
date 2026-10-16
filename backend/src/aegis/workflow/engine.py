@@ -170,6 +170,15 @@ class WorkflowEngine:
         """
         return self._services
 
+    @property
+    def instance_stats(self) -> dict[str, int]:
+        """在内存里留着几个实例、上界多大、累计被挤掉几个（D7 之后每条预警都起一个实例）。
+
+        这三个数只有摆在一起才读得懂：`evicted_instances` 一直在涨说明容量小了，
+        而单独看它不知道上界在哪。
+        """
+        return {"held": len(self._instances), "capacity": self._max_instances, "evicted": self.evicted_instances}
+
     def validate_definition(self, definition: WorkflowDef) -> None:
         """静态校验：节点类型已注册、配置合法、图无环、边引用存在。
 

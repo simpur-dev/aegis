@@ -107,8 +107,8 @@ class ChainBoards:
     def snapshot(self) -> dict[str, Any]:
         """开着几张盘。漏收盘会在这里露出来，而不是悄悄吃内存。
 
-        当前读者只有 parity 用例（`test_盘面在起图失败时也不漏`）：它验的是"起图抛异常也要收"。
-        接进 `/api/v1/status` 让值班员看得见，是 chain 退役那一步（任务 D7-3）要一起做的事——
-        在那之前不假装这一行已经上了状态面。
+        读者是 `/readyz` 的 `chain` 那一块（D7 收口时接上：链路的编排只剩这一条路径之后，
+        "盘面漏收"就成了唯一的进程内泄漏面，值班必须能一眼看见）；
+        `test_盘面在起图失败时也不漏` 钉的是同一件事的另一头——起图抛异常也要收。
         """
         return {"open_boards": len(self._open), "traces": sorted(self._open)[:5]}

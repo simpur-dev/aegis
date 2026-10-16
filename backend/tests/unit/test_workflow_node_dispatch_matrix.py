@@ -180,7 +180,7 @@ async def _run(ctn: PlatformContainer, case: dict[str, Any], label: str) -> dict
     workflow = await ctn.workflow.create_definition(name=f"矩阵-{label}", description="", nodes=case["nodes"], edges=case.get("edges", []))
     payload = dict(case.get("payload", {}))
     if case.get("chain_board"):
-        stations = ctn.workflow_chain.stations
+        stations = ctn.chain.stations
         board = stations.open(
             ChainBoard(
                 result=ChainResult(trace_id=TRACE, event_id=new_event_id()),

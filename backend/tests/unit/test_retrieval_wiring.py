@@ -31,16 +31,16 @@ from aegis.domain.messages import AgentMessage
 from aegis.integrations import build_retrieval, warm_retrieval
 from aegis.knowledge.cases import HazardCase, load_builtin_cases
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.chain import HazardResponseChain
 from aegis.pipeline.result import ChainResult
 from aegis.pipeline.stages import HazardStages
+from aegis.pipeline.workflow_chain import WorkflowChain
 from aegis.retrieval.corpus import CASES_SOURCE, doc_from_case, docs_from_cases
 from aegis.retrieval.docs import LEG_LEXICAL, Provenance, RetrievedDoc
 from aegis.retrieval.embedder import HashingEmbedder
 from aegis.retrieval.lexical import build_lexical_index
 from aegis.retrieval.onnx_io import EMBEDDER_MODEL_DIR, MODEL_TOKENIZER_FILE, MODEL_WEIGHTS_FILE, RERANKER_MODEL_DIR
 from aegis.retrieval.service import Degradation, HybridRetrievalService, RetrievalOutcome, RetrievalQuery
-from conftest import REGION, readings_rain_burst
+from conftest import REGION, chain_entry, readings_rain_burst
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -242,16 +242,16 @@ class TestBuildRetrieval:
         assert all(item.is_skipped for item in outcome.degradations)
 
 
-def build_chain(
+async def build_chain(
     bus: InMemoryBus,
     registry: AgentRegistry,
     contracts: ContractRegistry,
     settings: Settings,
     *,
     retrieval: Any | None,
-) -> HazardResponseChain:
+) -> WorkflowChain:
     gateway = AgentGateway(bus, registry, contracts, Tracer(), default_deadline_ms=1_500)
-    return HazardResponseChain(
+    return await chain_entry(
         HazardStages(
             gateway=gateway,
             registry=registry,
@@ -291,7 +291,7 @@ async def drive_with_plan_agent(
     await bus.idle()
     await asyncio.sleep(0.01)
     await bus.idle()
-    chain = HazardResponseChain(
+    chain = await chain_entry(
         HazardStages(
             gateway=gateway,
             registry=registry,
@@ -385,7 +385,7 @@ class TestChainRetrieval:
         stub = StubRetrieval()
         settings = base_settings()
         gateway = AgentGateway(bus, registry, contracts, Tracer(), default_deadline_ms=1_500)
-        chain = HazardResponseChain(
+        chain = await chain_entry(
             HazardStages(
                 gateway=gateway,
                 registry=registry,

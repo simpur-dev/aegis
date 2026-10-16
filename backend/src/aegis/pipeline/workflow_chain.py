@@ -1,12 +1,14 @@
-"""用工作流引擎跑同一条五段链路（D7 编排归一 §4.6 的目标形态）。
+"""五段链路的**唯一**编排入口（D7 §4.6 收口）：段的先后由 DAG 的边决定。
 
-与 `HazardResponseChain` 的区别只有一处：段的调用顺序由 DAG 的边决定，而不是由 Python 写死。
-段的判定、段的记账、根跨度、落库回调全部复用同一批对象（`HazardStages.run_stage`、
-`pipeline/span.py`、`ChainBoard`），所以两条路径可被 parity 用例逐项对齐——
-`tests/unit/test_chain_workflow_parity.py` 全绿是 chain 退役的前置门。
+退役前这里是"两条路径之一"：`pipeline/chain.py` 用 Python 写死顺序，这里用边表达同一条顺序，
+parity 用例逐项对齐两者的可观测物，全绿之后固定顺序那份才删（2026-10-16，过程见 REPORT 的 D7 第 4 步）。
+段的判定与记账仍在 `HazardStages.run_stage`（两条路径本来就共用它），根跨度在 `pipeline/span.py`，
+跨段中转在 `pipeline/board.py`——收口之后这一层只剩"什么时候跑哪段"这一件事。
 
-早退用边条件表达：感知段没命中就不往研判走、研判没出结论就不往决策走，
-与固定顺序版"停在两段 + 后四段记 skipped"是同一件事的两种写法。
+早退用边条件表达：感知段没命中就不往研判走、研判没出结论就不往决策走，下游由 `board.finish()`
+补 skipped。对外形状（`process` / `process_many` / `handle_agent_message` / `warnings`）沿用退役前，
+调用点不需要知道顺序是谁决定的——这也是"退役不改口径"能成立的原因。
+
 """
 
 from __future__ import annotations
@@ -72,7 +74,7 @@ class ChainStations:
 
 
 class WorkflowChain:
-    """工作流编排的链路入口。对外形状与 `HazardResponseChain` 一致。"""
+    """链路入口：开一盘、起一次标准五段实例、收盘、补 skipped、落库回调。"""
 
     def __init__(
         self,

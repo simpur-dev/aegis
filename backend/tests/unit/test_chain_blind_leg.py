@@ -11,8 +11,8 @@ from typing import Any
 from aegis.config import Settings
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit, make_request, make_response, now_iso
-from aegis.pipeline.chain import HazardResponseChain
 from aegis.pipeline.stages import HazardStages
+from conftest import chain_entry
 
 REGION = "540121"
 TRACE = "trc_" + "1" * 16
@@ -98,7 +98,7 @@ class _Contracts:
 
 
 async def _run(double_blind: str, disagreement: bool | None = None, mode: str = "") -> Any:
-    chain = HazardResponseChain(
+    chain = await chain_entry(
         HazardStages(
             gateway=_Gateway(_assess_response(double_blind, disagreement, mode)),  # type: ignore[arg-type]
             registry=_Registry(),  # type: ignore[arg-type]
@@ -134,7 +134,7 @@ class TestBlindLegTrace:
             reply_to="reply.t01.inbox",
         )
         bare = make_response(request, source="assess.stub", payload={"risk_level": 2, "hazard_type": "debris_flow", "confidence": 0.7})
-        chain = HazardResponseChain(
+        chain = await chain_entry(
             HazardStages(
                 gateway=_Gateway(bare),  # type: ignore[arg-type]
                 registry=_Registry(),  # type: ignore[arg-type]
@@ -179,7 +179,7 @@ class TestBlindFactReachesLedger:
 
     async def test_本地降级轨不提双盲(self) -> None:
         """规则定级这一程没有任何智能体参与，note 里不该出现"双盲"字样。"""
-        chain = HazardResponseChain(
+        chain = await chain_entry(
             HazardStages(
                 gateway=_Gateway(_assess_response("agreed", disagreement=False)),  # type: ignore[arg-type]
                 registry=_NoAgentsRegistry(),  # type: ignore[arg-type]

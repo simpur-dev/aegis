@@ -135,7 +135,7 @@ groups:
             平台规则引擎降级路径应在数秒内产出，若降级也慢则查 RuleEngine 输入规模。
 
       # 考核指标 4「预警信息靶向触达 ≤20 分钟」：
-      # 埋点为 services/delivery.py 与 pipeline/chain.py 的 warning_reach_ms（发布→回执）。
+      # 埋点只有一处：services/delivery.py 的 tracer.record("warning_reach_ms")（发布→回执）。
       # 这里不能用 histogram_quantile：1.2e+06ms 恰是 _BUCKETS_MS 的最高有限桶，
       # 超出上界的样本无法插值回读，故直接取"超过最高桶的样本数"（le 标签按导出器实写的 "1.2e+06"）。
       - alert: AegisTargetedReachOverBudget

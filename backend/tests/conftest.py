@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from typing import Any
 
@@ -17,6 +17,12 @@ from aegis.container import PlatformContainer, create_container
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, now_iso, utc_now
 from aegis.observability.tracer import Tracer
+from aegis.pipeline.result import ChainResult
+from aegis.pipeline.stages import HazardStages
+from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
+from aegis.workflow.engine import WorkflowEngine
+from aegis.workflow.nodes import WorkflowServices
+from aegis.workflow.templates import register_standard_chain_template
 
 # 测试进程一律不许吃本机 `.env`：那是部署面，里面可能有真密钥与真模型路由。
 # 光把 Settings 的 dotenv 源摘掉不够——实测 `graphiti_core` 在 import 时调 dotenv 的
@@ -39,6 +45,23 @@ except ImportError:  # pragma: no cover
     pass
 
 REGION = "540121"
+
+
+async def chain_entry(
+    stages: HazardStages,
+    *,
+    on_result: Callable[[ChainResult], Awaitable[None]] | None = None,
+    settings: Settings | None = None,
+) -> WorkflowChain:
+    """给单测一个**生产同款**的链路入口：DAG 引擎 + 标准五段模板，段实现就是传进来的 `stages`。
+
+    chain 退役后这是唯一一条编排路径，所以这里不提供"不用引擎的简化链路"作为第二选项：
+    多留一条简化路径，就等于允许单测跑在生产根本不走的那条路上——那正是退役要消灭的东西。
+    """
+    stations = ChainStations(stages)
+    engine = WorkflowEngine(services=WorkflowServices(run_chain_stage=stations))
+    await register_standard_chain_template(engine, agent_txn_ms=int((settings or Settings(env="test")).sla_agent_txn_ms))
+    return WorkflowChain(stages, engine, stations=stations, on_result=on_result)
 
 
 @pytest.fixture

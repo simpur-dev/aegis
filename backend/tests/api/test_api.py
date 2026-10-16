@@ -17,7 +17,10 @@ from aegis.api.app import create_app
 from aegis.config import Settings
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.container import PlatformContainer, create_container
-from aegis.domain.messages import utc_now
+from aegis.domain.messages import new_event_id, utc_now
+from aegis.pipeline.board import ChainBoard
+from aegis.pipeline.result import ChainResult
+from conftest import REGION
 
 BASE = "http://testserver"
 
@@ -159,6 +162,35 @@ class TestOpsEndpoints:
         assert body["status"] == "ready"
         assert body["bus"] == "memory"
         assert "store" in body
+
+    async def test_readyz带着链路进程内资源那一块(self, client: httpx.AsyncClient, container: PlatformContainer) -> None:
+        """D7 收口后只剩一条编排路径：盘面漏收与实例被上界挤掉，是它仅有的两个进程内泄漏面。
+
+        两个数都只在有对照时读得懂，所以一并给出容量上界；跑完一次链路再取一次，
+        是为了让"开—收成对"这件事在探针上留下证据，而不是只活在那条单测里。
+        """
+        before = (await client.get("/readyz")).json()["chain"]
+        assert before["open_boards"] == 0, "一次链路都没跑过就不是 0：说明启动过程里有人开了盘没收回"
+        assert before["held"] == 0 and before["evicted"] == 0
+        assert before["capacity"] >= 8, "容量下限由引擎守住（留太少会把还在被人看的实例也挤掉）"
+
+        await container.chain.process([], region_code=REGION)
+        after = (await client.get("/readyz")).json()["chain"]
+        assert after["open_boards"] == 0, "正常跑完一条链路后盘面必须归零"
+        assert after["evicted"] == 0
+
+    async def test_盘面漏收时探针当场看得见(self, client: httpx.AsyncClient, container: PlatformContainer) -> None:
+        """判定力来自一次真漏收：把 `finally` 里的收盘改掉，这一格就不再归零（变异 N3 走的就是这条路）。"""
+        stations = container.chain.stations
+        trace = "trc_" + "a" * 16
+        stations.open(ChainBoard(result=ChainResult(trace_id=trace, event_id=new_event_id()), trace=trace, region=REGION, readings=[]))
+        try:
+            body = (await client.get("/readyz")).json()["chain"]
+            assert body["open_boards"] == 1, body
+            assert body["traces"] == [trace], "漏收的那张盘要能被点名，否则运维只能看到个数字"
+        finally:
+            stations.close(trace)
+        assert (await client.get("/readyz")).json()["chain"]["open_boards"] == 0
 
     async def test_readyz_503_when_bus_down(self, settings: Settings) -> None:
         ctn = create_container(settings, with_simulator=False)

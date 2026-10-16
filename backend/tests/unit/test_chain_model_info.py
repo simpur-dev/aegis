@@ -17,9 +17,10 @@ from aegis.config import Settings
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
 from aegis.domain.messages import ModelInfo, TelemetryReading, make_request, now_iso
 from aegis.persistence import rows
-from aegis.pipeline.chain import HazardResponseChain
 from aegis.pipeline.result import ChainResult, StageResult, model_receipt
 from aegis.pipeline.stages import HazardStages
+from aegis.pipeline.workflow_chain import WorkflowChain
+from conftest import chain_entry
 
 REGION = "540121"
 TRACE = "trc_" + "0" * 16
@@ -85,9 +86,9 @@ class FakeGateway:
         self.published.append(subject)
 
 
-def chain_with(response: Any | None) -> HazardResponseChain:
+async def chain_with(response: Any | None) -> WorkflowChain:
     present = {"assess"} if response is not None else set()
-    return HazardResponseChain(
+    return await chain_entry(
         HazardStages(
             gateway=FakeGateway(response),  # type: ignore[arg-type]
             registry=FakeRegistry(present),  # type: ignore[arg-type]
@@ -122,13 +123,13 @@ def trigger_hit() -> Any:
     )
 
 
-async def _run(chain: HazardResponseChain) -> ChainResult:
+async def _run(chain: WorkflowChain) -> ChainResult:
     return await chain.process([reading()], region_code=REGION, preset_hits=[trigger_hit()])
 
 
 class TestCapture:
     async def test_智能体带了凭证就逐段转记(self) -> None:
-        chain = chain_with(_response(model_info=ModelInfo(model="deepseek-chat", model_version="v1", prompt_version="1.1.0")))
+        chain = await chain_with(_response(model_info=ModelInfo(model="deepseek-chat", model_version="v1", prompt_version="1.1.0")))
         result = await _run(chain)
         assess = result.stage("assess")
         assert assess is not None and assess.mode == "agent"
@@ -136,14 +137,14 @@ class TestCapture:
 
     async def test_本地降级腿不带这个键而不是带一个空值(self) -> None:
         """`mode=local` 那几段根本没走模型：键缺席说的是"没这回事"，`null` 说的是"走了但没记名"。"""
-        chain = chain_with(None)
+        chain = await chain_with(None)
         result = await _run(chain)
         for stage in result.stages:
             assert "model_info" not in stage.as_dict(), stage.name
         assert result.stage_models == {}
 
     async def test_智能体没带凭证时不代填(self) -> None:
-        chain = chain_with(_response(model_info=None))
+        chain = await chain_with(_response(model_info=None))
         result = await _run(chain)
         assess = result.stage("assess")
         assert assess is not None and assess.mode == "agent"
@@ -174,7 +175,7 @@ class TestCapture:
                 return plan_response if agent_type is AgentType.PLAN else self._response
 
         gateway = TwoAgentGateway(_response(model_info=ModelInfo(model="deepseek-chat", prompt_version="1.1.0")))
-        chain = HazardResponseChain(
+        chain = await chain_entry(
             HazardStages(
                 gateway=gateway,  # type: ignore[arg-type]
                 registry=FakeRegistry({"assess", "plan"}),  # type: ignore[arg-type]
@@ -188,7 +189,7 @@ class TestCapture:
 
     async def test_只有应答成功的那一段才记(self) -> None:
         """研判之外的段没有智能体在场，不许被顺手记上同一个凭证。"""
-        chain = chain_with(_response(model_info=ModelInfo(model="deepseek-chat", prompt_version="1.1.0")))
+        chain = await chain_with(_response(model_info=ModelInfo(model="deepseek-chat", prompt_version="1.1.0")))
         result = await _run(chain)
         assert set(result.stage_models) == {"assess"}
         assert all(stage.model_info is None for stage in result.stages if stage.name != "assess")
@@ -235,7 +236,7 @@ class TestExecuteReceipt:
                 return copy_response if agent_type is AgentType.EXECUTE else self._response
 
         assess_response = _response(model_info=ModelInfo(model="deepseek-chat", prompt_version="1.1.0"))
-        chain = HazardResponseChain(
+        chain = await chain_entry(
             HazardStages(
                 gateway=CopyGateway(assess_response),  # type: ignore[arg-type]
                 registry=FakeRegistry({"assess", "execute"}),  # type: ignore[arg-type]

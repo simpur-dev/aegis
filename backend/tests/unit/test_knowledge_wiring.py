@@ -41,10 +41,10 @@ from aegis.knowledge.provider import (
     SupportsShutdown,
 )
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.chain import HazardResponseChain
 from aegis.pipeline.result import ChainResult
 from aegis.pipeline.stages import HazardStages
-from conftest import REGION, readings_rain_burst
+from aegis.pipeline.workflow_chain import WorkflowChain
+from conftest import REGION, chain_entry, readings_rain_burst
 
 GRAPH_URI = "neo4j+ssc://aegis_reader:sup3rs3cr3t@10.0.0.9:7687?database=neo4j"
 SECRET = "sup3rs3cr3t"
@@ -185,16 +185,16 @@ class TestPlanningBrief:
         assert not any(key in brief for key in ("actions", "title", "why_now"))
 
 
-def build_chain(
+async def build_chain(
     bus: InMemoryBus,
     registry: AgentRegistry,
     contracts: ContractRegistry,
     settings: Settings,
     *,
     knowledge: KnowledgeProvider | None,
-) -> HazardResponseChain:
+) -> WorkflowChain:
     gateway = AgentGateway(bus, registry, contracts, Tracer(), default_deadline_ms=1_500)
-    return HazardResponseChain(
+    return await chain_entry(
         HazardStages(
             gateway=gateway,
             registry=registry,
@@ -211,7 +211,7 @@ class TestChainRecall:
     ) -> None:
         cfg = base_settings(knowledge_recall_budget_ms=250.0)
         stub = StubProvider()
-        result = await build_chain(bus, registry, contracts, cfg, knowledge=stub).process(readings_rain_burst())
+        result = await (await build_chain(bus, registry, contracts, cfg, knowledge=stub)).process(readings_rain_burst())
 
         call = stub.calls[0]
         assert call["hazard_type"] == HazardType.DEBRIS_FLOW.value
@@ -225,7 +225,7 @@ class TestChainRecall:
         self, bus: InMemoryBus, registry: AgentRegistry, contracts: ContractRegistry
     ) -> None:
         stub = StubProvider(error=RuntimeError("图谱连接中断"))
-        result = await build_chain(bus, registry, contracts, base_settings(), knowledge=stub).process(readings_rain_burst())
+        result = await (await build_chain(bus, registry, contracts, base_settings(), knowledge=stub)).process(readings_rain_burst())
 
         assert result.ok, "知识层是增强腿，它的故障绝不能把链路判红"
         assert result.verdict is not None and result.warning is not None
@@ -236,7 +236,7 @@ class TestChainRecall:
     async def test_chain_without_knowledge_keeps_the_pre_wiring_semantics(
         self, bus: InMemoryBus, registry: AgentRegistry, contracts: ContractRegistry
     ) -> None:
-        result = await build_chain(bus, registry, contracts, base_settings(), knowledge=None).process(readings_rain_burst())
+        result = await (await build_chain(bus, registry, contracts, base_settings(), knowledge=None)).process(readings_rain_burst())
 
         assert result.ok
         assert result.reference_cases == []
@@ -247,7 +247,7 @@ class TestChainRecall:
     ) -> None:
         bare = CaseMatch(case_id="case_graph_only", score=0.9, source="graphiti")
         stub = StubProvider([bare, match_of(builtin_case(1))])
-        result = await build_chain(bus, registry, contracts, base_settings(), knowledge=stub).process(readings_rain_burst())
+        result = await (await build_chain(bus, registry, contracts, base_settings(), knowledge=stub)).process(readings_rain_burst())
 
         assert result.ok
         assert result.reference_cases == ["case_graph_only", builtin_case(1).case_id]
@@ -256,7 +256,7 @@ class TestChainRecall:
         """未成灾的读数不该触发任何知识检索：预警窗口的毫秒不该花在无事件上。"""
         stub = StubProvider()
         readings = HazardScenarioSimulator(scenario="normal", seed=7).collect_at(utc_now())
-        result = await build_chain(bus, registry, contracts, base_settings(), knowledge=stub).process(readings)
+        result = await (await build_chain(bus, registry, contracts, base_settings(), knowledge=stub)).process(readings)
 
         assert result.acted is False
         assert stub.calls == []
@@ -266,7 +266,7 @@ class TestChainRecall:
     ) -> None:
         """链路 dict 是给 Web 与取证用的：参考案例必须在里面，否则"凭什么这么判"无从回答。"""
         stub = StubProvider([match_of(builtin_case(0))])
-        result = await build_chain(bus, registry, contracts, base_settings(), knowledge=stub).process(readings_rain_burst())
+        result = await (await build_chain(bus, registry, contracts, base_settings(), knowledge=stub)).process(readings_rain_burst())
 
         assert result.as_dict()["reference_cases"] == result.reference_cases
 
@@ -298,7 +298,7 @@ class TestChainRecall:
         await asyncio.sleep(0.01)
         await bus.idle()
 
-        chain = HazardResponseChain(
+        chain = await chain_entry(
             HazardStages(
                 gateway=gateway,
                 registry=registry,

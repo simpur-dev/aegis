@@ -93,7 +93,14 @@ export function createApiClient(instance: AxiosInstance) {
   return {
     health: () => request<{ status: string; version: string; contract: string }>({ url: '/healthz' }),
     ready: () =>
-      request<{ status: string; bus: string; agents_online: number; store: Record<string, number> }>({
+      request<{
+        status: string
+        bus: string
+        agents_online: number
+        store: Record<string, number>
+        /** 链路的进程内资源（D7 收口后只有一条编排路径）：开着的盘面与留在内存里的实例账。 */
+        chain: { open_boards: number; traces: string[]; held: number; capacity: number; evicted: number }
+      }>({
         url: '/readyz',
       }),
 

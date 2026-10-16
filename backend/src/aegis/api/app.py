@@ -293,6 +293,9 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             "bus": ctn.transport.name,
             "agents_online": ctn.registry.online_count,
             "store": ctn.store.snapshot(),
+            # D7 收口后链路只有一条编排路径，它的两种进程内资源都得能被看见（铁律 7）：
+            # 开着的盘面（漏收盘就是内存泄漏）与留在内存里的工作流实例（有上界，挤掉多少要记账）。
+            "chain": {**ctn.chain.stations.boards.snapshot(), **ctn.workflow.instance_stats},
         }
 
     @app.get("/api/v1/integrations", tags=["ops"])

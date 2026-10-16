@@ -50,7 +50,6 @@ from aegis.observability.instrumentation import register_sla_budgets
 from aegis.observability.metrics import MetricsExporter
 from aegis.observability.telemetry import telemetry_status
 from aegis.observability.tracer import Tracer
-from aegis.pipeline.chain import HazardResponseChain
 from aegis.pipeline.result import ChainResult
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
@@ -330,7 +329,9 @@ class PlatformContainer:
     tracer: Tracer
     gateway: AgentGateway
     store: StoreProtocol
-    chain: HazardResponseChain
+    #: 五段链路入口（D7 §4.6 收口后唯一一条编排路径：标准五段模板 + `chain_stage` 节点）。
+    #: 名字沿用 `chain` 是因为调用点要的是那个形状，不是因为它还归 Python 写顺序。
+    chain: WorkflowChain
     ingest: IngestService
     dispatcher: DeliveryDispatcher
     exporter: MetricsExporter
@@ -338,9 +339,6 @@ class PlatformContainer:
     bundle: StoreBundle
     rule_engine: RuleEngine
     analytics: AnalyticsRecorder | None = None
-    #: 同一条五段的 DAG 编排（D7 §4.6）。段的判定与记账与 `chain` 共用同一个 HazardStages，
-    #: parity 用例与退役切换都走它——加它不是为了多一个入口，而是为了让 chain 能退。
-    workflow_chain: WorkflowChain | None = None
     knowledge: KnowledgeProvider | None = None
     knowledge_state: IntegrationState | None = None
     retrieval: HybridRetrievalService | None = None
@@ -733,7 +731,7 @@ class PlatformContainer:
         """群防群治上报 → 三路融合解析 → **同一条链路**。
 
         这里刻意不复制一条"上报专用预警链"：解析只负责把文本变成触发命中与定级建议，
-        之后的研判、决策、预警生成、靶向触达、降级留痕与时延量测全部走 `HazardResponseChain`。
+        之后的研判、决策、预警生成、靶向触达、降级留痕与时延量测全部走链路入口 `self.chain`。
 
         低置信度（等级不是阈值命中所得）如实外显 `human_review_required` 并计入 `report_stats`；
         核签动作在指挥员一侧（工作流实例的 `human_review` 节点），平台不自动起实例。
@@ -951,26 +949,26 @@ def create_container(
     )
     # 阈值建议闭环要在链路之前建好：反馈段拿它当入账口，端点拿它当唯一读写面。
     suggestions = ThresholdSuggestionService(store=store, rule_engine=rule_engine)
-    chain = HazardResponseChain(
-        HazardStages(
-            gateway=gateway,
-            registry=registry,
-            contracts=contracts,
-            tracer=tracer,
-            settings=cfg,
-            rule_engine=rule_engine,
-            risk_engine=RiskEngine(rule_engine),
-            task_parser=TaskParser(contracts, settings=cfg),
-            warning_service=warning_service,
-            dispatcher=dispatcher,
-            knowledge=knowledge,
-            retrieval=retrieval,
-            suggestions=suggestions,
-        ),
-        on_result=on_result,
+    # D7 §4.6 第 4 步：段的判定与记账在 `HazardStages`，段的先后由标准五段模板的边决定。
+    # 这里刻意不再另建一个"固定顺序编排器"——两条路径并存的那段日子，parity 用例是唯一的护栏，
+    # 而护栏不该是常驻成本（退役过程见 REPORT 的 D7 第 4 步一节）。
+    stages = HazardStages(
+        gateway=gateway,
+        registry=registry,
+        contracts=contracts,
+        tracer=tracer,
+        settings=cfg,
+        rule_engine=rule_engine,
+        risk_engine=RiskEngine(rule_engine),
+        task_parser=TaskParser(contracts, settings=cfg),
+        warning_service=warning_service,
+        dispatcher=dispatcher,
+        knowledge=knowledge,
+        retrieval=retrieval,
+        suggestions=suggestions,
     )
     # 段的执行口先于引擎：引擎的服务里要摆这个可调用，而它只依赖段与盘面，不依赖引擎本身。
-    stations = ChainStations(chain.stages)
+    stations = ChainStations(stages)
     use_simulator = cfg.simulator_enabled if with_simulator is None else with_simulator
     simulator = HazardScenarioSimulator(seed=cfg.simulator_seed) if use_simulator else None
 
@@ -1005,7 +1003,10 @@ def create_container(
         tracer=tracer,
         settings=cfg,
     )
-    workflow_chain = WorkflowChain(chain.stages, workflow, stations=stations, on_result=on_result)
+    # 链路入口就是这张图。`chain` 这个名字与它的四个方法（process / process_many /
+    # handle_agent_message / warnings）都不改——调用点（`/api/v1/drill/run`、人工上报腿、
+    # 演练与报表脚本、总线订阅）要的只是这个形状；改的是"段的先后由谁决定"。
+    chain = WorkflowChain(stages, workflow, stations=stations, on_result=on_result)
     container = PlatformContainer(
         settings=cfg,
         transport=bus,
@@ -1015,7 +1016,6 @@ def create_container(
         gateway=gateway,
         store=store,
         chain=chain,
-        workflow_chain=workflow_chain,
         ingest=ingest,
         dispatcher=dispatcher,
         exporter=MetricsExporter(gateway, tracer),
