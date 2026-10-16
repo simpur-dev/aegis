@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     # 三条腿各自可单独摘除：标定实验要能回答"去掉 LLM 腿准确率掉多少"，
     # 而不是只能整份开或整份关。关掉后解析仍然可用（规则腿是唯一判据来源）。
     report_llm_leg: bool = True
+    #: §4.4 推演角色档：默认 `rule`（确定性、离线可复算、零 token 成本）。
+    #: 开成 true 且 LLM 腿在位时，每轮四个角色各一次结构化调用（只选预案档位，不产数字）。
+    #: 默认关是刻意的：一次 T=5 的推演要 20 次调用，这钱该由部署方按演练需求决定。
+    simulation_roles_llm: bool = False
     report_evidence_leg: bool = True
 
     # 契约 Schema 目录：镜像/离线部署把它指到打包位置（后端镜像里是 /contracts）。留空 = 跟着

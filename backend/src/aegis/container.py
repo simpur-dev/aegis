@@ -232,6 +232,38 @@ def _worst_level(raw: object) -> int | None:
     return min(levels) if levels else None
 
 
+def _sandbox_runner(settings: Settings, llm_gateway: object | None) -> Any:
+    """把推演沙盒接成 DAG 节点 `situation_simulate` 要的调用口（§4.4：节点契约不变，能力换实现）。
+
+    画布/演练给了参数就用给的，没给用配置默认。**每个参数都夹进区间**：
+    节点输入来自画布上人手填的 config，`scenarios=1e9` 不该变成一次跑不完的循环。
+    """
+    from aegis.services.simulation import SimConfig, make_sandbox
+
+    defaults = SimConfig()
+
+    async def _run(payload: dict[str, Any]) -> dict[str, Any]:
+        def _clamped_int(key: str, *, low: int, high: int) -> int:
+            raw = payload.get(key)
+            value = int(getattr(defaults, key) if raw is None else raw)
+            return max(low, min(high, value))
+
+        raw_seed = payload.get("seed")
+        cfg = SimConfig(
+            scenarios=_clamped_int("scenarios", low=1, high=64),
+            rounds=_clamped_int("rounds", low=1, high=24),
+            rain_base_mm=float(payload.get("rain_base_mm", defaults.rain_base_mm)),
+            rain_spread_mm=float(payload.get("rain_spread_mm", defaults.rain_spread_mm)),
+            playbook=str(payload.get("playbook") or defaults.playbook),
+            token_budget=_clamped_int("token_budget", low=1_000, high=defaults.token_budget),
+            seed=int(defaults.seed if raw_seed is None else raw_seed),
+        )
+        # 括号是必需的：`await x.run(cfg).as_dict()` 会被解析成 `await (x.run(cfg).as_dict())`。
+        return (await make_sandbox(settings, llm_gateway=llm_gateway).run(cfg)).as_dict()
+
+    return _run
+
+
 class AssembledScenarios:
     """把知识层的案例命中折成推演节点要的键（装配点翻译；内核只认 `ScenarioProvider` 协议）。
 
@@ -966,6 +998,8 @@ def create_container(
             outbound=outbound,
             # 案例驱动推演的注入位：知识腿没装配就留 None，节点侧显式降级而不是回退到 ±1 启发式
             scenario_provider=AssembledScenarios(knowledge=knowledge, settings=cfg) if knowledge is not None else None,
+            # §4.4：推演沙盒接进 DAG 节点。LLM 角色档由 `simulation_roles_llm` 决定，默认规则档。
+            sandbox_runner=_sandbox_runner(cfg, gateway_llm),
             run_chain_stage=stations,
         ),
         tracer=tracer,

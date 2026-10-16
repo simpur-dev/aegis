@@ -86,8 +86,14 @@ class TestOpsEndpoints:
         a, b = first.json(), second.json()
         assert a == b, "同参同种子必须逐字节可复现（§3.6 数字冻结自遥测、确定性）"
         assert a["mode"] == "demo_sandbox"
-        assert {"probability_matrix", "timeline", "playbook_comparison"} <= set(a)
+        assert {"probability_matrix", "timeline", "playbook_comparison", "roles"} <= set(a)
         assert {row["playbook"] for row in a["playbook_comparison"]} == {"转移", "封路", "不行动"}
+        # §4.4：出口必须说清"这一份是谁选的、选了几次"，否则前端只能显示四个字符串当多角色。
+        assert a["roles"]["policy"] == "rule" and a["roles"]["asked"] == a["roles"]["calls"] == 16
+        assert [row["key"] for row in a["roles"]["roles"]] == ["commander", "rescue", "residents", "monitor"]
+        for row in a["timeline"]:
+            assert set(row["actions"]) == {"commander", "rescue", "residents", "monitor"}
+            assert row["applied_playbook"] == "转移" and row["mitigation"] == 0.6
 
     async def test_simulation_cost_cap_downscales_scenarios(self, client: httpx.AsyncClient) -> None:
         body = {"scenarios": 64, "rounds": 24, "token_budget": 100, "playbook": "转移", "seed": 7}

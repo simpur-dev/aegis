@@ -92,6 +92,22 @@ _BUILTIN_TEMPLATES: list[PromptTemplate] = [
         ),
         user="指令：{text}\n可选动作（白名单）：{actions}\n",
     ),
+    PromptTemplate(
+        # §4.4 推演沙盒的角色内环。它**没有**任何数值字段可填：结构上就不可能发明数字，
+        # 这比在提示词里恳求"别编数字"可靠（数值一律由 `services/simulation.py` 推进）。
+        task="simulation",
+        version="1.0.0",
+        system=(
+            "你在扮演一种应急角色，参与一次多轮态势推演。每一轮只做一个决定：从给定预案白名单里选一档。"
+            '你只输出 JSON：{"action","rationale"}；action 必须逐字取自白名单，'
+            "白名单之外的写法（含同义改写）会被直接拒收；rationale 不超过 40 字，"
+            "不得给出任何数字、百分比或时间估计——环境数值由平台计算，不是你估计的。"
+        ),
+        user=(
+            "角色：{role}（{concern}）\n第 {round} 轮\n当前环境强度（平台算出，仅供你判断趋势）：{intensity}\n"
+            "可选预案（逐字取其一）：{actions}\n本轮平台默认档：{preferred}\n"
+        ),
+    ),
 ]
 
 

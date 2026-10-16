@@ -837,7 +837,7 @@ def build_mcp(
         cases=_mcp_knowledge_source(knowledge, settings) if knowledge is not None else None,
         memory_search=_mcp_memory_search_source(memory) if memory is not None else None,
         memory_write=_mcp_memory_write_source(memory) if memory is not None else None,
-        simulation=_mcp_simulation_source(),
+        simulation=_mcp_simulation_source(settings),
     )
     server, state = build_server(
         sources=sources,
@@ -964,9 +964,9 @@ def _mcp_memory_write_source(memory: object):
     return _call
 
 
-def _mcp_simulation_source():
+def _mcp_simulation_source(settings: Settings):
     async def _call(args: dict[str, Any]) -> dict[str, Any]:
-        from aegis.services.simulation import Sandbox, SimConfig
+        from aegis.services.simulation import SimConfig, make_sandbox
 
         defaults = SimConfig()
         rain = args.get("rain_base_mm")
@@ -979,7 +979,9 @@ def _mcp_simulation_source():
             token_budget=max(1_000, int(args.get("token_budget") or defaults.token_budget)),
             seed=int(defaults.seed if seed is None else seed),
         )
-        out = Sandbox().run(cfg).as_dict()
+        # 工具面不接 LLM 网关（`build_mcp` 的实参里没有它），所以这一份永远是 `rule` 档；
+        # 报告里的 `roles.policy` 说的就是这件事，不是配置读漏了。接网关属于 §4.2 那批消费方切换。
+        out = (await make_sandbox(settings).run(cfg)).as_dict()
         out["mode"] = "demo_sandbox"
         out["note"] = "概率/暴露/缓解系数为未实测初值；情景参数由调用方给定，不声称现场达标。"
         return out

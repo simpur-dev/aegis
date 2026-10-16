@@ -186,6 +186,35 @@ class TestCalls:
         assert state.calls == {}
 
 
+class TestSimulationSourceNeedsNoSdk:
+    """沙盒实现这一头不碰 SDK：没装可选腿时它照样该能跑、形状照样要说清"是谁选的"。"""
+
+    def test_工具面的推演交出角色档且不因开关冒充LLM档(self) -> None:
+        """§4.4 从工具面出去的那一份也要说清"是谁选的"。
+
+        网关没进 `build_mcp`，所以 `simulation_roles_llm=true` 在工具面拧不动——报告里
+        `roles.policy=rule` 就是这件事的事实。把它钉住：§4.2 真接上网关时这一格会变，
+        那时该改的是这条断言，而不是让"配了没生效"继续没人发现。
+        """
+        from aegis.config import Settings
+        from aegis.integrations import _mcp_simulation_source
+
+        call = _mcp_simulation_source(Settings(env="test", simulation_roles_llm=True))
+        out = asyncio.run(call({"rounds": 2, "scenarios": 2}))
+        assert out["mode"] == "demo_sandbox"
+        assert out["roles"]["policy"] == "rule" and out["roles"]["asked"] == 8
+        assert all(set(row["actions"]) == {"commander", "rescue", "residents", "monitor"} for row in out["timeline"])
+
+    def test_工具面的情景条数被夹住(self) -> None:
+        """外部客户端给 `scenarios=1e9`：这条腿是公开面，循环上限必须在装配点就成立。"""
+        from aegis.config import Settings
+        from aegis.integrations import _mcp_simulation_source
+
+        out = asyncio.run(_mcp_simulation_source(Settings(env="test"))({"scenarios": 10**9, "rounds": 10**9}))
+        assert out["cost"]["requested_scenarios"] <= 24
+        assert len(out["timeline"]) <= 24
+
+
 class TestOptionalLegStaysOptional:
     def test_门面在没装可选腿时也能import且available为False(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """可选腿的"没装"必须是一行事实：`mcp_available()` 走 find_spec 探测，不真 import mcp。"""

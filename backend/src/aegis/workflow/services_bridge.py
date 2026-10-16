@@ -167,6 +167,7 @@ def build_workflow_services(
     gateway: AgentGateway,
     outbound: OutboundCaller | None = None,
     scenario_provider: ScenarioProvider | None = None,
+    sandbox_runner: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
     run_chain_stage: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
 ) -> WorkflowServices:
     """装配节点服务。
@@ -177,6 +178,8 @@ def build_workflow_services(
     `scenario_provider` 缺席时 `situation_simulate` 走显式降级（`degraded: True` 并写明原因），
     行为与升级前一致地保守、但不再假装是案例驱动：内核不得 import 知识/检索腿，
     案例这条腿只能由装配点（container/integrations）注入。
+    `sandbox_runner` 同理——它是 §4.4 沙盒（`services/simulation.py`，L4 服务）进画布的唯一入口；
+    缺位或报错只降级 `sandbox` 那一格，情景与三个既有输出键不受影响。
     """
 
     async def telemetry_query(
@@ -213,6 +216,25 @@ def build_workflow_services(
         return verdict.as_payload()
 
     async def simulate(payload: dict[str, Any]) -> dict[str, Any]:
+        """§4.4 的节点契约：案例驱动的情景 + 沙盒的 K×T 概率矩阵，两份事实并列摆着。
+
+        升级前这里只有情景趋势；`sandbox` 这一格现在带上真推演报告（概率矩阵/时间线/预案对比/
+        角色档），拿不到就是拿不到并写明原因——**不**用"情景有了"冒充"推演跑过了"。
+        画布与既有用例在读的 `horizon_minutes` / `scenarios` / `trend` 保持原样。
+        """
+        result = await case_driven_scenarios(payload)
+        if sandbox_runner is None:
+            result["sandbox"] = {"degraded": True, "degraded_reason": "未注入推演沙盒（sandbox_runner 缺位）"}
+            return result
+        try:
+            report = await sandbox_runner(payload)
+        except Exception as exc:
+            result["sandbox"] = {"degraded": True, "degraded_reason": f"推演沙盒调用失败（{type(exc).__name__}）"}
+            return result
+        result["sandbox"] = report
+        return result
+
+    async def case_driven_scenarios(payload: dict[str, Any]) -> dict[str, Any]:
         """案例驱动的多情景推演；没有案例可依据时如实降级，不再用 ±1 冒充推演结论。
 
         画布与既有用例在读的三个键（`horizon_minutes` / `scenarios` / `trend`）保持原样，

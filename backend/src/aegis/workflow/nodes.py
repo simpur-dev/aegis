@@ -305,6 +305,9 @@ async def _situation_simulate(ctx: NodeContext, config: dict[str, Any]) -> NodeO
             "declared_level": result.get("declared_level"),
             "hazard_type": result.get("hazard_type"),
             "region_code": result.get("region_code"),
+            # §4.4：沙盒那份 K×T 报告（概率矩阵/时间线/预案对比/角色档）。缺位或被降级时
+            # 里面自带 `degraded` + 原因，画布上就能看出"这条推演没跑沙盒"。
+            "sandbox": result.get("sandbox"),
         }
     )
 

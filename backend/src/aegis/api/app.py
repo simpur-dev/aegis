@@ -960,13 +960,16 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         return {"record_id": record_id, "removed": True, "driver": ctn.memory.backend}
 
     @app.post("/api/v1/simulation/run", tags=["simulation"])
-    async def simulation_run(payload: SimulationRequest) -> dict[str, Any]:
+    async def simulation_run(payload: SimulationRequest, ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
         """泥石流次生灾害推演沙盒（§3.6/§4.4）：确定性数值模型 → 概率矩阵/预案对比/时间线。
 
         演示/演练口径，不进任何 SLA 热路径；情景参数由调用方给定（画布/演练），概率/缓解系数为未实测初值，
         只保证模型单调与可复现，不声称现场达标。
+        角色档写在 `roles.policy` 里（`rule` 或 `llm`）：默认是 `rule`，开 LLM 要
+        `AEGIS_SIMULATION_ROLES_LLM=true` 且 LLM 腿在位——一次 T=5 的推演要点 20 次模型，
+        这钱该由部署方按演练需求决定，不由平台替谁花。
         """
-        from aegis.services.simulation import Sandbox, SimConfig
+        from aegis.services.simulation import SimConfig, make_sandbox
 
         cfg = SimConfig(
             scenarios=payload.scenarios,
@@ -977,7 +980,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             token_budget=payload.token_budget,
             seed=payload.seed,
         )
-        out = Sandbox().run(cfg).as_dict()
+        out = (await make_sandbox(ctn.settings, llm_gateway=ctn.llm_gateway).run(cfg)).as_dict()
         out["mode"] = "demo_sandbox"
         out["note"] = "概率/暴露/缓解系数为未实测初值；情景参数由调用方给定，不声称现场达标。"
         return out

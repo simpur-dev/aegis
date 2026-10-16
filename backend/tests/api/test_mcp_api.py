@@ -262,6 +262,24 @@ class TestHandshake:
         assert "memory.write" not in names, "写工具还要第二把钥匙（allow_write_tools）"
         assert "telemetry.query" not in names, "既然点了名，就不该再白送默认面"
 
+    async def test_工具面的推演单次真跑到沙盒并交出角色档(self) -> None:
+        """§4.4：同一份沙盒事实要从两个门面（REST `/api/v1/simulation/run` 与工具 `simulation.run`）交出来。
+
+        这一条顺带钉装配签名——`_mcp_simulation_source(settings)` 少拿一个参数只在调用期炸，
+        外部客户端看到的是一个 `isError` 而不说为什么；`roles` 那一格则是"多角色真被问过"的凭据。
+        """
+        settings = _settings(mcp_enabled=True, mcp_tools="simulation.run", http_port=_free_port())
+        async with _live_server(settings) as base_url, _mcp_session(base_url) as session:
+            result = await session.call_tool("simulation.run", {"scenarios": 3, "rounds": 2, "seed": 5})
+
+        assert result.is_error is False
+        body = json.loads(result.content[0].text)
+        assert body["mode"] == "demo_sandbox"
+        assert body["roles"]["policy"] == "rule" and body["roles"]["asked"] == 8 and body["roles"]["calls"] == 8
+        assert body["probability_matrix"] and body["timeline"]
+        assert all(set(row["actions"]) == {"commander", "rescue", "residents", "monitor"} for row in body["timeline"])
+        assert {row["playbook"] for row in body["playbook_comparison"]} == {"转移", "封路", "不行动"}
+
     async def test_腿断了过线报工具错误并把成因带进状态行(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """外部客户端拿到的必须是协议层的 `isError`，而平台侧要留下同一件事的账。
 
