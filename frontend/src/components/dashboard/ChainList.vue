@@ -52,25 +52,29 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
       <span class="seg seg--swatch is-skipped"></span>跳过
       <span class="seg seg--swatch is-fail"></span>失败
     </div>
-    <div
-      v-for="chain in chains"
-      :key="chain.trace_id"
-      class="chain"
-      data-testid="chain-row"
-      :data-trace="chain.trace_id"
-    >
-      <span class="chain__result" :class="resultOf(chain).cls">
-        <span class="chain__dot" aria-hidden="true"></span>{{ resultOf(chain).label }}
-      </span>
-      <span class="chain__trace" :title="chain.trace_id">{{ chain.trace_id }}</span>
-      <span class="chain__stages">
-        <span v-for="stage in chain.stages" :key="stage.name" class="seg" :class="stageClass(stage)" :title="stageTitle(stage)">
-          {{ stageLabel(stage) }}
+    <!-- 图例钉住、行区自己滚：窗口是 20 条，全部铺开会把这张卡撑到一屏多，
+         把下面的智能体板与事件流顶出首屏——那是"这一页讲什么"的次序被行数劫持。 -->
+    <div class="chain-list__rows">
+      <div
+        v-for="chain in chains"
+        :key="chain.trace_id"
+        class="chain"
+        data-testid="chain-row"
+        :data-trace="chain.trace_id"
+      >
+        <span class="chain__result" :class="resultOf(chain).cls">
+          <span class="chain__dot" aria-hidden="true"></span>{{ resultOf(chain).label }}
         </span>
-      </span>
-      <span class="chain__tasks" :title="`拆解出的任务单元数`">{{ chain.task_units.length }} 个</span>
-      <span v-if="!chain.acted" class="chain__idle pill-dashed">未触发</span>
-      <span v-if="chain.degradations.length" class="chain__degraded" :title="chain.degradations.join('；')">降级</span>
+        <span class="chain__trace" :title="chain.trace_id">{{ chain.trace_id }}</span>
+        <span class="chain__stages">
+          <span v-for="stage in chain.stages" :key="stage.name" class="seg" :class="stageClass(stage)" :title="stageTitle(stage)">
+            {{ stageLabel(stage) }}
+          </span>
+        </span>
+        <span class="chain__tasks" :title="`拆解出的任务单元数`">{{ chain.task_units.length }} 个</span>
+        <span v-if="!chain.acted" class="chain__idle pill-dashed">未触发</span>
+        <span v-if="chain.degradations.length" class="chain__degraded" :title="chain.degradations.join('；')">降级</span>
+      </div>
     </div>
     <div v-if="!chains.length" class="empty-hero" data-testid="chains-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
@@ -96,6 +100,11 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
   margin-bottom: var(--aeg-space-s2);
   font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-muted);
+}
+.chain-list__rows {
+  /* 20 条窗口 ≈ 820px 高；给到 380px 的可视区（约 9 条），其余在区内滚 */
+  max-height: 380px;
+  overflow-y: auto;
 }
 .chain {
   display: flex;
