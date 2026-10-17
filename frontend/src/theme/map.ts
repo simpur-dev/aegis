@@ -71,3 +71,14 @@ export function mapPalette(mode: ThemeMode): MapPalette {
     fillFor: (cssColor) => mapping[cssColor.toUpperCase()] ?? cssColor,
   }
 }
+
+/**
+ * 高德 JS API 的底图样式名（`AmapMap.vue` 用）。
+ *
+ * 高德把样式做成它自家渲染器里的**字符串档位**，CSS 变量到达不了画布——
+ * 与 Cesium/ECharts 同一条纪律：档位映射住在本派生层，组件不许自己挑样式名。
+ * 浅色用官方默认 normal；深色用灰度档 grey（比纯黑档 dark 更贴本平台深蓝黑的卡面色）。
+ */
+export function amapStyleName(mode: ThemeMode): string {
+  return mode === 'dark' ? 'amap://styles/grey' : 'amap://styles/normal'
+}

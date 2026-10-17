@@ -25,6 +25,11 @@ import { isLocalAssetUrl, tileUrlForTemplate } from './offline'
 export const DEFAULT_BASEMAP_TEMPLATE = '/basemaps/{z}/{x}/{y}.png'
 export const DEFAULT_PMTILES_URL = '/basemaps/aegis.pmtiles'
 export const BASEMAP_ATTRIBUTION = 'AEGIS 离线底图（自托管烘焙，无第三方瓦片服务）'
+/**
+ * 真 OSM 烘焙档的署名（ODbL 要求）。它**只在 url-template 档生效**：
+ * 合成 PMTiles 那一份里没有一个 OSM 字节，挂上这句署名就是假溯源。
+ */
+export const OSM_BAKE_ATTRIBUTION = '离线自托管瓦片 · 数据 © OpenStreetMap contributors (ODbL)'
 
 /** 高原 1:5 万级现场判读通常烘到 z12–z14；上限写死可避免 Cesium 无谓地探更深层。 */
 export const DEFAULT_MAXIMUM_LEVEL = 14
@@ -40,7 +45,10 @@ export interface BasemapConfig {
 export const DEFAULT_BASEMAP_CONFIG: BasemapConfig = {
   template: DEFAULT_BASEMAP_TEMPLATE,
   pmtilesUrl: DEFAULT_PMTILES_URL,
-  attribution: BASEMAP_ATTRIBUTION,
+  // 空串 = **按实际选中的源派生**（见 chooseBasemapSource 的 forKind）。
+  // 这里原先预填 BASEMAP_ATTRIBUTION：非空就把派生逻辑短路掉了，
+  // 于是加载真 OSM 瓦片的页面照样挂"合成影像"那句署名——真机看过 credit 才发现。
+  attribution: '',
   maximumLevel: DEFAULT_MAXIMUM_LEVEL,
   prefer: 'pmtiles',
 }
@@ -70,16 +78,18 @@ export function chooseBasemapSource(
     return { kind: 'none', reason: '底图地址不是同源路径，已按"无外链"约束拒绝（禁止第三方瓦片服务）' }
   }
 
-  const attribution = config.attribution || BASEMAP_ATTRIBUTION
+  // 署名跟着**实际加载的那一份**走：显式给了就用显式的，否则按源类型给。
+  const forKind = (kind: 'template' | 'pmtiles') =>
+    config.attribution || (kind === 'template' ? OSM_BAKE_ATTRIBUTION : BASEMAP_ATTRIBUTION)
   const pmtilesFirst = config.prefer === 'pmtiles'
   const first = pmtilesFirst
-    ? { ok: reach.pmtilesReachable, source: { kind: 'pmtiles' as const, url: config.pmtilesUrl, attribution } }
+    ? { ok: reach.pmtilesReachable, source: { kind: 'pmtiles' as const, url: config.pmtilesUrl, attribution: forKind('pmtiles') } }
     : {
         ok: reach.templateReachable,
         source: {
           kind: 'url-template' as const,
           template: config.template,
-          attribution,
+          attribution: forKind('template'),
           maximumLevel: config.maximumLevel,
         },
       }
@@ -89,11 +99,11 @@ export function chooseBasemapSource(
         source: {
           kind: 'url-template' as const,
           template: config.template,
-          attribution,
+          attribution: forKind('template'),
           maximumLevel: config.maximumLevel,
         },
       }
-    : { ok: reach.pmtilesReachable, source: { kind: 'pmtiles' as const, url: config.pmtilesUrl, attribution } }
+    : { ok: reach.pmtilesReachable, source: { kind: 'pmtiles' as const, url: config.pmtilesUrl, attribution: forKind('pmtiles') } }
 
   if (first.ok) {
     return { ...first.source, reason: `${describeSource(first.source)}：探针可用` }

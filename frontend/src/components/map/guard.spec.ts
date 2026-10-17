@@ -20,11 +20,19 @@ function withoutComments(code: string): string {
   return code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
 
-const PURE_MODULES = ['./entities.ts', './offline.ts', './terrain.ts', './basemap.ts']
+const PURE_MODULES = ['./entities.ts', './offline.ts', './terrain.ts', './basemap.ts', './external.ts', './gcj02.ts']
 const RENDER_MODULES = ['./viewer.ts']
 const COMPONENTS = ['./MapPanel.vue', '../../views/MapView.vue']
 const ALL_SOURCES = [...PURE_MODULES, ...RENDER_MODULES, ...COMPONENTS, '../../api/map.ts']
-const SPEC_FILES = ['./entities.spec.ts', './offline.spec.ts', './terrain.spec.ts', './basemap.spec.ts', './api.spec.ts']
+const SPEC_FILES = [
+  './entities.spec.ts',
+  './offline.spec.ts',
+  './terrain.spec.ts',
+  './basemap.spec.ts',
+  './api.spec.ts',
+  './external.spec.ts',
+  './gcj02.spec.ts',
+]
 
 /** 静态导入语句：`import ... from 'x'`（含多行）；带 type 关键字的被排除。 */
 const STATIC_VALUE_IMPORTS = /(^|\n)\s*import\s+(?!type\s)[\s\S]*?from\s+['"]([^'"]+)['"]/g
@@ -113,9 +121,38 @@ describe('零外部服务：无托管瓦片、无令牌、无 CDN', () => {
     for (const token of FORBIDDEN) expect(code.includes(token), `${path} 出现 ${token}`).toBe(false)
   })
 
-  it.each(ALL_SOURCES)('%s 不含外部主机 URL（同源路径或 http://localhost 例外）', (path) => {
+  /**
+   * 外部主机只准出现在 `amap.ts` 一个文件里（高德 JS API 官方脚本，key 走环境变量）。
+   *
+   * 口径沿革：原来这条是"任何 `https://` 都不许有"；2026-10-17 接入高德在线底图时改成
+   * "外部源集中在 external.ts 且自报联网与坐标系"；同日官方 JS API 落地、**无 key 的内部瓦片
+   * 端点（autonavi）退役**，口径收敛成今天的三条可测判据：
+   * ① 离线链 + 场景层（basemap/offline/terrain/entities/gcj02/external/viewer）必须零外部主机；
+   * ② 唯一的外部主机住 `amap.ts`，且必须是带 key 的官方通道（`VITE_AMAP_KEY`）；
+   * ③ 退役的 autonavi 端点全库禁入（剥掉注释后查——文档里可以提它，代码里不许有）。
+   * "默认档 offline"这件事由 `readBasemapMode` 承担（external.spec.ts 钉住）。
+   */
+  const OFFLINE_CHAIN = ['./basemap.ts', './offline.ts', './terrain.ts', './entities.ts', './gcj02.ts', './external.ts', './viewer.ts']
+  it.each(OFFLINE_CHAIN)('%s 不含任何外部主机 URL（离线链不借道第三方）', (path) => {
     const code = withoutComments(source(path))
     const offenders = (code.match(/https?:\/\/[^\s'"`]+/g) ?? []).filter((url) => !url.startsWith('http://localhost'))
-    expect(offenders).toEqual([])
+    expect(offenders, `${path} 出现外部主机：${offenders.join(' ')}`).toEqual([])
+  })
+
+  it('外部主机只集中在 amap.ts，且走带 key 的官方 JS API', () => {
+    const code = withoutComments(source('./amap.ts'))
+    const hosts = [...new Set((code.match(/https:\/\/[^/'"`]+/g) ?? []).filter((url) => !url.startsWith('http://localhost')))]
+    expect(hosts.length, 'amap.ts 里一个外部主机都没有——这条在空跑').toBeGreaterThanOrEqual(1)
+    for (const host of hosts) {
+      expect(host, `amap.ts 出现了官方脚本之外的主机：${host}`).toBe('https://webapi.amap.com')
+    }
+    expect(code, '官方通道必须带 key（从环境变量取），不许退回无 key 端点').toContain('VITE_AMAP_KEY')
+  })
+
+  it('退役的无 key 瓦片端点（autonavi）全库禁入', () => {
+    const scanned = [...ALL_SOURCES, './amap.ts', './AmapMap.vue']
+    for (const path of scanned) {
+      expect(withoutComments(source(path)), `${path} 里 autonavi 端点回来了`).not.toContain('autonavi.com')
+    }
   })
 })

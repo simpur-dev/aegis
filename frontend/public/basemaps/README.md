@@ -65,6 +65,35 @@ public/basemaps/{z}/{x}/{y}.png          # 默认模板，见 MAP_ASSET_PATHS.ba
 * 与形态 A 的第 1 步产物完全一致，直接拷进来即可（不转 PMTiles 也能跑）；
 * 缺点：数万个小文件，拷盘/校验慢；优点：最直白，任何静态服务器都能供。
 
+#### 2026-10-17 落地：`scripts/bake_osm_basemap.py`（真 OSM 数据走的就是这一档）
+
+```bash
+# 1) 取源（Geofabrik 分区；这台机器直连不通，要挂代理）
+curl -x http://127.0.0.1:10090 -L -o tibet-latest.osm.pbf \
+     https://download.geofabrik.de/asia/china/tibet-latest.osm.pbf          # 48 MB
+# 2) 烘焙（依赖装在仓库外的独立 venv：pyogrio + shapely + matplotlib + pillow + geopandas）
+python scripts/bake_osm_basemap.py --pbf tibet-latest.osm.pbf \
+       --out frontend/public/basemaps --min-zoom 0 --max-zoom 10
+# 3) 事后复核（不重烘，只审计已有瓦树：等距抽样数非透明像素）
+python scripts/bake_osm_basemap.py --pbf tibet-latest.osm.pbf --verify-only
+```
+
+* **探针要 z0**：`tileUrlForTemplate` 探的是 `/basemaps/0/0/0.png`，所以 `--min-zoom` 必须从 0 起，
+  否则真瓦永远判"不可达"、页面静默退回合成 PMTiles；
+* **`maximumLevel` 要与烘焙档位一致**（`MapView.vue` 传 10）：写 14 而瓦只到 z10，
+  Cesium 会去要 z11–z14 并吃一串 404；
+* **瓦片树不入库**（本目录 `.gitignore` 已收）：z0–z10 是几千个小文件，git 里既膨胀也没法 review，
+  交付形态是"跑一次烘焙"或"随镜像带上"，仓库继续只带脚本与合成档；
+* **署名跟着实际加载的源走**：`chooseBasemapSource` 按源类型给 attribution——真 OSM 瓦记
+  `© OpenStreetMap contributors (ODbL)`，合成档不冒领（那里面没有一个 OSM 字节）；
+* **v1 的边界（如实说明，别当成完整底图）**：只画主干路/次干路/水系/铁路 + 市与镇的分级注记，
+  **不画行政界线、不画 landuse 大面**——GDAL 默认 OSM 配置把 boundary 与面要素放在
+  `multipolygons`，v1 不读大面层（几十分钟级的裁剪开销）。区域级视野下线条很细，
+  要看清得放大到 z8 以上；要更接近 OSM Carto 的观感，得配自定义 tags 文件或换 Mapnik 渲染同一套瓦目录；
+* **注记字体**：字形被烤进栅格，脚本按许可顺序探测（Noto Sans SC → Source Han → SimHei，
+  **不收 .ttc**：`msyh.ttc` 能被注册也能被 `findfont` 解析，但渲出来是豆腐块），
+  判据是直接读 cmap 而非看像素，实际用了哪支写进 `bake-meta.json`。
+
 ### 形态 C：同源瓦片服务（矢量底图的正路）
 
 矢量 PMTiles 想要好看的中文注记与分级符号，就让 **Martin / Tegola / tileserver-gl** 在同一站点下反代出

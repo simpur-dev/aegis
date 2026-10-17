@@ -38,9 +38,15 @@ import {
 import { collectFacts, initialMachine, NOT_PROBED_YET, reduceOffline, tileUrlForTemplate } from '@/components/map/offline'
 import type { OfflineMachine } from '@/components/map/offline'
 import MapPanel from '@/components/map/MapPanel.vue'
+import AmapMap from '@/components/map/AmapMap.vue'
 import { terrainProbeUrl } from '@/components/map/terrain'
 import type { LayerName, MapScene, MapSceneInfo } from '@/components/map/viewer'
 import { useTheme } from '@/theme/useTheme'
+import {
+  readBasemapMode,
+  writeBasemapMode,
+  type BasemapMode,
+} from '@/components/map/external'
 
 /** 数据轮询与源探针周期：野外弱网下"少而稳"胜过"快而抖"。 */
 const DATA_REFRESH_MS = 30_000
@@ -53,6 +59,16 @@ const sceneInfo = ref<MapSceneInfo | null>(null)
 const sceneError = ref<string | null>(null)
 /** 画布内部读不到 CSS 变量，所以主题要显式喂给场景（见 `@/theme/map`）。 */
 const { resolved: themeMode } = useTheme()
+/**
+ * 底图档。默认离线自托管（交付形态不依赖外部主机，见 external.ts）；'amap' 整块换成
+ * 高德 JS API 渲染面（`AmapMap.vue`）。场景层（viewer.ts）永远是离线链、不感知这个档——
+ * 换档是页面级"换组件"，不是换影像层。
+ */
+const basemapMode = ref<BasemapMode>(readBasemapMode(typeof localStorage === 'undefined' ? null : localStorage))
+/** 画面上一行说实话：档名 + 纠偏口径。高德档是带 key 的官方 JS API（key 在 .env.local，不入库）。 */
+const basemapSummary = computed(() =>
+  basemapMode.value === 'amap' ? '高德 JS API · 图元按 GCJ02 纠偏' : '离线自托管（可切「高德在线」）',
+)
 
 const readings = ref<TelemetryReading[]>([])
 const warnings = ref<WarningRecord[]>([])
@@ -193,7 +209,10 @@ async function initScene(): Promise<void> {
     const { createMapScene } = await import('@/components/map/viewer')
     const created = await createMapScene(host.value, {
       terrainUrl: MAP_ASSET_PATHS.terrain,
-      basemap: { template: MAP_ASSET_PATHS.basemapTemplate, pmtilesUrl: MAP_ASSET_PATHS.pmtiles },
+      // prefer:'template'：本地烘过真 OSM 瓦片时优先用它们（探针命中 z0/0/0 才算可达），
+      // 没烘（新克隆）就自动退回仓库自带的合成 PMTiles——两条路都是同源，降级链不变。
+      // maximumLevel 必须与烘焙档位一致：写 14 而瓦只到 z10，Cesium 会去要 z11–z14 并吃一串 404。
+      basemap: { template: MAP_ASSET_PATHS.basemapTemplate, pmtilesUrl: MAP_ASSET_PATHS.pmtiles, prefer: 'template', maximumLevel: 10 },
       fetchLike: probeFetch,
       onViewChanged: (next, nextZoom) => {
         bbox.value = next ? expandBBox(next) : null
@@ -283,6 +302,22 @@ watch(themeMode, (mode) => {
   scene.value?.setTheme(mode)
 })
 
+/** 底图档翻转：页面级换渲染面（v-if 切 AmapMap/Cesium host），把选择记下来（下次进页还是它）。 */
+watch(
+  basemapMode,
+  (mode) => {
+    writeBasemapMode(typeof localStorage === 'undefined' ? null : localStorage, mode)
+    /**
+     * 页面直接落在 'amap' 档（localStorage 记忆）时，挂载那刻 Cesium 宿主不存在，
+     * initScene 在 `!host` 上早退、场景为 null；切回离线时宿主才出现——不在这里补建场，
+     * 离线档就是永远转圈的"正在加载三维场景"（交付形态反而死了）。
+     * 必须用 post：watch 默认先于渲染跑，那一刻宿主 div 还没挂上，`!host` 又会早退一次。
+     */
+    if (mode === 'offline' && scene.value === null && sceneError.value === null) void initScene()
+  },
+  { flush: 'post' },
+)
+
 // 数据/视野变化 → 重算渲染计划并推给场景：plan 是 computed（纯函数产物），页面不手改图元。
 watch(plan, (data) => {
   scene.value?.render(data)
@@ -296,10 +331,23 @@ watch(visibility, (value) => {
 
 <template>
   <div>
-    <PageHero title="应急一张图" badge="离线三维" caption="底图、地形与矢量瓦片由本进程自托管，弱网与断网下仍可用。" />
-    <a-card size="small" title="一张图 · 自托管离线三维（Cesium + quantized-mesh + PMTiles）">
+    <PageHero
+      title="应急一张图"
+      :badge="basemapMode === 'amap' ? '在线底图' : '离线三维'"
+      :caption="
+        basemapMode === 'amap'
+          ? '底图走高德 JS API 官方通道（key 放 frontend/.env.local，不入库）；要素坐标已按 WGS84→GCJ-02 纠偏。加载失败会在图上说明原因，切回「离线自托管」即恢复交付形态。'
+          : '底图、地形与矢量瓦片由本进程自托管，弱网与断网下仍可用。'
+      "
+    />
+    <a-card size="small" :title="basemapMode === 'amap' ? '一张图 · 高德在线底图（JS API）' : '一张图 · 自托管离线三维（Cesium + quantized-mesh + PMTiles）'">
       <template #extra>
         <a-space wrap>
+          <!-- 底图档：默认离线自托管（交付形态，见 external.ts 的默认档论证）；高德是带 key 的 JS API 档，加载失败会在图上说明 -->
+          <a-radio-group v-model:value="basemapMode" size="small" button-style="solid" data-testid="basemap-mode">
+            <a-radio-button value="offline">离线自托管</a-radio-button>
+            <a-radio-button value="amap">高德在线</a-radio-button>
+          </a-radio-group>
           <a-select v-model:value="regionCode" style="width: 170px" placeholder="全部区域" @change="load">
             <a-select-option value="">全部区域</a-select-option>
             <a-select-option v-for="code in regionOptions" :key="code" :value="code">{{ code }}</a-select-option>
@@ -319,9 +367,12 @@ watch(visibility, (value) => {
       <a-col :xs="24" :lg="17">
         <a-card size="small" :body-style="{ padding: '0' }">
           <div class="map-frame">
-            <div ref="host" class="map-host" />
-            <div v-if="!sceneInfo && !sceneError" class="map-placeholder">正在加载三维场景（地图引擎独立分块，按需下载）…</div>
-            <div v-if="sceneError" class="map-placeholder">
+            <!-- 高德 JS API 是另一套渲染引擎，与 Cesium 不叠在同一块画布上：整块换表面 -->
+            <AmapMap v-if="basemapMode === 'amap'" :plan="plan" @select="selectFeature" />
+            <template v-else>
+              <div ref="host" class="map-host" />
+              <div v-if="!sceneInfo && !sceneError" class="map-placeholder">正在加载三维场景（地图引擎独立分块，按需下载）…</div>
+              <div v-if="sceneError" class="map-placeholder">
               <div>三维场景不可用：{{ sceneError }}</div>
               <div class="hint">
                 右侧面板与清单仍可用。首次部署需把
@@ -329,13 +380,18 @@ watch(visibility, (value) => {
                 <code>public/cesium/</code>，并烘焙底图与地形资产（清单见 public/basemaps/README.md、public/terrain/README.md）。
               </div>
             </div>
+            </template>
           </div>
           <div class="scene-bar">
-            <span>
+            <!-- 视野与缩放是 Cesium 相机的量，高德档下没有这两个数，别摆一个假"未就绪" -->
+            <span v-if="basemapMode === 'offline'">
               视野：{{ bbox ? `${bbox.west.toFixed(2)}, ${bbox.south.toFixed(2)} → ${bbox.east.toFixed(2)}, ${bbox.north.toFixed(2)}` : '未就绪' }}
             </span>
-            <span>· 缩放 {{ zoom }} · 上图要素 {{ plottedTotal }} · 未定位 {{ unlocated.length }}</span>
+            <span>· 上图要素 {{ plottedTotal }} · 未定位 {{ unlocated.length }}</span>
+            <span v-if="basemapMode === 'offline'">· 缩放 {{ zoom }}</span>
             <span v-if="plan.clustered" class="hint">· 已按网格聚合（圆点上的数字=该格要素数）</span>
+            <!-- 底图来源与坐标系要说在画面上：只写在代码注释里，看图的人无从知道落点被纠过偏 -->
+            <span class="hint">· 底图：{{ basemapSummary }}</span>
           </div>
         </a-card>
       </a-col>

@@ -79,7 +79,13 @@ class FakeDataSource {
 
 function buildFakeCesium(captured: { dataSources: FakeDataSource[] }) {
   const scene = {
-    globe: { baseColor: color('#000000'), enableLighting: false, imageryLayers: [] as unknown[] },
+    globe: {
+      baseColor: color('#000000'),
+      enableLighting: false,
+      imageryLayers: [] as unknown[],
+      // 真 Cesium 用这个事件通知"瓦队列排空"，装配里靠它补一次重绘（见 viewer.ts 的注释）
+      tileLoadProgressEvent: { addEventListener: () => {} },
+    },
     backgroundColor: color('#000000'),
     skyAtmosphere: { show: true },
     sun: { show: true },
@@ -108,6 +114,27 @@ function buildFakeCesium(captured: { dataSources: FakeDataSource[] }) {
       },
       removeAll: () => {},
     },
+    /**
+     * 影像层集合：离线底图链（basemap.ts）装配时用它挂 baseLayer。
+     * 真实 Cesium 的 `ImageryLayerCollection` 是 `length` + `get(i)` + `addImageryProvider`，
+     * 替身按同样的形状给，缺一样就会在装配底图时炸成"读 undefined.length"。
+     */
+    imageryLayers: {
+      layers: [] as { show: boolean }[],
+      get length() {
+        return this.layers.length
+      },
+      get(index: number) {
+        return this.layers[index]
+      },
+      add(layer: { show: boolean }) {
+        this.layers.push(layer)
+        return layer
+      },
+      addImageryProvider() {
+        return this.add({ show: true })
+      },
+    },
     destroy: () => {},
   }
   return {
@@ -135,6 +162,14 @@ function buildFakeCesium(captured: { dataSources: FakeDataSource[] }) {
     ScreenSpaceEventType: { LEFT_CLICK: 'LEFT_CLICK' },
     Credit: function CreditStub(text: string) {
       return { text }
+    },
+    // 离线模板档（basemap.ts）会走这条路；本文件把 createBasemapSetup 换成了替身，
+    // 这里只是让替身形状与真 API 对齐，缺了不代表错，但留着防止"替身撒谎"
+    UrlTemplateImageryProvider: function UrlTemplateStub(options: unknown) {
+      return { __options: options }
+    },
+    ImageryLayer: function ImageryLayerStub() {
+      return { show: true }
     },
     CreditDisplay: { cesiumCredit: null as unknown },
     __scene: scene,
