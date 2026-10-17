@@ -1,0 +1,7 @@
+# 真 OSM 烘焙产物不入库：z0–z10 是几千个小文件，git 里既膨胀又没法 review。
+# 复现方式是一条命令（脚本会连元数据一起生成），交付时随镜像带上或现场烘一次：
+#   python scripts/bake_osm_basemap.py --pbf <tibet-latest.osm.pbf> --out frontend/public/basemaps
+# 仓库仍然带着 README.md 与合成档 aegis.pmtiles，所以新克隆照样能跑离线链路。
+[0-9]/
+[0-9][0-9]/
+bake-meta.json

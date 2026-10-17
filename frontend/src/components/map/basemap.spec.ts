@@ -12,6 +12,7 @@ import { FakeWebMercatorTilingScheme, fakeRectangle, insideWebMercator, WEB_MERC
 import type { BasemapCesium, TileReader } from './basemap'
 import {
   BASEMAP_ATTRIBUTION,
+  OSM_BAKE_ATTRIBUTION,
   boundsOfHead,
   chooseBasemapSource,
   PmtilesImageryProvider,
@@ -86,10 +87,27 @@ describe('底图源选择', () => {
     expect(source.reason).toContain('同源路径')
   })
 
-  it('缺省署名回落到内置署名', () => {
-    const source = chooseBasemapSource({ templateReachable: true, pmtilesReachable: true }, { ...DEFAULT_BASEMAP_CONFIG, attribution: '', prefer: 'template' })
-    if (source.kind === 'url-template') expect(source.attribution).toBe(BASEMAP_ATTRIBUTION)
-    else throw new Error('应命中 url-template')
+  /**
+   * 署名跟着**实际加载的那一份**走（2026-10-17 真 OSM 烘焙接入时改的口径）。
+   * 原来两支共用一个常量：换成真瓦后挂"合成底图"那句是漏署名（ODbL 要求），
+   * 而反过来在合成 PMTiles 上挂 "© OpenStreetMap contributors" 就是**假溯源**——
+   * 那里面没有一个 OSM 字节。所以两支各钉一条，且都用 throw 防"选择器没命中而空跑"。
+   */
+  it('缺省署名按源类型给：真 OSM 瓦片记 OSM，合成归档不冒领', () => {
+    const template = chooseBasemapSource(
+      { templateReachable: true, pmtilesReachable: true },
+      { ...DEFAULT_BASEMAP_CONFIG, attribution: '', prefer: 'template' },
+    )
+    if (template.kind !== 'url-template') throw new Error('应命中 url-template')
+    expect(template.attribution).toBe(OSM_BAKE_ATTRIBUTION)
+
+    const synthetic = chooseBasemapSource(
+      { templateReachable: false, pmtilesReachable: true },
+      { ...DEFAULT_BASEMAP_CONFIG, attribution: '' },
+    )
+    if (synthetic.kind !== 'pmtiles') throw new Error('应命中 pmtiles')
+    expect(synthetic.attribution, '合成归档不得挂 OSM 署名').not.toContain('OpenStreetMap')
+    expect(synthetic.attribution).toBe(BASEMAP_ATTRIBUTION)
   })
 })
 
