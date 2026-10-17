@@ -8,6 +8,7 @@ import { HAZARD_LABELS } from '@/api/types'
 import { workflowApi } from '@/api/workflow'
 import PageHero from '@/components/PageHero.vue'
 import KpiStrip, { type KpiItem } from '@/components/dashboard/KpiStrip.vue'
+import ChainList from '@/components/dashboard/ChainList.vue'
 import RiskWall from '@/components/dashboard/RiskWall.vue'
 import LegStatusPanel from '@/components/system/LegStatusPanel.vue'
 import { useEventStream } from '@/composables/useEventStream'
@@ -206,13 +207,6 @@ watch(
   },
 )
 
-const stageColumns = [
-  { title: '事件', dataIndex: 'trace_id', key: 'trace_id', ellipsis: true },
-  { title: '结果', key: 'result', width: 120 },
-  { title: '各段执行方式', key: 'stages' },
-  { title: '任务', dataIndex: 'task_units', key: 'task_units', customRender: ({ text }: { text: string[] }) => `${text.length} 个` },
-]
-
 const agentColumns = [
   { title: '智能体', dataIndex: 'agent_id', key: 'agent_id' },
   { title: '类型', dataIndex: 'agent_type', key: 'agent_type' },
@@ -255,33 +249,7 @@ const agentColumns = [
 
       <a-col :xs="24" :lg="14">
         <a-card :title="chainsTitle" size="small" :loading="loading">
-          <a-table :columns="stageColumns" :data-source="recentChains" :pagination="{ pageSize: 6 }" row-key="trace_id" size="small">
-            <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：这一张正是"最近做了什么"，
-                 第一屏留一句英文，等于既没说"还没有跑过链路"，也没说去哪儿跑一条。 -->
-            <template #emptyText>
-              <div class="empty-hero" data-testid="chains-empty">
-                <span class="empty-hero__icon" aria-hidden="true">◇</span>
-                <div>
-                  <div class="empty-hero__title">还没有链路执行记录</div>
-                  <div class="empty-hero__desc">在监测页发起一次演练（激增/背景任一），五段链路就会跑起来并出现在这里。</div>
-                  <router-link class="empty-hero__action" to="/monitor">去监测页发起演练 →</router-link>
-                </div>
-              </div>
-            </template>
-            <template #bodyCell="{ column, record }">
-              <template v-if="column.key === 'result'">
-                <a-tag :color="record.errors.length ? 'red' : record.ok ? 'green' : 'orange'">
-                  {{ record.errors.length ? '失败' : record.ok ? '成功' : '进行中' }}
-                </a-tag>
-                <a-tag v-if="!record.acted">未触发</a-tag>
-              </template>
-              <template v-else-if="column.key === 'stages'">
-                <a-tag v-for="stage in record.stages" :key="stage.name" :color="stage.mode === 'agent' ? 'blue' : 'default'">
-                  {{ stage.name }}:{{ stage.mode }}
-                </a-tag>
-              </template>
-            </template>
-          </a-table>
+          <ChainList :chains="recentChains" />
         </a-card>
       </a-col>
     </a-row>

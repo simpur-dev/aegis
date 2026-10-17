@@ -143,9 +143,8 @@ describe('态势总览的取数', () => {
     mocked.events.mockResolvedValue({ items: [chainOf('trc_a'), chainOf('trc_b'), chainOf('trc_c')] } as never)
     const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
     await flushPromises()
-    const table = wrapper.findAllComponents({ name: 'ATable' })[0]
-    const rows = table.props('dataSource') as Array<{ trace_id: string }>
-    expect(rows.map((row) => row.trace_id)).toEqual(['trc_c', 'trc_b', 'trc_a'])
+    const rows = wrapper.findAll('[data-testid="chain-row"]').map((row) => row.attributes('data-trace'))
+    expect(rows).toEqual(['trc_c', 'trc_b', 'trc_a'])
     expect(wrapper.text()).toContain('最新在上')
   })
 
@@ -251,6 +250,11 @@ describe('态势总览的取数', () => {
  * 等轮询那份**更早**的快照迟到落地，它又把表整个替换回旧的一份——
  * 补数这件事本来就是为"时间线有了、这张表还没有"而加的，结果被一次迟到的轮询抹平。
  */
+/** 链路行的当前顺序（ChainList 渲染的 DOM）：两个写手那组用例都从这里读。 */
+function chainTraces(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper.findAll('[data-testid="chain-row"]').map((row) => row.attributes('data-trace') ?? '')
+}
+
 describe('链路执行记录的两个写手不许互相抹', () => {
   it('轮询的旧快照迟到时，不许把刚补上的那条新链路又抹掉', async () => {
     responses()
@@ -271,12 +275,11 @@ describe('链路执行记录的两个写手不许互相抹', () => {
     capturedEvents.value = [{ trace_id: 'trc_new_1', ts: 'x', subject: 'warning.published', payload: {} }]
     await vi.advanceTimersByTimeAsync(1_300)
     await flushPromises()
-    const rows = () => wrapper.findAllComponents({ name: 'ATable' })[0].props('dataSource') as Array<{ trace_id: string }>
-    expect(rows().map((row) => row.trace_id)).toContain('trc_new_1')
+    expect(chainTraces(wrapper)).toContain('trc_new_1')
 
     releaseRefresh({ items: [chainOf('trc_a')] })
     await flushPromises()
-    expect(rows().map((row) => row.trace_id), '更旧的快照迟到就该丢掉，不然新那条又从表里消失了').toContain('trc_new_1')
+    expect(chainTraces(wrapper), '更旧的快照迟到就该丢掉，不然新那条又从表里消失了').toContain('trc_new_1')
     wrapper.unmount()
   })
 
@@ -302,12 +305,11 @@ describe('链路执行记录的两个写手不许互相抹', () => {
     await vi.advanceTimersByTimeAsync(1_300)
     await vi.advanceTimersByTimeAsync(14_000)
     await flushPromises()
-    const rows = () => wrapper.findAllComponents({ name: 'ATable' })[0].props('dataSource') as Array<{ trace_id: string }>
-    expect(rows().map((row) => row.trace_id)).toContain('trc_new_1')
+    expect(chainTraces(wrapper)).toContain('trc_new_1')
 
     releaseBackfill({ items: [chainOf('trc_a')] })
     await flushPromises()
-    expect(rows().map((row) => row.trace_id), '补数那趟比轮询先发，迟到了就该让位').toContain('trc_new_1')
+    expect(chainTraces(wrapper), '补数那趟比轮询先发，迟到了就该让位').toContain('trc_new_1')
     wrapper.unmount()
   })
 })
