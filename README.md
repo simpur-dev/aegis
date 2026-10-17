@@ -61,7 +61,9 @@ aegis/
 
 ## 2. 部署与运行
 
-两条互不依赖的路径，命令都在本机逐条跑过（2026-10-12，Windows 11 + Docker Desktop/WSL2）：
+两条互不依赖的路径，命令都在本机逐条跑过（2026-10-12 全链路取证，Windows 11 + Docker Desktop/WSL2；
+2026-10-17 复核：2.2 第 2 步 `config --quiet` 默认档与 app/iot/observability 四档在 docker 29.8.1 / compose v5.5.1 上仍通过，
+前端 `npm run build` 25.6s 通过）：
 
 - **路径 A · 本机进程**（日常开发、离线全测试、演练与报表）——不需要 Docker。
 - **路径 B · Docker 起后端与依赖**（真总线 + 真库 + 图谱 + 检索权重），**Web 端仍在宿主机跑**：
@@ -96,6 +98,8 @@ cd backend && uv sync --extra dev
 #      uv sync --extra dev --extra perf --extra postgres --extra iot --extra analytics \
 #              --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp
 cd ../frontend && npm install
+#    可选：一张图的「高德在线」底图档要配 key——frontend/.env.local 写 VITE_AMAP_KEY=…（该文件已 gitignore）。
+#    不配不影响部署：一张图默认是自托管离线档，高德只是页面里可切的在线档；改了这个文件要重启 vite（它只在启动时读）。
 
 # 3) 全量测试：范围是 tests/ 整棵树（含 tests/perf 与 tests/integration）
 #    只跑 tests/unit 那一档子集不算门禁：2026-10-12 就是"本机子集全绿、CI 红"，
@@ -156,6 +160,10 @@ profile 分层（本机实测：用模板作 `--env-file`、四条 profile 一�
 | `iot` | `emqx` | MQTT 推送腿；默认 `AEGIS_MQTT_ENABLED=false`，不开这条腿 |
 | `observability` | `prometheus`、`alertmanager`、`jaeger` | 指标抓取、告警链路、跨度取证（**先起它**，应用才不会把跨度只留在本地）。本轮重写文档时这一档只做到 `config` 解析通过，没有重新起栈取证；起过并量过的记录在 `deploy/observability/README.md` 与 `docs/REPORT.md` |
 | `reserved` | `minio`、`redis` | **目前没有消费方**（配置面没有对应键，代码里 0 处 import），所以移出默认档。移出还有一层硬原因：`minio/minio:latest` 已不可拉取（本机实测 `pull access denied`），留在默认档会让每个照文档做的人在 `up` 的第一条命令上失败 |
+
+2026-10-17 复核：`.env.example` 的占位与 compose 里五处 `${VAR:?}` 必填项逐一对得上；两个 Dockerfile 都自带
+`HEALTHCHECK`（backend 打 `/healthz`、postgres 打 `pg_isready`），所以 backend 的
+`depends_on: condition: service_healthy` 链成立——compose 文件的服务段里没写 postgres 的 healthcheck 不是缺漏。
 
 ```bash
 # 1) 配置落点：仓库根这份给 compose 插值与容器 env_file；backend/.env 只给本机直接跑的进程
@@ -322,16 +330,22 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 
 ### Web 页面（纯 Web，响应式，无原生移动端）
 
-| 页面 | 路由 | 内容 |
-| --- | --- | --- |
-| 态势总览 | `/dashboard` | KPI、风险区域网格、链路各段执行方式（agent/local）、智能体在线状态、SSE 实时事件、页底各条可选腿的三态面板（腿名与后端装配面严格同名，多一条腿没登记标签就会被前端门禁挡住） |
-| 一张图 | `/map` | Cesium 三维 + 站点/预警点位；底图 PMTiles、地形自建 quantized-mesh，零 Ion/谷歌依赖；缺瓦片时如实降级为"无底图 + 椭球地形" |
-| 监测预警 | `/monitor` | 遥测明细与时序曲线、劣化读数缺口显示、一键发起激增/背景演练；**人工上报入口**（群防群治表单 → 三路解析 → 同一条链路，回显等级/置信/`decided_by`/是否转人工核签与三腿留痕；低置信度由平台自动开出 `human_review` 核签工单，回执带回实例号与待签节点） |
-| 预警发布 | `/warnings` | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |
-| 流程编排 | `/workflow` | Vue Flow 画布：面板可拖 16 类、引擎注册 17 类（每一类都有引擎级分派证据，见 `tests/unit/test_workflow_node_dispatch_matrix.py`）、版本化定义与实例运行、人工决策/改参/旁路。配置里点名的 `upstream` 必须是画布上的连线，定义期就校验 |
-| 指标量测 | `/metrics` | 运行时埋点的 P50/P95/最大时延 vs 阈值判定、协同成功率、越限项 |
-| 推演沙盒 | `/simulation` | §3.6/§4.4 的报告出口：K 情景 × T 轮 → 次生灾害概率矩阵、关键时间线（**每个在场角色一列票** + 本轮汇聚生效的预案）、预案对比、成本降档说明；页顶写"角色档位"是 `rule` 还是 `llm`、实问几次回落几次，缺键报告在边界上判读失败而不是画空表；未点"发起推演"时页面一个概率数字都不出现 |
-| 智能助手 | `/assistant` | 语义交互：四类任务（查询 / 预案问答 / 演练 / 上报）、意图解构引擎（模糊指令 → 白名单动作链，LLM 只有规划权没有执行权）、流式过程帧、**执行类动作必须人工确认**（越权指令一律拒绝并留痕）；未配 LLM 时页面如实显示"语义服务未配置"而不是装可用 |
+外壳是**侧栏导航**（2026-10-17 信息架构收并）：侧栏按受众分「值班主线」（态势总览/监测预警/一张图/流程编排）
+与「系统」（指标量测）两组，可折叠、偏好记 localStorage、窄屏（<1000px）默认收起；侧栏底部常驻智能体在线
+状态（取不到就说"未取到"，不拿 0 冒充"都没上线"）；顶栏只留当前页、后端健康、事件流连接与主题切换；
+**智能助手是每页右下角的悬浮球**。`/warnings` 与 `/simulation` 路由保留但当前**没有侧栏入口**（深链直达），
+这是有意的信息架构决定，不是遗漏。以下按页面路由说明各页内容：
+
+| 页面 | 路由 | 入口 | 内容 |
+| --- | --- | --- | --- |
+| 态势总览 | `/dashboard` | 侧栏·值班主线 | 读数带（KPI）、风险瓦片墙（按严重度排序）、链路行五段分段条（每段 agent/local 如实标注）、智能体在线板、事件流日志排、页底各条可选腿的三态面板（腿名与后端装配面严格同名，多一条腿没登记标签就会被前端门禁挡住） |
+| 监测预警 | `/monitor` | 侧栏·值班主线 | 遥测明细与时序曲线、劣化读数缺口显示、一键发起激增/背景演练；**人工上报入口**（群防群治表单 → 三路解析 → 同一条链路，回显等级/置信/`decided_by`/是否转人工核签与三腿留痕；低置信度由平台自动开出 `human_review` 核签工单，回执带回实例号与待签节点） |
+| 一张图 | `/map` | 侧栏·值班主线 | 双档渲染面（页面级整块切换，选择记 localStorage）：默认**自托管离线三维**（Cesium + 自烘 PMTiles + quantized-mesh 地形，零 Ion/谷歌依赖，缺瓦片时如实降级为"无底图 + 椭球地形"）；可切**高德 JS API 在线底图**（官方 JS API，key 填 `frontend/.env.local` 的 `VITE_AMAP_KEY`，可选、不入库，WGS84→GCJ-02 逐点纠偏，加载失败在图上说明）。场景层（站点/预警点位）两档共用同一份 RenderPlan |
+| 流程编排 | `/workflow` | 侧栏·值班主线 | Vue Flow 画布：面板可拖 16 类、引擎注册 17 类（每一类都有引擎级分派证据，见 `tests/unit/test_workflow_node_dispatch_matrix.py`）、版本化定义与实例运行、人工决策/改参/旁路。配置里点名的 `upstream` 必须是画布上的连线，定义期就校验 |
+| 指标量测 | `/metrics` | 侧栏·系统 | 运行时埋点的 P50/P95/最大时延 vs 阈值判定、协同成功率、越限项 |
+| 智能助手 | `/assistant` | 每页悬浮球 | 对话式界面：用户气泡靠右、回答为主回复，过程帧折进「过程 ｜ N 帧」一行（点开才是 meta/intent/status/result 等帧记录）；语义交互四类任务（查询 / 预案问答 / 演练 / 上报）、意图解构引擎（模糊指令 → 白名单动作链，LLM 只有规划权没有执行权）、**执行类动作必须人工确认**（提案卡内嵌在会话流里，越权指令一律拒绝并留痕）；未配 LLM 时页面如实显示"语义服务未配置"而不是装可用 |
+| 预警发布 | `/warnings` | 深链（无侧栏入口） | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |
+| 推演沙盒 | `/simulation` | 深链（无侧栏入口） | §3.6/§4.4 的报告出口：K 情景 × T 轮 → 次生灾害概率矩阵、关键时间线（**每个在场角色一列票** + 本轮汇聚生效的预案）、预案对比、成本降档说明；页顶写"角色档位"是 `rule` 还是 `llm`、实问几次回落几次，缺键报告在边界上判读失败而不是画空表；未点"发起推演"时页面一个概率数字都不出现 |
 
 ## 3. 可选子系统：接得上、退得掉、看得见
 
