@@ -14,6 +14,17 @@
  */
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 
+/**
+ * "让数据落地再量"的辅助等待。**必须带 timeout**：`networkidle` 在健康后端上永远等不到——
+ * 顶栏的 EventSource 是一条常驻连接，Playwright 的 networkidle 判据是"500ms 内没有网络活动"。
+ * 原先 17 处直等（无超时）→ 每项跑到 180s 测试超时才红，而且**在 main 上同样复现**
+ * （2026-10-17 实测：未改动的 /monitor 六档全超时）。真正的落地判据是各自的
+ * `waitForSelector` 与 `leafCount` 下限，这里只是给一次机会。
+ */
+const settle = async (page: Page): Promise<void> => {
+  await page.waitForLoadState('networkidle', { timeout: 8_000 }).catch(() => {})
+}
+
 const PAGES: Array<[string, string]> = [
   ['dashboard', '/dashboard'],
   ['monitor', '/monitor'],
@@ -348,7 +359,7 @@ for (const width of WIDTHS) {
            监测页的台账表会晚于固定 sleep 才落地，leafCount 下限就被误触发
            （隔离跑全绿、整批偶发红，量的都是同一个页面）。这不是页面缺陷，是探针的等待方式。
            重试到 12 秒还起不来，那就当真有问题处理。 */
-        await page.waitForLoadState('networkidle').catch(() => {})
+        await settle(page)
         await page.waitForTimeout(name === 'map' ? 12_000 : 2_500)
         let r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
         for (let attempt = 0; attempt < 6 && r.leafCount <= 30; attempt++) {
@@ -426,7 +437,7 @@ test.describe('弹层焦点不外泄 @1440', () => {
       await page.setViewportSize({ width: 1440, height: 900 })
       await page.goto(c.path)
       await page.waitForSelector('.page-head', { timeout: 45_000 })
-      await page.waitForLoadState('networkidle').catch(() => {})
+      await settle(page)
       await page.waitForTimeout(2_500)
       await page.locator(c.trigger).first().click()
       await page.waitForSelector(c.scope, { timeout: 15_000 })
@@ -714,7 +725,7 @@ test.describe('画布节点不变量 @1440', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
     await page.waitForSelector('.page-head', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.waitForTimeout(2_000)
     /* 刚进页面时是"新建画布"那份空定义：① 画布上没有节点，小地图里什么都没有，不许把它画出来
        （但它得**挂在 DOM 里**——落点让位要量它的真实尺寸当禁落区，见下面那条拖拽用例）；
@@ -858,7 +869,7 @@ test.describe('画布节点不变量 @1440', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
     await page.waitForSelector('.page-head', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.waitForTimeout(3_000)
     const items = page.locator('.wf-palette__item')
     expect(await items.count(), '节点面板一个都没有——判据在空跑').toBeGreaterThan(3)
@@ -938,7 +949,7 @@ test.describe('画布节点不变量 @1440', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
     await page.waitForSelector('.page-head', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.waitForTimeout(3_000)
     await page.getByRole('tab', { name: /定义/ }).click()
     await page.waitForTimeout(1_500)
@@ -1002,7 +1013,7 @@ test.describe('画布节点不变量 @1440', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
     await page.waitForSelector('.page-head', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.waitForTimeout(3_000)
     const canvas = page.locator('.wf__canvas')
     const items = page.locator('.wf-palette__item')
@@ -1195,7 +1206,7 @@ test.describe('运行时间线 @1440', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
     await page.waitForSelector('.page-head', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.waitForTimeout(2_500)
     const picks = page.locator('.wf-run__pick')
     expect(await picks.count(), '运行态里没有可选实例——判据在空跑').toBeGreaterThan(0)
@@ -1324,7 +1335,7 @@ test.describe('系统输出浮层 @1440', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/monitor')
     await page.waitForSelector('.page-head', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.waitForTimeout(2_500)
     const chip = await page.evaluate(() => {
       const el = document.querySelector('.sys-term__chip')?.getBoundingClientRect()
@@ -1436,7 +1447,7 @@ test.describe('定义行网格与入场动效 @1440', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
     await page.waitForSelector('.page-head', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.waitForTimeout(3_000)
     await page.getByRole('tab', { name: /定义/ }).click()
     await page.waitForTimeout(2_000)
@@ -1523,7 +1534,7 @@ test.describe('风险芯片兼图例 @1440', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/map')
     await page.waitForSelector('.page-head', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.waitForTimeout(12_000)
     const chips = page.locator('.risk-chip')
     expect(await chips.count(), '一张图上一个风险芯片都没有——判据在空跑').toBe(5)
@@ -1602,7 +1613,7 @@ async function hoverSweep(
   for (const [name, path] of PAGES) {
     await page.goto(path)
     await page.waitForSelector('.page-head', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.waitForTimeout(2_500)
     let budget = opts.perPage
     for (const selector of HOVER_TARGETS) {
@@ -2035,7 +2046,11 @@ test.describe('页头统计托盘对齐 @1440', () => {
       console.log(`TRAY ${name} tops=${JSON.stringify(r.cells)} spread=${r.spread}`)
       if (r.cells.length > 1 && r.spread > 1) problems.push(`${name} 大数字顶边差 ${r.spread}px（${r.cells.join(' / ')}）`)
     }
-    expect(trays, '一个统计托盘都没找到——判据在空跑').toBeGreaterThanOrEqual(2)
+    /* 地板 2→1（2026-10-17 dashboard 标杆页 spike）：态势页的四个 KPI 从页头托盘搬进了独立读数带
+       （见 `components/dashboard/KpiStrip.vue`），`.page-head__stats` 只剩指标页一处——
+       而这条判据的原始事故（带环那格把数字抬走 25px）恰恰就在指标页，主体没丢。
+       七页里第二处托盘在推演沙盒页，但它不在 PAGES 名单内，所以地板按实量下调而不是放虚。 */
+    expect(trays, '一个统计托盘都没找到——判据在空跑').toBeGreaterThanOrEqual(1)
     expect(problems, `托盘里的数字不在一条线上：\n${problems.join('\n')}`).toHaveLength(0)
   })
 })
@@ -2055,7 +2070,7 @@ test.describe('定义列表自查 @1440', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
     await page.waitForSelector('.page-head', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.getByRole('tab', { name: /定义/ }).click()
     await page.waitForTimeout(2_000)
 
@@ -2155,11 +2170,15 @@ test.describe('深色主题换肤', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/dashboard')
     await page.waitForSelector('.ant-card', { timeout: 45_000 })
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await settle(page)
     await page.waitForTimeout(2_000)
     const dark = await page.evaluate(shellLum, { limit: 128, wantBright: false })
     console.log(`SHELL-dark seen=${dark.seen} wrong=${dark.wrong.join(' | ')}`)
-    expect(dark.seen, '一块表面都没读到——判据在空跑').toBeGreaterThanOrEqual(8)
+    /* 地板 8→7（2026-10-17 dashboard 标杆页 spike）：这张页原先的两张 antd 表换成了自绘行，
+       SELS 里 `.ant-table-thead > tr > th` 这一路在 /dashboard 归零，实量剩
+       body + .app-shell + .navbar + 4×.ant-card = 7。地板的职责是"别空跑"，不是"必须 8"，
+       所以随实量下调、判据与两向对照都保留。 */
+    expect(dark.seen, '一块表面都没读到——判据在空跑').toBeGreaterThanOrEqual(7)
     expect(dark.wrong, `深色下还有亮底（白底补丁）：\n${dark.wrong.join('\n')}`).toHaveLength(0)
 
     /* 反向对照：同一份读数在浅色下必须全是亮面。只验深色一边的话，判据写反了（或恒真）也是绿的。 */
@@ -2167,7 +2186,7 @@ test.describe('深色主题换肤', () => {
     await page.waitForTimeout(700)
     const light = await page.evaluate(shellLum, { limit: 128, wantBright: true })
     console.log(`SHELL-light seen=${light.seen} wrong=${light.wrong.join(' | ')}`)
-    expect(light.seen, '浅色这一档没读到表面——两向对照失效').toBeGreaterThanOrEqual(8)
+    expect(light.seen, '浅色这一档没读到表面——两向对照失效').toBeGreaterThanOrEqual(7)
     expect(light.wrong, `浅色主题里出现了暗面（说明令牌被写死、没跟着主题翻）：\n${light.wrong.join('\n')}`).toHaveLength(0)
     expect(await page.evaluate(() => document.documentElement.dataset.theme), '浅色档没落到 DOM 上').toBe('light')
   })
@@ -2197,7 +2216,9 @@ test.describe('深色主题换肤', () => {
     expect(after.stored, '选择没存进 localStorage').toBe('dark')
     expect(after.scheme, 'color-scheme 没跟着翻（原生控件与滚动条会留浅色）').toBe('dark')
     expect(after.pressed, '选中那格的 aria-pressed 没翻（读屏听不出当前是哪档）').toBe('true')
-    await page.reload({ waitUntil: 'networkidle' }).catch(() => {})
+    /* 不能用 waitUntil:'networkidle'：SSE 是常驻连接，reload 会一直等到 180s 测试超时
+       （2026-10-17 实测，与上面 settle() 同一根因）。等 DOM 就绪即可，主题落没落由后面的断言判。 */
+    await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
     await page.waitForSelector('.navbar', { timeout: 45_000 })
     expect(await page.evaluate(() => document.documentElement.dataset.theme), 'reload 之后忘了用户选过深色').toBe('dark')
     /* 页签导航全档铺页名之后，title/aria-label 仍要带着页名（读屏与 hover 都靠它），
@@ -2216,7 +2237,7 @@ test.describe('深色主题换肤', () => {
       await page.setViewportSize({ width: 1440, height: 900 })
       await page.goto(path)
       await page.waitForSelector('.page-head', { timeout: 45_000 })
-      await page.waitForLoadState('networkidle').catch(() => {})
+      await settle(page)
       await page.waitForTimeout(2_500)
       const r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
       console.log(`DARK ${name} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} lowContrast=${r.lowContrastCount}`)
@@ -2239,7 +2260,7 @@ test.describe('深色主题换肤', () => {
       await page.setViewportSize({ width, height: 1080 })
       await page.goto('/dashboard')
       await page.waitForSelector('.navbar', { timeout: 45_000 })
-      await page.waitForLoadState('networkidle').catch(() => {})
+      await settle(page)
       await page.waitForTimeout(2_000)
       const nav = await page.evaluate(() => {
         const box = (sel: string) => {
@@ -2331,7 +2352,7 @@ test.describe('ECharts 画布换肤', () => {
       await page.setViewportSize({ width: 1440, height: 900 })
       await page.goto(path)
       await page.waitForSelector('.ant-card canvas', { timeout: 45_000 })
-      await page.waitForLoadState('networkidle').catch(() => {})
+      await settle(page)
       await page.waitForTimeout(2_200)
       const dark = await page.evaluate(canvasInk, { tol: 2 })
       console.log(`CANVAS-${name}-dark ${JSON.stringify(dark)}`)
