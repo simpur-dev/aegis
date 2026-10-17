@@ -371,6 +371,18 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   }
   applyPalette()
   viewer.scene.globe.enableLighting = false
+  /**
+   * 瓦加载完必须自己喊一次重绘。
+   *
+   * 这个页面为了在轻薄本上省电开了 `requestRenderMode`，又把 `maximumRenderTimeChange`
+   * 设成 Infinity——于是**异步到达的影像/地形瓦不会触发任何一帧**：请求全 200、图层 show=true、
+   * alpha=1，画面却一直是地球底色。接高德时 261 张瓦全部加载成功仍然全黑，才把这条挖出来
+   * （此前自托管烘焙瓦"看着没生效"是同一个原因，不是瓦的问题）。
+   * `tileLoadProgressEvent(0)` 是官方给的"队列排空"信号，正好是省电与正确性的交点。
+   */
+  viewer.scene.globe.tileLoadProgressEvent.addEventListener((queued: number) => {
+    if (queued === 0) viewer.scene.requestRender()
+  })
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 200
   viewer.camera.setView({ destination: cesium.Rectangle.fromDegrees(...rectArray(options.initialRectangle ?? TIBET_RECTANGLE)) })
@@ -378,6 +390,7 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   publishMapDebugHandle(viewer, location.search)
 
   const handles = createLayerHandles(cesium, viewer)
+
   const signatures = {} as Record<LayerName, string>
   for (const name of LAYER_NAMES) signatures[name] = ''
 
@@ -394,6 +407,8 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
 
   function render(data: RenderData): void {
     lastData = data
+    // 本场景只连同源自托管资产（WGS84 烘焙瓦），坐标不做任何变换；'amap' 档是页面级的
+    // 另一套渲染面（AmapMap.vue），它的纠偏在那边做，与这里无关。
     rebuild('hazards', data.hazards, (zone) => handles.hazards.entities.add(hazardZoneGraphics(cesium, zone, cesium.ClassificationType.TERRAIN, palette)))
     rebuild('stations', data.stations, (feature) => handles.stations.entities.add(stationGraphics(cesium, feature, palette)))
     rebuild('warnings', data.warnings, (feature) => handles.warnings.entities.add(warningGraphics(cesium, feature, palette)))

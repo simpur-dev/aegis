@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest'
 import { RISK_COLORS, type RiskLevel } from '@/api/types'
 
 import { colorSlots, riskFill } from './tokens'
-import { mapPalette } from './map'
+import { amapStyleName, mapPalette } from './map'
 
 function channel(v: number): number {
   const c = v / 255
@@ -97,5 +97,11 @@ describe('theme/map —— Cesium 场景调色板派生层', () => {
     /* 通道色与风险档同值（劣化=等级1红、正常=等级4蓝），所以它跟着换档是一致的，不是漏网。 */
     expect(dark.fillFor('#cf1322')).toBe(riskFill.dark[1])
     expect(dark.fillFor('#1677ff')).toBe(riskFill.dark[4])
+  })
+
+  it('高德样式名两档不同、都来自官方样式表，且浅色就是官方默认（组件不许自挑档位）', () => {
+    expect(amapStyleName('light')).toBe('amap://styles/normal')
+    expect(amapStyleName('dark')).toBe('amap://styles/grey')
+    expect(amapStyleName('light')).not.toBe(amapStyleName('dark'))
   })
 })
