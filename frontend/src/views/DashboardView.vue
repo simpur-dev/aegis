@@ -248,7 +248,7 @@ watch(
       </a-col>
     </a-row>
 
-    <a-row :gutter="12" style="margin-top: 12px">
+    <a-row :gutter="12" class="dash-row">
       <a-col :xs="24" :lg="14">
         <a-card title="智能体在线状态（经总线契约注册）" size="small">
           <AgentBoard :agents="agents" />
@@ -261,7 +261,7 @@ watch(
       </a-col>
     </a-row>
 
-    <a-row style="margin-top: 12px">
+    <a-row class="dash-row">
       <a-col :span="24">
         <!-- 垫在明细之后：KPI 与链路要先占住首屏，但这块必须和它们在同一页——
              判"预案为什么变慢"时翻的是这个，不是日志。 -->
@@ -273,8 +273,11 @@ watch(
 
 <style scoped>
 /* KPI 托盘（.stat-cell）与空态（.empty-hero）的样式在 styles/theme.css：两页共用一份。 */
+.dash-row {
+  margin-top: var(--aeg-space-s3);
+}
 .dash-error {
-  margin-bottom: 12px;
+  margin-bottom: var(--aeg-space-s3);
 }
 /* 待办条是"要人去做的事"：动作位给它主色左带 + brand-soft 底，与数据卡分开一档。
    旧的紫色雾底（#f9f0ff/#531dab）是浅色主题限定的字面色，深色下不成立，已退役。 */

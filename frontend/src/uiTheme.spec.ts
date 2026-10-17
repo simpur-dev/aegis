@@ -20,10 +20,12 @@ import { readRepoFile, repoRoot } from '@/testing/repoSource'
 
 /** 棘轮基线：2026-10-07 阶段 1 由探针（E:\tmp\color-count.mjs，与本条同一套走目录/剥注释/正则）量得。
  *  轨迹：458（阶段 0 摸底）→ 335（`theme.css`+`App.vue` 接令牌）→ 228（七页共用的灰字与几块白底接上令牌）
- *  → **159（藏青横幅退役：`PageHero.vue` 31→0、`theme.css` 27→0；顺带把指标页三处"深底色压亮面"改成档位 + 槽位）**。
+ *  → **159（藏青横幅退役：`PageHero.vue` 31→0、`theme.css` 27→0；顺带把指标页三处"深底色压亮面"改成档位 + 槽位）**
+ *  → 158（Cesium `viewer.ts` 的 `#101923` 归零）→ **154（spike：dashboard 标杆页——待办条紫底 3 处与
+ *  `LegStatusPanel` 的 rgba 分隔线归零，页面里只留 var(--aeg-*)）**。
  *  现在最重的三处：`SystemTerminal.vue` 21（固定深底的面板，它本来就不随主题翻，但要收进令牌槽）、
- *  `AssistantView.vue` 15、`NodeShell.vue` 14。`App.vue`、`theme.css`、`PageHero.vue` 与 `MetricsView.vue` 都已归零。 */
-const COLOR_BASELINE = 158
+ *  `AssistantView.vue` 15、`NodeShell.vue` 14。`App.vue`、`theme.css`、`PageHero.vue`、`MetricsView.vue` 与 `DashboardView.vue` 都已归零。 */
+const COLOR_BASELINE = 154
 
 function fontsCss(): string {
   return readRepoFile('frontend', 'src', 'styles', 'fonts.css')

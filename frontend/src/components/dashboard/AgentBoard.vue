@@ -83,6 +83,10 @@ function loadRatio(agent: AgentInfo): number {
 }
 .agent__type {
   flex: 0 0 auto;
+  padding: 0 6px;
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-sunken);
   font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-secondary);
 }

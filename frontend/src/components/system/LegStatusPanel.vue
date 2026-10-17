@@ -95,19 +95,20 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .leg-error {
-  margin-bottom: 8px;
+  margin-bottom: var(--aeg-space-s2);
 }
 .leg-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 4px 16px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0 var(--aeg-space-s4);
 }
 .leg-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--aeg-space-s2);
   padding: 6px 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  /* 原先是 rgba(0,0,0,0.06)：浅色限定字面色，深色主题下等于没画（棘轮与换肤双料欠账）。 */
+  border-bottom: 1px solid var(--aeg-color-border-subtle);
 }
 .leg-main {
   min-width: 0;
@@ -116,25 +117,29 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 .leg-name {
-  font-weight: 600;
+  font-size: var(--aeg-font-base);
+  font-weight: var(--aeg-weight-semibold);
+  color: var(--aeg-color-text);
 }
 .leg-detail {
+  font-family: var(--aeg-font-mono);
+  font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-secondary);
-  font-size: 12px;
 }
 .leg-facts {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 10px;
+  gap: 2px var(--aeg-space-s2);
   overflow-wrap: anywhere;
 }
 .leg-facts span {
-  color: var(--aeg-color-text-secondary);
-  font-size: 12px;
+  font-family: var(--aeg-font-mono);
+  font-size: var(--aeg-font-xs);
+  color: var(--aeg-color-text-muted);
 }
 .leg-empty {
+  padding: var(--aeg-space-s2) 0;
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-secondary);
-  font-size: 12px;
-  padding: 8px 0;
 }
 </style>
