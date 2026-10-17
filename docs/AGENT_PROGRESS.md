@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | M0 现状审计与选型提案 | done | BRIEF §1–§3：基线实测、耦合面量化、六维对比、用户拍板 Arco |
 | M1 设计令牌与双主题引擎 | in_progress | 令牌四层/切换器/ECharts 换肤/旧横幅停用已落地；欠 Cesium+Vue Flow 画布、布局骨架（待批） |
-| M2 Dashboard 标杆页 | todo | 风格标杆页按新设计重做（含三态、五段链路、七腿三态面板） |
+| M2 Dashboard 标杆页 | in_progress | 探索性 spike 已出标杆视觉（分支 `spike/dashboard-redesign`，见 BRIEF §15）；待用户评审方向后再并入主线并按 T12 收组件层 |
 | M3 逐页推开 monitor/warnings/map/workflow/metrics/assistant | todo | 每页三态 + 双主题截图 |
 | M4 多智能体预留补齐 | todo | 全局状态区、人在回路组件、AgentMessage v1 类型/store、画布节点区分+图例 |
 | M5 分辨率走查与最终验收 | todo | 1366×768/1920×1080 走查、全门禁、最终验收报告 |
@@ -32,7 +32,7 @@
 | T11 | 布局骨架：可折叠侧栏（含智能体状态迷你区）+ 顶栏 + 栅格 | blocked | 用户批准 | — | 方向性改动，按升级机制等批准（见阻塞清单 B1） |
 | T12 | 阶段 2 组件层替换 antd→Arco（16 文件/202 标签）+ e2e 51 处 ant-* 选择器迁移 | todo | T10 | 全门禁绿 + 全量 e2e | 机械可改；不得动契约 |
 | T13 | uiTheme.spec.ts 按新规范重写（4 条改口径、7 条保留） | todo | T12 | 重写后 11+ 条全绿、逐条变异检查 | 改口径不是删断言 |
-| T14 | /dashboard 标杆页重做（KPI/五段链路/风险网格/SSE 流/智能体组/七腿三态 + 三态） | todo | T12 | 页面级 e2e + 双主题截图 + 全门禁 | M2 交付物 |
+| T14 | /dashboard 标杆页重做（KPI/五段链路/风险网格/SSE 流/智能体组/七腿三态 + 三态） | in_progress | T12 | 页面级 e2e + 双主题截图 + 全门禁 | M2 交付物。**2026-10-17 探索 spike 已出标杆视觉**（分支 `spike/dashboard-redesign`，BRIEF §15）：读数带/风险瓦片墙/五段分段条/智能体在线板/日志排事件流；组件层迁移（T12）仍待做 |
 | T15 | /monitor 重做（遥测表+曲线、缺口标记、演练入口、人工上报向导+低置信核签） | todo | T14 | 同上 | |
 | T16 | /warnings 重做（列表/详情、双语 translation_pending 如实标、回执、关联任务） | todo | T14 | 同上 | 不伪造藏文 |
 | T17 | /map 重做（全屏 Cesium+浮动面板+详情抽屉，缺瓦片如实降级） | todo | T08、T14 | 同上 + 地图两道门禁 | 保持零 Ion/谷歌依赖 |
@@ -44,7 +44,8 @@
 | T23 | AgentMessage v1 TS 类型 + store（按 contracts/agent_message.v1.schema.json 对账） | todo | — | 类型单测 + 与 schema 对账脚本/用例 | 不改契约本身 |
 | T24 | 五段链路可视化（decided_by/耗时/产出/降级原因如实标注） | todo | T14、T23 | dashboard 真机 + 降级场景注入验证"平台降级接管"字样 | |
 | T25 | 分辨率走查（1366×768 与 1920×1080 两档全页）+ 关键路径 3 步可达核验 | todo | T14–T20 | 两档全量 e2e + 截图走查 | M5 |
-| T26 | 最终验收：DoD 七条逐条勾选留证 + 全门禁 + 生产构建 + 《最终验收报告》 | todo | 全部 | 报告含命令与结果、已知限制、后续建议 | |
+| T26 | 最终验收：DoD 七条逐条勾选留证 + 全门禁 + 生产构建 + 《最终验收报告》 | todo | 全部 | 报告含命令与结果、已知限制、后续建议 |
+| T27 | 画面门禁的两处过期判据：顶栏页签 `labels === 7`（`/simulation` 后实为 8）、@1000/@900 的 `.nav-status` 静默裁字 | todo | — | 改判据本身（页签数按 router 实量、胶囊按内容宽度给余量），改前先 A/B 确认 main 同现 | 2026-10-17 dashboard spike 的副产发现：两项在 `main` 上同样红，与页面改造无关 | |
 
 ## 阻塞清单
 
@@ -73,3 +74,13 @@
   `text-muted` 那处期望错（本就过 AA，非缺陷，已记 BRIEF §14）。全量 ui-overlap+map-visual 干净重跑进行中，结果下轮追记。
   代码提交 `75fa1f9 feat(ui): Cesium 画面内部接令牌…`。
   下一步：T09 Vue Flow 画布接令牌（照 T08 的派生层套路，`utils/graph.ts` 12 处含紫/品红/青）。
+- 2026-10-17 轮次3（/dashboard 标杆页视觉 spike，分支 `spike/dashboard-redesign`，未并主线）：按用户任务书做探索性重做——
+  方向「值班台 · 一屏三问」，新增 `components/dashboard/` 五个组件（读数带 / 风险瓦片墙 / 五段分段条链路行 / 智能体在线板 / 日志排事件流），
+  `LegStatusPanel` 收掉一处浅色限定 rgba；**未新增令牌槽位**（新方向全用现有 `--aeg-*` 表达），颜色棘轮 158→154（态势页内字面色归零）。
+  十条产品不变量逐条继承，八枚 `data-testid` 全保留；门禁：typecheck ✓ / vitest 868 ✓ / build 24.09s ✓ /
+  dashboard 相关 e2e 32 项 **26 passed**（@1100–@1440 四档几何与对比度全 0 命中）。
+  两件事是门禁自己的问题，已一并修：① `ui-overlap` 的 17 处 `networkidle` 等待无超时，**后端一健康就每项跑满 180s**
+  （A/B：未改动的 /monitor 在 main 上同样全超时）→ 统一 `settle()` 8 秒；② 表面地板 8→7、托盘地板 2→1（页面结构变了，按实量下调不删断言）。
+  剩 6 项红与本无关：@1000/@900 的 `.nav-status` 静默裁字（main 同现）、顶栏页签 `labels===7` 已过期（`/simulation` 后是 8 枚，见新任务 T27）。
+  截图：`frontend/test-results/spike/before-*` 与 `after-*` 各四张（浅/深 × 1366/1920），数据走真演练接口。
+  下一步：等用户对方向的裁决——通过则并入主线并补 T12（Arco 组件层），不通过则整分支丢弃（main 未动）。

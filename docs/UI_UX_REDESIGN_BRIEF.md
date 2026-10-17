@@ -598,3 +598,56 @@ scoped 样式里对 `--aeg-color-status-success/danger/text-muted` 取值，环�
 1. T09 Vue Flow 画布内部接令牌（`utils/graph.ts` 的 `NODE_STATE_STYLES` 12 处，含紫/品红/青那几支——同一套派生层 + 像素/场景双证据）；
 2. T10 Arco 探针实测（选型已批）→ T12 组件层迁移；
 3. `viewer.theme.spec.ts` 那套假 Cesium 可以继续当 Vue Flow 那半的模板。
+
+---
+
+## 15. /dashboard 标杆页视觉 spike（2026-10-17，分支 `spike/dashboard-redesign`）
+
+### 决策 11：版面按"值班员三问"重排，不按数据种类平铺
+
+用户授权的探索性 spike（直接改码、放开视觉方向），产出是真代码/真数据/真双主题。方向命名**「值班台 · 一屏三问」**：
+*最坏的风险在哪、有没有事在等我、系统自己还健康吗*。落地为五个新组件（`frontend/src/components/dashboard/`）：
+
+| 组件 | 换掉了什么 | 换来的判据 |
+| --- | --- | --- |
+| `KpiStrip.vue` | PageHero 的数字托盘（`a-statistic` × 4） | 读数带独立：2xl 等宽大数 + 口径注脚（成功率的"目标 90% · 达标"从 suffix 挪进 note） |
+| `RiskWall.vue` | 均一网格 + `a-tag` 色块 | **排序即层级**：等级 1 最坏在前、同级按置信降序；等级文字走 `--aeg-risk-text-*`，色带仍取 `RISK_COLORS` |
+| `ChainList.vue` | 链路 `a-table`（"各段执行方式"一列每行撑三行高） | 一行一条链 + **五段分段条**（agent/local/hybrid/skipped/失败各有档，段详情进 `title`）；同屏由 ~2 条变 9 条（行区 380px 内滚，图例钉住） |
+| `AgentBoard.vue` | 智能体 `a-table` 五列等宽 | 健康点 + 等宽 ID + 类型芯片 + **在途/上限小容量条** + 成败计数；在线/失联仍取注册表 `healthy` |
+| `EventFeed.vue` | `a-timeline` 大圆点 | 等宽时间戳单行正文的日志排法（同屏容量翻倍），UTC+8 口径不变 |
+
+`LegStatusPanel.vue`（仅此页在用）顺带清掉一处 `rgba(0,0,0,.06)` 分隔线（深色下等于没画）并把 driver/事实串收进等宽小字。
+**颜色棘轮 158 → 154**（态势页内字面色归零），未新增任何令牌槽位——新方向完全用现有令牌表达。
+产品不变量十条逐条继承（`—` 不写 0、待办 `null` 不摆、错误条常驻、窗口诚实、最新在上、空态带出口、15s 轮询 + 可见性、SSE 补数 1.2s 防抖 + seq、八枚 `data-testid`、风险色同源）。
+
+### 这一轮被门禁逮到的两件事（都不是画面，是门禁自己）
+
+1. **`networkidle` 在健康后端上永远等不到**：顶栏的 EventSource 是常驻连接，而 `ui-overlap.spec.ts` 有 17 处
+   `waitForLoadState('networkidle')`（无超时）与一处 `reload({ waitUntil: 'networkidle' })`——
+   后端与代理一正常，**每一项都跑到 180s 测试超时**。A/B 实测：未改动的 `/monitor` 在 `main` 上六档全超时。
+   修法：统一 `settle(page)`（最多 8 秒，等不到继续），落地判据仍是各自的 `waitForSelector` 与 `leafCount` 下限。
+   这条也解释了为什么 §11–§14 那些"112 passed"是在 SSE 未连的状态下取到的。
+2. **两处防空跑地板要随实量走**：表面地板 8→7（态势页两张 antd 表改自绘行，SELS 里 `.ant-table-thead th` 归零，
+   探针实量 `body + .app-shell + .navbar + 4×.ant-card = 7`）、托盘地板 2→1（KPI 搬出页头托盘，
+   原始事故所在的指标页仍在判据内）。**都是下调数值、不删断言**，理由写在选择器旁边。
+
+### 门禁状态（spike 分支，构建产物 + 真后端 8321）
+
+| 门禁 | 结果 |
+| --- | --- |
+| `npm run typecheck` | exit 0 |
+| `node node_modules/vitest/vitest.mjs run` | **868 passed / 51 个文件**（用例数不变：链路行那三条是改宿主不是新增） |
+| `npm run build` | ✓ built in 24.09s |
+| `e2e ui-overlap`（dashboard 相关 8 组，32 项） | **26 passed / 6 failed**，红的全部是外壳级、且与本无关：@1000/@900 的 `.nav-status` 静默裁字（`main` 同现，A/B 已验 @1000）；顶栏页签 `labels === 7` 是**过期判据**——`/simulation` 落地后（`cd68c45`）页签已是 8 枚 |
+| dashboard 几何与对比度 | @1440/@1280/@1200/@1100 四档 `overlap=0 beyond=0 clipped=0 folded=0 lowContrast=0 navClip=0`（leaves 303–306） |
+| 截图 | `frontend/test-results/spike/`：`before-*` 与 `after-*` 各四张（浅/深 × 1366×768/1920×1080），数据由 `POST /api/v1/drill/run` 真演练种出 |
+
+### 已知代价与推广成本（若评审通过）
+
+- **推广到其余六页**：`ChainList`/`AgentBoard` 的分段条与容量条是本页专属语义，别页要各自设计；可复用的是"排序即层级""读数带""日志排"三条口径 + 五个组件的骨架。
+- **与迁 Arco 的关系**：本轮刻意**继续用 antd 当底层交互件**（`a-card`/`a-button`/`a-alert`/`a-table` 只剩智能体一处），
+  自绘部分全是 CSS 变量，不新增依赖也不与 Arco 冲突；但 `ChainList`/`RiskWall` 这类自绘行会让 §1.2 那 51 处
+  `ant-*` 类名断言继续减少——**越早定 Arco，越晚要重画这些行**。
+- **一处待拍板**：托盘地板 2→1 与表面地板 8→7 是"页面结构变了"的被动下调；若后续把 KPI 读数带也做成 `.ant-card`
+  一族，可回到 8 以上。
+
