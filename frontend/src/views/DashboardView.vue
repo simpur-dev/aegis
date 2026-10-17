@@ -4,10 +4,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import api from '@/api/client'
 import type { AgentInfo, ChainSummary, LatencyReport, WarningRecord } from '@/api/types'
-import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
+import { HAZARD_LABELS } from '@/api/types'
 import { workflowApi } from '@/api/workflow'
 import PageHero from '@/components/PageHero.vue'
 import KpiStrip, { type KpiItem } from '@/components/dashboard/KpiStrip.vue'
+import RiskWall from '@/components/dashboard/RiskWall.vue'
 import LegStatusPanel from '@/components/system/LegStatusPanel.vue'
 import { useEventStream } from '@/composables/useEventStream'
 import { formatOperatingTime } from '@/utils/clock'
@@ -108,13 +109,15 @@ const regionGrid = computed(() => {
       byRegion.set(region, chain)
     }
   }
-  return [...byRegion.entries()].map(([region, chain]) => ({
-    region,
-    hazard: chain.risk ? HAZARD_LABELS[chain.risk.hazard_type] : '无风险',
-    level: chain.risk?.risk_level ?? 5,
-    confidence: chain.risk?.confidence ?? 0,
-    degraded: chain.degradations.length > 0,
-  }))
+  return [...byRegion.entries()]
+    .map(([region, chain]) => ({
+      region,
+      hazard: chain.risk ? HAZARD_LABELS[chain.risk.hazard_type] : '无风险',
+      level: chain.risk?.risk_level ?? 5,
+      confidence: chain.risk?.confidence ?? 0,
+      degraded: chain.degradations.length > 0,
+    }))
+    .sort((a, b) => a.level - b.level || b.confidence - a.confidence || a.region.localeCompare(b.region))
 })
 
 async function refresh(): Promise<void> {
@@ -246,25 +249,7 @@ const agentColumns = [
     <a-row :gutter="12">
       <a-col :xs="24" :lg="10">
         <a-card :title="gridTitle" size="small" :loading="loading">
-          <div class="grid">
-            <div v-for="cell in regionGrid" :key="cell.region" class="cell" :style="{ borderColor: RISK_COLORS[cell.level] }">
-              <div class="region">{{ cell.region }}</div>
-              <div class="hazard">{{ cell.hazard }}</div>
-              <a-tag :color="RISK_COLORS[cell.level]">{{ RISK_LABELS[cell.level] }}</a-tag>
-              <div v-if="cell.degraded" class="degraded">降级：平台规则兜底</div>
-            </div>
-            <!-- 卡片级空态一律用带出口的芯片块：原先这里是 antd 的居中大插图，
-                 同一屏另外两张卡（链路记录、智能体）却是"图标芯片 + 一句话 + 去发起演练"，
-                 两种习语并排就像两个系统。整页截图目视复核（第三十批）抓到的。 -->
-            <div v-if="!regionGrid.length" class="empty-hero" data-testid="region-empty">
-              <span class="empty-hero__icon" aria-hidden="true">◇</span>
-              <div>
-                <div class="empty-hero__title">还没有研判结论</div>
-                <div class="empty-hero__desc">这张网格按最近 {{ CHAIN_WINDOW }} 条链路归集，跑一次演练就会落点。</div>
-                <router-link class="empty-hero__action" to="/monitor">去监测页发起演练 →</router-link>
-              </div>
-            </div>
-          </div>
+          <RiskWall :cells="regionGrid" :window-size="CHAIN_WINDOW" />
         </a-card>
       </a-col>
 
@@ -381,34 +366,5 @@ const agentColumns = [
   /* 链接压在 brand-soft 合成底上：浅档 #1D4ED8 / 深档 #60A5FA，两档都过 4.5:1 */
   color: var(--aeg-color-brand-hover);
   text-decoration: underline;
-}
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
-}
-/* 空态要占满整张网格，不是挤进一个 140px 的格子：
-   把 `.empty-hero` 当普通子元素放进去，标题会被折成两行（门禁的"短词折行"判据当场抓到的）。 */
-.grid > .empty-hero {
-  grid-column: 1 / -1;
-}
-.cell {
-  border: 2px solid var(--aeg-color-border-strong);
-  border-radius: 6px;
-  padding: 10px;
-  background: var(--aeg-color-card);
-}
-.region {
-  font-weight: 600;
-}
-.hazard {
-  font-size: 12px;
-  color: var(--aeg-color-text-secondary);
-  margin-bottom: 4px;
-}
-.degraded {
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--aeg-color-status-warning);
 }
 </style>
