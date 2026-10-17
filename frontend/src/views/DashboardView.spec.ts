@@ -237,7 +237,7 @@ describe('态势总览的取数', () => {
     responses()
     const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
     await flushPromises()
-    const timeline = wrapper.find('.tl-item')
+    const timeline = wrapper.find('[data-testid="evt-row"]')
     expect(timeline.text()).toContain('2026-10-04 00:45:13')
     expect(timeline.text()).not.toMatch(/\d{2}:\d{2}:\d{2}\.\d+Z/)
   })

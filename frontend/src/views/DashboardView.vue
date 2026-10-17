@@ -8,7 +8,9 @@ import { HAZARD_LABELS } from '@/api/types'
 import { workflowApi } from '@/api/workflow'
 import PageHero from '@/components/PageHero.vue'
 import KpiStrip, { type KpiItem } from '@/components/dashboard/KpiStrip.vue'
+import AgentBoard from '@/components/dashboard/AgentBoard.vue'
 import ChainList from '@/components/dashboard/ChainList.vue'
+import EventFeed from '@/components/dashboard/EventFeed.vue'
 import RiskWall from '@/components/dashboard/RiskWall.vue'
 import LegStatusPanel from '@/components/system/LegStatusPanel.vue'
 import { useEventStream } from '@/composables/useEventStream'
@@ -206,14 +208,6 @@ watch(
     }, 1_200)
   },
 )
-
-const agentColumns = [
-  { title: '智能体', dataIndex: 'agent_id', key: 'agent_id' },
-  { title: '类型', dataIndex: 'agent_type', key: 'agent_type' },
-  { title: '能力', dataIndex: 'capabilities', key: 'capabilities', customRender: ({ text }: { text: string[] }) => text.join(', ') },
-  { title: '状态', key: 'healthy' },
-  { title: '在途/上限', key: 'load' },
-]
 </script>
 
 <template>
@@ -257,44 +251,12 @@ const agentColumns = [
     <a-row :gutter="12" style="margin-top: 12px">
       <a-col :xs="24" :lg="14">
         <a-card title="智能体在线状态（经总线契约注册）" size="small">
-          <a-table :columns="agentColumns" :data-source="agents" :pagination="false" row-key="agent_id" size="small">
-            <!-- 中文值班台的第一屏不能落一句英文 "No data"（与链路表、预警表同一口径）：
-                 空表要说清"为什么是空的"与"去哪儿让它不空"。 -->
-            <template #emptyText>
-              <div class="empty-hero" data-testid="agents-empty">
-                <span class="empty-hero__icon" aria-hidden="true">◇</span>
-                <div>
-                  <div class="empty-hero__title">还没有智能体注册上来</div>
-                  <div class="empty-hero__desc">智能体经总线契约注册；后端起来后它们会逐个出现在这里，跑一次演练即可看到它们接活。</div>
-                  <router-link class="empty-hero__action" to="/monitor">去监测页发起演练 →</router-link>
-                </div>
-              </div>
-            </template>
-            <template #bodyCell="{ column, record }">
-              <template v-if="column.key === 'healthy'">
-                <a-tag :color="record.healthy ? 'green' : 'red'">{{ record.healthy ? '在线' : '失联' }}</a-tag>
-              </template>
-              <template v-else-if="column.key === 'load'">{{ record.inflight }} / {{ record.max_concurrency }}</template>
-            </template>
-          </a-table>
+          <AgentBoard :agents="agents" />
         </a-card>
       </a-col>
       <a-col :xs="24" :lg="10">
         <a-card title="实时事件流（SSE）" size="small">
-          <a-timeline>
-            <a-timeline-item v-for="event in events.slice(0, 8)" :key="event.trace_id + event.ts" color="blue">
-              <div>{{ event.payload.title ?? event.payload.warning_id ?? event.subject }}</div>
-              <small>{{ formatOperatingTime(event.ts) }}（UTC+8）</small>
-            </a-timeline-item>
-            <div v-if="!events.length" class="empty-hero" data-testid="events-empty">
-              <span class="empty-hero__icon" aria-hidden="true">◇</span>
-              <div>
-                <div class="empty-hero__title">事件流还没有消息</div>
-                <div class="empty-hero__desc">SSE 连上后链路每一步都会落在这里；一直空白就先跑一次演练看链路是否启动。</div>
-                <router-link class="empty-hero__action" to="/workflow">去流程编排跑一次链路 →</router-link>
-              </div>
-            </div>
-          </a-timeline>
+          <EventFeed :events="events.slice(0, 8)" />
         </a-card>
       </a-col>
     </a-row>
