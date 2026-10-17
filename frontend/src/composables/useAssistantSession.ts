@@ -21,6 +21,14 @@ const STORAGE_KEY = 'aegis.assistant.session.v1'
 const MAX_PERSISTED_FRAMES = 60
 
 const frames = ref<AssistantFrame[]>([])
+/**
+ * 每一轮用户说的话（后端的帧里没有"用户问了什么"这回事，气泡只能自己记）。
+ * 与轮次**从尾部对齐**：两边都只在尾部追加、只在头部按同一条上限截断，
+ * 所以"第 i 轮 ↔ sentTexts 倒数第 i 条"在截断后依然成立；对不上的老轮次就空着，不冒充。
+ * 只在流式落地第一帧时才记（视图侧调 `recordSent`）——一发出去就记的话，
+ * 一次零帧的失败请求会让这句话冒充一轮、把对齐全盘错位。
+ */
+const sentTexts = ref<string[]>([])
 const sessionId = ref<string | null>(null)
 const decisions = reactive<Record<string, Decision>>({})
 
@@ -41,9 +49,15 @@ export function rehydrate(): void {
   }
   if (raw === null) return
   try {
-    const saved = JSON.parse(raw) as { frames?: AssistantFrame[]; session_id?: string | null; decisions?: Record<string, Decision> }
+    const saved = JSON.parse(raw) as {
+      frames?: AssistantFrame[]
+      session_id?: string | null
+      decisions?: Record<string, Decision>
+      sent_texts?: unknown
+    }
     frames.value = Array.isArray(saved.frames) ? saved.frames : []
     sessionId.value = typeof saved.session_id === 'string' ? saved.session_id : null
+    sentTexts.value = Array.isArray(saved.sent_texts) ? saved.sent_texts.filter((item): item is string => typeof item === 'string') : []
     for (const key of Object.keys(decisions)) delete decisions[key]
     // 「放弃」只在这页记录（后端没有取消接口），所以它必须跟时间线一起活过刷新：
     // 只存时间线不存决定，刷一次页就让人刚拒绝的演练又变回一颗可点的「确认」。
@@ -52,6 +66,7 @@ export function rehydrate(): void {
     // 存不下或读不出都按"没有上一段"处理：宁可重开一场，也不要拿半截 JSON 画时间线
     frames.value = []
     sessionId.value = null
+    sentTexts.value = []
   }
 }
 
@@ -60,19 +75,28 @@ function persist(): void {
   if (bucket === null) return
   const recent = frames.value.slice(-MAX_PERSISTED_FRAMES)
   try {
-    bucket.setItem(STORAGE_KEY, JSON.stringify({ frames: recent, session_id: sessionId.value, decisions: { ...decisions } }))
+    bucket.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ frames: recent, session_id: sessionId.value, decisions: { ...decisions }, sent_texts: sentTexts.value.slice(-MAX_PERSISTED_FRAMES) }),
+    )
   } catch {
     // 配额或隐私模式写不进：页面上这段对话照样还在，换页照样接得上，只是刷新接不上
   }
 }
 
 rehydrate()
-watch([frames, sessionId, decisions], persist, { deep: true })
+watch([frames, sessionId, decisions, sentTexts], persist, { deep: true })
 
 /** 清的是这一屏的记录；会话号留着，后端那段会话还在时限内就仍接得上。 */
 export function clearTimeline(): void {
   frames.value = []
+  sentTexts.value = []
   for (const key of Object.keys(decisions)) delete decisions[key]
+}
+
+/** 一轮对话的第一帧落地时由视图调用：把用户那句话跟这轮绑在一起。 */
+export function recordSent(text: string): void {
+  sentTexts.value.push(text)
 }
 
 /** 只给测试用：模块级状态在用例之间会串，每条用例都得从头开始（含浏览器存储那一层）。 */
@@ -86,14 +110,17 @@ export function resetAssistantSession(): void {
 export function reloadAssistantSession(): void {
   frames.value = []
   sessionId.value = null
+  sentTexts.value = []
   rehydrate()
 }
 
 export function useAssistantSession(): {
   frames: typeof frames
+  sentTexts: typeof sentTexts
   sessionId: typeof sessionId
   decisions: typeof decisions
   clearTimeline: () => void
+  recordSent: typeof recordSent
 } {
-  return { frames, sessionId, decisions, clearTimeline }
+  return { frames, sentTexts, sessionId, decisions, clearTimeline, recordSent }
 }

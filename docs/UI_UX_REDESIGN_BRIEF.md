@@ -163,6 +163,8 @@
 - [ ] 阶段 1：布局骨架（可折叠侧栏含智能体状态迷你区 + 顶栏 + 栅格）——**要先批准**
 - [ ] 阶段 2：组件层替换 + e2e 里 51 处 `ant-*` 选择器迁移
 - [ ] 阶段 2：`uiTheme.spec.ts` 11 条按新规范重写（4 条改口径、7 条保留）
+- [x] 阶段 3（提前落了一页）：`/assistant` 重排为通用助手的对话式布局（2026-10-17，见 §15）；
+      39 条页面契约测试零改动全绿，棘轮 **158 → 143**（`AssistantView.vue` 15→0）
 - [ ] 阶段 3：七页逐页重做（每页交齐加载/空/错三态 + 两主题整页截图）
 - [ ] 阶段 4：多智能体预留（状态区 / 链路可视化 / 人在回路组件 / AgentMessage v1 类型）
 
@@ -595,6 +597,63 @@ scoped 样式里对 `--aeg-color-status-success/danger/text-muted` 取值，环�
 
 ### 下一步（按依赖顺序）
 
-1. T09 Vue Flow 画布内部接令牌（`utils/graph.ts` 的 `NODE_STATE_STYLES` 12 处，含紫/品红/青那几支——同一套派生层 + 像素/场景双证据）；
+1. T09 Vue Flow 画布内部接令牌（`utils/graph.ts` `NODE_STATE_STYLES` 12 处，含待拍板的 #35——同一套派生层 + 像素/场景双证据）；
 2. T10 Arco 探针实测（选型已批）→ T12 组件层迁移；
 3. `viewer.theme.spec.ts` 那套假 Cesium 可以继续当 Vue Flow 那半的模板。
+
+---
+
+## 15. `/assistant` 重排为对话式布局（阶段 3 提前落了一页；ADR，2026-10-17）
+
+### 决策 11：聊天面按"轮"组织，过程帧降级为小字、answer 才是主回复——语义一条没动
+
+用户要求把助手页排成通用助手的形状。落地形状：中列聊天面（max-width 880，`calc(100vh - 头 - 页头)` 高、
+内部滚动 + 常驻底部输入区）——用户的话靠右成气泡（`brand-soft/line`，尾角收小），助手靠左：
+meta/intent/status/result/done 按**帧**渲染成小号过程行（帧名走 `--aeg-font-mono` 小牌），answer 帧放大成
+主回复（`text` 槽 + `lh-relaxed`），rejected/error 一行红（`status-danger`）。提案卡不再沉在时间线底下，
+而是内嵌在它所属的那一轮里（`--aeg-tag-orange-*` 三件套）。
+
+三条语义约束原样保留（文件头注释还在）：
+
+1. 帧序列是过程事实，不拼打字机、不删过程帧；
+2. 「放弃」只在本页收起，文案照旧说"后端没有取消接口"；
+3. 能力面读不到/未配置/503/404 四句话原样（banner 的 testid 与文案一字未改）。
+
+**用户气泡的文字后端帧里没有**：`useAssistantSession` 加了 `sentTexts`（与轮次尾对齐、同一条 60 截断、
+存进同一个 sessionStorage 桶，形状多了个 `sent_texts` 键——60 帧那条用例只断言 `.frames`，兼容）。
+视图侧在**流式落地第一帧时**才 `recordSent`：一发出去就记的话，零帧的失败请求会让那句话冒充一轮，
+把尾对齐全盘错位。对不上号的老轮次气泡就画没有，不冒充。
+
+### 顺手清掉的债
+
+- **颜色棘轮 158 → 143**：`AssistantView.vue` 15→0（拒绝与报错走 `--aeg-color-status-danger`、
+  提案卡走 `--aeg-tag-orange-*`、分隔线走 `border-subtle`、`'Consolas'` 换 `--aeg-font-mono`）。
+  基线注释同步改写，重榜换人：SystemTerminal 21 / NodeShell 14 / RunTimeline 13。
+- 建议芯片（caps-actions）与三条口径（caps-ttl）搬进空态欢迎区——通用助手把建议放在开口之前；
+  能力状态仍由页头 `caps-state` 常驻。
+
+### 二轮降噪（同日，"还是太丑、不简洁"的复核意见）
+
+第一版把过程帧排成常驻小字、JSON 整块摊开、11 枚实色绿芯片——信息诚实但太吵。二轮改法：
+
+- **过程帧折进一行**：有 answer 的轮次，meta/intent/status/result/done 收进原生 `<details>`（默认合上，
+  summary 只有一行「过程 ｜ N 帧」）；rejected/error/提案卡**永远直接可见**（它们是必须看见的事实）。
+  只回了 error 的轮次没有 answer，过程本身就是全部内容，也不折。流式进行中在打字行报最新帧名
+  （`正在处理… status`），折叠不等于看不见。
+- **芯片去色**：可用＝中性表面（`alter` 底 + `border` 描边），hover 才亮品牌；「需确认」「缺 …」降为
+  小字缀注（缺依赖保红字）。空态口径合成一行 `·` 分隔的灰字，去掉 → 箭头。
+- 门禁两条口径没动：`.caps__chip` 的 `999px`/`26px` 字面（T13 才改口径）、全部 testid/类名/文案——
+  二轮改完 39 条契约用例与 882 全量依旧零改动全绿。
+
+### 验证记录（2026-10-17 助手页重排）
+
+| 门禁 | 命令 | 结果 |
+| --- | --- | --- |
+| 类型 | `npm run typecheck` | exit 0 |
+| 页面契约 | `npx vitest run src/views/AssistantView.spec.ts` | **39 passed**——testid/类名/文案契约零改动，用例文件一行没动 |
+| 全量单测 | `node node_modules/vitest/vitest.mjs run` | 882 passed / 53 文件（棘轮基线 143 钉住） |
+| 棘轮 | 同口径探针脚本实量 | **143**（与基线一致；`AssistantView.vue` 不再在重榜名单） |
+| 画面 | 真机（dev 5173）：空态/一轮对话/提案卡/深浅两主题截图目视复核 | 见看板工作日志 |
+
+设计自由度说明：这一页的"通用助手形状"是**布局层**的决定，不与阶段 2/3 的既定口径冲突——
+组件库仍是 antd（Arco 迁移按台账推进）、颜色全部走令牌、每个区块三态如实。其余六页的逐页重做仍按台账顺序（T14 起）。
