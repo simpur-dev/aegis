@@ -7,6 +7,7 @@ import type { AgentInfo, ChainSummary, LatencyReport, WarningRecord } from '@/ap
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
 import { workflowApi } from '@/api/workflow'
 import PageHero from '@/components/PageHero.vue'
+import KpiStrip, { type KpiItem } from '@/components/dashboard/KpiStrip.vue'
 import LegStatusPanel from '@/components/system/LegStatusPanel.vue'
 import { useEventStream } from '@/composables/useEventStream'
 import { formatOperatingTime } from '@/utils/clock'
@@ -44,7 +45,7 @@ const { events } = useEventStream()
  * 首屏 500 之后这里曾是"在线智能体 0 个 / 已发布预警 0 条 / 任务单元 0 个"，
  * 页脚明明说了取数失败，可三个大数字看着像是"现场确实一个都没有"。
  */
-const kpis = computed(() => [
+const kpis = computed<KpiItem[]>(() => [
   { label: '在线智能体', value: ready.value === null ? '—' : ready.value.agents_online, suffix: '个' },
   // 取后端口径的总数，不用列表长度：`warnings` 是按 `limit: 50` 拉回来的，
   // 拿它的长度当"已发布预警"，过 50 条之后这个数字就永远停在 50，而且看着完全正常。
@@ -57,7 +58,12 @@ const kpis = computed(() => [
   {
     label: '协同成功率',
     value: latency.value?.collaboration.success_rate == null ? '—' : `${(latency.value.collaboration.success_rate * 100).toFixed(1)}%`,
-    suffix: latency.value?.collaboration.pass ? '达标' : '样本不足',
+    // 口径注脚只写给得出目标的数：目标与达标判定都来自时延账本，不是这里估的。
+    note:
+      latency.value?.collaboration.success_rate == null
+        ? undefined
+        : `目标 ${(latency.value.collaboration.target * 100).toFixed(0)}% · ${latency.value.collaboration.pass ? '达标' : '样本不足'}`,
+    tone: latency.value?.collaboration.pass ? 'ok' : 'idle',
   },
 ])
 
@@ -215,17 +221,12 @@ const agentColumns = [
 
 <template>
   <div>
-    <PageHero title="态势总览" badge="实时" caption="值班员的第一屏：KPI、风险网格、链路执行记录与实时事件流。">
+    <PageHero title="态势总览" badge="实时" caption="值班员的第一屏：要人处理的待办、现场读数、风险瓦片、链路记录与实时事件流。">
       <template #actions>
         <span data-testid="dashboard-updated">
           {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
         </span>
         <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
-      </template>
-      <template #stats>
-        <div v-for="kpi in kpis" :key="kpi.label" class="stat-cell">
-          <a-statistic :title="kpi.label" :value="kpi.value" :suffix="kpi.suffix" />
-        </div>
       </template>
     </PageHero>
     <!-- 值班员的任务入口：有单在等就顶到第一屏，和流程页的待办条同一句话、同一个数 -->
@@ -241,6 +242,7 @@ const agentColumns = [
       data-testid="dashboard-error"
       class="dash-error"
     />
+    <KpiStrip :items="kpis" />
     <a-row :gutter="12">
       <a-col :xs="24" :lg="10">
         <a-card :title="gridTitle" size="small" :loading="loading">
