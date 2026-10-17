@@ -89,12 +89,42 @@ describe('UI 基座', () => {
     expect(tokens).toMatch(/'brand': brand\.light\.base/)
   })
 
-  it('顶部导航覆盖全部页面路由：router 里的每一页在顶栏都点得到', () => {
-    const routerText = readRepoFile('frontend', 'src', 'router.ts')
-    const routePaths = [...routerText.matchAll(/path:\s*'\/([a-z]+)'/g)].map((match) => `/${match[1]}`)
-    expect(routePaths.length).toBeGreaterThanOrEqual(7)
-    const navTargets = [...appVue().matchAll(/to:\s*'\/([a-z]+)'/g)].map((match) => `/${match[1]}`)
-    expect(new Set(navTargets)).toEqual(new Set(routePaths))
+  /**
+   * 主导航覆盖口径（2026-10-17 信息架构收并后重写，原来是"顶栏平铺全部路由"）。
+   *
+   * 旧口径要求每一页都在顶栏平级点得到——八页平铺正是"杂糅、不知道怎么用"的根源，
+   * 用户拍板收并后改成：**进主导航的页面一一对应，退出导航的旧入口显式标注去向**。
+   * 导航真源只在 router.ts 的 `NAV_GROUPS`，App.vue 只许 import 不许抄——
+   * "路由加了页、导航忘了挂"与"导航挂了页、路由没有"两类漂移都在这儿红。
+   */
+  it('主导航与路由一一对应：进侧栏的每一页都有路由，退出导航的旧入口显式标注', () => {
+    /* 剥注释再对账：router.ts 的说明文字里也写着 `nav: false` 这类字面，
+       不剥就会把注释当成标注数进去（第一版就栽在这）。 */
+    const routerText = readRepoFile('frontend', 'src', 'router.ts').replace(/\/\*[\s\S]*?\*\//g, '')
+    /* 只数带 component 的真路由：`{ path: '/', redirect: ... }` 与将来的重定向不算页面 */
+    const routePaths = [...routerText.matchAll(/path:\s*'(\/[a-z]+)',\s*\n\s*name:/g)].map((match) => match[1] as string)
+    expect(routePaths.length, '路由表页码不对（收并后应是 8 页：主线 4 + 系统 1 + 旧入口 3）').toBe(8)
+    const navTargets = [...routerText.matchAll(/to:\s*'(\/[a-z]+)'/g)].map((match) => match[1] as string)
+    const navSet = new Set(navTargets)
+    // ① 侧栏每一项都指向真实路由（且不重复）
+    expect(navTargets.length, 'NAV_GROUPS 里有重复入口').toBe(navSet.size)
+    for (const target of navSet) {
+      expect(routePaths, `侧栏指向 ${target}，但路由表里没有这一页`).toContain(target)
+    }
+    // ② 标了 nav 的路由必须进侧栏：meta.nav 的条数与侧栏入口数对账
+    const navMetaCount = (routerText.match(/nav:\s*'(?:main|system)'/g) ?? []).length
+    expect(navMetaCount, 'meta.nav 标注的数量与侧栏入口数不一致——有一页加了路由忘了挂导航').toBe(navTargets.length)
+    // ③ 退出主导航的旧入口必须显式写 nav:false，不许"默默还在路由表里"
+    const legacy = routePaths.filter((p) => !navSet.has(p))
+    expect(legacy.length, '旧入口数量变了（合并/抽屉化完成后这条要跟着改）').toBe(3)
+    const legacyMarked = (routerText.match(/nav:\s*false/g) ?? []).length
+    expect(legacyMarked, `旧入口 ${legacy.join(' / ')} 没有显式标注 nav:false——它为什么不在侧栏，读代码的人无从得知`).toBe(legacy.length)
+    // ④ App.vue 的导航必须从 router.ts 取，不许自己再抄一份；
+    //    唯一的例外是助手悬浮入口（常驻工具，不属于导航分组），它指向 /assistant 且只能有这一个
+    const appText = appVue()
+    expect(appText, 'App.vue 没有从 router.ts 取导航').toMatch(/import \{ NAV_GROUPS \} from '@\/router'/)
+    const appToTargets = [...appText.matchAll(/(?:to:|to=)\s*['"`]?(\/[a-z]+)['"`]/g)].map((match) => match[1] as string)
+    expect(appToTargets, 'App.vue 自己抄了导航清单，或助手入口不见了——跳转目标只许是 /assistant').toEqual(['/assistant'])
   })
 
   /**

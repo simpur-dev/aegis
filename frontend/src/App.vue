@@ -5,27 +5,71 @@ import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 
 import api from '@/api/client'
+import type { AgentInfo } from '@/api/types'
 import ServiceTokenBar from '@/components/ServiceTokenBar.vue'
 import { useEventStream } from '@/composables/useEventStream'
 import { antdTheme } from '@/theme/antd'
+import { NAV_GROUPS } from '@/router'
 import { useTheme } from '@/theme/useTheme'
 
-const route = useRoute()
-const menuKey = computed(() => (route.name as string) ?? 'dashboard')
+/**
+ * 外壳（2026-10-17 信息架构收并）：侧栏导航取代顶栏一排平级页签。
+ *
+ * 为什么收：八页平铺时三类受众（值班业务 / 运维取证 / 演示玩具）混在同一排，
+ * 顶栏那个"流程步进器"样式还暗示着并不存在的顺序——外人打开无从下手。
+ * 现在侧栏按受众分两组（值班主线 / 系统），顶栏只留"我在哪页 + 后端与事件流状态 + 主题"，
+ * 智能助手是每页可见的悬浮入口（合并进抽屉之前先指向 /assistant 页）。
+ *
+ * 颜色一律读 `--aeg-*` 令牌（真源 src/theme/tokens.ts），动效只走 `--aeg-motion-*`：
+ * 这两条由 src/uiTheme.spec.ts 的棘轮门禁钉住，写字面色就是往回退。
+ */
 
-const pages = [
-  { key: 'dashboard', to: '/dashboard', label: '态势总览' },
-  { key: 'monitor', to: '/monitor', label: '监测预警' },
-  { key: 'warnings', to: '/warnings', label: '预警发布' },
-  { key: 'map', to: '/map', label: '一张图' },
-  { key: 'workflow', to: '/workflow', label: '流程编排' },
-  { key: 'metrics', to: '/metrics', label: '指标量测' },
-  { key: 'simulation', to: '/simulation', label: '推演沙盒' },
-  { key: 'assistant', to: '/assistant', label: '智能助手' },
-] as const
+const route = useRoute()
+const currentKey = computed(() => (route.name as string) ?? 'dashboard')
+const pageTitle = computed(() => (route.meta?.title as string) ?? 'AEGIS')
+
+const SIDEBAR_KEY = 'aegis.sidebar'
+const collapsed = ref(false)
+try {
+  collapsed.value = localStorage.getItem(SIDEBAR_KEY) === 'closed'
+  /* 没有存过偏好时，窄屏（值班平板）默认收起：232px 侧栏在 900px 宽只剩 668px 正文，
+     而这一档本来就要看遥测表。存过偏好就不猜侧，用户选过就算数。 */
+  if (localStorage.getItem(SIDEBAR_KEY) === null && window.innerWidth < 1000) collapsed.value = true
+} catch {
+  /* 隐私模式或存储被禁：用展开态，不拦页面 */
+}
+function toggleCollapse(): void {
+  collapsed.value = !collapsed.value
+  try {
+    localStorage.setItem(SIDEBAR_KEY, collapsed.value ? 'closed' : 'open')
+  } catch {
+    /* 存不下就算了，切换本身照样生效 */
+  }
+}
 
 const health = ref<{ status: string; version: string } | null>(null)
 const { events, connected, stalled } = useEventStream()
+
+/**
+ * 侧栏底部的智能体迷你状态区：五智能体在线/降级/离线是这一页最该常驻的事实，
+ * 但取不到就说取不到——`agentsLoaded` 为 false 时摆 "…"，不拿 0 冒充"都没上线"。
+ */
+const agents = ref<AgentInfo[]>([])
+const agentsLoaded = ref(false)
+const agentsOnline = computed(() => agents.value.filter((a) => a.healthy).length)
+const agentsTone = computed(() => {
+  if (!agentsLoaded.value) return 'idle' as const
+  if (agents.value.length === 0) return 'bad' as const
+  return agentsOnline.value === agents.value.length ? ('ok' as const) : ('warn' as const)
+})
+const agentsText = computed(() =>
+  agentsLoaded.value ? `智能体 ${agentsOnline.value}/${agents.value.length} 在线` : '智能体状态未取到',
+)
+const agentsHint = computed(() =>
+  agentsLoaded.value
+    ? agents.value.map((a) => `${a.agent_id}：${a.healthy ? '在线' : '不健康'}`).join('｜')
+    : '智能体清单还没取到：刷新或检查后端',
+)
 
 let timer: number | undefined
 
@@ -35,11 +79,21 @@ async function probe(): Promise<void> {
   } catch {
     health.value = null
   }
+  try {
+    const list = await api.agents()
+    agents.value = list.items
+    agentsLoaded.value = true
+  } catch {
+    agentsLoaded.value = false
+  }
 }
 
 onMounted(() => {
   void probe()
-  timer = window.setInterval(() => void probe(), 15_000)
+  timer = window.setInterval(() => {
+    if (document.visibilityState !== 'visible') return
+    void probe()
+  }, 15_000)
 })
 
 onBeforeUnmount(() => {
@@ -99,82 +153,106 @@ const statusTitle = computed<string>(() =>
        逐页补只能盖住写过的表，语言包一次盖住整类。 -->
   <a-config-provider :theme="theme" :locale="zhCN">
     <div class="app-shell">
-      <nav class="navbar">
-        <div class="nav-brand">
-          <router-link class="brand-link" to="/dashboard">
-            <span class="brand-logo" aria-hidden="true">A</span>
-            <span class="brand-name">AEGIS</span>
-          </router-link>
+      <!-- 侧栏：品牌 + 分组导航 + 智能体迷你状态 + 收起钮。宽度走布局令牌
+           （--aeg-sidebar-width 232 / --aeg-sidebar-collapsed 64），不许在这儿写死像素。 -->
+      <aside class="sidebar" :class="{ 'is-collapsed': collapsed }" data-testid="sidebar">
+        <div class="side-brand">
+          <span class="brand-logo" aria-hidden="true">A</span>
+          <span class="brand-name">AEGIS</span>
           <span class="brand-sub">山地灾害协同调控</span>
         </div>
 
-        <div class="nav-center">
-          <div class="immersive-stepper">
+        <nav class="side-scroll" aria-label="主导航">
+          <div v-for="group in NAV_GROUPS" :key="group.key" class="side-group">
+            <p class="side-group__label">{{ group.label }}</p>
             <router-link
-              v-for="page in pages"
-              :key="page.key"
-              class="flow-step"
-              :class="{ active: menuKey === page.key }"
-              :to="page.to"
-              :title="page.label"
-              :aria-label="page.label"
-              :aria-current="menuKey === page.key ? 'page' : undefined"
+              v-for="item in group.items"
+              :key="item.key"
+              class="side-item"
+              :class="{ active: currentKey === item.key }"
+              :to="item.to"
+              :title="item.label"
+              :aria-label="item.label"
+              :aria-current="currentKey === item.key ? 'page' : undefined"
+              :data-testid="`side-${item.key}`"
             >
-              <span class="flow-step-label">{{ page.label }}</span>
+              <span class="side-item__label">{{ collapsed ? item.short : item.label }}</span>
             </router-link>
           </div>
+        </nav>
+
+        <div class="side-agents" :class="`is-${agentsTone}`" :title="agentsHint" data-testid="side-agents">
+          <span class="status-dot" :class="agentsTone === 'idle' ? '' : agentsTone"></span>
+          <span class="side-agents__text">{{ agentsText }}</span>
         </div>
 
-        <!-- 右列是**一枚**胶囊里装三条真话（min-width 180 / padding 8px 12px / 999 圆角）。
-             此前是三枚独立胶囊，@1440 就装不下：在线文案 316px、故障文案 374px，都大于 295px 的列宽，
-             只能靠省略号截断（真机截图里 "后端在线 v0…" / "事件流已…"）。合成一枚后 273px / 285px，两档都放得下。
-             版本号挪进 title（现场支持要的是 hover 能看到，不是永远占 51px）。 -->
-        <div class="nav-right">
-          <div class="nav-status" :title="statusTitle">
-            <span class="status-fact">
-              <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
-              <span class="status-pill__text">{{ health ? '后端在线' : '后端不可达' }}</span>
-            </span>
-            <span class="status-fact" data-testid="stream-badge">
-              <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
-              <span class="status-pill__text">{{ streamLabel }}</span>
-            </span>
-            <span class="status-fact" data-testid="events-badge" title="最近事件条数">
-              <span class="events-count">{{ events.length }}</span>
-              <span>事件</span>
-            </span>
-          </div>
+        <button
+          type="button"
+          class="side-collapse"
+          :aria-expanded="!collapsed"
+          data-testid="side-collapse"
+          @click="toggleCollapse"
+        >
+          {{ collapsed ? '展开侧栏' : '收起侧栏' }}
+        </button>
+      </aside>
 
-          <!-- 主题切换器：三档都在明面上（不做成"点一下翻一档"的循环钮——汇报现场没人知道要点几次）。
-               `aria-pressed` 给读屏，选中的那一格用 `elevated` 底 + 主色字，深色主题下同一套写法成立。 -->
-          <div class="theme-switch" role="group" aria-label="主题">
-            <button
-              v-for="opt in themeOptions"
-              :key="opt.value"
-              type="button"
-              class="theme-switch__btn"
-              :class="{ 'is-on': pref === opt.value }"
-              :aria-pressed="pref === opt.value"
-              :title="`${opt.label}主题`"
-              :data-testid="`theme-${opt.value}`"
-              @click="setMode(opt.value)"
-            >
-              {{ opt.short }}
-            </button>
+      <div class="main-col">
+        <!-- 顶栏只留三件事：我在哪页（左）、后端与事件流状态（中右）、主题（右）。
+             页名放这里是给"从侧栏点进来之后忘了去了哪"的人一个固定锚点。 -->
+        <header class="topbar">
+          <div class="topbar-left">
+            <h1 class="topbar-title">{{ pageTitle }}</h1>
           </div>
-        </div>
-      </nav>
+          <div class="topbar-right">
+            <div class="nav-status" :title="statusTitle" data-testid="nav-status">
+              <span class="status-fact">
+                <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
+                <span class="status-pill__text">{{ health ? '后端在线' : '后端不可达' }}</span>
+              </span>
+              <span class="status-fact" data-testid="stream-badge">
+                <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
+                <span class="status-pill__text">{{ streamLabel }}</span>
+              </span>
+              <span class="status-fact" data-testid="events-badge" title="最近事件条数">
+                <span class="events-count">{{ events.length }}</span>
+                <span>事件</span>
+              </span>
+            </div>
+            <div class="theme-switch" role="group" aria-label="主题">
+              <button
+                v-for="opt in themeOptions"
+                :key="opt.value"
+                type="button"
+                class="theme-switch__btn"
+                :class="{ 'is-on': pref === opt.value }"
+                :aria-pressed="pref === opt.value"
+                :title="`${opt.label}主题`"
+                :data-testid="`theme-${opt.value}`"
+                @click="setMode(opt.value)"
+              >
+                {{ opt.short }}
+              </button>
+            </div>
+          </div>
+        </header>
 
-      <main class="main-content">
-        <router-view />
-        <!-- 服务令牌条常驻页脚：一台机器填一次，但"这台开了鉴权"必须每页都说得出口（§4.8.1） -->
-        <ServiceTokenBar />
-        <!-- 页脚跟着内容走，不钉在视口底：钉着的话每一页都永久吃掉一条，
-             而编排页那种"占满一屏"的布局还要去猜它的高度 -->
-        <footer class="footer">
-          AEGIS · Adaptive Emergency Geo-hazard Intelligence System ｜ 西藏山地灾害多智能体协同调控技术与平台
-        </footer>
-      </main>
+        <main class="main-content">
+          <router-view />
+          <!-- 服务令牌条常驻页脚：一台机器填一次，但"这台开了鉴权"必须每页都说得出口（§4.8.1） -->
+          <ServiceTokenBar />
+          <!-- 页脚跟着内容走，不钉在视口底：钉着的话每一页都永久吃掉一条，
+               而编排页那种"占满一屏"的布局还要去猜它的高度 -->
+          <footer class="footer">
+            AEGIS · Adaptive Emergency Geo-hazard Intelligence System ｜ 西藏山地灾害多智能体协同调控技术与平台
+          </footer>
+        </main>
+      </div>
+
+      <!-- 智能助手常驻入口：每一页都点得到。合并成右侧抽屉之前，先指向 /assistant 页。 -->
+      <router-link class="assistant-fab" to="/assistant" title="智能助手" data-testid="assistant-fab">
+        助手
+      </router-link>
     </div>
   </a-config-provider>
 </template>
@@ -182,45 +260,34 @@ const statusTitle = computed<string>(() =>
 <style>
 .app-shell {
   display: flex;
-  flex-direction: column;
-  /* 外壳定高、正文自己滚：原来写 min-height 时正文高度不定，编排页那种
-     "三列占满一屏"的布局只能去猜 calc(100vh - 220px)，横幅加进来之后那个 220
-     就不成立了——真机量到实例列表最后几行直接盖在页脚上（6 处重叠）。 */
+  /* 外壳定高、侧栏与正文自己安排滚动：正文区自己滚，侧栏整高不滚（内容多了内部滚） */
   height: 100vh;
   overflow: hidden;
   background: var(--aeg-color-page);
   color: var(--aeg-color-text);
 }
 
-/* —— 顶栏 ——
-   上一版是"半透白 + blur(22px) saturate(1.25) + 两道渐变底 + 蓝雾投影"。改成不透明 `card` 底 +
-   一条 `border` 分隔：顶栏下面是会滚动的表格与 Cesium 画面，模糊那一层既贵（每帧重算）又让描边发灰。
-   深色主题下它自动变深蓝黑，不需要第二套写法。 */
-.navbar {
-  position: sticky;
-  top: 0;
-  z-index: var(--aeg-z-header);
-  /* 三列网格：左右两列等宽（1fr），中间列按内容——这是"页签必须压在中线"的构造性保证
-     （常驻判据实测偏离中线 >1px 就红）。代价是每一侧的轨道宽度必须装得下它自己的内容，
-     所以右列"状态胶囊+切换器"要 354px、比品牌那侧宽得多；窄档不收文字就会被挤瘦裁字。
-     收字点的断点因此定在 ≤1290（那里轨道 (1200−514)/2=343 已经小于 354），而不是原来的 ≤1140。 */
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--aeg-space-s4);
-  height: var(--aeg-header-height);
-  padding: 0 var(--aeg-space-s6);
-  background: var(--aeg-color-card);
-  border-bottom: 1px solid var(--aeg-color-border);
-  box-shadow: var(--aeg-shadow-sm);
-}
-
-.nav-brand {
+/* —— 侧栏 ——
+   分组导航按受众分（值班主线 / 系统），不再是一排平级页签：
+   旧顶栏把值班业务、运维取证、演示玩具混在同一列，还摆成"流程顺序"的误导形状。 */
+.sidebar {
   display: flex;
-  align-items: center;
-  gap: var(--aeg-space-s3);
-  justify-self: start;
-  min-width: 0;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: var(--aeg-sidebar-width);
+  border-right: 1px solid var(--aeg-color-border);
+  background: var(--aeg-color-card);
+  transition: width var(--aeg-motion-base) ease;
+}
+.sidebar.is-collapsed {
+  width: var(--aeg-sidebar-collapsed);
+}
+.side-brand {
+  display: flex;
+  flex-direction: column;
+  gap: var(--aeg-space-s1);
+  padding: var(--aeg-space-s4) var(--aeg-space-s4) var(--aeg-space-s3);
+  border-bottom: 1px solid var(--aeg-color-border);
 }
 .brand-link {
   display: inline-flex;
@@ -247,68 +314,161 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text);
 }
 .brand-sub {
-  padding-left: var(--aeg-space-s3);
-  border-left: 1px solid var(--aeg-color-border);
   font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-secondary);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 收起态只留徽标：副标题先让位（它不表达状态，页名在顶栏也有一份） */
+.sidebar.is-collapsed .brand-name,
+.sidebar.is-collapsed .brand-sub {
+  display: none;
 }
 
-/* —— 中间：页签导航 ——
-   "轨道 + 选中格"的分段控件写法（Arco/Linear 那一族）：轨道 `sunken`、选中格 `elevated` + 一档投影。
-   页名全档铺开：七枚页签合计 ~560px，最窄一档（1100，右列收成圆点）也装得下——
-   编号圆点与连接短线已退役：页名就是标识，序号不表达任何状态，挂着只是噪声。 */
-.nav-center {
-  display: flex;
-  align-items: center;
-  gap: var(--aeg-space-s4);
-  justify-self: center;
-  min-width: 0;
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--aeg-space-s3) var(--aeg-space-s2);
 }
-.immersive-stepper {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 4px;
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-pill);
-  background: var(--aeg-color-sunken);
+.side-group + .side-group {
+  margin-top: var(--aeg-space-s4);
 }
-.flow-step {
+.side-group__label {
+  margin: 0 0 var(--aeg-space-s1);
+  padding: 0 var(--aeg-space-s2);
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-semibold);
+  color: var(--aeg-color-text-muted);
+}
+.side-item {
   display: flex;
   align-items: center;
-  padding: 6px var(--aeg-space-s3);
-  border-radius: var(--aeg-radius-pill);
+  min-height: 36px;
+  margin-bottom: 2px;
+  padding: 0 var(--aeg-space-s2);
+  border-radius: var(--aeg-radius-md);
   color: var(--aeg-color-text-secondary);
   text-decoration: none;
   white-space: nowrap;
-  transition: background-color var(--aeg-motion-base) ease, color var(--aeg-motion-base) ease, box-shadow var(--aeg-motion-base) ease;
+  transition: background-color var(--aeg-motion-base) ease, color var(--aeg-motion-base) ease;
 }
-.flow-step-label {
+.side-item__label {
   font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
-  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.flow-step:not(.active):hover {
+.side-item:not(.active):hover {
   background: var(--aeg-color-brand-soft);
   color: var(--aeg-color-text);
 }
-.flow-step.active {
-  background: var(--aeg-color-elevated);
-  box-shadow: var(--aeg-shadow-sm);
+.side-item.active {
+  background: var(--aeg-color-brand);
+  color: var(--aeg-color-text-inverse);
+}
+.sidebar.is-collapsed .side-item {
+  justify-content: center;
+  padding: 0;
+}
+
+/* 智能体迷你状态区：侧栏常驻的"平台还活着吗"答案。
+   idle 档（没取到）用灰点 + "未取到"，不许画成绿的——那会是假装在线。 */
+.side-agents {
+  display: flex;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  margin: 0 var(--aeg-space-s2) var(--aeg-space-s2);
+  padding: var(--aeg-space-s2);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-sunken);
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-semibold);
+  color: var(--aeg-color-text-secondary);
+}
+.side-agents__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-agents.is-ok .status-dot {
+  background: var(--aeg-color-status-success);
+}
+.side-agents.is-warn .status-dot {
+  background: var(--aeg-color-status-warning);
+}
+.side-agents.is-bad .status-dot {
+  background: var(--aeg-color-status-danger);
+}
+.sidebar.is-collapsed .side-agents__text {
+  display: none;
+}
+
+.side-collapse {
+  flex: 0 0 auto;
+  margin: 0 var(--aeg-space-s2) var(--aeg-space-s3);
+  padding: var(--aeg-space-s2);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-md);
+  background: transparent;
+  color: var(--aeg-color-text-secondary);
+  font-family: inherit;
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-semibold);
+  cursor: pointer;
+  transition: background-color var(--aeg-motion-base) ease, color var(--aeg-motion-base) ease;
+}
+.side-collapse:hover {
+  background: var(--aeg-color-brand-soft);
   color: var(--aeg-color-text);
 }
 
-/* —— 右侧：状态胶囊 + 主题切换器 —— */
-.nav-right {
+/* —— 顶栏 ——
+   只留"我在哪页 / 后端与事件流状态 / 主题"三件事，不透明 card 底 + 一条 border 分隔：
+   顶栏下面是会滚动的表格与 Cesium 画面，模糊那一层既贵（每帧重算）又让描边发灰。 */
+.main-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--aeg-space-s4);
+  height: var(--aeg-header-height);
+  padding: 0 var(--aeg-space-s6);
+  background: var(--aeg-color-card);
+  border-bottom: 1px solid var(--aeg-color-border);
+  box-shadow: var(--aeg-shadow-sm);
+}
+.topbar-left {
+  min-width: 0;
+}
+.topbar-title {
+  margin: 0;
+  font-size: var(--aeg-font-md);
+  font-weight: var(--aeg-weight-bold);
+  color: var(--aeg-color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar-right {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  justify-self: end;
   gap: var(--aeg-space-s3);
   min-width: 0;
   max-width: 100%;
 }
+
+/* 状态胶囊：一枚里装三条真话（min-width 180 / padding 8px 12px / 999 圆角）。
+   此前是三枚独立胶囊，@1440 就装不下：在线文案 316px、故障文案 374px，都大于 295px 的列宽，
+   只能靠省略号截断（真机截图里 "后端在线 v0…" / "事件流已…"）。合成一枚后 273px / 285px，两档都放得下。 */
 .nav-status {
   display: flex;
   align-items: center;
@@ -339,7 +499,7 @@ const statusTitle = computed<string>(() =>
   padding-left: 10px;
   border-left: 1px solid var(--aeg-color-border);
 }
-/* 挤不下时省略号收尾（全称在 title 里），不许无声裁字、更不许顶开步进器 */
+/* 挤不下时省略号收尾（全称在 title 里），不许无声裁字 */
 .status-pill__text {
   min-width: 0;
   overflow: hidden;
@@ -379,7 +539,7 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text);
 }
 
-/* 主题切换器：同一族"轨道 + 选中格"的分段写法，与步进器一眼是一类控件。
+/* 主题切换器：与侧栏选中项同一族"轨道 + 选中格"的分段写法。
    选中格 `elevated` 底 + 主色字——字色取 `brand-hover` 而不是 `brand`：深色主题下 brand(#3B82F6)
    压在 elevated(#16223A) 上只有 4.05:1，12px 的字要 4.5:1；提亮的 brand-hover(#60A5FA) 才够。 */
 .theme-switch {
@@ -433,16 +593,33 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text-secondary);
 }
 
-/* 窄屏只收两侧，不动页签：先收副题，再收状态文字。
-   两档都是"少显示一点"，不是"互相压上去"也不是"把状态胶囊裁掉半颗"——
-   真机量到的顶栏重叠与静默裁切就是这么来的。
-   页签为什么不收：七枚合计 ~560px，把副题（≤1360 收）与状态文字（≤1140 收）让出来的地算上，
-   最窄的 1100 档三列总和 ~845px，余量还很大；页名收回编号点那档已被用户否掉（2026-10-07：导航留顶部、页名要好看）。 */
-@media (max-width: 1360px) {
-  .brand-sub {
-    display: none;
-  }
+/* 助手悬浮入口：每页都点得到，压在内容之上但不挡操作（右下角是滚动条位之外的留白）。
+   它替代了原来一级页签里的"智能助手"——助手是随叫随到的工具，不该占一级导航。 */
+.assistant-fab {
+  position: fixed;
+  right: var(--aeg-space-s6);
+  bottom: var(--aeg-space-s6);
+  z-index: var(--aeg-z-header);
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 var(--aeg-space-s5);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-brand);
+  color: var(--aeg-color-text-inverse);
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-bold);
+  text-decoration: none;
+  box-shadow: var(--aeg-shadow-md);
+  transition: background-color var(--aeg-motion-base) ease, transform var(--aeg-motion-base) ease;
 }
+.assistant-fab:hover {
+  background: var(--aeg-color-brand-hover);
+  transform: translateY(-1px);
+}
+
+/* 窄档只收状态文字：少显示一点，不是互相压上去。
+   侧栏是定宽的，顶栏右列在 ≤1290 把胶囊文字收成圆点即可，页名不受影响。 */
 @media (max-width: 1290px) {
   .status-pill__text {
     display: none;

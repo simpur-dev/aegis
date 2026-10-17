@@ -25,6 +25,11 @@ const settle = async (page: Page): Promise<void> => {
   await page.waitForLoadState('networkidle', { timeout: 8_000 }).catch(() => {})
 }
 
+/**
+ * 全部可达页面（2026-10-17 信息架构收并后）：侧栏只挂 5 个一级入口
+ * （值班主线 4 + 系统 1），但旧入口 /warnings /simulation /assistant 仍可访问
+ * （书签、门禁、合并完成前的过渡），几何与对比度判据对它们一样生效。
+ */
 const PAGES: Array<[string, string]> = [
   ['dashboard', '/dashboard'],
   ['monitor', '/monitor'],
@@ -32,6 +37,7 @@ const PAGES: Array<[string, string]> = [
   ['map', '/map'],
   ['workflow', '/workflow'],
   ['metrics', '/metrics'],
+  ['simulation', '/simulation'],
   ['assistant', '/assistant'],
 ]
 const WIDTHS = [1440, 1280, 1200, 1100, 1000, 900]
@@ -174,15 +180,16 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     if (tops.size > 1) folded.push(`"${text}" 折成 ${tops.size} 行 | ${pathOf(el)}`)
   }
 
-  /* 顶栏三列互不侵入（按**容器**包围盒量，不按文本叶子）：
-     右列的胶囊是 nowrap 的，故障文案一长整列就长出 `1fr` 轨道、往左压进步进器。
-     文本叶子那套重叠检查在这一处抓不到（实测：容器级压 63×28px，叶子级报 0），
-     所以单独钉一条容器级的。 */
+  /* 外壳互不侵入（按**容器**包围盒量，不按文本叶子）：
+     右列的胶囊是 nowrap 的，故障文案一长整列就长出轨道、往左压进主题切换器；
+     侧栏与正文是 flex 同胞，宽度算错时会互相压（文本叶子那套在容器级压叠上可能报 0，
+     所以单独钉一条容器级的）。 */
   const navIntrude: string[] = []
   {
     const pairs: [string, string][] = [
-      ['.nav-brand', '.nav-center'],
-      ['.immersive-stepper', '.nav-status'],
+      ['.topbar-left', '.topbar-right'],
+      ['.nav-status', '.theme-switch'],
+      ['.sidebar', '.main-col'],
     ]
     for (const [x, y] of pairs) {
       const a = document.querySelector(x)?.getBoundingClientRect()
@@ -194,10 +201,11 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     }
   }
 
-  /* 顶栏三组都被 overflow 管着：内容比列宽就"静默裁掉"，包围盒还在原处——
-     重叠检查看不见它，所以单独量 scrollWidth 与 clientWidth 的差。 */
+  /* 外壳各部分都被 overflow 管着：内容比列宽就"静默裁掉"，包围盒还在原处——
+     重叠检查看不见它，所以单独量 scrollWidth 与 clientWidth 的差。
+     侧栏收起态短名是有意收字（display 管不到 scrollWidth），所以这里量的是展开态默认形状。 */
   const navClip: string[] = []
-  for (const sel of ['.nav-brand', '.nav-center', '.nav-status']) {
+  for (const sel of ['.sidebar', '.nav-status', '.topbar-right']) {
     const el = document.querySelector(sel)
     if (el && el.scrollWidth > el.clientWidth + 1) navClip.push(`${sel} scrollWidth=${el.scrollWidth} > clientWidth=${el.clientWidth}`)
   }
@@ -316,7 +324,10 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     .map((el) => (el.textContent ?? '').trim())
     .filter((t) => t.length > 0 && !/[\u4e00-\u9fa5]/.test(t))
 
-  const center = document.querySelector('.nav-center')?.getBoundingClientRect()
+  /* 侧栏宽度读回：收并后顶栏不再有"绝对居中的步进器"，中线判据随结构退役；
+     等价的不变量是"侧栏在场上且不侵正文"（上面 navIntrude 已钉），这里读回宽度仅供取证。
+     地板 180px：收起态是 64px，默认展开态必须接近布局令牌的 232px。 */
+  const side = document.querySelector('.sidebar')?.getBoundingClientRect()
   return {
     url: location.pathname,
     vw: innerWidth,
@@ -342,17 +353,17 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     heroShortBtns,
     englishEmpty: englishEmpty.slice(0, 6),
     englishEmptyCount: englishEmpty.length,
-    centerOffset: center ? Number(Math.abs(center.left + center.width / 2 - innerWidth / 2).toFixed(2)) : null,
+    sideWidth: side ? Number(side.width.toFixed(2)) : null,
   }
 }
 
 for (const width of WIDTHS) {
-  test.describe(`顶栏与正文不变量 @${width}`, () => {
+  test.describe(`外壳与正文不变量 @${width}`, () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize({ width, height: 900 })
     })
     for (const [name, path] of PAGES) {
-      test(`七页之一 ${name}：无重叠、不出屏、无裁字、顶栏不静默裁切、对比度达标、步进器居中`, async ({ page }) => {
+      test(`页面 ${name}：无重叠、不出屏、无裁字、侧栏不静默裁切、对比度达标`, async ({ page }) => {
         await page.goto(path)
         await page.waitForSelector('.page-head', { timeout: 45_000 })
         /* 先等网络静 + 再"量到内容够了才继续"：整批跑（71 项）时前面的地图项要吃十几秒 GPU，
@@ -367,21 +378,21 @@ for (const width of WIDTHS) {
           await page.waitForTimeout(2_000)
           r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
         }
-        console.log(`UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} navIntrude=${r.navIntrude.length} navTrunc=${r.navTruncated.length} lowContrast=${r.lowContrastCount} heroBtn=${r.heroBtnCount} heroLow=${r.heroLowCount} heroShort=${r.heroShortBtns.length} centerOffset=${r.centerOffset}`)
+        console.log(`UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} navIntrude=${r.navIntrude.length} navTrunc=${r.navTruncated.length} lowContrast=${r.lowContrastCount} heroBtn=${r.heroBtnCount} heroLow=${r.heroLowCount} heroShort=${r.heroShortBtns.length} sideWidth=${r.sideWidth}`)
         expect(r.leafCount, `${name}@${width} 页面一个文本节点都没看到——判据在空跑`).toBeGreaterThan(30)
         expect(r.overlapCount, `${name}@${width} 重叠明细：\n${r.overlap.join('\n')}`).toBe(0)
         expect(r.beyondCount, `${name}@${width} 有内容出屏：\n${r.beyond.join('\n')}`).toBe(0)
         expect(r.clippedCount, `${name}@${width} 有文字被裁：\n${r.clipped.join('\n')}`).toBe(0)
         expect(r.foldedCount, `${name}@${width} 有按钮文字折行（"打/开"竖排）：\n${r.folded.join('\n')}`).toBe(0)
-        expect(r.navClip, `${name}@${width} 顶栏把内容裁掉了（列宽不够）：\n${r.navClip.join('\n')}`).toHaveLength(0)
+        expect(r.navClip, `${name}@${width} 外壳把内容裁掉了（列宽不够）：\n${r.navClip.join('\n')}`).toHaveLength(0)
         expect(r.navTruncated, `${name}@${width} 顶栏状态文字被省略号截断：
 ${r.navTruncated.join('\n')}`).toHaveLength(0)
-        expect(r.navIntrude, `${name}@${width} 顶栏三列互相侵入：\n${r.navIntrude.join('\n')}`).toHaveLength(0)
+        expect(r.navIntrude, `${name}@${width} 外壳互相侵入：\n${r.navIntrude.join('\n')}`).toHaveLength(0)
         expect(r.lowContrastCount, `${name}@${width} 有字对比度不足：\n${r.lowContrast.join('\n')}`).toBe(0)
         expect(r.heroLowCount, `${name}@${width} 页头动作区的按钮读不清：\n${r.heroLow.join('\n')}`).toBe(0)
         expect(r.heroShortBtns, `${name}@${width} 页头主入口按钮太矮（<34px）：\n${r.heroShortBtns.join('\n')}`).toHaveLength(0)
         expect(r.englishEmptyCount, `${name}@${width} 出现纯英文空态文案：\n${r.englishEmpty.join('\n')}`).toBe(0)
-        if (r.centerOffset !== null) expect(r.centerOffset, `${name}@${width} 步进器偏离中线`).toBeLessThanOrEqual(1)
+        expect(r.sideWidth, `${name}@${width} 侧栏不在场上——判据在空跑`).toBeGreaterThan(180)
       })
     }
   })
@@ -1068,7 +1079,7 @@ test.describe('画布节点不变量 @1440', () => {
  * 弹层本来就该浮在正文上），所以单独钉一条"不许盖住顶栏"。
  */
 test.describe('提示条落点 @1440', () => {
-  test('报错提示落在顶栏下方，不吃掉步进器与状态胶囊', async ({ page }) => {
+  test('报错提示落在外壳下方，不吃掉侧栏与状态胶囊', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.route('**/api/**', (route) =>
       route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"probe boom"}' }),
@@ -1080,7 +1091,7 @@ test.describe('提示条落点 @1440', () => {
     await page.waitForSelector('.ant-message-notice', { timeout: 15_000 })
     const m = await page.evaluate(() => {
       const box = document.querySelector('.ant-message')?.getBoundingClientRect()
-      const nav = document.querySelector('.navbar')?.getBoundingClientRect()
+      const nav = document.querySelector('.topbar')?.getBoundingClientRect()
       const notice = document.querySelector('.ant-message-notice')?.getBoundingClientRect()
       return {
         top: box ? Math.round(box.top) : null,
@@ -1396,7 +1407,7 @@ test.describe('系统输出浮层 @1440', () => {
  * 不是"我们的规则生效"；后者另用 brandRing（至少一处焦点环用主色蓝）钉住。
  */
 test.describe('键盘焦点态 @1440', () => {
-  test('Tab 走七页：每个焦点都有可见指示且不被裁到看不见', async ({ page }) => {
+  test('Tab 走全部页面：每个焦点都有可见指示且不被裁到看不见', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const problems: string[] = []
     let brandRings = 0
@@ -1585,7 +1596,7 @@ test.describe('风险芯片兼图例 @1440', () => {
  * 基线（不悬停）那四项在常驻判据里已经是 0，所以这里任何命中都只能是悬停造成的。
  */
 const HOVER_TARGETS = [
-  '.flow-step',
+  '.side-item',
   '.theme-switch__btn',
   '.page-head button',
   '.ant-list-item',
@@ -1596,6 +1607,8 @@ const HOVER_TARGETS = [
   '.risk-chip',
   '.sys-term__chip',
   '.ant-card-hoverable',
+  '.assistant-fab',
+  '.side-collapse',
 ]
 
 /**
@@ -1735,7 +1748,7 @@ const scanMotion = (): { infinite: string[]; running: number } => {
 }
 
 test.describe('减动效与动画中的可读性 @1440', () => {
-  test('七页开"减少动效"后一个无限动画都不许留（正常态确有动效，不是在空跑）', async ({ page }) => {
+  test('全部页面开"减少动效"后一个无限动画都不许留（正常态确有动效，不是在空跑）', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const offenders: string[] = []
     let animated = 0
@@ -1971,7 +1984,7 @@ const scanDurations = (): { strays: string[]; tally: Record<string, number> } =>
 }
 
 test.describe('微动效基准 @1440', () => {
-  test('七页同屏只许出现四档时长，且基准那一档占多数', async ({ page }) => {
+  test('全部页面同屏只许出现四档时长，且基准那一档占多数', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const strays: string[] = []
     const all: Record<string, number> = {}
@@ -2148,7 +2161,7 @@ const shellLum = (opts: { limit: number; wantBright: boolean }) => {
     return parts.slice(0, 3)
   }
   const lum = (c: number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
-  const SELS = ['body', '.app-shell', '.navbar', '.main-content', '.ant-card', '.ant-card-head',
+  const SELS = ['body', '.app-shell', '.sidebar', '.topbar', '.main-content', '.ant-card', '.ant-card-head',
     '.ant-table-thead > tr > th', '.ant-input', '.ant-select-selector']
   const wrong: string[] = []
   let seen = 0
@@ -2177,7 +2190,9 @@ test.describe('深色主题换肤', () => {
     /* 地板 8→7（2026-10-17 dashboard 标杆页 spike）：这张页原先的两张 antd 表换成了自绘行，
        SELS 里 `.ant-table-thead > tr > th` 这一路在 /dashboard 归零，实量剩
        body + .app-shell + .navbar + 4×.ant-card = 7。地板的职责是"别空跑"，不是"必须 8"，
-       所以随实量下调、判据与两向对照都保留。 */
+       所以随实量下调、判据与两向对照都保留。
+       （2026-10-17 晚信息架构收并：`.navbar` 换成 `.sidebar` + `.topbar` 两族表面，
+       读数只增不减；地板不动。） */
     expect(dark.seen, '一块表面都没读到——判据在空跑').toBeGreaterThanOrEqual(7)
     expect(dark.wrong, `深色下还有亮底（白底补丁）：\n${dark.wrong.join('\n')}`).toHaveLength(0)
 
@@ -2219,16 +2234,16 @@ test.describe('深色主题换肤', () => {
     /* 不能用 waitUntil:'networkidle'：SSE 是常驻连接，reload 会一直等到 180s 测试超时
        （2026-10-17 实测，与上面 settle() 同一根因）。等 DOM 就绪即可，主题落没落由后面的断言判。 */
     await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
-    await page.waitForSelector('.navbar', { timeout: 45_000 })
+    await page.waitForSelector('.topbar', { timeout: 45_000 })
     expect(await page.evaluate(() => document.documentElement.dataset.theme), 'reload 之后忘了用户选过深色').toBe('dark')
-    /* 页签导航全档铺页名之后，title/aria-label 仍要带着页名（读屏与 hover 都靠它），
-       可见文字本身也得是真页名——这条防"铺是铺了，铺的是占位符"。 */
+    /* 侧栏导航全档铺页名（2026-10-17 收并后）：title/aria-label 仍要带着页名（读屏与 hover 都靠它），
+       可见文字本身也得是真页名（展开态全名、收起态短名，两个都不是占位符）。 */
     const navText = await page.evaluate(() => ({
-      titled: [...document.querySelectorAll('.flow-step')].every((el) => (el.getAttribute('title') ?? '').length > 1),
-      labelled: [...document.querySelectorAll('.flow-step-label')].every((el) => (el.textContent ?? '').trim().length > 1),
+      titled: [...document.querySelectorAll('.side-item')].every((el) => (el.getAttribute('title') ?? '').length > 1),
+      labelled: [...document.querySelectorAll('.side-item__label')].every((el) => (el.textContent ?? '').trim().length > 1),
     }))
-    expect(navText.titled, '页签的 title 里没了页名——读屏只剩下一格空壳').toBe(true)
-    expect(navText.labelled, '页签铺出来的不是页名（空文字或单字符）').toBe(true)
+    expect(navText.titled, '侧栏入口的 title 里没了页名——读屏只剩下一格空壳').toBe(true)
+    expect(navText.labelled, '侧栏铺出来的不是页名（空文字或单字符）').toBe(true)
   })
 
   for (const [name, path] of PAGES) {
@@ -2251,15 +2266,16 @@ test.describe('深色主题换肤', () => {
     })
   }
 
-  /* 页签导航现在是全档铺页名（2026-10-07 拍板：导航留顶部、不要编号点）。
-     "铺没铺"不再是 1920 的专属分支，所以这条从单档改成 1100–1920 四档连跑：
-     每一档都要求页名在场、右列不压叠不裁字——任何一档空间算错都会当场红。 */
+  /* 侧栏导航（2026-10-17 信息架构收并：值班主线 4 + 系统 1，旧入口退场）。
+     "铺没铺"从顶栏页签改成侧栏入口：四档连跑（1100–1920），每一档都要求页名在场、
+     右列不压叠不裁字、侧栏自身不裁——任何一档空间算错都会当场红。
+     侧栏是定宽令牌（232px），不随视口伸缩，所以真正会随宽度出问题的是顶栏右列。 */
   for (const width of [1100, 1280, 1440, 1920]) {
-    test(`顶栏页签 @${width}：页名铺开，右列不压叠、不裁字`, async ({ page }) => {
+    test(`侧栏导航 @${width}：页名铺开，右列不压叠、不裁字`, async ({ page }) => {
       await page.addInitScript(() => localStorage.setItem('aegis.theme', 'dark'))
       await page.setViewportSize({ width, height: 1080 })
       await page.goto('/dashboard')
-      await page.waitForSelector('.navbar', { timeout: 45_000 })
+      await page.waitForSelector('.sidebar', { timeout: 45_000 })
       await settle(page)
       await page.waitForTimeout(2_000)
       const nav = await page.evaluate(() => {
@@ -2269,14 +2285,22 @@ test.describe('深色主题换肤', () => {
           const r = el.getBoundingClientRect()
           return { left: Math.round(r.left), right: Math.round(r.right), w: Math.round(r.width), scroll: el.scrollWidth, client: el.clientWidth }
         }
-        return { stepper: box('.immersive-stepper'), right: box('.nav-right'), status: box('.nav-status'), sw: box('.theme-switch'), labels: document.querySelectorAll('.flow-step-label').length, labelShown: [...document.querySelectorAll('.flow-step-label')].some((el) => getComputedStyle(el).display !== 'none') }
+        return {
+          side: box('.sidebar'),
+          right: box('.topbar-right'),
+          status: box('.nav-status'),
+          sw: box('.theme-switch'),
+          labels: document.querySelectorAll('.side-item__label').length,
+          labelShown: [...document.querySelectorAll('.side-item__label')].every((el) => getComputedStyle(el).display !== 'none'),
+        }
       })
       console.log(`NAV@${width} ${JSON.stringify(nav)}`)
-      expect(nav.labelShown, `@${width} 页名没铺开——页签导航是全档铺页名的，这一档不许掉回编号点`).toBe(true)
-      expect(nav.labels, '页签页名数不对（七页都该有）').toBe(7)
-      expect(nav.status!.left, `状态胶囊压进了页签（页签右缘=${nav.stepper!.right}，胶囊左缘=${nav.status!.left}）`).toBeGreaterThan(nav.stepper!.right)
+      expect(nav.labelShown, `@${width} 侧栏页名没铺开——这一档不许把入口收成图标`).toBe(true)
+      expect(nav.labels, '侧栏入口数不对（值班主线 4 + 系统 1）').toBe(5)
+      expect(nav.status!.right, `状态胶囊压进主题切换器（胶囊右缘=${nav.status!.right}，切换器左缘=${nav.sw!.left}）`).toBeLessThanOrEqual(nav.sw!.left + 1)
       expect(nav.right!.scroll - nav.right!.client, `右列被裁：scroll=${nav.right!.scroll} client=${nav.right!.client}`).toBeLessThanOrEqual(1)
       expect(nav.status!.scroll - nav.status!.client, `状态胶囊静默裁字：scroll=${nav.status!.scroll} client=${nav.status!.client}`).toBeLessThanOrEqual(1)
+      expect(nav.side!.scroll - nav.side!.client, `侧栏静默裁字：scroll=${nav.side!.scroll} client=${nav.side!.client}`).toBeLessThanOrEqual(1)
       if (width === 1920) await page.screenshot({ path: 'test-results/ui-audit/dark-nav-1920.png' })
     })
   }
