@@ -361,20 +361,25 @@ const agentColumns = [
 .dash-error {
   margin-bottom: 12px;
 }
+/* 待办条是"要人去做的事"：动作位给它主色左带 + brand-soft 底，与数据卡分开一档。
+   旧的紫色雾底（#f9f0ff/#531dab）是浅色主题限定的字面色，深色下不成立，已退役。 */
 .dash-todos {
   display: flex;
-  gap: 10px;
+  gap: var(--aeg-space-s3);
   align-items: center;
-  margin-bottom: 10px;
-  padding: 8px 12px;
-  border-radius: 4px;
-  background: #f9f0ff;
-  color: #531dab;
-  font-size: 13px;
+  margin-bottom: var(--aeg-space-s3);
+  padding: var(--aeg-space-s2) var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-brand-line);
+  border-left: 3px solid var(--aeg-color-brand);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-text);
+  font-size: var(--aeg-font-sm);
 }
 .dash-todos__link {
-  font-weight: 600;
-  color: #531dab;
+  font-weight: var(--aeg-weight-semibold);
+  /* 链接压在 brand-soft 合成底上：浅档 #1D4ED8 / 深档 #60A5FA，两档都过 4.5:1 */
+  color: var(--aeg-color-brand-hover);
   text-decoration: underline;
 }
 .grid {
