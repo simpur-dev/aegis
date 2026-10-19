@@ -293,6 +293,31 @@ function createLayerHandles(cesium: CesiumModule, viewer: CesiumViewer): LayerHa
  * 建场：探针 → 决策 → 装配 Viewer/影像/地形 → 绑定相机与点击事件。
  * 任何一步失败都抛给调用方，由 MapView 显示"三维图不可用 + 文字清单仍在"，页面不崩。
  */
+/**
+ * 等容器拿到非零尺寸（最多 `timeoutMs`）。
+ *
+ * 没有 ResizeObserver、或拿到的是测试替身（没有 clientWidth 这个数）时直接放行：
+ * 建场本身不该因为"等不到尺寸"而永久挂起——超时后照建，后面还有 ResizeObserver 兜底。
+ */
+async function waitForContainerSize(element: HTMLElement, timeoutMs = 3_000): Promise<void> {
+  if (typeof element?.clientWidth !== 'number' || typeof element?.clientHeight !== 'number') return
+  if (element.clientWidth > 0 && element.clientHeight > 0) return
+  if (typeof ResizeObserver === 'undefined') return
+  await new Promise<void>((resolve) => {
+    const observer = new ResizeObserver(() => {
+      if (element.clientWidth > 0 && element.clientHeight > 0) finish()
+    })
+    let timer: ReturnType<typeof setTimeout> | null = null
+    function finish(): void {
+      if (timer !== null) clearTimeout(timer)
+      observer.disconnect()
+      resolve()
+    }
+    timer = setTimeout(finish, timeoutMs)
+    observer.observe(element)
+  })
+}
+
 export async function createMapScene(el: HTMLElement, options: MapSceneOptions = {}): Promise<MapScene> {
   ensureCesiumBaseUrl()
   const cesium = await import('cesium')
@@ -307,6 +332,16 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
       return fetch(url, init)
     })
   const browserOnline = options.browserOnline ?? (() => globalThis.navigator?.onLine !== false)
+
+  /**
+   * 建场前等容器有尺寸。
+   *
+   * Cesium 在 `new Viewer(el, ...)` 那一刻按 `el.clientWidth/Height` 定画布，之后**不会**自己
+   * 跟随容器变化；而 `v-if` 切档后宿主刚插入、或首屏布局尚未完成时，宽度会是 0 —— 于是画布
+   * 0×420、相机 `setView` 算成全球视野（真机实测：宿主 811×490，画面一片空白且无报错）。
+   * 等不到（超时）也照常建场：后面还有 ResizeObserver 兜底，不能因此让页面永远停在 Loading。
+   */
+  await waitForContainerSize(el)
 
   const facts = await collectFacts({
     fetch: fetchLike,
@@ -358,6 +393,33 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   })
 
   let palette = mapPalette(options.themeMode ?? 'light')
+  const initialRectangle = options.initialRectangle ?? TIBET_RECTANGLE
+  /**
+   * 建场那一刻容器若还没有宽度，`setView` 会算出全球视野（真机：宽度 0 时视野 -180..180、缩放 0）；
+   * 拿到尺寸后必须补一次，否则画布恢复成 811×490 了、画面却停在星空里。
+   */
+  let viewApplied = el.clientWidth > 0
+  /**
+   * 容器尺寸变化 → 让 Cesium 跟着重排。
+   *
+   * 建场那一刻容器可能还没有宽度（`v-if` 切档后宿主刚插入、或布局尚未完成），Cesium 会按 0 宽
+   * 建出画布，而它**不会自动跟随**容器变化——真机实测：宿主 811×490、canvas 0×420，地图一片空白
+   * 且没有任何报错。`requestRenderMode` 下 resize 之后还要显式 requestRender，否则不重绘。
+   */
+  const resizeObserver =
+    typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => {
+          if (viewer.isDestroyed()) return
+          viewer.resize()
+          if (!viewApplied && el.clientWidth > 0) {
+            viewer.camera.setView({ destination: cesium.Rectangle.fromDegrees(...rectArray(initialRectangle)) })
+            viewApplied = true
+          }
+          viewer.scene.requestRender()
+        })
+  resizeObserver?.observe(el)
+
   /**
    * 主题落到场景上：地球底色 + 画面外底色，并把太阳/月亮/天空大气关掉——
    * 那三样是不表达任何状态的装饰光，而深色档下那条蓝色地平线辉光是画布里唯一不肯翻面的亮面。
@@ -372,20 +434,33 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   applyPalette()
   viewer.scene.globe.enableLighting = false
   /**
-   * 瓦加载完必须自己喊一次重绘。
+   * 瓦片队列有变化就重绘，而不是只在"排空"那一刻重绘。
    *
    * 这个页面为了在轻薄本上省电开了 `requestRenderMode`，又把 `maximumRenderTimeChange`
    * 设成 Infinity——于是**异步到达的影像/地形瓦不会触发任何一帧**：请求全 200、图层 show=true、
-   * alpha=1，画面却一直是地球底色。接高德时 261 张瓦全部加载成功仍然全黑，才把这条挖出来
-   * （此前自托管烘焙瓦"看着没生效"是同一个原因，不是瓦的问题）。
-   * `tileLoadProgressEvent(0)` 是官方给的"队列排空"信号，正好是省电与正确性的交点。
+   * alpha=1，画面却一直是地球底色。此前只在 `queued === 0` 时补一帧，真机踩到另一种形态：
+   * 建场首帧没能排出请求，队列一直"空"，`0` 事件再也不来 ⇒ 一张瓦片都不请求、画面停在星空里。
+   * 现在队列每变一次就要一帧（进队/出队都算），静置时仍然一帧都不多画。
    */
-  viewer.scene.globe.tileLoadProgressEvent.addEventListener((queued: number) => {
-    if (queued === 0) viewer.scene.requestRender()
+  viewer.scene.globe.tileLoadProgressEvent.addEventListener(() => {
+    viewer.scene.requestRender()
   })
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 200
-  viewer.camera.setView({ destination: cesium.Rectangle.fromDegrees(...rectArray(options.initialRectangle ?? TIBET_RECTANGLE)) })
+  viewer.camera.setView({ destination: cesium.Rectangle.fromDegrees(...rectArray(initialRectangle)) })
+  /**
+   * 建场末尾必须显式要一帧：`requestRenderMode` 下没有这一下，首帧可能永远不来，
+   * 影像/地形的瓦片请求链就整条不启动——真机实测：canvas/视野/图层都对，`performance` 里
+   * 只有探针的两条 HEAD，一张瓦片都没请求，画面停在空白。
+   * 再补两帧：globe 的 surface 初始化不止一次 `endFrame`，只渲染一帧时它可能还没排出请求。
+   */
+  viewer.scene.requestRender()
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => {
+      viewer.scene.requestRender()
+      requestAnimationFrame(() => viewer.scene.requestRender())
+    })
+  }
   // `?mapDebug` 时才挂只读句柄：视觉烟雾门禁要读 globe.getHeight() 这类真场景状态（见 debugHandle.ts）。
   publishMapDebugHandle(viewer, location.search)
 
@@ -483,6 +558,7 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     destroy: () => {
       if (destroyed) return
       destroyed = true
+      resizeObserver?.disconnect()
       viewer.camera.changed.removeEventListener(onCameraChanged)
       handler.removeInputAction(cesium.ScreenSpaceEventType.LEFT_CLICK)
       handler.destroy()

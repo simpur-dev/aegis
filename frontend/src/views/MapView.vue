@@ -308,12 +308,25 @@ watch(
   (mode) => {
     writeBasemapMode(typeof localStorage === 'undefined' ? null : localStorage, mode)
     /**
+     * 切到高德：`v-if` 会把 Cesium 的宿主 div 整个卸载掉，**连带把 canvas 一起带走**；
+     * 而场景对象还活着（`scene.value !== null`），于是切回离线时既不重建、也没有画布可画——
+     * 真机实测：宿主 692×490、`.cesium-widget` 不存在、画面只剩 `.map-host` 的深蓝背景。
+     * 所以切走时必须销毁场景，切回时重建。
+     */
+    if (mode === 'amap') {
+      scene.value?.destroy()
+      scene.value = null
+      sceneInfo.value = null
+      sceneError.value = null
+      return
+    }
+    /**
      * 页面直接落在 'amap' 档（localStorage 记忆）时，挂载那刻 Cesium 宿主不存在，
      * initScene 在 `!host` 上早退、场景为 null；切回离线时宿主才出现——不在这里补建场，
      * 离线档就是永远转圈的"正在加载三维场景"（交付形态反而死了）。
      * 必须用 post：watch 默认先于渲染跑，那一刻宿主 div 还没挂上，`!host` 又会早退一次。
      */
-    if (mode === 'offline' && scene.value === null && sceneError.value === null) void initScene()
+    if (scene.value === null && sceneError.value === null) void initScene()
   },
   { flush: 'post' },
 )

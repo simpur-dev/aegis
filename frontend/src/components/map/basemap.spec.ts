@@ -5,6 +5,7 @@
 
 import { TileType } from 'pmtiles'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { inflateSync } from 'node:zlib'
 
 import { cesiumSourceFlat } from '@/testing/cesiumSource'
 import { FakeWebMercatorTilingScheme, fakeRectangle, insideWebMercator, WEB_MERCATOR_MAX_LATITUDE_DEG } from '@/testing/cesiumBasemapStub'
@@ -12,6 +13,7 @@ import { FakeWebMercatorTilingScheme, fakeRectangle, insideWebMercator, WEB_MERC
 import type { BasemapCesium, TileReader } from './basemap'
 import {
   BASEMAP_ATTRIBUTION,
+  BLANK_PNG_BASE64,
   OSM_BAKE_ATTRIBUTION,
   boundsOfHead,
   chooseBasemapSource,
@@ -264,6 +266,80 @@ describe('栅格 PMTiles provider', () => {
       attribution: 'x',
     })
     expect(await instance.requestImage(1, 1, 6)).toEqual({ kind: 'blank' })
+  })
+
+  /**
+   * 透明瓦常量必须是**结构合法**的 PNG，而不是"看着像 PNG"的一串。
+   *
+   * 上一版就是坏的：IHDR 声明 8bit RGBA（每行 1+4 字节），IDAT 解压后只有 3 字节，
+   * 浏览器 `createImageBitmap` 抛 `InvalidStateError: The source image could not be decoded`，
+   * rejection 冒进 Cesium 的渲染循环 ⇒ 整张图 "Rendering has stopped"（触发条件：PMTiles 档
+   * maxZoom=2 而当前缩放 8，每块越界瓦片都走 blank）。这条门禁按 PNG 结构现算，不认 base64 长相。
+   */
+  it('透明瓦常量的解码长度必须对得上 IHDR 声明', () => {
+    const bytes = Buffer.from(BLANK_PNG_BASE64, 'base64')
+    expect(bytes.subarray(0, 8).toString('hex'), '不是 PNG 签名').toBe('89504e470d0a1a0a')
+    let cursor = 8
+    let width = 0
+    let height = 0
+    let bitDepth = 0
+    let colorType = -1
+    const idat: Buffer[] = []
+    let sawIend = false
+    while (cursor < bytes.length) {
+      const length = bytes.readUInt32BE(cursor)
+      const type = bytes.subarray(cursor + 4, cursor + 8).toString('ascii')
+      const data = bytes.subarray(cursor + 8, cursor + 8 + length)
+      if (type === 'IHDR') {
+        width = data.readUInt32BE(0)
+        height = data.readUInt32BE(4)
+        bitDepth = data[8]
+        colorType = data[9]
+      } else if (type === 'IDAT') idat.push(data)
+      else if (type === 'IEND') {
+        sawIend = true
+        break
+      }
+      cursor += 12 + length
+    }
+    expect(sawIend, '缺 IEND：浏览器会在解码阶段报错').toBe(true)
+    const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 } as Record<number, number | undefined>)[colorType]
+    expect(channels, `未预期的 colorType=${colorType}`).toBeDefined()
+    const perRow = 1 + Math.ceil((width * bitDepth * (channels as number)) / 8)
+    expect(inflateSync(Buffer.concat(idat)).length, 'IDAT 解出的字节数与 IHDR 不符').toBe(height * perRow)
+  })
+
+  it('单块瓦片解不出图时退回透明瓦，不把 rejection 交给渲染循环', async () => {
+    let calls = 0
+    vi.stubGlobal('createImageBitmap', () => {
+      calls += 1
+      return calls === 1 ? Promise.reject(new Error('InvalidStateError: The source image could not be decoded.')) : Promise.resolve({ kind: 'blank' })
+    })
+    const { cesium } = fakeCesium()
+    const instance = new PmtilesImageryProvider({
+      cesium,
+      reader: { getZxy: async () => ({ data: new Uint8Array([1, 2, 3]).buffer }) },
+      verdict: describePmtilesHead(head()),
+      attribution: 'x',
+    })
+    await expect(instance.requestImage(1, 1, 6)).resolves.toEqual({ kind: 'blank' })
+  })
+
+  it('透明瓦自身解码失败不永久缓存：下一次缺瓦会重试而不是永远拿同一个 rejection', async () => {
+    let calls = 0
+    vi.stubGlobal('createImageBitmap', () => {
+      calls += 1
+      return calls === 1 ? Promise.reject(new Error('环境级失败')) : Promise.resolve({ kind: 'blank' })
+    })
+    const { cesium } = fakeCesium()
+    const instance = new PmtilesImageryProvider({
+      cesium,
+      reader: { getZxy: async () => undefined },
+      verdict: describePmtilesHead(head()),
+      attribution: 'x',
+    })
+    await expect(instance.requestImage(0, 0, 20)).rejects.toThrow('环境级失败')
+    await expect(instance.requestImage(0, 0, 20)).resolves.toEqual({ kind: 'blank' })
   })
 
   /** provider 矩形越出切片方案 = 浏览器里 `undefined.x` 打死渲染循环；这条前提写成断言。 */

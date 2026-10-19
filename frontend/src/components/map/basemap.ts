@@ -203,8 +203,15 @@ export function describePmtilesHead(head: PmtilesHead): PmtilesVerdict {
 
 // ---------- 装配（需要 Cesium 命名空间，由 viewer.ts 注入）----------
 
-/** 1×1 全透明 PNG（base64）：缺瓦的替身，避免成片黑块与错误日志刷屏。 */
-const BLANK_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+/**
+ * 1×1 全透明 PNG（base64）：缺瓦的替身，避免成片黑块与错误日志刷屏。
+ *
+ * 上一版这个常量是坏的：IHDR 声明 8bit RGBA，IDAT 解压后只有 3 字节（应为 5：filter + RGBA），
+ * `createImageBitmap` 抛 `InvalidStateError: The source image could not be decoded`，而这个 rejection
+ * 冒进 Cesium 的渲染循环 ⇒ 整张图 "Rendering has stopped"（真机条件：PMTiles 档 maxZoom=2 而当前缩放 8，
+ * 每一块越界瓦片都走 blank）。导出给 `basemap.spec.ts` 做结构校验，防止再被人换成一个"看着像 PNG"的串。
+ */
+export const BLANK_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII='
 
 export interface BasemapCesium {
   ImageryLayer: typeof ImageryLayer
@@ -299,16 +306,26 @@ export class PmtilesImageryProvider {
 
   async requestImage(x: number, y: number, level: number): Promise<ImageBitmap> {
     if (!this.hasTile(x, y, level)) return this.blank()
-    const tile = await this.reader.getZxy(level, x, y)
-    if (!tile || tile.data.byteLength === 0) return this.blank()
-    return createImageBitmap(new Blob([tile.data], { type: this.contentType }))
+    try {
+      const tile = await this.reader.getZxy(level, x, y)
+      if (!tile || tile.data.byteLength === 0) return this.blank()
+      return await createImageBitmap(new Blob([tile.data], { type: this.contentType }))
+    } catch {
+      // 单块瓦片坏掉（截断、非图片字节）只该让这一块空着——与"缺瓦"同一语义（野外弱网是常态），
+      // 绝不许把 rejection 冒进 Cesium 的渲染循环把整张图打死。
+      return this.blank()
+    }
   }
 
   /** 1×1 全透明位图：懒建一次并复用（Cesium 会并发问很多缺口的瓦片）。 */
   private blank(): Promise<ImageBitmap> {
     if (!this.blankPromise) {
       const bytes = Uint8Array.from(atob(BLANK_PNG_BASE64), (char) => char.charCodeAt(0))
-      this.blankPromise = createImageBitmap(new Blob([bytes], { type: 'image/png' }))
+      this.blankPromise = createImageBitmap(new Blob([bytes], { type: 'image/png' })).catch((error: unknown) => {
+        // 失败不缓存：一次环境级失败（浏览器策略、内存）不该把之后所有缺瓦请求钉死在同一个 rejection 上。
+        this.blankPromise = null
+        throw error
+      })
     }
     return this.blankPromise
   }
