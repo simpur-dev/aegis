@@ -19,6 +19,8 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -32,6 +34,7 @@ from aegis.container import PlatformContainer, create_container
 from aegis.errors import AegisError
 from aegis.observability import telemetry
 from aegis.persistence.errors import QueryArgumentError
+from aegis.workflow.errors import WorkflowAppError
 
 log = logging.getLogger("aegis.api")
 
@@ -78,7 +81,9 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if cfg.env != "prod" else [],
-        allow_methods=["GET", "POST"],
+        # 草稿保存走 PUT、重命名走 PATCH：只放 GET/POST 时浏览器预检会先拦下，
+        # 表现为"后端端点明明存在，页面上却只有 CORS 报错"。
+        allow_methods=["GET", "POST", "PUT", "PATCH"],
         allow_headers=["*"],
     )
 
@@ -134,6 +139,33 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             content=json.dumps({"error": exc.code.value, "message": exc.message, "detail": exc.detail}),
             media_type="application/json",
         )
+
+    @app.exception_handler(WorkflowAppError)
+    async def _workflow_app_error_handler(_: Request, exc: WorkflowAppError) -> Response:
+        """文档生命周期端点的统一错误体：`detail: {code, message, details}`。"""
+        return JSONResponse(status_code=exc.status, content={"detail": exc.as_detail()})
+
+    @app.exception_handler(RequestValidationError)
+    async def _request_validation_handler(request: Request, exc: RequestValidationError) -> Response:
+        """新工作流端点用统一错误体，旧端点保持 FastAPI 默认的 `detail: [...]`。
+
+        旧端点的既有客户端与测试都按列表形状解析；统一错误模型不能靠改全局 422 形状来达成。
+        """
+        errors = jsonable_encoder(exc.errors())
+        path = request.url.path
+        if (
+            path == "/api/v1/workflow/lineages"
+            or path.startswith("/api/v1/workflow/lineages/")
+            or path.startswith("/api/v1/workflow/versions/")
+        ):
+            code = (
+                "invalid_schema_version" if any(error.get("type") == "invalid_schema_version" for error in errors) else "validation_failed"
+            )
+            return JSONResponse(
+                status_code=422,
+                content={"detail": {"code": code, "message": "请求校验失败", "details": {"errors": errors}}},
+            )
+        return JSONResponse(status_code=422, content={"detail": errors})
 
     @app.exception_handler(QueryArgumentError)
     async def _query_argument_handler(_: Request, exc: QueryArgumentError) -> Response:

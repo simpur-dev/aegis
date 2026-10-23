@@ -71,8 +71,10 @@ from aegis.services.rules.risk_engine import RiskEngine
 from aegis.services.rules.threshold_suggestions import ThresholdSuggestionService
 from aegis.services.rules.trigger_rules import RuleEngine, rulebook_from_rows
 from aegis.storage.store import StoreProtocol, rule_library_port
+from aegis.workflow.drafts import DraftService, LineageLocks
 from aegis.workflow.engine import WorkflowEngine
 from aegis.workflow.outbound import OutboundCaller, OutboundPolicy
+from aegis.workflow.publishing import PublishingService
 from aegis.workflow.services_bridge import build_workflow_services
 from aegis.workflow.templates import (
     register_builtin_templates,
@@ -102,6 +104,9 @@ class PlatformContainer:
     dispatcher: DeliveryDispatcher
     exporter: MetricsExporter
     workflow: WorkflowEngine
+    #: 草稿与发布共享同一条 lineage 锁：发布要先比对 revision/哈希再写版本，两件事必须串行。
+    drafts: DraftService
+    publishing: PublishingService
     bundle: StoreBundle
     rule_engine: RuleEngine
     #: 人工上报这条腿的入口（P4 起独立成 `pipeline/report_intake.py`）。
@@ -634,6 +639,14 @@ def create_container(
     # handle_agent_message / warnings）都不改——调用点（`/api/v1/drill/run`、人工上报腿、
     # 演练与报表脚本、总线订阅）要的只是这个形状；改的是"段的先后由谁决定"。
     chain = WorkflowChain(stages, workflow, stations=stations, on_result=on_result)
+    lineage_locks = LineageLocks()
+    drafts = DraftService(workflow.repository, locks=lineage_locks)
+    publishing = PublishingService(
+        workflow.repository,
+        drafts,
+        locks=lineage_locks,
+        validate_definition=workflow.validate_definition,
+    )
     # 人工上报这本账只有一个出处：容器读它出报表，受理腿写它记样本，两边拿的是同一个 dict。
     report_stats = {"submitted": 0, "measured_by_rule": 0, "review_required": 0, "reviews_opened": 0}
     container = PlatformContainer(
@@ -649,6 +662,8 @@ def create_container(
         dispatcher=dispatcher,
         exporter=MetricsExporter(gateway, tracer),
         workflow=workflow,
+        drafts=drafts,
+        publishing=publishing,
         bundle=bundle,
         rule_engine=rule_engine,
         report_intake=ReportIntake(parser=parser, chain=chain, tracer=tracer, workflow=workflow, report_stats=report_stats),

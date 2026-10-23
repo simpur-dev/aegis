@@ -38,6 +38,8 @@ mcp = ["mcp>=2.3"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    # 覆盖率只用于新增 workflow 模块（CI 里显式给 --cov 目标），不改变全仓既有 pytest 口径。
+    "pytest-cov>=5.0",
     "ruff>=0.7",
     "mypy>=1.13",
     "hypothesis>=6.168",
@@ -88,3 +90,20 @@ python_version = "3.12"
 warn_unused_ignores = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
+
+# 新增 workflow 文档/草稿/发布/预览/变量/端口层从严，不改全仓历史口径。
+[[tool.mypy.overrides]]
+module = [
+  "aegis.workflow.documents",
+  "aegis.workflow.drafts",
+  "aegis.workflow.publishing",
+  "aegis.workflow.errors",
+  "aegis.workflow.store",
+  "aegis.workflow.preview",
+  "aegis.workflow.variables",
+  "aegis.workflow.ports",
+  "aegis.api.workflow.*",
+]
+disallow_untyped_defs = true
+warn_return_any = true
+no_implicit_optional = true

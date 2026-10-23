@@ -4,7 +4,7 @@
 但"某一类节点在真实装配下能不能跑完"此前只有 `data_fetch/threshold/branch/join/delay/notify`
 几类在引擎测试里出现过——`hazard_identify`、`risk_assess`、`situation_simulate`、
 `warning_generate/publish`、`feedback_collect`、`degrade_to_rule`、`api_call`、
-`device_control` 只在 handler 级或 `test_task_parser` 里被提到。节点注册表长到 16 类之后，
+`device_control` 只在 handler 级或 `test_task_parser` 里被提到。节点注册表长到 19 类之后，
 "≥10 类防控任务节点可视化编排"这句话要能被逐类指着说"引擎跑过它"。
 
 这里刻意用**装配容器里的引擎**（`create_container` → `build_workflow_services`），
@@ -38,6 +38,19 @@ TRACE = "trc_" + "a" * 16
 
 # 一个场景 = 一张最小的真实流程图；expectations 说"哪个节点必须产出哪个键"。
 SCENARIOS: dict[str, dict[str, Any]] = {
+    "起点与终点": {
+        "nodes": [
+            {
+                "node_id": "start",
+                "type": "start",
+                "config": {"variables": [{"name": "region_code", "label": "区域代码", "type": "string", "required": True}]},
+            },
+            {"node_id": "end", "type": "end", "config": {}},
+        ],
+        "edges": [{"source": "start", "target": "end", "condition": ""}],
+        "payload": {"region_code": "540121"},
+        "expectations": {"start": "variables", "end": "ended"},
+    },
     "预警链_从读数到发布与回执": {
         "nodes": [
             {"node_id": "fetch", "type": "data_fetch", "config": {"region_code": "540121", "limit": 5}},

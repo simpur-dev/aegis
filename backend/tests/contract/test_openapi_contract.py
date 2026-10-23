@@ -25,7 +25,11 @@ from aegis.container import PlatformContainer, create_container
 # /readyz 与 /api/v1/retrieval/search 不在模糊集合里：503 是它们自身的语义（未就绪/未启用就该 503），
 # schemathesis 把任何 5xx 记为 ServerError，把它们放进来只会稳定红一条；两者的 503 与 200 分别由
 # tests/api 与 tests/unit/test_retrieval_wiring.py:540 的显式用例验证，比随机撞更准确。
-READ_ONLY = r"^/healthz$|^/api/v1/(telemetry|warnings|agents|collaboration|metrics/latency|integrations|cases/recall|stations)$"
+READ_ONLY = (
+    r"^/healthz$|^/api/v1/(telemetry|warnings|agents|collaboration|metrics/latency|integrations|cases/recall|stations)$"
+    r"|^/api/v1/workflow/versions/"
+    r"|^/api/v1/workflow/lineages/[^/]+/versions$"
+)
 TASK_LOOKUP = r"^/api/v1/tasks/"
 BASE_URL = "http://testserver"
 

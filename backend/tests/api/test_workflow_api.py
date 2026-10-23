@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -145,6 +146,78 @@ async def test_名称与说明里的首尾空格不进定义(container: Platform
         assert after["version"] > stored["version"]
 
 
+def _one_node_payload(name: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": "",
+        "nodes": [{"node_id": "a", "type": "delay", "name": "等一会儿", "config": {"seconds": 0}}],
+        "edges": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_旧端点同名再建一份归入同一族谱(container: PlatformContainer) -> None:
+    """旧 create 的语义是"同名再建 = 追加新版本"（模板 force 与引擎用例都依赖），
+    锁内分配只保证版本号不撞，不把同名改成冲突。"""
+    async with _client(container) as client:
+        payload = _one_node_payload("旧端点重名流程")
+        first = await client.post("/api/v1/workflow/definitions", json=payload)
+        assert first.status_code == 201, first.text
+        second = await client.post("/api/v1/workflow/definitions", json=payload)
+        assert second.status_code == 201, second.text
+        assert (first.json()["version"], second.json()["version"]) == (1, 2)
+
+        first_detail = (await client.get(f"/api/v1/workflow/definitions/{first.json()['workflow_id']}")).json()
+        second_detail = (await client.get(f"/api/v1/workflow/definitions/{second.json()['workflow_id']}")).json()
+        assert first_detail["lineage_id"] == second_detail["lineage_id"] == first.json()["workflow_id"]
+        versions = await client.get(f"/api/v1/workflow/lineages/{first.json()['workflow_id']}/versions")
+        assert [row["version"] for row in versions.json()["items"]] == [2, 1], "版本列表最新在前"
+
+
+@pytest.mark.asyncio
+async def test_旧修订并发时不撞版本号(container: PlatformContainer) -> None:
+    """锁外读 next_version 时两路修订会同时抢 v2，一路冒成 500；锁内分配应各得一号。"""
+    async with _client(container) as client:
+        created = await client.post("/api/v1/workflow/definitions", json=_one_node_payload("旧端点并发修订流程"))
+        assert created.status_code == 201, created.text
+        workflow_id = created.json()["workflow_id"]
+        first, second = await asyncio.gather(
+            client.post(f"/api/v1/workflow/definitions/{workflow_id}/revise", json={"description": "并一"}),
+            client.post(f"/api/v1/workflow/definitions/{workflow_id}/revise", json={"description": "并二"}),
+        )
+        assert (first.status_code, second.status_code) == (200, 200), (first.text, second.text)
+        assert sorted([first.json()["version"], second.json()["version"]]) == [2, 3]
+
+        # 新族的 lineage 就是最早那一版的 workflow_id：版本列表必须把三版都聚在同一条族谱里。
+        versions = await client.get(f"/api/v1/workflow/lineages/{workflow_id}/versions")
+        assert versions.status_code == 200, versions.text
+        assert [row["version"] for row in versions.json()["items"]] == [3, 2, 1]
+
+
+@pytest.mark.asyncio
+async def test_旧创建违反文档不变量时是400不是500(container: PlatformContainer) -> None:
+    """注册 start/end 后，旧端点也能送来"两个起点"这类违反文档不变量的图。
+
+    文档校验抛的是 Pydantic ValidationError；不在这里收敛就会冒成 500，
+    让调用方以为服务端坏了，实际该改的是图。
+    """
+    async with _client(container) as client:
+        response = await client.post(
+            "/api/v1/workflow/definitions",
+            json={
+                "name": "两个起点",
+                "description": "",
+                "nodes": [
+                    {"node_id": "start_a", "type": "start", "name": "起点一", "config": {}},
+                    {"node_id": "start_b", "type": "start", "name": "起点二", "config": {}},
+                ],
+                "edges": [],
+            },
+        )
+        assert response.status_code == 400, response.text
+        assert "start" in response.json()["detail"]
+
+
 @pytest.mark.asyncio
 async def test_全空白的流程名是422不是500(container: PlatformContainer) -> None:
     """`"    "` 裁完是空串，`min_length=2` 就该在这儿判死。
@@ -176,7 +249,7 @@ async def test_节点类型出口与后端注册表同源(container: PlatformCon
         body = (await client.get("/api/v1/workflow/node-types")).json()
         names = {str(row["type"]) for row in body["items"]}
         assert {"hazard_identify", "risk_assess", "situation_simulate", "human_review", "degrade_to_rule"} <= names
-        assert body["count"] == len(names) == 16, f"节点类型数变了（{len(names)}），前端镜像与文档都要跟着改"
+        assert body["count"] == len(names) == 18, f"节点类型数变了（{len(names)}），前端镜像与文档都要跟着改"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 #: 每条集成/门禁 job 自己那份 junit 产物：守卫核对的就是它
 GUARDED_JOBS = {
     "gate": "reports/junit-gate.xml",
+    "coverage": "reports/junit-coverage.xml",
     "integration-nats": "reports/junit-nats.xml",
     "integration-postgres": "reports/junit-postgres.xml",
 }
@@ -108,7 +109,7 @@ class TestCiWiring:
 
         return yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
 
-    def test_三条job都跑守卫且核对的是自己那份产物(self) -> None:
+    def test_每个受守卫的job恰好一条守卫且核对自己那份产物(self) -> None:
         jobs = self._workflow()["jobs"]
         for job, artifact in GUARDED_JOBS.items():
             steps = [str(step.get("run") or "") for step in jobs[job]["steps"]]
@@ -132,7 +133,7 @@ class TestCiWiring:
         """
         text = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         assert "enable-caching" not in text
-        assert text.count("enable-cache: true") == 3, "gate / integration-nats / integration-postgres 各一条"
+        assert text.count("enable-cache: true") == 4, "gate / coverage / integration-nats / integration-postgres 各一条"
 
 
 class TestGuardJudges:

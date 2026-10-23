@@ -1,0 +1,213 @@
+{
+  "workflow_id": "wf_13056c3798b2",
+  "name": "崩塌危岩冻融期管控流程",
+  "description": "冻融循环叠加裂缝扩展 → 定级 → 拦路闸联动与预警发布两路并行 → 汇聚后采回执；联动缺席时按降级继续，不谎报已封路",
+  "version": 1,
+  "nodes": [
+    {
+      "node_id": "fetch_rock",
+      "type": "data_fetch",
+      "name": "拉取危岩区读数",
+      "config": {
+        "limit": 300
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "check_freeze_thaw",
+      "type": "threshold",
+      "name": "冻融裂扩展判定",
+      "config": {
+        "upstream": "fetch_rock",
+        "mode": "all",
+        "conditions": [
+          {
+            "metric": "freeze_thaw_cycles",
+            "op": ">=",
+            "threshold": 3.0,
+            "agg": "max"
+          },
+          {
+            "metric": "crack_aperture_mm",
+            "op": ">=",
+            "threshold": 15.0,
+            "agg": "max"
+          }
+        ]
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "assess",
+      "type": "risk_assess",
+      "name": "风险定级",
+      "config": {
+        "upstream": "check_freeze_thaw"
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "barrier",
+      "type": "device_control",
+      "name": "危岩段拦路闸联动（占位地址，需现场台账替换）",
+      "config": {
+        "device": "road-barrier-01",
+        "action": "close",
+        "command_url": "https://api.example.com/device/command"
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "degrade",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "generate",
+      "type": "warning_generate",
+      "name": "生成预警",
+      "config": {},
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "publish",
+      "type": "warning_publish",
+      "name": "靶向发布（含北斗）",
+      "config": {
+        "channels": [
+          "sms",
+          "beidou",
+          "broadcast"
+        ]
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "sync",
+      "type": "join",
+      "name": "联动与触达汇聚",
+      "config": {
+        "upstream": [
+          "barrier",
+          "publish"
+        ]
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "feedback",
+      "type": "feedback_collect",
+      "name": "触达回执",
+      "config": {},
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "log_quiet",
+      "type": "notify",
+      "name": "未触发记录",
+      "config": {
+        "text": "本轮未触发崩塌阈值",
+        "level": "debug"
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "fetch_rock",
+      "target": "check_freeze_thaw",
+      "condition": ""
+    },
+    {
+      "source": "check_freeze_thaw",
+      "target": "assess",
+      "condition": "triggered"
+    },
+    {
+      "source": "check_freeze_thaw",
+      "target": "log_quiet",
+      "condition": "not_triggered"
+    },
+    {
+      "source": "assess",
+      "target": "barrier",
+      "condition": ""
+    },
+    {
+      "source": "assess",
+      "target": "generate",
+      "condition": ""
+    },
+    {
+      "source": "generate",
+      "target": "publish",
+      "condition": ""
+    },
+    {
+      "source": "barrier",
+      "target": "sync",
+      "condition": ""
+    },
+    {
+      "source": "publish",
+      "target": "sync",
+      "condition": ""
+    },
+    {
+      "source": "sync",
+      "target": "feedback",
+      "condition": ""
+    }
+  ],
+  "created_by": "platform.workflow",
+  "status": "active"
+}

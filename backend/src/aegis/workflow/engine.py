@@ -1,7 +1,7 @@
 """柔性工作流引擎：DAG + 状态机 + 事件驱动调度 + 动态改图。
 
 对应考核指标 2 的三条：
-- "≥10 类节点自定义配置" → NodeRegistry 17 类节点（含 1 类内部原语，面板可拖 16 类），config 逐节点校验；
+- "≥10 类节点自定义配置" → NodeRegistry 19 类节点（含 1 类内部原语，面板可拖 18 类），config 逐节点校验；
 - "常规任务调度响应时延 ≤2s" → 节点就绪到开始执行的 workflow_schedule_ms（事件驱动，无轮询）；
 - "异常工况识别与重调度 ≤10s" → 失败/超时被立即分类并按 on_failure 处置，
   workflow_reschedule_ms 记录"首次失败→终态"的实际时长。
@@ -24,6 +24,7 @@ from aegis.domain.messages import now_iso
 from aegis.errors import AegisError
 from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
+from aegis.workflow.documents import document_from_definition
 from aegis.workflow.model import (
     EdgeDef,
     InstanceStatus,
@@ -44,7 +45,7 @@ from aegis.workflow.nodes import (
     WorkflowServices,
     default_registry,
 )
-from aegis.workflow.store import WorkflowRepository, new_instance_id
+from aegis.workflow.store import DuplicateWorkflowName, WorkflowRepository, new_instance_id
 
 log = logging.getLogger("aegis.workflow")
 
@@ -53,6 +54,10 @@ ACTIVE_SOURCE_STATES = frozenset({NodeState.SUCCEEDED, NodeState.DEGRADED, NodeS
 
 class WorkflowValidationError(Exception):
     """定义期校验失败：未知节点类型、配置不合法、图有环等。"""
+
+
+class WorkflowConflictError(WorkflowValidationError):
+    """定义期冲突（重名/版本被占）：旧端点据此回 409 而不是 400。"""
 
 
 def _as_config_list(value: Any) -> list[str]:
@@ -231,7 +236,21 @@ class WorkflowEngine:
         except ValidationError as exc:
             raise _as_workflow_error(exc) from exc
         self.validate_definition(definition)
-        return await self._repository.save(definition)
+        try:
+            document = document_from_definition(definition)
+        except ValidationError as exc:
+            # 文档层新增了 Start/End 图不变量：注册 start/end 后，旧端点也可能送来
+            # 违反它们的图。这里不收敛的话，Pydantic 异常会冒成 500——明明是定义错了。
+            raise _as_workflow_error(exc) from exc
+        try:
+            if version is not None:
+                return await self._repository.save(definition)
+            # 版本号在仓储锁内从整条 lineage 取 max+1：旧端点的"建定义"与"修订"
+            # 此前在锁外读 next_version，并发两路会撞同一个号并冒成 500。
+            # 同名再建一份仍按旧语义追加新版本，所以走按名归族的 save_next_named。
+            return await self._repository.save_next_named(definition, document=document)
+        except DuplicateWorkflowName as exc:
+            raise WorkflowConflictError(str(exc)) from exc
 
     async def revise_definition(
         self,
@@ -253,29 +272,29 @@ class WorkflowEngine:
                 nodes=nodes if nodes is not None else [node.model_dump() for node in base.nodes],
                 edges=edges if edges is not None else [edge.model_dump() for edge in base.edges],
                 description=base.description if description is None else description,
-                version=self._repository.next_version(base.name),
+                # save_next 会在锁内改写版本号；这里只需要一个合法占位值。
+                version=base.version + 1,
+                lineage_id=base.lineage_id,
             )
         except ValidationError as exc:
             raise _as_workflow_error(exc) from exc
         self.validate_definition(revised)
-        return await self._repository.save(revised)
+        try:
+            document = document_from_definition(revised)
+        except ValidationError as exc:
+            raise _as_workflow_error(exc) from exc
+        try:
+            return await self._repository.save_next(revised, document=document)
+        except DuplicateWorkflowName as exc:
+            raise WorkflowConflictError(str(exc)) from exc
 
     async def archive(self, workflow_id: str) -> WorkflowDef:
-        from aegis.workflow.store import build_definition
-
         base = self._repository.get(workflow_id)
         if base is None:
             raise WorkflowValidationError(f"工作流定义不存在: {workflow_id}")
-        archived = build_definition(
-            name=base.name,
-            nodes=[node.model_dump() for node in base.nodes],
-            edges=[edge.model_dump() for edge in base.edges],
-            description=base.description,
-            workflow_id=base.workflow_id,
-            version=base.version,
-        )
-        archived.status = "archived"
-        return await self._repository.save(archived)
+        # 归档不改内容、不产生新版本：重建对象会把 created_at 改成"归档时刻"，版本列表里的
+        # 创建时间就成了一句随操作变化的话。只翻转状态，其余字段原样保留。
+        return await self._repository.save(base.model_copy(update={"status": "archived"}))
 
     async def restore(self, workflow_id: str) -> WorkflowDef:
         """取消归档：与 `archive()` 对称的撤销动作，同样不产生新版本、不动历史。
@@ -284,24 +303,13 @@ class WorkflowEngine:
         走的都是 `latest(name)`，把一份旧版本签回启用中会让人以为恢复好了、实际仍指向
         那个归档的新版——与其静默无效，不如当场说清楚该撤哪一版。
         """
-        from aegis.workflow.store import build_definition
-
         base = self._repository.get(workflow_id)
         if base is None:
             raise WorkflowValidationError(f"工作流定义不存在: {workflow_id}")
         latest = self._repository.latest(base.name)
         if latest is not None and latest.version > base.version:
             raise WorkflowValidationError(f"同名已有更新版本 v{latest.version}，要恢复的是那一版而不是 v{base.version}")
-        restored = build_definition(
-            name=base.name,
-            nodes=[node.model_dump() for node in base.nodes],
-            edges=[edge.model_dump() for edge in base.edges],
-            description=base.description,
-            workflow_id=base.workflow_id,
-            version=base.version,
-        )
-        restored.status = "active"
-        return await self._repository.save(restored)
+        return await self._repository.save(base.model_copy(update={"status": "active"}))
 
     def latest_definition(self, name: str) -> WorkflowDef | None:
         return self._repository.latest(name)

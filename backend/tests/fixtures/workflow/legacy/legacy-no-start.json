@@ -1,0 +1,77 @@
+{
+  "workflow_id": "wf_4fa29ab1bb29",
+  "name": "旧版阈值判定流程（无 Start）",
+  "description": "冻结于 document/Start 引入之前的定义形状：无 schema_version、无 layout、无 start/end 节点",
+  "version": 1,
+  "nodes": [
+    {
+      "node_id": "fetch_rain",
+      "type": "data_fetch",
+      "name": "拉取区域读数",
+      "config": {
+        "limit": 200
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "check_trigger",
+      "type": "threshold",
+      "name": "触发条件判定",
+      "config": {
+        "upstream": "fetch_rain",
+        "mode": "all",
+        "conditions": [
+          {
+            "metric": "rain_10min",
+            "op": ">=",
+            "threshold": 30.0,
+            "agg": "max"
+          }
+        ]
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "log_quiet",
+      "type": "notify",
+      "name": "未触发记录",
+      "config": {
+        "text": "本轮未触发",
+        "level": "debug"
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "fetch_rain",
+      "target": "check_trigger",
+      "condition": ""
+    },
+    {
+      "source": "check_trigger",
+      "target": "log_quiet",
+      "condition": "not_triggered"
+    }
+  ],
+  "created_by": "platform.workflow",
+  "status": "active"
+}

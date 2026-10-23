@@ -11,8 +11,11 @@ from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
 from aegis.domain.messages import new_trace_id
 from aegis.services.memory.label_flywheel import CAPTURE_MARKER
-from aegis.workflow.engine import WorkflowEngine, WorkflowValidationError
+from aegis.workflow.documents import WorkflowDocument, WorkflowDraft
+from aegis.workflow.engine import WorkflowConflictError, WorkflowEngine, WorkflowValidationError
+from aegis.workflow.errors import WorkflowAppError, WorkflowErrorCode
 from aegis.workflow.model import RetryPolicy
+from aegis.workflow.publishing import version_summary
 
 
 class _TrimsText:
@@ -106,6 +109,80 @@ class InsertNodeInput(BaseModel):
     node: NodeInput
 
 
+class DraftPutInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_revision: int = Field(ge=0)
+    document: WorkflowDocument
+
+
+class PublishInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_revision: int = Field(ge=1)
+
+
+class RevertInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workflow_id: str = Field(pattern=r"^wf_[0-9a-f]{12}$")
+
+
+class RenameInput(_TrimsText, BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+
+
+class CreateLineageInput(_TrimsText, BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+
+
+class VersionSummaryOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workflow_id: str
+    lineage_id: str
+    version: int
+    name: str
+    description: str
+    status: str
+    node_count: int
+    edge_count: int
+    created_at: str
+    content_hash: str
+    is_current: bool
+
+
+class VersionListOut(BaseModel):
+    count: int
+    items: list[VersionSummaryOut]
+
+
+class DraftOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lineage_id: str
+    base_workflow_id: str | None
+    revision: int
+    document: WorkflowDocument
+    updated_at: str
+
+    @classmethod
+    def of(cls, draft: WorkflowDraft) -> DraftOut:
+        return cls(**draft.model_dump())
+
+
+class RenameOut(BaseModel):
+    workflow_id: str
+    lineage_id: str
+    name: str
+    version: int
+    draft: DraftOut | None
+
+
 def build_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1/workflow", tags=["workflow"])
 
@@ -138,12 +215,15 @@ def build_router() -> APIRouter:
             "items": [
                 {
                     "workflow_id": row.workflow_id,
+                    "lineage_id": row.lineage_id,
                     "name": row.name,
                     "version": row.version,
                     "status": row.status,
                     "description": row.description,
                     "node_count": len(row.nodes),
                     "edge_count": len(row.edges),
+                    "created_at": row.created_at,
+                    "content_hash": row.content_hash,
                 }
                 for row in rows
             ],
@@ -161,6 +241,8 @@ def build_router() -> APIRouter:
                 nodes=[node.model_dump() for node in payload.nodes],
                 edges=[edge.model_dump() for edge in payload.edges],
             )
+        except WorkflowConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except WorkflowValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"workflow_id": definition.workflow_id, "name": definition.name, "version": definition.version}
@@ -178,6 +260,8 @@ def build_router() -> APIRouter:
                 edges=None if payload.edges is None else [edge.model_dump() for edge in payload.edges],
                 description=payload.description,
             )
+        except WorkflowConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except WorkflowValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"workflow_id": revised.workflow_id, "name": revised.name, "version": revised.version}
@@ -226,6 +310,69 @@ def build_router() -> APIRouter:
         if definition is None:
             raise HTTPException(status_code=404, detail="工作流定义不存在")
         return definition.model_dump(mode="json")
+
+    @router.post("/lineages", response_model=DraftOut, status_code=201)
+    async def create_lineage(payload: CreateLineageInput, container: PlatformContainer = Depends(get_container)) -> DraftOut:
+        """新建空白草稿（自动带 Start）；首次发布时复用这条 lineage 作为 v1。"""
+        return DraftOut.of(await container.drafts.create(payload.name))
+
+    @router.get("/lineages/{lineage_id}/versions", response_model=VersionListOut, responses={404: {"description": "lineage 不存在"}})
+    async def list_versions(lineage_id: str, container: PlatformContainer = Depends(get_container)) -> VersionListOut:
+        rows = container.publishing.list_versions(lineage_id)
+        return VersionListOut(count=len(rows), items=[VersionSummaryOut(**row) for row in rows])
+
+    @router.get("/versions/{workflow_id}", response_model=WorkflowDocument, responses={404: {"description": "版本不存在"}})
+    async def get_version_document(workflow_id: str, container: PlatformContainer = Depends(get_container)) -> WorkflowDocument:
+        """某个已发布版本的完整文档（节点/连线/版式）——版本只读查看与恢复为草稿都靠它。"""
+        document = container.workflow.repository.document_of(workflow_id)
+        if document is None:
+            raise WorkflowAppError(WorkflowErrorCode.NOT_FOUND, f"版本不存在: {workflow_id}")
+        return document
+
+    @router.get("/lineages/{lineage_id}/draft", response_model=DraftOut)
+    async def get_draft(lineage_id: str, container: PlatformContainer = Depends(get_container)) -> DraftOut:
+        draft = await container.drafts.get(lineage_id)
+        if draft is None:
+            raise WorkflowAppError(WorkflowErrorCode.NOT_FOUND, f"草稿不存在: {lineage_id}")
+        return DraftOut.of(draft)
+
+    @router.put("/lineages/{lineage_id}/draft", response_model=DraftOut)
+    async def put_draft(
+        lineage_id: str,
+        payload: DraftPutInput,
+        container: PlatformContainer = Depends(get_container),
+    ) -> DraftOut:
+        draft = await container.drafts.put(lineage_id, payload.document, base_revision=payload.base_revision)
+        return DraftOut.of(draft)
+
+    @router.post("/lineages/{lineage_id}/publish", response_model=VersionSummaryOut)
+    async def publish(lineage_id: str, payload: PublishInput, container: PlatformContainer = Depends(get_container)) -> VersionSummaryOut:
+        stored = await container.publishing.publish(lineage_id, base_revision=payload.base_revision)
+        return VersionSummaryOut(**version_summary(stored, is_current=True))
+
+    @router.post("/lineages/{lineage_id}/revert-to-draft", response_model=DraftOut)
+    async def revert_to_draft(
+        lineage_id: str,
+        payload: RevertInput,
+        container: PlatformContainer = Depends(get_container),
+    ) -> DraftOut:
+        draft = await container.publishing.revert_to_draft(lineage_id, payload.workflow_id)
+        return DraftOut.of(draft)
+
+    @router.patch("/lineages/{lineage_id}", response_model=RenameOut)
+    async def rename_lineage(
+        lineage_id: str,
+        payload: RenameInput,
+        container: PlatformContainer = Depends(get_container),
+    ) -> RenameOut:
+        definition, draft = await container.publishing.rename(lineage_id, payload.name)
+        return RenameOut(
+            workflow_id=definition.workflow_id,
+            lineage_id=definition.lineage_id,
+            name=definition.name,
+            version=definition.version,
+            draft=DraftOut.of(draft) if draft is not None else None,
+        )
 
     @router.get("/instances")
     async def list_instances(container: PlatformContainer = Depends(get_container)) -> dict[str, Any]:

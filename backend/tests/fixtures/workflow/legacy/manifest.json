@@ -1,0 +1,79 @@
+{
+  "provenance": "Batch 0 frozen fixtures; generated from backend/src/aegis/workflow/templates.py on 2026-10-22",
+  "shape": "GET /api/v1/workflow/definitions/{workflow_id} (WorkflowDef.model_dump(mode='json'))",
+  "why": "Old definitions predate schema_version/layout/start-end; new document codecs must keep reading them.",
+  "entries": [
+    {
+      "file": "debris-flow.json",
+      "kind": "builtin",
+      "name": "泥石流预警标准流程",
+      "workflow_id": "wf_67ea7014e326",
+      "node_count": 8,
+      "edge_count": 7,
+      "signature": "assess:risk_assess|check_trigger:threshold|commander_sign:human_review|feedback:feedback_collect|fetch_rain:data_fetch|generate:warning_generate|log_quiet:notify|publish:warning_publish|assess->generate:|check_trigger->assess:triggered|check_trigger->log_quiet:not_triggered|commander_sign->publish:approve|fetch_rain->check_trigger:|generate->commander_sign:|publish->feedback:"
+    },
+    {
+      "file": "lake-outburst.json",
+      "kind": "builtin",
+      "name": "冰湖溃决应急会商流程",
+      "workflow_id": "wf_a2b98eebf0db",
+      "node_count": 7,
+      "edge_count": 6,
+      "signature": "assess:risk_assess|check_trigger:threshold|fetch_lake:data_fetch|generate:warning_generate|publish:warning_publish|simulate:situation_simulate|watch:notify|assess->simulate:|check_trigger->assess:triggered|fetch_lake->check_trigger:|generate->publish:|publish->watch:|simulate->generate:"
+    },
+    {
+      "file": "landslide.json",
+      "kind": "builtin",
+      "name": "滑坡隐患点降雨-位移双判处置流程",
+      "workflow_id": "wf_61cc9f07b967",
+      "node_count": 10,
+      "edge_count": 10,
+      "signature": "assess:risk_assess|check_infiltration:threshold|commander_sign:human_review|feedback:feedback_collect|fetch_watch:data_fetch|generate:warning_generate|identify_hazard:hazard_identify|patrol:notify|publish:warning_publish|simulate:situation_simulate|assess->simulate:|check_infiltration->assess:triggered|check_infiltration->identify_hazard:triggered|check_infiltration->patrol:not_triggered|commander_sign->generate:approve|fetch_watch->check_infiltration:|generate->publish:|identify_hazard->assess:|publish->feedback:|simulate->commander_sign:"
+    },
+    {
+      "file": "rockfall.json",
+      "kind": "builtin",
+      "name": "崩塌危岩冻融期管控流程",
+      "workflow_id": "wf_13056c3798b2",
+      "node_count": 9,
+      "edge_count": 9,
+      "signature": "assess:risk_assess|barrier:device_control|check_freeze_thaw:threshold|feedback:feedback_collect|fetch_rock:data_fetch|generate:warning_generate|log_quiet:notify|publish:warning_publish|sync:join|assess->barrier:|assess->generate:|barrier->sync:|check_freeze_thaw->assess:triggered|check_freeze_thaw->log_quiet:not_triggered|fetch_rock->check_freeze_thaw:|generate->publish:|publish->sync:|sync->feedback:"
+    },
+    {
+      "file": "avalanche.json",
+      "kind": "builtin",
+      "name": "雪崩气象型预警与交通管控流程",
+      "workflow_id": "wf_fc5abaf12dcc",
+      "node_count": 11,
+      "edge_count": 11,
+      "signature": "assess:risk_assess|check_snow_load:threshold|check_weak_layer:threshold|feedback:feedback_collect|fetch_snow:data_fetch|generate:warning_generate|log_quiet:notify|pit_watch:notify|publish:warning_publish|route:branch|traffic_intel:api_call|assess->route:|check_snow_load->assess:triggered|check_snow_load->log_quiet:not_triggered|check_weak_layer->pit_watch:triggered|fetch_snow->check_snow_load:|fetch_snow->check_weak_layer:|generate->publish:|publish->feedback:|route->generate:publish_direct|route->traffic_intel:traffic_check|traffic_intel->generate:"
+    },
+    {
+      "file": "standard-chain.json",
+      "kind": "standard_chain",
+      "name": "标准五段处置链路",
+      "workflow_id": "wf_f50ac15a15a3",
+      "node_count": 5,
+      "edge_count": 4,
+      "signature": "assess:chain_stage|execute:chain_stage|feedback:chain_stage|perceive:chain_stage|plan:chain_stage|assess->plan:verdict|execute->feedback:|perceive->assess:hit|plan->execute:"
+    },
+    {
+      "file": "report-review.json",
+      "kind": "report_review",
+      "name": "人工上报核签流程",
+      "workflow_id": "wf_77890844c32c",
+      "node_count": 4,
+      "edge_count": 3,
+      "signature": "adjust:notify|drop:notify|ok:notify|review:human_review|review->adjust:adjust|review->drop:reject|review->ok:approve"
+    },
+    {
+      "file": "legacy-no-start.json",
+      "kind": "legacy_no_start",
+      "name": "旧版阈值判定流程（无 Start）",
+      "workflow_id": "wf_4fa29ab1bb29",
+      "node_count": 3,
+      "edge_count": 2,
+      "signature": "check_trigger:threshold|fetch_rain:data_fetch|log_quiet:notify|check_trigger->log_quiet:not_triggered|fetch_rain->check_trigger:"
+    }
+  ]
+}

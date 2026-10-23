@@ -1,0 +1,163 @@
+{
+  "workflow_id": "wf_a2b98eebf0db",
+  "name": "冰湖溃决应急会商流程",
+  "description": "水位与渗浊双条件 → 灾种识别 → 定级 → 态势推演 → 高风险直接发布并通知，中低风险加密监测",
+  "version": 1,
+  "nodes": [
+    {
+      "node_id": "fetch_lake",
+      "type": "data_fetch",
+      "name": "拉取冰湖区读数",
+      "config": {
+        "limit": 500
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "check_trigger",
+      "type": "threshold",
+      "name": "溃决前兆判定",
+      "config": {
+        "upstream": "fetch_lake",
+        "mode": "any",
+        "conditions": [
+          {
+            "metric": "lake_level_m",
+            "op": ">=",
+            "threshold": 0.5,
+            "agg": "max"
+          },
+          {
+            "metric": "dam_seepage_turbidity_ntu",
+            "op": ">=",
+            "threshold": 50.0,
+            "agg": "max"
+          }
+        ]
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "assess",
+      "type": "risk_assess",
+      "name": "风险定级",
+      "config": {
+        "upstream": "check_trigger"
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "simulate",
+      "type": "situation_simulate",
+      "name": "溃决态势推演",
+      "config": {},
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "generate",
+      "type": "warning_generate",
+      "name": "生成预警",
+      "config": {},
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "publish",
+      "type": "warning_publish",
+      "name": "红色预警发布（含北斗）",
+      "config": {
+        "channels": [
+          "sms",
+          "beidou",
+          "broadcast"
+        ]
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "watch",
+      "type": "notify",
+      "name": "转加密监测",
+      "config": {
+        "text": "中低风险，转加密监测与巡查",
+        "level": "info"
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "fetch_lake",
+      "target": "check_trigger",
+      "condition": ""
+    },
+    {
+      "source": "check_trigger",
+      "target": "assess",
+      "condition": "triggered"
+    },
+    {
+      "source": "assess",
+      "target": "simulate",
+      "condition": ""
+    },
+    {
+      "source": "simulate",
+      "target": "generate",
+      "condition": ""
+    },
+    {
+      "source": "generate",
+      "target": "publish",
+      "condition": ""
+    },
+    {
+      "source": "publish",
+      "target": "watch",
+      "condition": ""
+    }
+  ],
+  "created_by": "platform.workflow",
+  "status": "active"
+}

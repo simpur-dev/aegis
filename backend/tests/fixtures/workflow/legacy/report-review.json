@@ -1,0 +1,95 @@
+{
+  "workflow_id": "wf_77890844c32c",
+  "name": "人工上报核签流程",
+  "description": "低置信度上报 → 值班指挥员核签（通过/更正转监测/驳回）→ 结果留痕广播，供阈值标定回看",
+  "version": 1,
+  "nodes": [
+    {
+      "node_id": "review",
+      "type": "human_review",
+      "name": "上报核签",
+      "config": {
+        "prompt": "该上报的等级不是阈值命中所得，请核签：确认处置、更正后转加密监测，或驳回",
+        "options": [
+          "approve",
+          "adjust",
+          "reject"
+        ]
+      },
+      "sla_ms": 900000,
+      "timeout_ms": 900000,
+      "on_failure": "escalate",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "ok",
+      "type": "notify",
+      "name": "核签通过",
+      "config": {
+        "text": "人工核签通过，上报结论按现状生效",
+        "level": "info"
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "adjust",
+      "type": "notify",
+      "name": "更正后转监测",
+      "config": {
+        "text": "核签更正灾种或等级，转加密监测与现场核查",
+        "level": "warning"
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "drop",
+      "type": "notify",
+      "name": "驳回",
+      "config": {
+        "text": "人工核签驳回本次上报",
+        "level": "info"
+      },
+      "sla_ms": 5000,
+      "timeout_ms": 5000,
+      "on_failure": "retry",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "review",
+      "target": "ok",
+      "condition": "approve"
+    },
+    {
+      "source": "review",
+      "target": "adjust",
+      "condition": "adjust"
+    },
+    {
+      "source": "review",
+      "target": "drop",
+      "condition": "reject"
+    }
+  ],
+  "created_by": "platform.workflow",
+  "status": "active"
+}

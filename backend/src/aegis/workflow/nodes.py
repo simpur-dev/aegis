@@ -438,9 +438,25 @@ async def _degrade_to_rule(ctx: NodeContext, config: dict[str, Any]) -> NodeOutc
     return NodeOutcome(output={"risk_level": fallback_level, "degraded": True}, branch=f"level_{fallback_level}")
 
 
+async def _start(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
+    """起点：只声明运行输入变量，取值由实例 payload 提供。
+
+    旧定义没有 Start 仍能运行——引擎不要求每张图从这里开始；有 Start 时的
+    "唯一根/全可达"约束由文档校验负责，节点本身不做图级判断。
+    """
+    variables = config.get("variables", [])
+    return NodeOutcome(output={"started": True, "variables": list(variables) if isinstance(variables, list) else []})
+
+
+async def _end(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
+    return NodeOutcome(output={"ended": True})
+
+
 def default_registry() -> NodeRegistry:
     registry = NodeRegistry()
     specs = [
+        NodeSpec("start", "起点：声明运行输入变量", _start, (), ("variables",)),
+        NodeSpec("end", "终点：标记流程结束", _end),
         NodeSpec("data_fetch", "数据接入：按区域/指标拉取最新读数", _data_fetch, (), ("region_code", "metric", "limit")),
         NodeSpec("threshold", "阈值判断：对读数做触发条件判定", _threshold, ("conditions",), ("upstream", "mode")),
         NodeSpec("hazard_identify", "灾种识别：判定候选灾种", _hazard_identify, (), ("extra",)),

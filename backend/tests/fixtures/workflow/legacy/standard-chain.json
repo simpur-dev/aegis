@@ -1,0 +1,107 @@
+{
+  "workflow_id": "wf_f50ac15a15a3",
+  "name": "标准五段处置链路",
+  "description": "标准五段处置链路（感知→研判→决策→执行→反馈）：D7 编排归一的 DAG 形态",
+  "version": 1,
+  "nodes": [
+    {
+      "node_id": "perceive",
+      "type": "chain_stage",
+      "name": "① 感知（标准五段）",
+      "config": {
+        "stage": "perceive"
+      },
+      "sla_ms": 65000,
+      "timeout_ms": 65000,
+      "on_failure": "abort",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "assess",
+      "type": "chain_stage",
+      "name": "② 研判（标准五段）",
+      "config": {
+        "stage": "assess"
+      },
+      "sla_ms": 65000,
+      "timeout_ms": 65000,
+      "on_failure": "abort",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "plan",
+      "type": "chain_stage",
+      "name": "③ 决策（标准五段）",
+      "config": {
+        "stage": "plan"
+      },
+      "sla_ms": 65000,
+      "timeout_ms": 65000,
+      "on_failure": "abort",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "execute",
+      "type": "chain_stage",
+      "name": "④ 执行（标准五段）",
+      "config": {
+        "stage": "execute"
+      },
+      "sla_ms": 65000,
+      "timeout_ms": 65000,
+      "on_failure": "abort",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    },
+    {
+      "node_id": "feedback",
+      "type": "chain_stage",
+      "name": "⑤ 反馈（标准五段）",
+      "config": {
+        "stage": "feedback"
+      },
+      "sla_ms": 65000,
+      "timeout_ms": 65000,
+      "on_failure": "abort",
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 200
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "perceive",
+      "target": "assess",
+      "condition": "hit"
+    },
+    {
+      "source": "assess",
+      "target": "plan",
+      "condition": "verdict"
+    },
+    {
+      "source": "plan",
+      "target": "execute",
+      "condition": ""
+    },
+    {
+      "source": "execute",
+      "target": "feedback",
+      "condition": ""
+    }
+  ],
+  "created_by": "platform.workflow",
+  "status": "active"
+}

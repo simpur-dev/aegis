@@ -9,10 +9,13 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from aegis.domain.messages import now_iso
 
 MAX_NODES = 64
 MAX_EDGES = 256
@@ -96,13 +99,33 @@ class WorkflowDef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workflow_id: str = Field(pattern=r"^wf_[0-9a-f]{12}$")
+    #: 同一模板的版本族。旧构造点不传时按 workflow_id 自成一条 lineage；
+    #: 仓储 `save()` 会按 name 回填成该名字最早版本的 lineage（ADR-0009 §2）。
+    lineage_id: str = ""
+    schema_version: int = Field(default=1, ge=1)
     name: str = Field(min_length=1, max_length=64)
     description: str = Field(default="", max_length=512)
     version: int = Field(default=1, ge=1)
     nodes: list[NodeDef] = Field(min_length=1, max_length=MAX_NODES)
     edges: list[EdgeDef] = Field(default_factory=list, max_length=MAX_EDGES)
     created_by: str = Field(default="platform.workflow", max_length=64)
+    created_at: str = Field(default_factory=now_iso)
     status: str = Field(default="active", pattern=r"^(active|archived)$")
+    #: 发布时那份文档的 canonical hash（含 layout）；旧路径创建的定义由仓储按投影文档补算。
+    content_hash: str = ""
+
+    @field_validator("lineage_id")
+    @classmethod
+    def _lineage_pattern(cls, value: str) -> str:
+        if value and not re.fullmatch(r"wf_[0-9a-f]{12}", value):
+            raise ValueError(f"lineage_id 形状不合法: {value!r}")
+        return value
+
+    @model_validator(mode="after")
+    def _default_lineage(self) -> WorkflowDef:
+        if not self.lineage_id:
+            self.lineage_id = self.workflow_id
+        return self
 
     @model_validator(mode="after")
     def _graph_is_valid(self) -> WorkflowDef:
