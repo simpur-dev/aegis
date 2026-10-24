@@ -200,8 +200,11 @@ def build_router() -> APIRouter:
                 {
                     "type": spec.type_name,
                     "description": spec.description,
+                    "category": spec.category,
                     "required_config": list(spec.required_config),
                     "optional_config": list(spec.optional_config),
+                    "min_config": dict(spec.min_config),
+                    "outputs": list(spec.outputs),
                 }
                 for spec in specs
             ],

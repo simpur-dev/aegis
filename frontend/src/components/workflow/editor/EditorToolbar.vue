@@ -1,7 +1,13 @@
 <script setup lang="ts">
 /** 画布左上角的浮动工具条：添加节点 / 备注 / 自动布局 / 适配画布（对齐 Dify 画布浮层控件的位置与尺寸）。 */
-defineProps<{ disabled?: boolean }>()
-const emit = defineEmits<{ add: [event: MouseEvent]; note: []; layout: []; fit: [] }>()
+const props = defineProps<{ disabled?: boolean; mode?: 'pointer' | 'hand' }>()
+const emit = defineEmits<{
+  add: [event: MouseEvent]
+  note: []
+  layout: []
+  fit: []
+  mode: [mode: 'pointer' | 'hand']
+}>()
 </script>
 
 <template>
@@ -28,6 +34,17 @@ const emit = defineEmits<{ add: [event: MouseEvent]; note: []; layout: []; fit: 
       自动布局
     </button>
     <button type="button" class="ed-toolbar__btn" @click="emit('fit')">适配画布</button>
+    <button
+      type="button"
+      class="ed-toolbar__btn"
+      :class="{ 'is-active': props.mode === 'hand' }"
+      :aria-pressed="props.mode === 'hand'"
+      title="抓手模式（H）/ 指针模式（V）"
+      data-testid="toolbar-mode"
+      @click="emit('mode', props.mode === 'hand' ? 'pointer' : 'hand')"
+    >
+      {{ props.mode === 'hand' ? '抓手' : '指针' }}
+    </button>
   </div>
 </template>
 
@@ -63,6 +80,10 @@ const emit = defineEmits<{ add: [event: MouseEvent]; note: []; layout: []; fit: 
 .ed-toolbar__btn:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+.ed-toolbar__btn.is-active {
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-brand-hover);
 }
 .ed-toolbar__btn.is-primary {
   background: var(--aeg-color-brand);

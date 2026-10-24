@@ -196,6 +196,13 @@
     ],
     "added": [
       {
+        "id": "workflow.cut",
+        "hotkeys": [
+          "Mod+X"
+        ],
+        "note": "批次 C3 追加：复制后删除选中节点（上游只有复制/粘贴）"
+      },
+      {
         "id": "workflow.save",
         "hotkeys": [
           "Mod+S"
@@ -208,6 +215,13 @@
           "?"
         ],
         "note": "AEGIS 帮助面板"
+      },
+      {
+        "id": "workflow.locate",
+        "hotkeys": [
+          "Mod+F"
+        ],
+        "note": "批次 C1 追加：按名称查找并聚焦节点"
       }
     ]
   }

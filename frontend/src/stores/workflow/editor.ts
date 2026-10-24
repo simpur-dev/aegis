@@ -13,6 +13,9 @@ import { describeFailure } from './shared'
 export type EditorMode =
   { kind: 'draft' } | { kind: 'version'; workflowId: string } | { kind: 'instance'; instanceId: string; readOnly: true }
 
+/** 指针模式：左键框选/拖节点；抓手模式：左键平移画布（Dify 的 V / H 两档）。 */
+export type CanvasMode = 'pointer' | 'hand'
+
 function initialMode(): EditorMode {
   return { kind: 'draft' }
 }
@@ -20,6 +23,7 @@ function initialMode(): EditorMode {
 export function createEditorStore() {
   return defineStore('workflow.editor', () => {
     const mode = ref<EditorMode>(initialMode())
+    const canvasMode = ref<CanvasMode>('pointer')
     const selectedNodeId = ref<string | null>(null)
     const selectedNoteId = ref<string | null>(null)
     const error = ref<string | null>(null)
@@ -37,6 +41,10 @@ export function createEditorStore() {
 
     function setMode(next: EditorMode): void {
       mode.value = next
+    }
+
+    function setCanvasMode(next: CanvasMode): void {
+      canvasMode.value = next
     }
 
     function setError(message: string | null): void {
@@ -63,6 +71,7 @@ export function createEditorStore() {
 
     return {
       mode,
+      canvasMode,
       selectedNodeId,
       selectedNoteId,
       error,
@@ -70,6 +79,7 @@ export function createEditorStore() {
       select,
       selectNote,
       setMode,
+      setCanvasMode,
       setError,
       clearError,
       runAction,

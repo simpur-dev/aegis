@@ -251,6 +251,16 @@ async def test_节点类型出口与后端注册表同源(container: PlatformCon
         assert {"hazard_identify", "risk_assess", "situation_simulate", "human_review", "degrade_to_rule"} <= names
         assert body["count"] == len(names) == 18, f"节点类型数变了（{len(names)}），前端镜像与文档都要跟着改"
 
+        by_type = {str(row["type"]): row for row in body["items"]}
+        for row in body["items"]:
+            assert row["category"] in {"io", "logic", "intelligence", "human"}, row
+            assert isinstance(row["min_config"], dict), row
+            assert row["outputs"], f"{row['type']} 没声明产出键"
+        spec = container.workflow.node_registry.require("degrade_to_rule")
+        assert by_type["degrade_to_rule"]["category"] == spec.category == "intelligence"
+        assert by_type["degrade_to_rule"]["min_config"] == {"risk_level": 1}
+        assert by_type["data_fetch"]["outputs"] == ["rows", "count"]
+
 
 @pytest.mark.asyncio
 async def test_内部段原语给引擎看不给画布看(container: PlatformContainer) -> None:

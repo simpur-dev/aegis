@@ -5,6 +5,7 @@ import {
   WorkflowError,
   type DefinitionSummary,
   type DefinitionsResponse,
+  type NodeTypeEntry,
   type NodeTypesResponse,
   type WorkflowGateway,
 } from '@/api/workflow/contract'
@@ -66,10 +67,21 @@ describe('目录层：节点面板与定义列表', () => {
         {
           type: 'data_fetch',
           description: '数据接入：按区域/指标拉取最新读数',
+          category: 'io',
           required_config: [],
           optional_config: [],
+          min_config: {},
+          outputs: ['rows', 'count'],
         },
-        { type: 'join', description: '并行汇聚：合并多路上游结果', required_config: ['upstream'], optional_config: [] },
+        {
+          type: 'join',
+          description: '并行汇聚：合并多路上游结果',
+          category: 'logic',
+          required_config: ['upstream'],
+          optional_config: [],
+          min_config: {},
+          outputs: ['merged'],
+        },
       ],
     }
     bootstrap({ nodeTypes: vi.fn(async () => nodeTypes) })
@@ -153,6 +165,79 @@ describe('目录层：节点面板与定义列表', () => {
     expect(catalog().error).toBe('归档定义失败：该工作流已归档')
     expect(catalog().definitions).toHaveLength(1)
     expect(catalog().loading).toBe(false)
+  })
+})
+
+describe('目录层：节点目录的加载与重试', () => {
+  function entry(type: string, overrides: Partial<NodeTypeEntry> = {}): NodeTypeEntry {
+    return {
+      type,
+      description: `${type} 的说明`,
+      category: 'io',
+      required_config: [],
+      optional_config: [],
+      min_config: {},
+      outputs: ['ok'],
+      ...overrides,
+    }
+  }
+
+  function nodeTypesOf(items: NodeTypeEntry[]): NodeTypesResponse {
+    return { count: items.length, items }
+  }
+
+  it('加载失败不抛：错误留在 nodeTypesError，面板照常可用', async () => {
+    bootstrap({
+      nodeTypes: vi.fn<WorkflowGateway['nodeTypes']>(async () => {
+        throw new WorkflowError('network_error', 0, '接口调用失败（网络）：断网')
+      }),
+    })
+    expect(await catalog().loadNodeTypes()).toBe(false)
+    expect(catalog().nodeTypesError).toContain('节点目录没加载')
+    expect(catalog().nodeTypesError).toContain('断网')
+    expect(catalog().nodeTypes).toEqual([])
+    expect(catalog().nodeTypesLoading).toBe(false)
+    expect(catalog().nodeTypesUpdatedAt).toBeNull()
+  })
+
+  it('重试成功后错误清掉，失败态不会残留', async () => {
+    const nodeTypes = vi
+      .fn<WorkflowGateway['nodeTypes']>()
+      .mockRejectedValueOnce(new WorkflowError('network_error', 0, '断网'))
+      .mockResolvedValueOnce(nodeTypesOf([entry('notify'), entry('data_fetch')]))
+    bootstrap({ nodeTypes })
+    expect(await catalog().loadNodeTypes()).toBe(false)
+    expect(await catalog().retryNodeTypes()).toBe(true)
+    expect(catalog().nodeTypesError).toBeNull()
+    expect(catalog().nodeTypes).toHaveLength(2)
+    expect(catalog().nodeTypesUpdatedAt).not.toBeNull()
+    expect(catalog().descriptionByType.notify).toBe('notify 的说明')
+  })
+
+  it('对账点名服务端新增、本地多出与字段不一致', async () => {
+    bootstrap({
+      nodeTypes: vi.fn(async () =>
+        nodeTypesOf([
+          entry('data_fetch', { category: 'io', outputs: ['rows', 'count'] }),
+          entry('telepathy', { category: 'misc' as NodeTypeEntry['category'] }),
+          entry('join', { category: 'io', outputs: ['merged'] }),
+        ]),
+      ),
+    })
+    await catalog().loadNodeTypes()
+    expect(catalog().drift.unknown).toEqual(['telepathy'])
+    expect(catalog().drift.mismatched).toEqual(['join'])
+    expect(catalog().drift.missing).toContain('start')
+    expect(catalog().drift.missing).not.toContain('data_fetch')
+    expect(catalog().hasDrift).toBe(true)
+    expect(catalog().driftSummary).toContain('telepathy')
+    expect(catalog().driftSummary).toContain('join')
+  })
+
+  it('目录还没加载时不下"全都缺"的结论', async () => {
+    bootstrap({ nodeTypes: vi.fn<WorkflowGateway['nodeTypes']>(async () => nodeTypesOf([])) })
+    expect(catalog().hasDrift).toBe(false)
+    expect(catalog().drift.missing).toEqual([])
   })
 })
 

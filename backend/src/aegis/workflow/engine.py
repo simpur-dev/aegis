@@ -141,6 +141,9 @@ class WorkflowEngine:
         # 因此这里统一按 `is None` 判断是否使用默认值。
         self._repository = repository if repository is not None else WorkflowRepository()
         self._registry = registry if registry is not None else default_registry()
+        # 启动对账：目录是面板、变量选择器与发布校验的共同真源，坏一行就整表拒启。
+        # 放在构造期而不是首次请求期——启动日志里第一条事实就该是"目录对上了"。
+        self._registry.assert_consistent()
         self._services = services if services is not None else WorkflowServices()
         self._tracer = tracer if tracer is not None else Tracer()
         self._settings = settings if settings is not None else get_settings()

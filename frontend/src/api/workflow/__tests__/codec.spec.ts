@@ -213,9 +213,47 @@ describe('codec：响应逐字段解析', () => {
     expect(() =>
       decodeNodeTypesResponse({
         count: 2,
-        items: [{ type: 'notify', description: '', required_config: [], optional_config: [] }],
+        items: [
+          {
+            type: 'notify',
+            description: '',
+            category: 'io',
+            required_config: [],
+            optional_config: [],
+            min_config: {},
+            outputs: ['notified'],
+          },
+        ],
       }),
     ).toThrowError(expect.objectContaining({ message: expect.stringContaining('node-types.count') }))
+  })
+
+  it('节点面板：类别/下限/产出键逐格收严，坏字段带路径', () => {
+    const row = {
+      type: 'degrade_to_rule',
+      description: '规则降级',
+      category: 'intelligence',
+      required_config: [],
+      optional_config: ['risk_level'],
+      min_config: { risk_level: 1 },
+      outputs: ['risk_level', 'degraded'],
+    }
+    const decoded = decodeNodeTypesResponse({ count: 1, items: [row] })
+    expect(decoded.items[0]?.category).toBe('intelligence')
+    expect(decoded.items[0]?.min_config).toEqual({ risk_level: 1 })
+    expect(decoded.items[0]?.outputs).toEqual(['risk_level', 'degraded'])
+    expectRejected(
+      () => decodeNodeTypesResponse({ count: 1, items: [{ ...row, category: 'misc' }] }),
+      'node-types.items[0].category',
+    )
+    expectRejected(
+      () => decodeNodeTypesResponse({ count: 1, items: [{ ...row, min_config: { risk_level: '1' } }] }),
+      'node-types.items[0].min_config.risk_level',
+    )
+    expectRejected(
+      () => decodeNodeTypesResponse({ count: 1, items: [{ ...row, outputs: [1] }] }),
+      'node-types.items[0].outputs[0]',
+    )
   })
 
   it('实例：payload 与节点运行态都按 JSON 解析', () => {

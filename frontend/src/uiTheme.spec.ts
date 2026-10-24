@@ -31,8 +31,11 @@ import { readRepoFile, repoRoot } from '@/testing/repoSource'
  *  从写死的 `#fa8c16` 改走 `--aeg-color-status-warning`，白底上原本只有 2.38:1）。
  *  口径没变（同一套走目录/剥注释/正则），是 HEAD 实量 139 减到 110，不是换了算法。
  *  现在最重的三处：`SystemTerminal.vue` 21（固定深底的面板，它本来就不随主题翻，但要收进令牌槽）、
- *  `RunTimeline.vue` 13、`utils/graph.ts` 12（T09 的欠项：画布内部接令牌）。 */
-const COLOR_BASELINE = 110
+ *  `RunTimeline.vue` 13、`utils/graph.ts` 12（T09 的欠项：画布内部接令牌）。**
+ *  → 106（2026-10-24 批次 D3：节点参数表单换控件时把 `ConfigFields.vue` 2→0、`JsonField.vue` 2→0
+ *  （`#d9d9d9` 描边 → `--aeg-color-border-strong`，`#cf1322` 红字 → `--aeg-color-status-danger`），
+ *  新落地的 7 个编辑器组件从第一行起就没写字面色。口径不变，探针同脚本实量。 */
+const COLOR_BASELINE = 106
 
 function fontsCss(): string {
   return readRepoFile('frontend', 'src', 'styles', 'fonts.css')

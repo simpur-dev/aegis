@@ -13,6 +13,8 @@ const props = defineProps<{
   placeholder: string
   modelValue: JsonValue | undefined
   disabled: boolean
+  /** 这格的内容不合规（白名单外的结构、类型不对…）：只染红边框，话由外层说。 */
+  invalid?: boolean
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: JsonValue] }>()
@@ -23,7 +25,8 @@ function render(value: JsonValue | undefined): string {
 }
 
 const draft = ref(render(props.modelValue))
-const invalid = ref('')
+/** 本地解析状态：与"内容不合规"（`invalid`）分开——前者是没写完，后者是写完了但不对。 */
+const parseError = ref('')
 /** 记录最后一次由本组件写出的值，用来区分"外部改写"与"自己刚写回的回声"。 */
 let lastEmitted: string = JSON.stringify(props.modelValue ?? null)
 
@@ -39,18 +42,18 @@ function onInput(event: Event): void {
   const text = (event.target as HTMLTextAreaElement).value
   draft.value = text
   if (text.trim() === '') {
-    invalid.value = ''
+    parseError.value = ''
     lastEmitted = 'null'
     emit('update:modelValue', null)
     return
   }
   try {
     const parsed: unknown = JSON.parse(text)
-    invalid.value = ''
+    parseError.value = ''
     lastEmitted = JSON.stringify(parsed)
     emit('update:modelValue', parsed as JsonValue)
   } catch {
-    invalid.value = 'JSON 解析失败，未提交'
+    parseError.value = 'JSON 解析失败，未提交'
   }
 }
 </script>
@@ -60,13 +63,15 @@ function onInput(event: Event): void {
     <span class="wf-json__label">{{ label }}</span>
     <textarea
       class="wf-json__area"
+      :class="{ 'is-invalid': parseError !== '' || invalid === true }"
       rows="4"
       :value="draft"
       :placeholder="placeholder"
       :disabled="disabled"
+      :aria-invalid="parseError !== '' || invalid === true"
       @input="onInput"
     />
-    <span v-if="invalid !== ''" class="wf-json__error">{{ invalid }}</span>
+    <span v-if="parseError !== ''" class="wf-json__error">{{ parseError }}</span>
   </label>
 </template>
 
@@ -82,14 +87,19 @@ function onInput(event: Event): void {
 }
 .wf-json__area {
   padding: 4px 6px;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--aeg-color-border-strong);
   border-radius: 4px;
+  background: var(--aeg-color-elevated);
+  color: var(--aeg-color-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   resize: vertical;
 }
+.wf-json__area.is-invalid {
+  border-color: var(--aeg-color-status-danger);
+}
 .wf-json__error {
-  color: #cf1322;
+  color: var(--aeg-color-status-danger);
   font-size: 12px;
 }
 </style>

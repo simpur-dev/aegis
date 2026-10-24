@@ -128,7 +128,17 @@ describe('workflow gateway：旧端点', () => {
           status: 200,
           data: {
             count: 1,
-            items: [{ type: 'notify', description: '通报', required_config: ['text'], optional_config: [] }],
+            items: [
+              {
+                type: 'notify',
+                description: '通报',
+                category: 'io',
+                required_config: ['text'],
+                optional_config: [],
+                min_config: {},
+                outputs: ['notified'],
+              },
+            ],
           },
         }
       }

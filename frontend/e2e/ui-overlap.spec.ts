@@ -1401,7 +1401,8 @@ test.describe('画布节点不变量 @1440', () => {
     await page.keyboard.press('+')
     await page.waitForTimeout(500)
     const afterPlus = await zoom()
-    await page.keyboard.press('1')
+    /* 「适配画布」是 Mod+1（Shift+1 是 100%）；按 1 什么都不会发生，判据会在那里空跑。 */
+    await page.keyboard.press('Control+1')
     await page.waitForTimeout(1_200)
     const afterFit = await zoom()
     console.log(`SHORTCUT start=${start} minus=${afterMinus} zero=${afterZero} plus=${afterPlus} fit=${afterFit}`)
@@ -1486,7 +1487,7 @@ test.describe('沉浸式编辑器外壳 @1440', () => {
       expect(shell.grid.w, `点阵横向间距按 zoom 还原是 ${shell.grid.w}，不是设计钉的 14`).toBeCloseTo(14, 1)
       expect(shell.grid.h, `点阵纵向间距按 zoom 还原是 ${shell.grid.h}，不是设计钉的 14`).toBeCloseTo(14, 1)
     }
-    expect(shell.toolbar, '画布工具条四枚按钮没齐').toBe(4)
+    expect(shell.toolbar, '画布工具条五枚按钮没齐（添加/备注/自动布局/适配/指针切换）').toBe(5)
 
     /* 块选择器：400px 宽、打开时搜索框常驻焦点、Esc 关闭并把焦点还给打开它的按钮。 */
     await page.locator('[data-testid="toolbar-add"]').click()

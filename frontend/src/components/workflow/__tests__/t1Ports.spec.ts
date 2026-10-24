@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { colorSlots } from '@/theme/tokens'
 import connectionFixture from '@/utils/graph/__fixtures__/dify-1.17.1/connections.json'
 import edgeColorFixture from '@/utils/graph/__fixtures__/dify-1.17.1/edge-color.json'
+import variableFixture from '@/utils/graph/__fixtures__/dify-1.17.1/variable.json'
 import type { NodeState } from '@/utils/graph'
+import { normalizeWorkflowOutputName, variableTransformer } from '@/utils/graph/variable'
 
 import {
   getNodesConnectedSourceOrTargetHandleIdsMap,
@@ -102,5 +104,28 @@ describe('connections（Dify T1 端口）', () => {
       initialNodes(),
     )
     expect(result).toEqual({})
+  })
+})
+
+describe('variable（Dify T1 端口）', () => {
+  it('选择器 ↔ 模板串与 1.17.1 fixture 逐例一致', () => {
+    for (const row of variableFixture.selectorCases) {
+      const actual =
+        typeof row.input === 'string'
+          ? variableTransformer(row.input as string)
+          : variableTransformer(row.input as readonly string[])
+      expect(actual, row.name).toEqual(row.actual)
+    }
+  })
+
+  it('输出名归一与 fixture 一致（undefined 归空串而不是 "undefined"）', () => {
+    for (const row of variableFixture.normalizeCases) {
+      expect(normalizeWorkflowOutputName(row.input), JSON.stringify(row.input)).toBe(row.actual)
+    }
+  })
+
+  it('反方向回填：node_id + 输出键拼出可直接塞进配置的整串引用', () => {
+    expect(variableTransformer(['fetch_1', 'rows'])).toBe('{{#fetch_1.rows#}}')
+    expect(variableTransformer(['fetch_1', 'rows'])).not.toContain('undefined')
   })
 })

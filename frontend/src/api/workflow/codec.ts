@@ -90,6 +90,7 @@ const NODE_STATES: readonly NodeState[] = [
   'cancelled',
   'timeout',
 ]
+const NODE_CATEGORIES = ['io', 'logic', 'intelligence', 'human'] as const
 const ON_FAILURES: readonly OnFailure[] = ['retry', 'degrade', 'escalate', 'skip', 'abort']
 const STICKY_COLORS: readonly StickyNoteColor[] = ['amber', 'blue', 'green', 'violet']
 const DEFINITION_STATUSES = ['active', 'archived'] as const
@@ -178,6 +179,18 @@ function enumAt<T extends string>(value: unknown, path: string, allowed: readonl
 
 function stringArrayAt(value: unknown, path: string): string[] {
   return arrayAt(value, path).map((item, index) => stringAt(item, `${path}[${index}]`))
+}
+
+/** `Record<string, number>`（节点参数下限）：键必须非空，值必须是有限数。 */
+function numberRecordAt(value: unknown, path: string): Record<string, number> {
+  const record = objectAt(value, path)
+  const out: Record<string, number> = {}
+  for (const [key, raw] of Object.entries(record)) {
+    if (key === '') fail(path, '键不得为空')
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) fail(`${path}.${key}`, '应为有限数字')
+    out[key] = raw
+  }
+  return out
 }
 
 export function decodeJsonValue(value: unknown, path: string): JsonValue {
@@ -446,8 +459,11 @@ export function decodeNodeTypesResponse(value: unknown): NodeTypesResponse {
     return {
       type: stringAt(entry.type, `${path}.type`, { min: 2, max: 32 }),
       description: stringAt(entry.description, `${path}.description`),
+      category: enumAt(entry.category, `${path}.category`, NODE_CATEGORIES),
       required_config: stringArrayAt(entry.required_config, `${path}.required_config`),
       optional_config: stringArrayAt(entry.optional_config, `${path}.optional_config`),
+      min_config: numberRecordAt(entry.min_config, `${path}.min_config`),
+      outputs: stringArrayAt(entry.outputs, `${path}.outputs`),
     }
   })
   if (integerAt(record.count, 'node-types.count', 0) !== items.length) fail('node-types.count', '与 items 长度不一致')

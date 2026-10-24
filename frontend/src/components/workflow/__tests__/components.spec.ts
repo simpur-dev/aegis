@@ -164,6 +164,7 @@ describe('NodeShell 共用外框', () => {
   const base = {
     label: '风险定级',
     nodeType: 'risk_assess',
+    known: true,
     state: null as FlowNodeData['state'],
     slaMs: 5_000,
     timeoutMs: 4_000,
@@ -198,6 +199,35 @@ describe('NodeShell 共用外框', () => {
     expect(wrapper.find('.wf-node').classes()).toContain('is-selected')
     expect(wrapper.find('.wf-node').attributes('style')).toContain('#cf1322')
     expect(wrapper.text()).toContain('已试 0 次')
+  })
+
+  it('未知类型画成虚线卡并标只读，运行状态徽标让位', () => {
+    const wrapper = shallowMount(NodeShell, {
+      props: { ...base, nodeType: 'future_type', known: false, state: 'running' },
+    })
+    expect(wrapper.find('.wf-node').classes()).toContain('is-unknown')
+    expect(wrapper.find('.wf-node__type').text()).toBe('未知类型 · future_type')
+    expect(wrapper.find('.wf-node__badge').text()).toBe('只读')
+  })
+})
+
+describe('NodeInspector 对未知类型降级', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('隐藏全部编辑器、给出只读说明，但保留删除入口', () => {
+    const context = editorContext()
+    context.document.resetDocument('链路')
+    context.document.addNode({ ...createNodeDef('notify', 'future_1'), type: 'future_type' as NodeType })
+    context.editor.select('future_1')
+    const wrapper = mount(NodeInspector, {
+      global: { ...withEditor(context), stubs: { RuntimeActions: true, ConfigFields: true } },
+    })
+    expect(wrapper.find('.wf-inspector__unknown').text()).toContain('future_type')
+    expect(wrapper.findAll('input[type="text"]')).toHaveLength(0)
+    expect(wrapper.findAll('input[type="number"]')).toHaveLength(0)
+    expect(wrapper.text()).toContain('删除节点')
   })
 })
 

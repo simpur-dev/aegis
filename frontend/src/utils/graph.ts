@@ -173,43 +173,156 @@ export interface NodeSpec {
   required_config: readonly string[]
   optional_config: readonly string[]
   min_config: Readonly<Record<string, number>>
+  /** 该类型可能写进产出的顶层键（后端 `NodeSpec.outputs`）：上游变量选择器据此列项。 */
+  outputs: readonly string[]
   /** 后端 `NodeSpec.internal`：引擎能驱动、但不给画布拖。缺省按 false 处理，
    *  所以镜像里只有内部原语需要显式写 `internal: true`。 */
   internal?: boolean
 }
 
-/** 后端注册表的前端镜像；类别 + 配置白名单的唯一真源。 */
+/** 后端注册表的前端镜像；类别 + 配置白名单 + 产出键的唯一真源。 */
 export const NODE_SPECS: Record<NodeType, NodeSpec> = {
-  api_call: { category: 'io', required_config: ['method', 'url'], optional_config: ['body'], min_config: {} },
-  branch: { category: 'logic', required_config: ['rules'], optional_config: ['upstream', 'default'], min_config: {} },
+  api_call: {
+    category: 'io',
+    required_config: ['method', 'url'],
+    optional_config: ['body'],
+    min_config: {},
+    outputs: ['response'],
+  },
+  branch: {
+    category: 'logic',
+    required_config: ['rules'],
+    optional_config: ['upstream', 'default'],
+    min_config: {},
+    outputs: ['matched'],
+  },
   // 标准五段模板的段节点：只在系统模板里出现，拖出来跑不起来（它要的是链路盘面），所以不进面板。
-  chain_stage: { category: 'logic', required_config: ['stage'], optional_config: [], min_config: {}, internal: true },
-  data_fetch: { category: 'io', required_config: [], optional_config: ['region_code', 'metric', 'limit'], min_config: {} },
-  delay: { category: 'logic', required_config: [], optional_config: ['seconds'], min_config: {} },
+  chain_stage: {
+    category: 'logic',
+    required_config: ['stage'],
+    optional_config: [],
+    min_config: {},
+    outputs: [],
+    internal: true,
+  },
+  data_fetch: {
+    category: 'io',
+    required_config: [],
+    optional_config: ['region_code', 'metric', 'limit'],
+    min_config: {},
+    outputs: ['rows', 'count'],
+  },
+  delay: {
+    category: 'logic',
+    required_config: [],
+    optional_config: ['seconds'],
+    min_config: {},
+    outputs: ['delayed_seconds'],
+  },
   degrade_to_rule: {
     category: 'intelligence',
     required_config: [],
     optional_config: ['risk_level'],
     min_config: { risk_level: 1 },
+    outputs: ['risk_level', 'degraded'],
   },
   device_control: {
     category: 'io',
     required_config: ['device', 'action', 'command_url'],
     optional_config: [],
     min_config: {},
+    outputs: ['device', 'response'],
   },
-  end: { category: 'logic', required_config: [], optional_config: [], min_config: {} },
-  feedback_collect: { category: 'logic', required_config: [], optional_config: ['wait_seconds'], min_config: {} },
-  hazard_identify: { category: 'intelligence', required_config: [], optional_config: ['extra'], min_config: {} },
-  human_review: { category: 'human', required_config: [], optional_config: ['prompt', 'options'], min_config: {} },
-  join: { category: 'logic', required_config: ['upstream'], optional_config: [], min_config: {} },
-  notify: { category: 'io', required_config: ['text'], optional_config: ['level'], min_config: {} },
-  risk_assess: { category: 'intelligence', required_config: [], optional_config: ['upstream', 'extra'], min_config: {} },
-  situation_simulate: { category: 'intelligence', required_config: [], optional_config: ['extra', 'upstream'], min_config: {} },
-  start: { category: 'logic', required_config: [], optional_config: ['variables'], min_config: {} },
-  threshold: { category: 'logic', required_config: ['conditions'], optional_config: ['upstream', 'mode'], min_config: {} },
-  warning_generate: { category: 'intelligence', required_config: [], optional_config: ['extra'], min_config: {} },
-  warning_publish: { category: 'intelligence', required_config: [], optional_config: ['channels'], min_config: {} },
+  end: { category: 'logic', required_config: [], optional_config: [], min_config: {}, outputs: ['ended'] },
+  feedback_collect: {
+    category: 'logic',
+    required_config: [],
+    optional_config: ['wait_seconds'],
+    min_config: {},
+    outputs: ['feedback'],
+  },
+  hazard_identify: {
+    category: 'intelligence',
+    required_config: [],
+    optional_config: ['extra'],
+    min_config: {},
+    outputs: ['hazard'],
+  },
+  human_review: {
+    category: 'human',
+    required_config: [],
+    optional_config: ['prompt', 'options'],
+    min_config: {},
+    outputs: ['decision', 'choice'],
+  },
+  join: {
+    category: 'logic',
+    required_config: ['upstream'],
+    optional_config: [],
+    min_config: {},
+    outputs: ['merged'],
+  },
+  notify: {
+    category: 'io',
+    required_config: ['text'],
+    optional_config: ['level'],
+    min_config: {},
+    outputs: ['notified'],
+  },
+  risk_assess: {
+    category: 'intelligence',
+    required_config: [],
+    optional_config: ['upstream', 'extra'],
+    min_config: {},
+    outputs: ['risk_level', 'risk'],
+  },
+  situation_simulate: {
+    category: 'intelligence',
+    required_config: [],
+    optional_config: ['extra', 'upstream'],
+    min_config: {},
+    outputs: [
+      'scenarios',
+      'horizon_minutes',
+      'trend',
+      'degraded',
+      'degraded_reason',
+      'case_count',
+      'dropped_cases',
+      'declared_level',
+      'hazard_type',
+      'region_code',
+      'sandbox',
+    ],
+  },
+  start: {
+    category: 'logic',
+    required_config: [],
+    optional_config: ['variables'],
+    min_config: {},
+    outputs: ['started', 'variables'],
+  },
+  threshold: {
+    category: 'logic',
+    required_config: ['conditions'],
+    optional_config: ['upstream', 'mode'],
+    min_config: {},
+    outputs: ['triggered', 'hits'],
+  },
+  warning_generate: {
+    category: 'intelligence',
+    required_config: [],
+    optional_config: ['extra'],
+    min_config: {},
+    outputs: ['warning'],
+  },
+  warning_publish: {
+    category: 'intelligence',
+    required_config: [],
+    optional_config: ['channels'],
+    min_config: {},
+    outputs: ['delivery', 'delivered'],
+  },
 }
 
 export const NODE_TYPES: NodeType[] = Object.keys(NODE_SPECS) as NodeType[]

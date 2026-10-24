@@ -7,7 +7,7 @@
  */
 import { useDebounceFn } from '@vueuse/core'
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 
 import {
   WorkflowError,
@@ -17,6 +17,7 @@ import {
 } from '@/api/workflow/contract'
 import { workflowApi } from '@/api/workflow'
 import {
+  edgeId,
   layerPositions,
   patchNode as patchNodeDef,
   removeEdge as removeEdgeFromDef,
@@ -24,6 +25,7 @@ import {
   setEdgeCondition as setEdgeConditionInDef,
   upsertEdge,
   validateGraph,
+  type EdgeDef,
   type JsonValue,
   type NodeDef,
   type NodePatch,
@@ -43,6 +45,19 @@ import {
   type WorkflowDocument,
   type WorkflowDraft,
 } from '@/utils/graph/document'
+import {
+  canRedoHistory,
+  canUndoHistory,
+  cloneWorkflowDocument,
+  commitHistory,
+  createHistoryState,
+  HISTORY_LABELS,
+  redoHistory,
+  redoHistoryLabel,
+  undoHistory,
+  undoHistoryLabel,
+  type WorkflowHistoryState,
+} from '@/utils/graph/history'
 
 import { describeFailure, isAbortError, nowIso } from './shared'
 
@@ -94,7 +109,8 @@ function sleep(ms: number): Promise<void> {
 
 export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
   return defineStore('workflow.document', () => {
-    const document = ref<WorkflowDocument | null>(blankDocument(DEFAULT_NAME))
+    const initialDocument = blankDocument(DEFAULT_NAME)
+    const document = ref<WorkflowDocument | null>(initialDocument)
     /** 每换一份文档加一；编辑只替换文档内容，不加这个数——画布据此决定要不要收拢视野。 */
     const documentEpoch = ref(0)
     const revision = ref(0)
@@ -109,8 +125,13 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
      * 基线必须是响应式的：`isDirty` 是 computed，只改普通变量不会让它失效，
      * 于是"保存成功后仍显示有未发布的更改"，直到下一次编辑才重新计算。
      */
-    const baseline = ref(canonicalDocumentJson(blankDocument(DEFAULT_NAME)))
+    const baseline = ref(canonicalDocumentJson(initialDocument))
+    /** 撤销栈只活在本地；换文档时整栈重开，不跨会话复用。 */
+    const historyState = shallowRef<WorkflowHistoryState | null>(createHistoryState(initialDocument))
     let suppressWatch = false
+    let suppressHistory = false
+    let skipNextHistory = false
+    let pendingHistoryLabel: string | null = null
     let loadToken = 0
     let saveToken = 0
     let inFlight: Promise<boolean> | null = null
@@ -164,6 +185,12 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
 
     const statusText = computed<string>(() => saveStateLabel(saveState.value))
 
+    /** 只读版本/实例视图照常渲染，但不允许撤销把内容写回。 */
+    const canUndo = computed<boolean>(() => autoSaveEnabled.value && canUndoHistory(historyState.value))
+    const canRedo = computed<boolean>(() => autoSaveEnabled.value && canRedoHistory(historyState.value))
+    const undoLabel = computed<string | null>(() => undoHistoryLabel(historyState.value))
+    const redoLabel = computed<string | null>(() => redoHistoryLabel(historyState.value))
+
     const debouncedSave = useDebounceFn(() => saveNow('auto'), AUTOSAVE_DELAY_MS)
 
     watch(
@@ -171,6 +198,15 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       () => {
         if (suppressWatch) return
         if (document.value === null) return
+        if (!suppressHistory && !skipNextHistory) {
+          const label = pendingHistoryLabel ?? HISTORY_LABELS.updateNode
+          historyState.value =
+            historyState.value === null
+              ? createHistoryState(document.value, label)
+              : commitHistory(historyState.value, document.value, label)
+        }
+        skipNextHistory = false
+        pendingHistoryLabel = null
         if (saveState.value.kind === 'conflict') return
         if (!autoSaveEnabled.value) {
           saveState.value = { kind: 'dirty', since: nowIso() }
@@ -194,9 +230,13 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
 
     function applyDocument(next: WorkflowDocument): void {
       suppressWatch = true
+      suppressHistory = false
+      skipNextHistory = false
+      pendingHistoryLabel = null
       document.value = next
       baseline.value = canonicalDocumentJson(next)
       documentEpoch.value += 1
+      historyState.value = createHistoryState(next)
       suppressWatch = false
     }
 
@@ -212,6 +252,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     function setMeta(meta: { name?: string; description?: string }): void {
       const current = document.value
       if (current === null) return
+      pendingHistoryLabel = HISTORY_LABELS.rename
       document.value = {
         ...current,
         ...(meta.name === undefined ? {} : { name: meta.name }),
@@ -230,7 +271,10 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
           changed = true
         }
       }
-      if (changed) document.value = { ...current, layout: { ...current.layout, positions } }
+      if (!changed) return
+      /* 拖动开始时固化自动布局坐标只是把"屏幕上的位置"写进文档，不构成一步可撤销的修改。 */
+      skipNextHistory = true
+      document.value = { ...current, layout: { ...current.layout, positions } }
     }
 
     /** at 为拖放落点（画布坐标）；省略时继续用视图的自动分层坐标。 */
@@ -250,6 +294,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
         }
         positions[node.node_id] = { x: at.x, y: at.y }
       }
+      pendingHistoryLabel = HISTORY_LABELS.addNode
       document.value = {
         ...current,
         nodes: [...current.nodes, node],
@@ -257,9 +302,48 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       }
     }
 
+    /** 粘贴/复制副本落地：节点、内部边与位置一次性写入，历史里只留一步。 */
+    function insertSubgraph(
+      nodes: readonly NodeDef[],
+      edges: readonly EdgeDef[],
+      positions: Readonly<Record<string, Position>>,
+    ): boolean {
+      const current = document.value
+      if (current === null || nodes.length === 0) return false
+      const nextPositions = { ...current.layout.positions }
+      for (const [nodeId, position] of Object.entries(positions)) {
+        nextPositions[nodeId] = { x: position.x, y: position.y }
+      }
+      pendingHistoryLabel = HISTORY_LABELS.paste
+      document.value = {
+        ...current,
+        nodes: [...current.nodes, ...nodes],
+        edges: [...current.edges, ...edges],
+        layout: { ...current.layout, positions: nextPositions },
+      }
+      return true
+    }
+
+    function moveNodes(positions: Readonly<Record<string, Position>>): void {
+      const current = document.value
+      if (current === null) return
+      let changed = false
+      const next = { ...current.layout.positions }
+      for (const [nodeId, position] of Object.entries(positions)) {
+        const previous = next[nodeId]
+        if (previous !== undefined && previous.x === position.x && previous.y === position.y) continue
+        next[nodeId] = { x: position.x, y: position.y }
+        changed = true
+      }
+      if (!changed) return
+      pendingHistoryLabel = HISTORY_LABELS.moveNodes
+      document.value = { ...current, layout: { ...current.layout, positions: next } }
+    }
+
     function moveNode(nodeId: string, position: Position): void {
       const current = document.value
       if (current === null) return
+      pendingHistoryLabel = HISTORY_LABELS.moveNodes
       document.value = {
         ...current,
         layout: {
@@ -285,6 +369,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
         text: '',
         color: 'amber',
       }
+      pendingHistoryLabel = HISTORY_LABELS.setNotes
       document.value = { ...current, layout: { ...current.layout, notes: [...current.layout.notes, note] } }
       return note.note_id
     }
@@ -298,12 +383,14 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       if (index < 0) return
       const notes = current.layout.notes.slice()
       notes[index] = { ...notes[index], ...patch } as StickyNote
+      pendingHistoryLabel = HISTORY_LABELS.setNotes
       document.value = { ...current, layout: { ...current.layout, notes } }
     }
 
     function removeNote(noteId: string): void {
       const current = document.value
       if (current === null) return
+      pendingHistoryLabel = HISTORY_LABELS.setNotes
       document.value = {
         ...current,
         layout: { ...current.layout, notes: current.layout.notes.filter((note) => note.note_id !== noteId) },
@@ -313,7 +400,10 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     function autoLayout(): void {
       const current = document.value
       if (current === null) return
-      document.value = autoLayoutDocument(current)
+      const next = autoLayoutDocument(current)
+      if (next === current) return
+      pendingHistoryLabel = HISTORY_LABELS.moveNodes
+      document.value = next
     }
 
     function applyGraph(next: WorkflowDef): void {
@@ -331,6 +421,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     function patchNode(nodeId: string, patch: NodePatch): void {
       const current = definition.value
       if (current === null) return
+      pendingHistoryLabel = HISTORY_LABELS.updateNode
       applyGraph(patchNodeDef(current, nodeId, patch))
     }
 
@@ -339,8 +430,10 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       const current = definition.value
       if (current === null || source === target) return false
       const next = upsertEdge(current, source, target, '')
+      if (next === current) return false
+      pendingHistoryLabel = HISTORY_LABELS.connect
       applyGraph(next)
-      return next.edges.length !== current.edges.length
+      return true
     }
 
     /**
@@ -387,6 +480,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       )
       const positions =
         at === undefined ? current.layout.positions : { ...current.layout.positions, [node.node_id]: at }
+      pendingHistoryLabel = HISTORY_LABELS.insertOnEdge
       document.value = {
         ...current,
         nodes: [...nodes, inserted],
@@ -399,19 +493,45 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     function updateEdgeCondition(id: string, condition: string): void {
       const current = definition.value
       if (current === null) return
-      applyGraph(setEdgeConditionInDef(current, id, condition))
+      if (!current.edges.some((edge, index) => edgeId(index, edge) === id)) return
+      const next = setEdgeConditionInDef(current, id, condition)
+      pendingHistoryLabel = HISTORY_LABELS.updateNode
+      applyGraph(next)
     }
 
     function removeEdge(id: string): void {
       const current = definition.value
       if (current === null) return
-      applyGraph(removeEdgeFromDef(current, id))
+      const next = removeEdgeFromDef(current, id)
+      if (next.edges.length === current.edges.length) return
+      pendingHistoryLabel = HISTORY_LABELS.removeEdges
+      applyGraph(next)
     }
 
     function removeNodes(nodeIds: Iterable<string>): void {
       const current = definition.value
       if (current === null) return
-      applyGraph(removeNodesFromDef(current, nodeIds))
+      const next = removeNodesFromDef(current, nodeIds)
+      if (next.nodes.length === current.nodes.length) return
+      pendingHistoryLabel = HISTORY_LABELS.removeNodes
+      applyGraph(next)
+    }
+
+    /** Delete/Backspace 一次删掉选中的节点与连线；只写一次文档，历史里也是一步。 */
+    function removeSelection(nodeIds: Iterable<string>, edgeIds: Iterable<string>): boolean {
+      const current = definition.value
+      if (current === null) return false
+      const doomedNodes = new Set(nodeIds)
+      const doomedEdges = new Set(edgeIds)
+      const edges = current.edges.filter(
+        (edge, index) =>
+          !doomedEdges.has(edgeId(index, edge)) && !doomedNodes.has(edge.source) && !doomedNodes.has(edge.target),
+      )
+      const nodes = current.nodes.filter((node) => !doomedNodes.has(node.node_id))
+      if (nodes.length === current.nodes.length && edges.length === current.edges.length) return false
+      pendingHistoryLabel = HISTORY_LABELS.removeNodes
+      applyGraph({ ...current, nodes, edges })
+      return true
     }
 
     function syncUpstreamConfig(nodeId: string): void {
@@ -422,6 +542,48 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       const sources = current.edges.filter((edge) => edge.target === nodeId).map((edge) => edge.source)
       const asList = Array.isArray(node.config.upstream)
       patchNode(nodeId, { config: { ...node.config, upstream: asList ? sources : (sources[0] ?? '') } })
+    }
+
+    /**
+     * 撤销目标直接换掉文档内容，但**不加 documentEpoch**：换 epoch 会让画布重新收拢视野，
+     * 而撤销一步只该把节点挪回原处，不该顺手把视口也改了。
+     */
+    function writeHistoryDocument(next: WorkflowDocument): void {
+      suppressHistory = true
+      document.value = cloneWorkflowDocument(next)
+      suppressHistory = false
+    }
+
+    function undo(): boolean {
+      if (!autoSaveEnabled.value) return false
+      const state = historyState.value
+      if (state === null || !canUndoHistory(state)) return false
+      const next = undoHistory(state)
+      if (next === state) return false
+      writeHistoryDocument(next.present.document)
+      historyState.value = next
+      return true
+    }
+
+    function redo(): boolean {
+      if (!autoSaveEnabled.value) return false
+      const state = historyState.value
+      if (state === null || !canRedoHistory(state)) return false
+      const next = redoHistory(state)
+      if (next === state) return false
+      writeHistoryDocument(next.present.document)
+      historyState.value = next
+      return true
+    }
+
+    /** lineage 由服务端补发时文档变了，但这不是用户的一步：把当前快照重钉到新文档上。 */
+    function rebaseHistory(next: WorkflowDocument): void {
+      const state = historyState.value
+      if (state === null) return
+      historyState.value = {
+        ...state,
+        present: { document: cloneWorkflowDocument(next), label: state.present.label },
+      }
     }
 
     function resetDocument(name = DEFAULT_NAME): void {
@@ -528,6 +690,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
         suppressWatch = true
         document.value = { ...document.value, lineage_id: draft.lineage_id }
         suppressWatch = false
+        rebaseHistory(document.value)
       }
       return draft.lineage_id
     }
@@ -741,6 +904,12 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       loading,
       isDirty,
       autoSaveEnabled,
+      canUndo,
+      canRedo,
+      undoLabel,
+      redoLabel,
+      undo,
+      redo,
       structuralErrors,
       validationErrors,
       canSave,
@@ -750,7 +919,9 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       setMeta,
       seedPositions,
       addNode,
+      insertSubgraph,
       moveNode,
+      moveNodes,
       addNote,
       updateNote,
       removeNote,
@@ -761,6 +932,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       updateEdgeCondition,
       removeEdge,
       removeNodes,
+      removeSelection,
       syncUpstreamConfig,
       resetDocument,
       openLineage,

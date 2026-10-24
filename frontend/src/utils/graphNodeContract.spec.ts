@@ -19,6 +19,8 @@ interface BackendSpec {
   required: string[]
   optional: string[]
   min: Record<string, number>
+  category: string
+  outputs: string[]
 }
 
 /** 按顶层逗号切分实参：字符串里的逗号与嵌套括号都不能算分隔符。 */
@@ -56,20 +58,65 @@ function stringsIn(tuple: string | undefined): string[] {
   return [...tuple.matchAll(/"([a-z_]+)"/g)].map((match) => match[1] as string).sort()
 }
 
-/** 从 `nodes.py` 里解析 `NodeSpec(名称, 说明, handler, 必填, 可选, 下限)` 的位置参数。 */
+/** 逐个扫出 `NodeSpec(...)` 的实参文本：实参里有元组/字典，正则的括号匹配靠不住。 */
+function nodeSpecCalls(text: string): string[] {
+  const marker = 'NodeSpec('
+  const calls: string[] = []
+  let from = 0
+  while (true) {
+    const start = text.indexOf(marker, from)
+    if (start < 0) return calls
+    let depth = 1
+    let index = start + marker.length
+    let quote = ''
+    while (index < text.length && depth > 0) {
+      const char = text[index] as string
+      if (quote) {
+        if (char === quote) quote = ''
+      } else if (char === '"' || char === "'") {
+        quote = char
+      } else if (char === '(') {
+        depth += 1
+      } else if (char === ')') {
+        depth -= 1
+      }
+      index += 1
+    }
+    if (depth !== 0) throw new Error(`nodes.py 第 ${start} 字符起的 NodeSpec( 没有闭合：注册写法变了，门禁要跟着改`)
+    calls.push(text.slice(start + marker.length, index - 1))
+    from = index
+  }
+}
+
+/** 从 `nodes.py` 里解析 `NodeSpec(名称, 说明, handler, 必填, 可选, 下限, ...)` 的实参。 */
 function backendSpecs(): Record<string, BackendSpec> {
   const text = readRepoFile('backend', 'src', 'aegis', 'workflow', 'nodes.py')
   const found: Record<string, BackendSpec> = {}
-  for (const match of text.matchAll(/NodeSpec\(([\s\S]*?)\)\s*,?\s*\n/g)) {
-    const args = splitArgs(match[1] as string)
+  for (const call of nodeSpecCalls(text)) {
+    const args = splitArgs(call)
     const name = (args[0] ?? '').replace(/"/g, '')
     if (!/^[a-z_]+$/.test(name)) continue
+    // 关键字实参（category=/outputs=/internal=）会插进位置参数中间：先摘掉再对齐槽位，
+    // 否则短写法 `NodeSpec(名称, 说明, handler, category=...)` 会把类别读成必填配置。
+    const positional = args.filter((arg) => !/^[a-z_]+=/.test(arg))
     const min: Record<string, number> = {}
-    for (const pair of (args[5] ?? '').matchAll(/"([a-z_]+)":\s*([-\d.]+)/g)) min[pair[1] as string] = Number(pair[2])
-    found[name] = { required: stringsIn(args[3]), optional: stringsIn(args[4]), min }
+    for (const pair of (positional[5] ?? '').matchAll(/"([a-z_]+)":\s*([-\d.]+)/g))
+      min[pair[1] as string] = Number(pair[2])
+    const categoryArg = args.find((arg) => arg.startsWith('category='))
+    if (!categoryArg) throw new Error(`${name} 没有 category=：后端 NodeSpec 的位置参数表变了，门禁要跟着改`)
+    const outputsArg = args.find((arg) => arg.startsWith('outputs='))
+    found[name] = {
+      required: stringsIn(positional[3]),
+      optional: stringsIn(positional[4]),
+      min,
+      category: (categoryArg.match(/"([a-z]+)"/)?.[1] ?? '') as string,
+      outputs: stringsIn(outputsArg),
+    }
   }
   if (Object.keys(found).length < 10) {
-    throw new Error(`nodes.py 里只解析到 ${Object.keys(found).length} 个 NodeSpec：注册写法变了，门禁要跟着改（不是把断言删掉）`)
+    throw new Error(
+      `nodes.py 里只解析到 ${Object.keys(found).length} 个 NodeSpec：注册写法变了，门禁要跟着改（不是把断言删掉）`,
+    )
   }
   return found
 }
@@ -87,10 +134,14 @@ describe('NODE_SPECS 与后端 NodeSpec 逐字段对账', () => {
       const mirror = NODE_SPECS[name as keyof typeof NODE_SPECS]
       if (!mirror) continue // 上一条用例已经报过"集合不一致"
       if (JSON.stringify([...mirror.required_config].sort()) !== JSON.stringify(spec.required)) {
-        drift.push(`${name}.required_config: 前端=${JSON.stringify([...mirror.required_config].sort())} 后端=${JSON.stringify(spec.required)}`)
+        drift.push(
+          `${name}.required_config: 前端=${JSON.stringify([...mirror.required_config].sort())} 后端=${JSON.stringify(spec.required)}`,
+        )
       }
       if (JSON.stringify([...mirror.optional_config].sort()) !== JSON.stringify(spec.optional)) {
-        drift.push(`${name}.optional_config: 前端=${JSON.stringify([...mirror.optional_config].sort())} 后端=${JSON.stringify(spec.optional)}`)
+        drift.push(
+          `${name}.optional_config: 前端=${JSON.stringify([...mirror.optional_config].sort())} 后端=${JSON.stringify(spec.optional)}`,
+        )
       }
     }
     expect(drift, drift.join('\n')).toEqual([])
@@ -113,5 +164,22 @@ describe('NODE_SPECS 与后端 NodeSpec 逐字段对账', () => {
       .filter((name) => NODE_SPECS[name as keyof typeof NODE_SPECS].internal === true)
       .sort()
     expect(mirrored).toEqual(backendInternalNodeTypes())
+  })
+
+  it('类别与产出键一致：面板分组、强调色与上游变量都读这几格', () => {
+    const drift: string[] = []
+    for (const [name, spec] of Object.entries(backend)) {
+      const mirror = NODE_SPECS[name as keyof typeof NODE_SPECS]
+      if (!mirror) continue
+      if (mirror.category !== spec.category) {
+        drift.push(`${name}.category: 前端=${mirror.category} 后端=${spec.category}`)
+      }
+      if (JSON.stringify([...mirror.outputs].sort()) !== JSON.stringify(spec.outputs)) {
+        drift.push(
+          `${name}.outputs: 前端=${JSON.stringify([...mirror.outputs].sort())} 后端=${JSON.stringify(spec.outputs)}`,
+        )
+      }
+    }
+    expect(drift, drift.join('\n')).toEqual([])
   })
 })

@@ -262,7 +262,7 @@ const popupStyle = computed(() => {
             @mouseenter="activeIndex = flat.indexOf(item)"
           >
             <span class="block-selector__icon" :class="`is-${item.category}`">
-              <NodeIcon :category="item.category" />
+              <NodeIcon :type="item.type" />
             </span>
             <span class="block-selector__label">{{ item.label }}</span>
             <span v-if="disabledReason(item.type) !== ''" class="block-selector__hint">

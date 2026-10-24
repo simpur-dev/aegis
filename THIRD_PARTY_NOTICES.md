@@ -48,12 +48,15 @@ The interactive design of this product is protected by appearance patent.
 | `frontend/src/utils/graph/node-factory.ts`（2026-10-23 落盘） | `web/app/components/workflow/utils/node.ts` L110-137 | 标题递增/落点数学；去掉 React Flow 依赖；空集返回 null 而非 Infinity | B |
 | `frontend/src/components/workflow/editor/edge-color.ts`（2026-10-23 落盘） | `web/app/components/workflow/utils/edge.ts` L3-20 | `NodeState` → `--aeg-*` token；timeout 承接上游 Exception，fail branch 保留 | B |
 | `frontend/src/components/workflow/editor/connections.ts`（2026-10-23 落盘） | `web/app/components/workflow/utils/workflow.ts` L43-105 | Vue Flow change 适配；删除不存在的 handle 改 no-op（修复上游 -1 splice） | B |
-| （待批次 C）`frontend/src/utils/graph/clipboard.ts` | `web/app/components/workflow/utils/clipboard.ts` L37-194 | AEGIS 类型/kind/大小上限/原型污染过滤 | C |
-| （待批次 C）`frontend/src/components/workflow/shortcuts/definitions.ts` | `web/app/components/workflow/shortcuts/definitions.ts` L48-165 | 保留子集；本地热键类型 | C |
-| （待批次 C）`frontend/src/components/workflow/editor/keyboard-movement.ts` | `web/app/components/workflow/utils/keyboard-movement.ts` L3-18 | DOM 事件类型 | C |
-| （待批次 C）`frontend/src/composables/workflow/useWorkflowHistory.ts` + `frontend/src/utils/graph/history.ts` | `web/app/components/workflow/hooks/use-workflow-history.ts` L14-158 | 去抖合并/事件标签/50 步上限 | C |
-| （待批次 C）`frontend/src/composables/workflow/useCanvasSelection.ts` | `web/app/components/workflow/hooks/use-selection-interactions.ts` L11-131 | Vue Flow 选择语义重写 | C |
-| （待批次 C）`frontend/src/composables/workflow/useNodeNavigation.ts` | `web/app/components/workflow/utils/node-navigation.ts` L93-108 | Pinia action + `setViewport` | C |
+| `frontend/src/utils/graph/clipboard.ts`（2026-10-24 落盘） | `web/app/components/workflow/utils/clipboard.ts` L37-194 | AEGIS `NodeDef/EdgeDef`/kind/2MB 上限/原型污染过滤；坏输入改显式错误 | C |
+| `frontend/src/composables/workflow/useWorkflowClipboard.ts`（2026-10-24 落盘） | 同上 L177-194（write/read） | `navigator.clipboard` 适配；拒绝读写抛带 code 的错误 | C |
+| `frontend/src/components/workflow/shortcuts/definitions.ts`（2026-10-24 落盘） | `web/app/components/workflow/shortcuts/definitions.ts` L48-165 | 保留 14 条、去掉 3 条、新增 save/help/locate/cut；本地热键类型 | C |
+| `frontend/src/components/workflow/shortcuts/match.ts`（2026-10-24 落盘） | 上游 `shortcuts/` 的 `@tanstack/react-hotkeys` 匹配语义 | 自写键串匹配；未写修饰键必须未按；数字按 `event.code`；输入框守卫 | C |
+| `frontend/src/components/workflow/useWorkflowShortcuts.ts`（2026-10-24 落盘） | `web/app/components/workflow/hooks/use-workflow-shortcuts.ts` | 表格 → 画布单键 → 方向键微移的分发顺序；`Mod+S` 在输入框内仍生效 | C |
+| `frontend/src/components/workflow/editor/keyboard-movement.ts`（2026-10-24 落盘） | `web/app/components/workflow/utils/keyboard-movement.ts` L3-18 | DOM 事件类型；无位移显式返回 null | C |
+| `frontend/src/composables/workflow/useWorkflowHistory.ts` + `frontend/src/utils/graph/history.ts`（2026-10-24 落盘） | `web/app/components/workflow/hooks/use-workflow-history.ts` L14-158 | 快照式撤销/重做；拖动只在落点记一步；显式上限 50；标签中文化 | C |
+| `frontend/src/composables/workflow/useCanvasSelection.ts`（2026-10-24 落盘） | `web/app/components/workflow/hooks/use-selection-interactions.ts` L11-131 | 选择不写文档；框选 240×100 相交含贴边；只读禁移动 | C |
+| `frontend/src/composables/workflow/useNodeNavigation.ts`（2026-10-24 落盘） | `web/app/components/workflow/utils/node-navigation.ts` L93-108 | 自定义事件换 `setViewport`；25% 定位数学保留 | C |
 | （待批次 D）`frontend/src/utils/graph/variable.ts` | `web/app/components/workflow/utils/variable.ts` L4-10 | `{{#node.path#}}` 双向转换 | D |
 | （待批次 D）`frontend/src/composables/workflow/useUpstreamVariables.ts` | `hooks/use-nodes-available-var-list.ts` L40-175、`hooks/use-workflow-variables.ts` L20-121 | 祖先 + catalog 输出 + 上次运行 | D |
 | （待批次 D）`frontend/src/composables/workflow/useAutoLayout.ts` + `frontend/src/utils/graph/layout.ts` | `hooks/use-workflow-organize.helpers.ts` L21-138 | 复用 `layerPositions`，不引入 elkjs | D |

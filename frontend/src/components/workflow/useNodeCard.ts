@@ -2,6 +2,7 @@ import type { NodeProps } from '@vue-flow/core'
 import { computed } from 'vue'
 
 import type { FlowNodeData } from '@/utils/graph'
+import { NODE_SPECS } from '@/utils/graph'
 
 /**
  * NodeProps → NodeShell 入参的唯一换算点。
@@ -12,6 +13,7 @@ export function useNodeCard(props: NodeProps<FlowNodeData>) {
   return computed(() => ({
     label: props.data.def.name === '' ? props.data.def.node_id : props.data.def.name,
     nodeType: props.data.def.type,
+    known: props.data.def.type in NODE_SPECS,
     state: props.data.state,
     slaMs: props.data.def.sla_ms,
     timeoutMs: props.data.def.timeout_ms,

@@ -10,9 +10,10 @@ handler 不直接依赖具体服务：全部通过 WorkflowServices 注入，
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -97,6 +98,12 @@ class NodeContext:
 NodeHandler = Callable[[NodeContext, dict[str, Any]], Awaitable[NodeOutcome]]
 
 
+NodeCategory = Literal["io", "logic", "intelligence", "human"]
+
+NODE_CATEGORIES: frozenset[str] = frozenset({"io", "logic", "intelligence", "human"})
+_CONFIG_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
 @dataclass(frozen=True, slots=True)
 class NodeSpec:
     type_name: str
@@ -105,6 +112,12 @@ class NodeSpec:
     required_config: tuple[str, ...] = ()
     optional_config: tuple[str, ...] = ()
     min_config: dict[str, Any] = field(default_factory=dict)
+    #: 画布分组（与前端 `NodeCategory` 同一条口径）。关键字参数是刻意的：
+    #: 前六个位置参数已被测试的源码对账按位解析，插一个位置会把"对账"变成"对错位"。
+    category: NodeCategory = field(default="io", kw_only=True)
+    #: 节点可能写进产出的顶层键。变量选择器据此列出"上游能给什么"；
+    #: 只列稳定键，动态整包（`chain_stage`）不猜。
+    outputs: tuple[str, ...] = field(default=(), kw_only=True)
     #: 内部原语：引擎能驱动、注册表里有它，但不进画布节点面板（`/node-types` 会滤掉）。
     #: `chain_stage` 就属于这类——它要的是链路的盘面（ChainBoard），从画布上拖出来永远跑不起来，
     #: 摆在面板里只是让值班员多一个必然失败的选项。
@@ -154,6 +167,52 @@ class NodeRegistry:
         画布侧看这里（"值班员能拖的"），两个口径各说各的事，别用其中一个去替另一个。
         """
         return [self._specs[name] for name in self.names() if not self._specs[name].internal]
+
+    def audit(self) -> list[str]:
+        """注册表自洽性对账（启动时执行一次，坏目录不许带病上线）。
+
+        这里只能查"注册表内部说得通"的那几件事；"前端镜像是不是同一条口径"
+        由前端门禁读本文件的源码来证明，两边各查各的一端。
+        """
+        problems: list[str] = []
+        for name in self.names():
+            spec = self._specs[name]
+            if not _CONFIG_KEY.match(spec.type_name):
+                problems.append(f"{name}: 类型名只允许小写字母/数字/下划线")
+            if not spec.description.strip():
+                problems.append(f"{name}: 描述为空")
+            if spec.category not in NODE_CATEGORIES:
+                problems.append(f"{name}: 未知类别 {spec.category!r}")
+            required = set(spec.required_config)
+            optional = set(spec.optional_config)
+            overlap = sorted(required & optional)
+            if overlap:
+                problems.append(f"{name}: 必填与可选重复 {overlap}")
+            bad_keys = sorted({key for key in (*spec.required_config, *spec.optional_config) if not _CONFIG_KEY.match(key)})
+            if bad_keys:
+                problems.append(f"{name}: 配置键名不合法 {bad_keys}")
+            stray_min = sorted(set(spec.min_config) - required - optional)
+            if stray_min:
+                problems.append(f"{name}: 下限声明了未注册的参数 {stray_min}")
+            bad_min = sorted(key for key, floor in spec.min_config.items() if not isinstance(floor, (int, float)))
+            if bad_min:
+                problems.append(f"{name}: 下限不是数字 {bad_min}")
+            outputs = list(spec.outputs)
+            if len(set(outputs)) != len(outputs):
+                problems.append(f"{name}: 产出键重复")
+            bad_outputs = sorted(key for key in outputs if not _CONFIG_KEY.match(key))
+            if bad_outputs:
+                problems.append(f"{name}: 产出键名不合法 {bad_outputs}")
+            if not spec.internal and not outputs:
+                problems.append(f"{name}: 画布节点必须声明至少一个产出键，否则变量选择器无从列起")
+        if not self.panel_specs():
+            problems.append("注册表里没有任何可上面板的节点")
+        return problems
+
+    def assert_consistent(self) -> None:
+        problems = self.audit()
+        if problems:
+            raise ValueError("节点注册表不自洽：" + "；".join(problems))
 
     def __len__(self) -> int:
         return len(self._specs)
@@ -455,28 +514,167 @@ async def _end(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
 def default_registry() -> NodeRegistry:
     registry = NodeRegistry()
     specs = [
-        NodeSpec("start", "起点：声明运行输入变量", _start, (), ("variables",)),
-        NodeSpec("end", "终点：标记流程结束", _end),
-        NodeSpec("data_fetch", "数据接入：按区域/指标拉取最新读数", _data_fetch, (), ("region_code", "metric", "limit")),
-        NodeSpec("threshold", "阈值判断：对读数做触发条件判定", _threshold, ("conditions",), ("upstream", "mode")),
-        NodeSpec("hazard_identify", "灾种识别：判定候选灾种", _hazard_identify, (), ("extra",)),
-        NodeSpec("risk_assess", "风险定级：产出 1-5 级结论", _risk_assess, (), ("upstream", "extra")),
-        NodeSpec("situation_simulate", "态势推演：多情景趋势", _situation_simulate, (), ("extra", "upstream")),
-        NodeSpec("human_review", "人工审核/会签：等待决策", _human_review, (), ("prompt", "options")),
-        NodeSpec("warning_generate", "预警生成：产出分级预警内容", _warning_generate, (), ("extra",)),
-        NodeSpec("warning_publish", "预警发布：多通道靶向触达", _warning_publish, (), ("channels",)),
-        NodeSpec("feedback_collect", "反馈采集：回执与响应状态", _feedback_collect, (), ("wait_seconds",)),
-        NodeSpec("branch", "条件分支：按规则路由", _branch, ("rules",), ("upstream", "default")),
-        NodeSpec("join", "并行汇聚：合并多路上游结果", _join, ("upstream",)),
-        NodeSpec("delay", "延时等待：节流与错峰", _delay, (), ("seconds",)),
-        NodeSpec("notify", "通知：总线事件广播", _notify, ("text",), ("level",)),
-        NodeSpec("api_call", "外部 API 调用", _api_call, ("method", "url"), ("body",)),
-        NodeSpec("device_control", "设备控制：广播/路障等联动", _device_control, ("device", "action", "command_url")),
-        NodeSpec("degrade_to_rule", "规则降级：智能体不可用时保守定级", _degrade_to_rule, (), ("risk_level",), {"risk_level": 1}),
-        NodeSpec("chain_stage", "链路段：把标准五段之一交给链路侧执行", _chain_stage, ("stage",), internal=True),
+        NodeSpec(
+            "start",
+            "起点：声明运行输入变量",
+            _start,
+            (),
+            ("variables",),
+            category="logic",
+            outputs=("started", "variables"),
+        ),
+        NodeSpec("end", "终点：标记流程结束", _end, category="logic", outputs=("ended",)),
+        NodeSpec(
+            "data_fetch",
+            "数据接入：按区域/指标拉取最新读数",
+            _data_fetch,
+            (),
+            ("region_code", "metric", "limit"),
+            category="io",
+            outputs=("rows", "count"),
+        ),
+        NodeSpec(
+            "threshold",
+            "阈值判断：对读数做触发条件判定",
+            _threshold,
+            ("conditions",),
+            ("upstream", "mode"),
+            category="logic",
+            outputs=("triggered", "hits"),
+        ),
+        NodeSpec(
+            "hazard_identify",
+            "灾种识别：判定候选灾种",
+            _hazard_identify,
+            (),
+            ("extra",),
+            category="intelligence",
+            outputs=("hazard",),
+        ),
+        NodeSpec(
+            "risk_assess",
+            "风险定级：产出 1-5 级结论",
+            _risk_assess,
+            (),
+            ("upstream", "extra"),
+            category="intelligence",
+            outputs=("risk_level", "risk"),
+        ),
+        NodeSpec(
+            "situation_simulate",
+            "态势推演：多情景趋势",
+            _situation_simulate,
+            (),
+            ("extra", "upstream"),
+            category="intelligence",
+            outputs=(
+                "scenarios",
+                "horizon_minutes",
+                "trend",
+                "degraded",
+                "degraded_reason",
+                "case_count",
+                "dropped_cases",
+                "declared_level",
+                "hazard_type",
+                "region_code",
+                "sandbox",
+            ),
+        ),
+        NodeSpec(
+            "human_review",
+            "人工审核/会签：等待决策",
+            _human_review,
+            (),
+            ("prompt", "options"),
+            category="human",
+            outputs=("decision", "choice"),
+        ),
+        NodeSpec(
+            "warning_generate",
+            "预警生成：产出分级预警内容",
+            _warning_generate,
+            (),
+            ("extra",),
+            category="intelligence",
+            outputs=("warning",),
+        ),
+        NodeSpec(
+            "warning_publish",
+            "预警发布：多通道靶向触达",
+            _warning_publish,
+            (),
+            ("channels",),
+            category="intelligence",
+            outputs=("delivery", "delivered"),
+        ),
+        NodeSpec(
+            "feedback_collect",
+            "反馈采集：回执与响应状态",
+            _feedback_collect,
+            (),
+            ("wait_seconds",),
+            category="logic",
+            outputs=("feedback",),
+        ),
+        NodeSpec(
+            "branch",
+            "条件分支：按规则路由",
+            _branch,
+            ("rules",),
+            ("upstream", "default"),
+            category="logic",
+            outputs=("matched",),
+        ),
+        NodeSpec(
+            "join",
+            "并行汇聚：合并多路上游结果",
+            _join,
+            ("upstream",),
+            category="logic",
+            outputs=("merged",),
+        ),
+        NodeSpec("delay", "延时等待：节流与错峰", _delay, (), ("seconds",), category="logic", outputs=("delayed_seconds",)),
+        NodeSpec("notify", "通知：总线事件广播", _notify, ("text",), ("level",), category="io", outputs=("notified",)),
+        NodeSpec(
+            "api_call",
+            "外部 API 调用",
+            _api_call,
+            ("method", "url"),
+            ("body",),
+            category="io",
+            outputs=("response",),
+        ),
+        NodeSpec(
+            "device_control",
+            "设备控制：广播/路障等联动",
+            _device_control,
+            ("device", "action", "command_url"),
+            category="io",
+            outputs=("device", "response"),
+        ),
+        NodeSpec(
+            "degrade_to_rule",
+            "规则降级：智能体不可用时保守定级",
+            _degrade_to_rule,
+            (),
+            ("risk_level",),
+            {"risk_level": 1},
+            category="intelligence",
+            outputs=("risk_level", "degraded"),
+        ),
+        NodeSpec(
+            "chain_stage",
+            "链路段：把标准五段之一交给链路侧执行",
+            _chain_stage,
+            ("stage",),
+            internal=True,
+            category="logic",
+        ),
     ]
     for spec in specs:
         registry.register(spec)
+    registry.assert_consistent()
     return registry
 
 

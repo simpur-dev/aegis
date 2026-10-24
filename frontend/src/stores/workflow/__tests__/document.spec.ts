@@ -780,6 +780,120 @@ describe('文档层：保存的边界与并发', () => {
   })
 })
 
+describe('文档层：撤销 / 重做', () => {
+  it('空白画布没有可撤销项；一次编辑一步，撤销后可重做', () => {
+    bootstrap()
+    expect(current().canUndo).toBe(false)
+    expect(current().undoLabel).toBeNull()
+
+    current().addNode(nodeDef('a'))
+    expect(current().canUndo).toBe(true)
+    expect(current().undoLabel).toBe('添加节点')
+
+    expect(current().undo()).toBe(true)
+    expect(current().document?.nodes).toEqual([])
+    expect(current().canRedo).toBe(true)
+    expect(current().undoLabel).toBeNull()
+    expect(current().redoLabel).toBe('添加节点')
+
+    expect(current().redo()).toBe(true)
+    expect(current().document?.nodes.map((node) => node.node_id)).toEqual(['a'])
+    expect(current().canRedo).toBe(false)
+    expect(current().redo()).toBe(false)
+  })
+
+  it('拖动只在落手时算一步：移动开始写坐标不入栈，重复移动到同一坐标不入栈', () => {
+    bootstrap()
+    current().addNode(nodeDef('a'), { x: 0, y: 0 })
+    current().addNode(nodeDef('b'), { x: 280, y: 0 })
+    current().seedPositions({ a: { x: 0, y: 0 }, b: { x: 280, y: 0 } })
+
+    current().moveNodes({ a: { x: 60, y: 70 }, b: { x: 340, y: 70 } })
+    current().moveNodes({ a: { x: 60, y: 70 }, b: { x: 340, y: 70 } })
+
+    expect(current().undoLabel).toBe('移动节点')
+    expect(current().undo()).toBe(true)
+    expect(current().document?.layout.positions).toMatchObject({
+      a: { x: 0, y: 0 },
+      b: { x: 280, y: 0 },
+    })
+    expect(current().document?.nodes).toHaveLength(2)
+  })
+
+  it('粘贴子图一步落齐节点、内部边与坐标，撤销整块收回', () => {
+    bootstrap()
+    current().addNode(nodeDef('seed'))
+    const pasted = current().insertSubgraph(
+      [nodeDef('a'), nodeDef('b', 'join', { upstream: ['a'] })],
+      [{ source: 'a', target: 'b', condition: '' }],
+      { a: { x: 100, y: 100 }, b: { x: 380, y: 100 } },
+    )
+    expect(pasted).toBe(true)
+    expect(current().undoLabel).toBe('粘贴')
+    expect(current().document?.nodes).toHaveLength(3)
+    expect(current().document?.edges).toHaveLength(1)
+
+    expect(current().undo()).toBe(true)
+    expect(current().document?.nodes.map((node) => node.node_id)).toEqual(['seed'])
+    expect(current().document?.edges).toEqual([])
+    expect(current().document?.layout.positions.a).toBeUndefined()
+    expect(current().document?.layout.positions.b).toBeUndefined()
+
+    expect(current().redo()).toBe(true)
+    expect(current().document?.nodes).toHaveLength(3)
+  })
+
+  it('多选删除是一步：节点、级联边与坐标一起回来', () => {
+    bootstrap()
+    current().insertSubgraph([nodeDef('a'), nodeDef('b')], [{ source: 'a', target: 'b', condition: '' }], {
+      a: { x: 0, y: 0 },
+      b: { x: 280, y: 0 },
+    })
+    expect(current().removeSelection(['a', 'b'], [])).toBe(true)
+    expect(current().document?.nodes).toEqual([])
+    expect(current().document?.edges).toEqual([])
+    expect(current().document?.layout.positions).toEqual({})
+
+    expect(current().undo()).toBe(true)
+    expect(current().document?.nodes.map((node) => node.node_id)).toEqual(['a', 'b'])
+    expect(current().document?.edges).toEqual([{ source: 'a', target: 'b', condition: '' }])
+    expect(current().document?.layout.positions.b).toEqual({ x: 280, y: 0 })
+  })
+
+  it('历史上限 50 步：更早的步骤会被挤掉，不会无限增长', () => {
+    bootstrap()
+    for (let index = 0; index < 60; index += 1) current().addNode(nodeDef(`n${index}`))
+
+    let undone = 0
+    while (current().undo()) undone += 1
+    expect(undone).toBe(50)
+    expect(current().canUndo).toBe(false)
+  })
+
+  it('撤销后再编辑会清空重做栈', () => {
+    bootstrap()
+    current().addNode(nodeDef('a'))
+    current().undo()
+    expect(current().canRedo).toBe(true)
+
+    current().addNode(nodeDef('b'))
+    expect(current().canRedo).toBe(false)
+    expect(current().redo()).toBe(false)
+    expect(current().document?.nodes.map((node) => node.node_id)).toEqual(['b'])
+  })
+
+  it('只读版本视图里撤销/重做都不可用', () => {
+    bootstrap()
+    current().bindInstanceDocument(workflowDocument())
+    expect(current().autoSaveEnabled).toBe(false)
+    expect(current().canUndo).toBe(false)
+
+    current().addNode(nodeDef('a'))
+    expect(current().canUndo).toBe(false)
+    expect(current().undo()).toBe(false)
+  })
+})
+
 describe('文档层：发布与覆盖失败的出口', () => {
   it('保存失败时发布会停在保存这一步，不再调用 publish', async () => {
     bootstrap({

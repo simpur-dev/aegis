@@ -9,13 +9,15 @@
 import { Handle, Position } from '@vue-flow/core'
 import { computed } from 'vue'
 
-import { categoryOfNode, stateStyle, type NodeState } from '@/utils/graph'
+import { stateStyle, type NodeState } from '@/utils/graph'
 
 import NodeIcon from './NodeIcon.vue'
+import { resolveNodePresentation } from './presentation'
 
 const props = defineProps<{
   label: string
   nodeType: string
+  known: boolean
   state: NodeState | null
   slaMs: number
   timeoutMs: number
@@ -26,27 +28,27 @@ const props = defineProps<{
 const style = computed(() => stateStyle(props.state ?? 'pending'))
 const stateClass = computed(() => (props.state === null ? 'is-idle' : style.value.className))
 const badge = computed(() => (props.state === null ? '未运行' : style.value.label))
-const category = computed(() => categoryOfNode(props.nodeType))
+const presentation = computed(() => resolveNodePresentation(props.nodeType))
 </script>
 
 <template>
   <div
     class="wf-node"
-    :class="[stateClass, { 'is-selected': selected }]"
+    :class="[stateClass, { 'is-selected': selected, 'is-unknown': !known }]"
     :style="{
       '--wf-accent': props.state === null ? 'var(--aeg-color-text-muted)' : style.color,
-      '--wf-cat': `var(--aeg-color-editor-cat-${category})`,
+      '--wf-cat': `var(--aeg-color-editor-accent-${presentation.accent})`,
     }"
   >
     <Handle type="target" :position="Position.Left" class="wf-node__handle" :style="{ top: '16px' }" />
     <div class="wf-node__head">
-      <span class="wf-node__icon"><NodeIcon :category="category" /></span>
+      <span class="wf-node__icon"><NodeIcon :type="nodeType" /></span>
       <span class="wf-node__ident">
         <span class="wf-node__title" :title="label">{{ label }}</span>
-        <span class="wf-node__type">{{ nodeType }}</span>
+        <span class="wf-node__type">{{ known ? nodeType : `未知类型 · ${nodeType}` }}</span>
       </span>
       <span class="wf-node__badge">
-        <span class="wf-node__dot" aria-hidden="true"></span>{{ badge }}
+        <span class="wf-node__dot" aria-hidden="true"></span>{{ known ? badge : '只读' }}
       </span>
     </div>
     <div class="wf-node__body"><slot /></div>
@@ -104,6 +106,12 @@ const category = computed(() => categoryOfNode(props.nodeType))
 }
 .wf-node.is-idle .wf-node__title {
   color: var(--aeg-color-text-secondary);
+}
+.wf-node.is-unknown {
+  border-style: dashed;
+}
+.wf-node.is-unknown .wf-node__type {
+  color: var(--aeg-color-status-warning);
 }
 .wf-node__head {
   display: flex;

@@ -204,14 +204,15 @@ describe('编辑器头部与画布工具条', () => {
     wrapper.unmount()
   })
 
-  it('工具条四枚按钮各发各的事件，禁用态真的挂上 disabled', async () => {
+  it('工具条五个按钮各发各的事件，禁用态真的挂上 disabled', async () => {
     const disabled = mount(EditorToolbar, { props: { disabled: true } })
     const buttons = disabled.findAll('.ed-toolbar__btn')
-    expect(buttons).toHaveLength(4)
+    expect(buttons).toHaveLength(5)
     for (const button of buttons.slice(0, 3)) {
       expect(button.attributes('disabled'), `禁用时 ${button.text()} 仍可点`).toBeDefined()
     }
     expect(buttons[3]?.attributes('disabled'), '「适配画布」不需要定义，不该跟着禁用').toBeUndefined()
+    expect(buttons[4]?.attributes('disabled'), '模式切换不该跟着禁用').toBeUndefined()
     disabled.unmount()
 
     const wrapper = mount(EditorToolbar)
@@ -220,10 +221,16 @@ describe('编辑器头部与画布工具条', () => {
     await live[1]?.trigger('click')
     await live[2]?.trigger('click')
     await live[3]?.trigger('click')
+    await live[4]?.trigger('click')
     expect(wrapper.emitted('add')).toHaveLength(1)
     expect(wrapper.emitted('note')).toHaveLength(1)
     expect(wrapper.emitted('layout')).toHaveLength(1)
     expect(wrapper.emitted('fit')).toHaveLength(1)
+    expect(wrapper.emitted('mode')).toEqual([['hand']])
+
+    await wrapper.setProps({ mode: 'hand' })
+    await wrapper.findAll('.ed-toolbar__btn')[4]?.trigger('click')
+    expect(wrapper.emitted('mode')).toEqual([['hand'], ['pointer']])
   })
 })
 

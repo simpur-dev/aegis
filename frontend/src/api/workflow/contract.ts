@@ -4,7 +4,16 @@
  * 本文件不依赖 axios / Vue / Pinia：store 与组件只认这里的形状，
  * 具体 HTTP 实现与响应解析分别落在 `client.ts` / `codec.ts`。
  */
-import type { EdgeDef, JsonValue, NodeDef, NodeState, OnFailure, RetryPolicy, WorkflowDef } from '@/utils/graph'
+import type {
+  EdgeDef,
+  JsonValue,
+  NodeCategory,
+  NodeDef,
+  NodeState,
+  OnFailure,
+  RetryPolicy,
+  WorkflowDef,
+} from '@/utils/graph'
 import type {
   RenameLineageResult,
   WorkflowDocument,
@@ -124,8 +133,14 @@ export interface DraftPutInput {
 export interface NodeTypeEntry {
   type: string
   description: string
+  /** 画布分组；与后端 `NodeSpec.category` 同一条口径。 */
+  category: NodeCategory
   required_config: string[]
   optional_config: string[]
+  /** 数值参数的硬下限（后端 `NodeSpec.min_config`）：发布前就能拦下越界值。 */
+  min_config: Record<string, number>
+  /** 该类型可能写进产出的顶层键：上游变量选择器的数据源。 */
+  outputs: string[]
 }
 
 export interface NodeTypesResponse {
