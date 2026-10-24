@@ -799,3 +799,20 @@ meta/intent/status/result/done 按**帧**渲染成小号过程行（帧名走 `-
 `NodeLogic.vue`/`NodeChips.vue` 各 1→0、`MapView.vue` 3→2（scene-bar 那句提示从 `#fa8c16` 改走
 `--aeg-color-status-warning`，白底上原本只有 2.38:1）。剩下的三块大头：`SystemTerminal.vue` 21、
 `RunTimeline.vue` 13、`utils/graph.ts` 12（最后一块就是 T09"画布内部接令牌"的欠项）。
+
+## 批次 D3（2026-10-24）：19 类节点专属表单与变量选择器
+
+- 面板字段与后端配置白名单**逐类按集合相等**判：少一格意味着存量定义里那个键只能改 JSON，
+  多一格写进去必吃后端的"未知参数"。补齐的两格是 `situation_simulate.upstream`（白名单里有、
+  面板一直没有）。
+- 新增 7 个编辑器组件（`RuleEditor`/`VariableListEditor`/`StartVariablesEditor`/`NodeRefPicker`/
+  `VariablePicker`/`TemplateField`/`ValidationList`）+ 一份纯判据 `configValidation.ts`：
+  必填、上下限、算子表外、`upstream` 不是入边、Start 变量名形状/重名/原型链名/超 32 项/默认值与类型不符，
+  都在**那一格下面**先说出来，不等一次网络往返。
+- `upstream` 的候选收成真实入边（`inboundSources`），与后端 `_validate_wired_upstreams` 同一口径；
+  失效引用不静默删掉，原样摆出来标"没有连线"，因为静默改参数比红字更糟。
+- 变量引用 `{{#节点.输出键#}}` 只从祖先里点（批次 D2 的 `useUpstreamVariables`：目录产出键 ∪ 上次运行多出来的键），
+  插在光标处而不是追加到末尾。
+- 颜色棘轮 **110 → 106**：`ConfigFields.vue` 2→0、`JsonField.vue` 2→0（`#d9d9d9`→`--aeg-color-border-strong`、
+  `#cf1322`→`--aeg-color-status-danger`），新组件自第一行起零字面色；口径不变，`E:\tmp\color-ratchet-probe.mjs` 实量。
+

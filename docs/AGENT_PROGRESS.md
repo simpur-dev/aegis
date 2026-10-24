@@ -123,3 +123,23 @@
   待用户裁决的一处：`NodePalette.vue` 与画布 `onDrop` 拖拽链路仍在但已无入口（加节点改走块选择器点选），
   要么按 Dify 给块选择器补"拖出去放"的一档，要么连 `onDrop` 一起退役；本批没动它。
   下一步：批次 C 操作语法（剪贴板/快捷键/历史）→ D 专属表单与变量 → E 试运行与实例图 → F 版本面板与性能收尾。
+- 2026-10-24 轮次（工作流编辑器重构批次 C 收口，方案 `mountain-trail-trout` C1–C4）：
+  交付：① 六个端口带 1.17.1 fixture 对拍——剪贴板 / 快捷键表 / 键盘微移（T1），历史 / 选择 / 节点定位（T2）；
+  ② 选择态收回编辑层：框选 240×100 相交（含贴边）、Shift 增减、点空白清空、只读可看不可移，选择不写文档；
+  ③ 剪贴板自有格式 `aegis-workflow-clipboard` v1、2MB 上限、原型段过滤、坏输入显式错误码、内部边一一换号、
+  节点+边+坐标一次落齐（历史一步）、落点跟最后一次指针（没跟过鼠标落可见区中心）；
+  ④ 历史快照式 50 步，拖动只在 `dragstop` 记一步，粘贴/多选删除/自动整理各一步，
+  undo/redo 不加 `documentEpoch`（视口不跳），只读视图禁用；⑤ 快捷键保留上游 14 条 + save/help/locate/cut 4 条，
+  右键菜单（节点/多选/边/空白）、`Mod+F` 定位、`?` 帮助、工具条第五枚指针/抓手；
+  ⑥ fast-check 性质测试 5 条（粘贴换号保持连通、未知类型级联丢弃、undo/redo 恒等、同文不记步、上限与标签）。
+  真机（构建产物 preview 4175 + 后端 8321）：框选 3 颗松手后仍选中 3 颗（修前 0）→ 复制读回片段含 kind/node_id →
+  粘贴 3→6 → `Mod+1` fit（matrix 0.9→1，0 颗出界）→ 三颗同位移 dx≈128 / dy≈74 → 撤销 3 次 6→3→2 →
+  重做 3 次 3→6→拖动位置；输入框 Delete 不删节点（正对照：画布 Delete 真删、undo 回来）；
+  坏剪贴板弹“剪贴板内容不是合法 JSON”且节点集合前后一致。截图 `frontend/test-results/c4/01..07`。
+  修掉的两个真缺陷：Vue Flow `Pane.onClick` 无条件 `removeSelectedElements()` 把框选结果清空
+  （捕获阶段吞掉合成 click，标记留到下一次 mousedown；变异删监听 → 3 变 0，备份还原后复绿）；
+  `ui-overlap` 的 fit 判据按裸 `1`（未绑定）在空跑，改 `Control+1`，工具条断言 4→5。
+  门禁：后端 ruff/mypy ✓ + pytest **3276 tests / 98 skipped / 3178 ran / 0 failed**（junit 守卫同数通过）；
+  前端 typecheck/lint/format ✓ + vitest **77 files / 1127 passed** +
+  coverage **99.7/93.93/99.56/99.7** ✓ + build 31.90s；e2e 全量 **128 passed / 0 failed**，33.3 分钟。
+  下一步：批次 D 专属表单与变量（19 类字段、变量语法端口、上游变量）。
