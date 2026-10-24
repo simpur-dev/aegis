@@ -143,3 +143,26 @@
   前端 typecheck/lint/format ✓ + vitest **77 files / 1127 passed** +
   coverage **99.7/93.93/99.56/99.7** ✓ + build 31.90s；e2e 全量 **128 passed / 0 failed**，33.3 分钟。
   下一步：批次 D 专属表单与变量（19 类字段、变量语法端口、上游变量）。
+- 2026-10-24 轮次（工作流编辑器重构批次 D1–D3 收口，方案 `mountain-trail-trout`）：
+  D1 交付：后端注册表自洽对账（`NodeRegistry.audit/assert_consistent`，`WorkflowEngine.__init__` 启动即判）+
+  `/node-types` 补 `category/min_config/outputs` 三格；前端 `presentation.ts` 穷尽图标与强调色、
+  未知类型画虚线卡并整体只读降级、`catalog` store 的漂移对账与重试横幅。跨端契约用例改成**按括号深度扫源码**
+  解析 `NodeSpec(...)`（旧正则被多行写法打断过），关键字参数先剔除再按位对齐。
+  D2 交付：`utils/graph/variable.ts`（T1，`variableTransformer`/输出名归一/`isSafeVariableKey`）与
+  `useUpstreamVariables`（T2，真实祖先 + 目录产出键 ∪ 上次运行多出的键 + 环上退化按 ID 排），
+  与 `dify-1.17.1/variable.json` fixture 对拍。
+  D3 交付：19 类字段形态全进 registry（面板字段与后端白名单**按集合相等**判，补齐 `situation_simulate.upstream`）；
+  新落 `RuleEditor`/`VariableListEditor`/`StartVariablesEditor`/`NodeRefPicker`/`VariablePicker`/`TemplateField`/
+  `ValidationList` + 纯判据 `configValidation.ts`：必填、上下限、算子表外、`upstream` 不是入边、
+  Start 变量名形状/重名/原型链名/超 32 项/默认值与类型不符，全部长在那一格下面。
+  真机（构建产物 preview 4175，目录不可达档）抓出并修掉两处：同一句必填提示摆两遍（改成编辑器只染红框、
+  话由一行统一说，并加“一句话只许出现一次”的回归断言）；值班员界面残留 `model.py:61-66` 行号。
+  变异检查 5 条，逐条从字节备份还原并复绿：删必填判定 → 红 2；删入边判定 → 红 2；原型链守卫换成大小写变形
+  （等价于失效）→ 红 1；变量插入改成永远追加到末尾 → 红 1；Start 变量名形状改成“非空即过” → 红 1。
+  外壳自身也被变异抓出一处坏法：vitest 汇总行带 ANSI 码，不剥掉就把“跑过了”读成“空输出”。
+  门禁：后端 ruff check/format + mypy src ✓ + pytest **3285 tests / 0 failed / 98 skipped**（331.6s，
+  junit `backend/reports/junit-d3-gate.xml`）；前端 typecheck/lint/format ✓ + vitest **80 files / 1200 passed**
+  （批次内实测轨迹 1141 → 1152 → 1200）+ coverage **99.71/94.01/99.58/99.71** ✓ + build ✓；
+  e2e 构建产物档 **4 passed**（`catalog-presentation` 2 + `node-forms` 2）；颜色棘轮 **110 → 106**。
+  下一步：批次 D4（性质测试、19 类编辑-保存-重开无损、真机全量验收与收口）。
+

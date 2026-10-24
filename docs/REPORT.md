@@ -3389,6 +3389,70 @@ CI 确实跑 `lint:workflow`/`format:check:workflow`/`test:coverage`、脚本覆
   F5 之后不可撤销（符合“草稿可恢复、撤销不跨会话”的口径，但没有做成产品文案提示）；
 - 只读视图的“可看不可移”由单测钉住，C4 真机动线没有打开历史版本走一遍；
 - 后端代码本批没有改动；全量 pytest 的绿色只证明没有回归，不构成本批新功能的证据；
-- 仍未提交、未 push；CI 亦未在 GitHub 上跑过批次 C 的改动。
+- 批次 C 的改动当时未提交；2026-10-24 与批次 D1–D3 一并提交并推到 `origin/main`（`898a1c3` + `0b7385c`），
+  GitHub 上的 CI 结果尚未回读。
+
+## 工作流编辑器重构批次 D（D1–D3）：目录对账、变量端口与 19 类专属表单（2026-10-24）
+
+**D1 目录与呈现**：后端 `NodeRegistry.audit()/assert_consistent()` 在 `default_registry()` 与
+`WorkflowEngine.__init__` 各判一次（坏目录不许带病上线），`/node-types` 补 `category/min_config/outputs`；
+前端镜像 `NODE_SPECS` 与 `nodes.py` 的源码对账改成**按括号深度扫描**取 `NodeSpec(...)` 再剔除关键字参数
+（旧正则被多行写法打断，会把"对账"变成"对错位"）。`presentation.ts` 穷尽 19 类的图标与强调色，
+未注册类型画虚线卡 + 只读徽标 + 面板隐藏编辑器。
+
+**D2 变量端口**：`utils/graph/variable.ts`（T1，与 `dify-1.17.1/variable.json` 对拍）与
+`useUpstreamVariables`（T2：真实祖先反向可达、目录产出键 ∪ 上次运行多出的键、空组省略、
+环上退化为按 ID 排、原型链键挡在面板外）。
+
+**D3 专属表单**：19 类的字段形态全部写进 registry，面板字段与后端配置白名单**按集合相等**判
+（少一格 = 存量定义只能改 JSON，多一格 = 写进去必吃"未知参数"）；新落 `RuleEditor`、
+`VariableListEditor`、`StartVariablesEditor`、`NodeRefPicker`、`VariablePicker`、`TemplateField`、
+`ValidationList` 与纯判据 `configValidation.ts`。就地判的六类事：必填、上下限（含 `min_config`）、
+算子/聚合表外、`upstream` 不是入边（镜像 `engine._validate_wired_upstreams` 的措辞，点名缺哪条边）、
+Start 变量名形状/重名/原型链名/超 32 项/默认值与类型不符、变量引用非祖先或路径不合法。
+
+**真机取证（构建产物 + preview 4175，目录不可达档）**：`e2e/node-forms.spec.ts` 走"加阈值节点 → 条件逐行加删改 →
+清空指标看红字"与"加数据接入 + 事件通报 → 拖线 → 清空必填 → 点变量插到光标处 → 手敲错引用 → 再连一颗阈值看
+`upstream` 候选"两条动线，截图 `frontend/test-results/d3/`。这一轮量出两处缺陷并修掉：
+同一句必填提示在面板上摆两遍（改成编辑器只染红框、话由一行统一说）；检查器提示里残留 `model.py:61-66`
+（值班员界面不夹源码行号，这条口径此前只在运行态面板执行过）。
+
+**变异检查**（外壳 `E:\tmp\d3-mutate.mjs`：锚点须恰好命中一次、只认 rc=1 且红≥1、还原逐字节比对）：
+
+| 变异 | 红条数 |
+|---|---|
+| 删掉必填判定（`isBlank` 短路） | 2 |
+| 删掉"引用必须是入边"判定 | 2 |
+| 原型链键守卫换成大小写变形（等价失效） | 1 |
+| 变量插入改成永远追加到末尾 | 1 |
+| Start 变量名形状改成"非空即过" | 1 |
+
+外壳自身也被抓出一处坏法：vitest 汇总行带 ANSI 颜色码，不剥掉就把"跑过了"读成"空输出"——
+第一版外壳因此把一条**有效**变异报成"无效"。修壳后五条全部复跑。
+
+**实测门禁**：
+
+| 门禁 | 结果 |
+|---|---|
+| 后端 `ruff check src tests` / `ruff format --check` | All checks passed / 333 files already formatted |
+| 后端 `mypy src` | Success: no issues found in 167 source files |
+| 后端全量 `pytest --junitxml` | **3285 tests / 0 failures / 0 errors / 98 skipped**，331.6s（`backend/reports/junit-d3-gate.xml`） |
+| 前端 `typecheck` / `lint:workflow` / `format:check:workflow` | 全部 rc=0 |
+| 前端 `vitest run` | **80 files / 1200 tests passed**（批次内轨迹 1141 → 1152 → 1200） |
+| 前端 `test:coverage` | 语句 **99.71** / 分支 **94.01** / 函数 **99.58** / 行 **99.71**，阈值 90/90/90/85 通过 |
+| 前端 `build` | 成功 |
+| e2e 构建产物档（`catalog-presentation` + `node-forms`） | **4 passed / 0 failed**，1.0 分钟 |
+| 颜色棘轮 | **110 → 106**（`ConfigFields.vue` 2→0、`JsonField.vue` 2→0，新组件零字面色） |
+
+**这一批没有证明的事**：
+
+- D3 的真机取证只在 **1440×900 浅色 + 目录不可达**这一档；深色档、900px 窄档下的表单与变量浮层没有截图，
+  19 类节点的"编辑-保存-重开无损"整批留给 D4；
+- 变量引用目前只是**前端判**：后端还没有 `workflow/variables` 求值与发布期硬校验（ADR-0009 §9），
+  所以"引用非法节点被 400 指名"这条验收目前由 `upstream` 承担，`{{#…#}}` 串对服务端仍是一段普通文本；
+- 上次运行输出（`run.instance`）进变量面板只由单测证明，真机没有打开过带实例的会话；
+- 全量 e2e（`ui-overlap` 127 项）本轮没有重跑——它需要真后端 8321，且 D3 没改外壳几何；
+  这条欠项与批次 D4 的收口一起补。
+
 
 
