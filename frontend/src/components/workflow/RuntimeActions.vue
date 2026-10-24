@@ -7,20 +7,20 @@ import { message } from 'ant-design-vue'
 import { computed, ref } from 'vue'
 
 import { RISK_LABELS } from '@/api/types'
-import { useWorkflowStore } from '@/stores/workflow'
 import { MAX_CHOICE_CHARS, MAX_DECISION_COMMENT_CHARS, MAX_SIGNER_CHARS, decisionLabel, nextAvailableId, stateStyle, type NodeDef, type NodeType } from '@/utils/graph'
 
+import { useEditorContext } from './editor/context'
 import { createNodeDef, NODE_META, PALETTE_GROUPS } from './registry'
 
 const props = defineProps<{ node: NodeDef }>()
 
-const store = useWorkflowStore()
+const { run: runtime } = useEditorContext()
 
-const run = computed(() => store.nodeRun(props.node.node_id))
+const run = computed(() => runtime.nodeRun(props.node.node_id))
 const style = computed(() => stateStyle(run.value?.state ?? 'pending'))
-const hasInstance = computed(() => store.instance !== null)
+const hasInstance = computed(() => runtime.instance !== null)
 /** 决策候选来自定义里的 options；为空表示引擎未登记候选（如失败转人工），退化为自由文本。 */
-const options = computed(() => store.decisionOptions(props.node.node_id))
+const options = computed(() => runtime.decisionOptions(props.node.node_id))
 const comment = ref('')
 const reason = ref('')
 const customChoice = ref('')
@@ -58,30 +58,30 @@ const signed = computed(() => {
  * 这一票的去向（D9 数据飞轮）：后端只在签字那一次的响应里说，实例快照里没有，
  * 所以页面上不说就等于没说——签单人以为自己给真值表添了一行，其实一行都没进。
  */
-const capture = computed(() => store.captureFor(props.node.node_id))
+const capture = computed(() => runtime.captureFor(props.node.node_id))
 
 function submit(choice: string): void {
   const level = choice === 'adjust' && adjustLevel.value > 0 ? adjustLevel.value : null
-  void store.submitDecision(props.node.node_id, choice, comment.value, signer.value, level)
+  void runtime.submitDecision(props.node.node_id, choice, comment.value, signer.value, level)
   comment.value = ''
 }
 
 function bypass(): void {
-  void store.bypassNode(props.node.node_id, reason.value)
+  void runtime.bypassNode(props.node.node_id, reason.value)
   reason.value = ''
 }
 
 function pushConfig(): void {
-  void store.patchRuntimeConfig(props.node.node_id, props.node.config)
+  void runtime.patchRuntimeConfig(props.node.node_id, props.node.config)
 }
 
 /** 在选中节点之后插入：后端会把选中节点的原出边重接到新节点（engine.py:558-565）。 */
 async function insertAfter(): Promise<void> {
-  const taken = (store.instance?.nodes ?? []).map((item) => item.node_id)
+  const taken = (runtime.instance?.nodes ?? []).map((item) => item.node_id)
   const created = createNodeDef(insertType.value, nextAvailableId(taken, insertType.value))
   // 插进去的节点只属于这条实例：画布画的是定义那一张图，点了之后画面一动不动。
   // 不点名的成功提示是这里唯一能给的诚实——否则这一下看着像没发生。
-  if (await store.insertRuntimeNode(props.node.node_id, created)) {
+  if (await runtime.insertRuntimeNode(props.node.node_id, created)) {
     message.success(`已在实例里插入 ${created.node_id}（画布显示的是定义那一张，这个节点只属于这条实例）`)
   }
 }
@@ -152,7 +152,7 @@ async function insertAfter(): Promise<void> {
         :key="option"
         type="button"
         class="wf-runtime__button"
-        :disabled="!store.canDecideNode(node.node_id)"
+        :disabled="!runtime.canDecideNode(node.node_id)"
         @click="submit(option)"
       >
         {{ decisionLabel(option) }}
@@ -163,7 +163,7 @@ async function insertAfter(): Promise<void> {
       <button
         type="button"
         class="wf-runtime__button"
-        :disabled="!store.canDecideNode(node.node_id) || customChoice === ''"
+        :disabled="!runtime.canDecideNode(node.node_id) || customChoice === ''"
         @click="submit(customChoice)"
       >
         提交决策
@@ -172,7 +172,7 @@ async function insertAfter(): Promise<void> {
     <span class="wf-runtime__hint">仅"待人工核签"状态的节点可提交决策。</span>
 
     <div class="wf-runtime__row">
-      <button type="button" class="wf-runtime__button" :disabled="!store.canPatchRuntime(node.node_id)" @click="pushConfig">
+      <button type="button" class="wf-runtime__button" :disabled="!runtime.canPatchRuntime(node.node_id)" @click="pushConfig">
         以当前参数下发改参
       </button>
       <span class="wf-runtime__hint">
@@ -183,7 +183,7 @@ async function insertAfter(): Promise<void> {
 
     <div class="wf-runtime__row">
       <input v-model="reason" class="wf-runtime__input" type="text" placeholder="旁路理由（可选）" maxlength="128" />
-      <button type="button" class="wf-runtime__button" :disabled="!store.canBypassNode(node.node_id)" @click="bypass">
+      <button type="button" class="wf-runtime__button" :disabled="!runtime.canBypassNode(node.node_id)" @click="bypass">
         绕过该节点
       </button>
     </div>
@@ -195,7 +195,7 @@ async function insertAfter(): Promise<void> {
           <option v-for="type in group.types" :key="type" :value="type">{{ NODE_META[type].label }}</option>
         </optgroup>
       </select>
-      <button type="button" class="wf-runtime__button" :disabled="!store.instanceMutable" @click="insertAfter">
+      <button type="button" class="wf-runtime__button" :disabled="!runtime.instanceMutable" @click="insertAfter">
         在此节点后插入
       </button>
     </div>

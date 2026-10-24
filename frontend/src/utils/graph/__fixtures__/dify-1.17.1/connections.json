@@ -1,0 +1,204 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "execution": "executed"
+  },
+  "module": "web/app/components/workflow/utils/workflow.ts",
+  "function": "getNodesConnectedSourceOrTargetHandleIdsMap",
+  "initialNodes": [
+    {
+      "id": "a",
+      "data": {
+        "_connectedSourceHandleIds": [
+          "then",
+          "else"
+        ],
+        "_connectedTargetHandleIds": []
+      }
+    },
+    {
+      "id": "b",
+      "data": {
+        "_connectedSourceHandleIds": [],
+        "_connectedTargetHandleIds": [
+          "target"
+        ]
+      }
+    }
+  ],
+  "cases": [
+    {
+      "name": "add-edge",
+      "changes": [
+        {
+          "type": "add",
+          "edge": {
+            "id": "e1",
+            "source": "a",
+            "target": "b",
+            "sourceHandle": "then",
+            "targetHandle": "target"
+          }
+        }
+      ],
+      "actual": {
+        "a": {
+          "_connectedSourceHandleIds": [
+            "then",
+            "else",
+            "then"
+          ],
+          "_connectedTargetHandleIds": []
+        },
+        "b": {
+          "_connectedSourceHandleIds": [],
+          "_connectedTargetHandleIds": [
+            "target",
+            "target"
+          ]
+        }
+      }
+    },
+    {
+      "name": "add-edge-default-handles",
+      "changes": [
+        {
+          "type": "add",
+          "edge": {
+            "id": "e2",
+            "source": "a",
+            "target": "b"
+          }
+        }
+      ],
+      "actual": {
+        "a": {
+          "_connectedSourceHandleIds": [
+            "then",
+            "else",
+            "source"
+          ],
+          "_connectedTargetHandleIds": []
+        },
+        "b": {
+          "_connectedSourceHandleIds": [],
+          "_connectedTargetHandleIds": [
+            "target",
+            "target"
+          ]
+        }
+      }
+    },
+    {
+      "name": "remove-existing",
+      "changes": [
+        {
+          "type": "remove",
+          "edge": {
+            "id": "e3",
+            "source": "a",
+            "target": "b",
+            "sourceHandle": "then",
+            "targetHandle": "target"
+          }
+        }
+      ],
+      "actual": {
+        "a": {
+          "_connectedSourceHandleIds": [
+            "else"
+          ],
+          "_connectedTargetHandleIds": []
+        },
+        "b": {
+          "_connectedSourceHandleIds": [],
+          "_connectedTargetHandleIds": []
+        }
+      }
+    },
+    {
+      "name": "remove-missing-handle",
+      "changes": [
+        {
+          "type": "remove",
+          "edge": {
+            "id": "e4",
+            "source": "a",
+            "target": "b",
+            "sourceHandle": "missing",
+            "targetHandle": "missing"
+          }
+        }
+      ],
+      "note": "上游 findIndex=-1 后 splice(-1,1) 会误删末尾；AEGIS 端口必须 no-op",
+      "actual": {
+        "a": {
+          "_connectedSourceHandleIds": [
+            "then"
+          ],
+          "_connectedTargetHandleIds": []
+        },
+        "b": {
+          "_connectedSourceHandleIds": [],
+          "_connectedTargetHandleIds": []
+        }
+      }
+    },
+    {
+      "name": "multiple-changes-same-node",
+      "changes": [
+        {
+          "type": "add",
+          "edge": {
+            "id": "e5",
+            "source": "a",
+            "target": "b",
+            "sourceHandle": "then"
+          }
+        },
+        {
+          "type": "add",
+          "edge": {
+            "id": "e6",
+            "source": "a",
+            "target": "b",
+            "sourceHandle": "else"
+          }
+        }
+      ],
+      "actual": {
+        "a": {
+          "_connectedSourceHandleIds": [
+            "then",
+            "else",
+            "then",
+            "else"
+          ],
+          "_connectedTargetHandleIds": []
+        },
+        "b": {
+          "_connectedSourceHandleIds": [],
+          "_connectedTargetHandleIds": [
+            "target",
+            "target",
+            "target"
+          ]
+        }
+      }
+    }
+  ],
+  "aegisExpectation": {
+    "remove-missing-handle": {
+      "note": "删除不存在的 handle 应为 no-op，集合不变",
+      "expectedSourceHandles": [
+        "then",
+        "else"
+      ],
+      "expectedTargetHandles": [
+        "target"
+      ]
+    }
+  }
+}

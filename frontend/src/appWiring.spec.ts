@@ -30,7 +30,10 @@ function wiring(text: string): string {
 describe('main.ts 的插件装配', () => {
   it('pinia 被装上：视图在 setup 顶层取 store，缺它页面直接空白', () => {
     const users = readRepoFile('frontend', 'src', 'views', 'WorkflowView.vue')
-    expect(users).toContain('useWorkflowStore()')
+    expect(users).toContain('provideEditorContext()')
+    const context = readRepoFile('frontend', 'src', 'components', 'workflow', 'editor', 'context.ts')
+    expect(context).toContain('useDocumentStore()')
+    expect(context).toContain('useRunStore()')
     expect(wiring(mainSource())).toMatch(/app\.use\(\s*createPinia\(\)\s*\)/)
   })
 

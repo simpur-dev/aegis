@@ -35,6 +35,6 @@ defineProps<{ chips: ConfigChip[] }>()
   color: var(--aeg-color-text-secondary);
 }
 .wf-chips__value {
-  color: #434343;
+  color: var(--aeg-color-text-secondary);
 }
 </style>

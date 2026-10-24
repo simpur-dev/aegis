@@ -11,28 +11,45 @@ import { confirmDiscardUnsaved } from './confirmDiscard'
 import { confirmArchive } from './confirmArchive'
 
 import type { DefinitionSummary } from '@/api/workflow'
-import { useWorkflowStore } from '@/stores/workflow'
 import { definitionStatusLabel, edgeId, MAX_DEFINITION_NAME_CHARS, MAX_DESCRIPTION_CHARS, type EdgeDef } from '@/utils/graph'
 
-const store = useWorkflowStore()
+import { useEditorContext } from './editor/context'
 
-/** 打开一份已存定义：会整体覆盖画布，有未保存改动时先确认。 */
-function open(workflowId: string): void {
+const { catalog, document: documentStore, editor } = useEditorContext()
+
+/** 打开一条 lineage 的草稿：会整体覆盖画布，有未保存改动时先确认。 */
+function open(row: DefinitionSummary): void {
   const proceed = (): void => {
-    void store.openDefinition(workflowId)
+    if (row.lineage_id === undefined || row.lineage_id === '') {
+      void documentStore.openVersion(row.workflow_id)
+      editor.setMode({ kind: 'version', workflowId: row.workflow_id })
+      return
+    }
+    void documentStore.openLineage(row.lineage_id)
+    editor.setMode({ kind: 'draft' })
   }
-  if (store.isDirty) confirmDiscardUnsaved('打开这份定义', proceed)
+  if (documentStore.isDirty) confirmDiscardUnsaved('打开这份定义', proceed)
+  else proceed()
+}
+
+/** 版本恢复会把那一版写成草稿（服务端状态），画布上有改动时先确认。 */
+function restore(row: { workflow_id: string; version: number }): void {
+  const proceed = (): void => {
+    void documentStore.restoreVersion(row.workflow_id)
+    editor.setMode({ kind: 'draft' })
+  }
+  if (documentStore.isDirty) confirmDiscardUnsaved(`恢复 v${row.version}`, proceed)
   else proceed()
 }
 
 /** 归档要确认（改了服务端状态、会停掉按名字取用的自动化）；取消归档是安全的反向动作，直接做。 */
 function toggleArchive(row: DefinitionSummary): void {
   if (row.status === 'archived') {
-    void store.restoreDefinition(row.workflow_id)
+    void catalog.restoreDefinition(row.workflow_id)
     return
   }
   confirmArchive(row.name, row.version, () => {
-    void store.archiveDefinition(row.workflow_id)
+    void catalog.archiveDefinition(row.workflow_id)
   })
 }
 
@@ -46,7 +63,7 @@ interface EdgeRow {
   condition: string
 }
 
-const def = computed(() => store.current)
+const def = computed(() => documentStore.definition)
 
 const edges = computed<EdgeRow[]>(() => {
   const current = def.value
@@ -60,11 +77,11 @@ const nameOf = (nodeId: string): string => {
 }
 
 function onName(event: Event): void {
-  store.setMeta({ name: (event.target as HTMLInputElement).value })
+  documentStore.setMeta({ name: (event.target as HTMLInputElement).value })
 }
 
 function onDescription(event: Event): void {
-  store.setMeta({ description: (event.target as HTMLTextAreaElement).value })
+  documentStore.setMeta({ description: (event.target as HTMLTextAreaElement).value })
 }
 </script>
 
@@ -101,9 +118,9 @@ function onDescription(event: Event): void {
             :value="edge.condition"
             placeholder="边条件（分支名）"
             maxlength="64"
-            @change="store.updateEdgeCondition(edge.id, ($event.target as HTMLInputElement).value)"
+            @change="documentStore.updateEdgeCondition(edge.id, ($event.target as HTMLInputElement).value)"
           />
-          <button type="button" class="wf-def__button wf-def__button--danger" @click="store.removeEdge(edge.id)">删除</button>
+          <button type="button" class="wf-def__button wf-def__button--danger" @click="documentStore.removeEdge(edge.id)">删除</button>
         </div>
         <p class="wf-def__hint">{{ CONDITION_HINT }}</p>
       </li>
@@ -111,29 +128,50 @@ function onDescription(event: Event): void {
 
     <h4 class="wf-def__subtitle">本地校验</h4>
     <p class="wf-def__hint">以下仅为提交前拦截，服务端仍会复核类型注册、重名版本与运行期配置。</p>
-    <ul v-if="store.validationErrors.length > 0" class="wf-def__errors">
-      <li v-for="message in store.validationErrors" :key="message">{{ message }}</li>
+    <ul v-if="documentStore.validationErrors.length > 0" class="wf-def__errors">
+      <li v-for="message in documentStore.validationErrors" :key="message">{{ message }}</li>
     </ul>
-    <p v-else class="wf-def__ok">校验通过，可保存。</p>
+    <p v-else class="wf-def__ok">校验通过，可发布。</p>
+
+    <h4 class="wf-def__subtitle">版本历史（{{ documentStore.versions.length }}）</h4>
+    <p v-if="documentStore.versions.length === 0" class="wf-def__empty">
+      还没有发布版本；画布草稿会自动保存，点「发布版本」后这里出现 v1。
+    </p>
+    <ul v-else class="wf-def__versions">
+      <li v-for="row in documentStore.versions" :key="row.workflow_id" class="wf-def__version">
+        <span class="wf-def__ver">v{{ row.version }}</span>
+        <code class="wf-def__version-id">{{ row.workflow_id }}</code>
+        <span class="wf-def__muted">{{ row.node_count }} 节点 / {{ row.edge_count }} 连线</span>
+        <span v-if="row.is_current" class="wf-def__current">当前版本</span>
+        <button
+          type="button"
+          class="wf-def__button"
+          :data-testid="`restore-${row.workflow_id}`"
+          @click="restore(row)"
+        >
+          恢复为草稿
+        </button>
+      </li>
+    </ul>
 
     <h4 class="wf-def__subtitle">服务端已存定义</h4>
     <!-- 这一列此前只在进页/保存/归档时对账，别人刚存的那一版要刷新整页才看得见。
          现在每 15 秒自查一次，并把"什么时候取的、多旧"写在同一栏里。 -->
     <FreshnessBar
-      :fetched-at="store.definitionsUpdatedAt"
-      :label="`服务端定义（${store.definitions.length}） ｜ 每 15 秒自己对一遍`"
+      :fetched-at="catalog.definitionsUpdatedAt"
+      :label="`服务端定义（${catalog.definitions.length}） ｜ 每 15 秒自己对一遍`"
       :interval-ms="15_000"
       stacked
     />
     <ul class="wf-def__list">
-      <li v-for="row in store.definitions" :key="row.workflow_id" class="wf-def__list-item">
+      <li v-for="row in catalog.definitions" :key="row.workflow_id" class="wf-def__list-item">
         <span class="wf-def__name" :title="row.name">{{ row.name }}</span>
         <span class="wf-def__ver">v{{ row.version }}</span>
         <span class="wf-def__muted wf-def__meta">{{ row.node_count }} 节点 / {{ row.edge_count }} 连线</span>
         <span class="wf-def__muted wf-def__state">{{ definitionStatusLabel(row.status) }}</span>
         <!-- 打开排在归档前面：这是一条能存不能开的链路修好后的样子，
              顺序也是提醒——先能拿回来编辑，再谈要不要收走它 -->
-        <button type="button" class="wf-def__button wf-def__button--open" :data-testid="`open-${row.workflow_id}`" @click="open(row.workflow_id)">打开</button>
+        <button type="button" class="wf-def__button wf-def__button--open" :data-testid="`open-${row.workflow_id}`" @click="open(row)">打开</button>
         <!-- 归档与取消归档是同一个开关的两面：一按就改了服务端状态的动作要先问一句，
              而把它撤回的那一下不该再拦人 -->
         <button
@@ -146,7 +184,7 @@ function onDescription(event: Event): void {
         </button>
       </li>
     </ul>
-    <p v-if="store.definitions.length === 0" class="wf-def__empty">尚无已保存定义。</p>
+    <p v-if="catalog.definitions.length === 0" class="wf-def__empty">尚无已保存定义。</p>
   </section>
 </template>
 
@@ -190,10 +228,42 @@ function onDescription(event: Event): void {
 }
 .wf-def__edges,
 .wf-def__list,
+.wf-def__versions,
 .wf-def__errors {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+.wf-def__versions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wf-def__version {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 4px 6px;
+  align-items: center;
+  padding: 5px 8px;
+  border: 1px solid var(--aeg-color-border);
+  border-radius: 8px;
+  font-size: 11px;
+}
+.wf-def__version-id {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aeg-color-text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wf-def__version .wf-def__button {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+}
+.wf-def__current {
+  color: var(--aeg-color-status-success);
+  font-weight: 600;
 }
 .wf-def__errors {
   color: #cf1322;

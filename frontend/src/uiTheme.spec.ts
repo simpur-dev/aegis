@@ -24,11 +24,15 @@ import { readRepoFile, repoRoot } from '@/testing/repoSource'
  *  → 158（Cesium `viewer.ts` 的 `#101923` 归零）→ 154（spike：dashboard 标杆页——待办条紫底 3 处与
  *  `LegStatusPanel` 的 rgba 分隔线归零）→ **143（助手页重排为对话式布局：`AssistantView.vue` 15→0——芯片改中性表面
  *  （`alter`+`border`，「需确认/缺依赖」降为小字缀注）、拒绝/报错改走 `--aeg-color-status-danger`、提案卡走
- *  `--aeg-tag-orange-*`；两分支合流后按同口径探针复量落定，2026-10-17）**。
+ *  `--aeg-tag-orange-*`；两分支合流后按同口径探针复量落定，2026-10-17）**
+ *  → **110（2026-10-23 批次 B：编排页沉浸化，节点卡/连线/画布浮层全部改读 `--aeg-color-editor-*` 槽位。
+ *  逐文件对账：`NodeShell.vue` 14→0、`WorkflowView.vue` 7→0、`NodeIntelligence.vue` 3→0、
+ *  `NodeHuman.vue` 2→0、`NodeLogic.vue`/`NodeChips.vue` 各 1→0、`MapView.vue` 3→2（scene-bar 那句提示
+ *  从写死的 `#fa8c16` 改走 `--aeg-color-status-warning`，白底上原本只有 2.38:1）。
+ *  口径没变（同一套走目录/剥注释/正则），是 HEAD 实量 139 减到 110，不是换了算法。
  *  现在最重的三处：`SystemTerminal.vue` 21（固定深底的面板，它本来就不随主题翻，但要收进令牌槽）、
- *  `NodeShell.vue` 14、`RunTimeline.vue` 13。`App.vue`、`theme.css`、`PageHero.vue`、`MetricsView.vue`、
- *  `DashboardView.vue` 与 `AssistantView.vue` 都已归零。 */
-const COLOR_BASELINE = 139
+ *  `RunTimeline.vue` 13、`utils/graph.ts` 12（T09 的欠项：画布内部接令牌）。 */
+const COLOR_BASELINE = 110
 
 function fontsCss(): string {
   return readRepoFile('frontend', 'src', 'styles', 'fonts.css')
@@ -53,9 +57,7 @@ describe('UI 基座', () => {
   it('两个字族的字重声明齐：Space Grotesk 400–700、JetBrains Mono 400/500/700', () => {
     const blocks = [...fontsCss().matchAll(/@font-face\s*{[^}]*}/g)].map((match) => match[0])
     const has = (family: string, weight: string) =>
-      blocks.some(
-        (block) => block.includes(`font-family: '${family}'`) && block.includes(`font-weight: ${weight}`),
-      )
+      blocks.some((block) => block.includes(`font-family: '${family}'`) && block.includes(`font-weight: ${weight}`))
     for (const weight of ['400', '500', '600', '700']) {
       expect(has('Space Grotesk', weight), `Space Grotesk ${weight} 缺失`).toBe(true)
     }
@@ -86,7 +88,7 @@ describe('UI 基座', () => {
     expect(text).toMatch(/:theme="theme"/)
     const tokens = readRepoFile('frontend', 'src', 'theme', 'tokens.ts')
     expect(tokens, '主色不再是科技蓝 #2563EB（令牌被改了要说明理由）').toMatch(/base: '#2563EB'/)
-    expect(tokens).toMatch(/'brand': brand\.light\.base/)
+    expect(tokens).toMatch(/'?brand'?: brand\.light\.base/)
   })
 
   /**
@@ -102,7 +104,9 @@ describe('UI 基座', () => {
        不剥就会把注释当成标注数进去（第一版就栽在这）。 */
     const routerText = readRepoFile('frontend', 'src', 'router.ts').replace(/\/\*[\s\S]*?\*\//g, '')
     /* 只数带 component 的真路由：`{ path: '/', redirect: ... }` 与将来的重定向不算页面 */
-    const routePaths = [...routerText.matchAll(/path:\s*'(\/[a-z]+)',\s*\n\s*name:/g)].map((match) => match[1] as string)
+    const routePaths = [...routerText.matchAll(/path:\s*'(\/[a-z]+)',\s*\n\s*name:/g)].map(
+      (match) => match[1] as string,
+    )
     expect(routePaths.length, '路由表页码不对（收并后应是 8 页：主线 4 + 系统 1 + 旧入口 3）').toBe(8)
     const navTargets = [...routerText.matchAll(/to:\s*'(\/[a-z]+)'/g)].map((match) => match[1] as string)
     const navSet = new Set(navTargets)
@@ -118,13 +122,20 @@ describe('UI 基座', () => {
     const legacy = routePaths.filter((p) => !navSet.has(p))
     expect(legacy.length, '旧入口数量变了（合并/抽屉化完成后这条要跟着改）').toBe(3)
     const legacyMarked = (routerText.match(/nav:\s*false/g) ?? []).length
-    expect(legacyMarked, `旧入口 ${legacy.join(' / ')} 没有显式标注 nav:false——它为什么不在侧栏，读代码的人无从得知`).toBe(legacy.length)
+    expect(
+      legacyMarked,
+      `旧入口 ${legacy.join(' / ')} 没有显式标注 nav:false——它为什么不在侧栏，读代码的人无从得知`,
+    ).toBe(legacy.length)
     // ④ App.vue 的导航必须从 router.ts 取，不许自己再抄一份；
-    //    唯一的例外是助手悬浮入口（常驻工具，不属于导航分组），它指向 /assistant 且只能有这一个
+    //    唯一的例外是助手常驻入口（贴在侧栏导航下面，不属于导航分组），它指向 /assistant 且只能有这一个
     const appText = appVue()
     expect(appText, 'App.vue 没有从 router.ts 取导航').toMatch(/import \{ NAV_GROUPS \} from '@\/router'/)
-    const appToTargets = [...appText.matchAll(/(?:to:|to=)\s*['"`]?(\/[a-z]+)['"`]/g)].map((match) => match[1] as string)
-    expect(appToTargets, 'App.vue 自己抄了导航清单，或助手入口不见了——跳转目标只许是 /assistant').toEqual(['/assistant'])
+    const appToTargets = [...appText.matchAll(/(?:to:|to=)\s*['"`]?(\/[a-z]+)['"`]/g)].map(
+      (match) => match[1] as string,
+    )
+    expect(appToTargets, 'App.vue 自己抄了导航清单，或助手入口不见了——跳转目标只许是 /assistant').toEqual([
+      '/assistant',
+    ])
   })
 
   /**
@@ -135,19 +146,34 @@ describe('UI 基座', () => {
    * ② 单字形图标（语/势/图/标/测/警/程）随装饰一起退役——标题已经说了页名，那颗渐变芯片没有功能目的，
    *    所以这里反过来**禁止**再传 `icon=`。
    */
-  it('每个页面都挂统一页头（title + caption），且不再挂单字形图标', () => {
+  it('常规页面挂统一页头，沉浸式编辑器用自带头部（两者都不许半套）', () => {
     const routerText = readRepoFile('frontend', 'src', 'router.ts')
-    const names = [...routerText.matchAll(/path:\s*'\/([a-z]+)'/g)].map(
-      (match) => `${(match[1] as string)[0]!.toUpperCase()}${(match[1] as string).slice(1)}View.vue`,
-    )
-    expect(names.length).toBeGreaterThanOrEqual(7)
-    for (const name of names) {
-      const text = readRepoFile('frontend', 'src', 'views', name)
-      expect(text, `${name} 没接页头组件`).toContain("import PageHero from '@/components/PageHero.vue'")
-      expect(text, `${name} 模板里没用页头`).toMatch(/<PageHero[\s>]/)
-      expect(text, `${name} 的页头没给标题`).toMatch(/<PageHero[^>]*[:\s]title=/s)
-      expect(text, `${name} 的页头没给说明句（caption）`).toMatch(/<PageHero[^>]*[:\s]caption=/s)
-      expect(text, `${name} 又传回了单字形图标 icon=（那颗渐变芯片已退役）`).not.toMatch(/<PageHero[^>]*[:\s]icon=/s)
+    const routes = [...routerText.matchAll(/path:\s*'\/([a-z]+)'[^}]*?meta:\s*\{([^}]*)\}/g)].map((match) => ({
+      name: `${(match[1] as string)[0]!.toUpperCase()}${(match[1] as string).slice(1)}View.vue`,
+      immersive: /immersive:\s*true/.test(match[2] as string),
+    }))
+    expect(routes.length).toBeGreaterThanOrEqual(7)
+    for (const route of routes) {
+      const text = readRepoFile('frontend', 'src', 'views', route.name)
+      if (route.immersive) {
+        /* `/workflow` 整页让位给编辑器：不挂 PageHero，但必须有自己的 56px 头部，
+           否则会出现"没有页头也没有返回入口"的整页孤岛。 */
+        expect(text, `${route.name} 标了 immersive 却还挂 PageHero（外壳会被套两层）`).not.toContain(
+          "import PageHero from '@/components/PageHero.vue'",
+        )
+        expect(text, `${route.name} 标了 immersive 却没有编辑器头部`).toContain(
+          "import EditorHeader from '@/components/workflow/editor/EditorHeader.vue'",
+        )
+        expect(text, `${route.name} 模板里没放编辑器头部`).toMatch(/<EditorHeader[\s>]/)
+        continue
+      }
+      expect(text, `${route.name} 没接页头组件`).toContain("import PageHero from '@/components/PageHero.vue'")
+      expect(text, `${route.name} 模板里没用页头`).toMatch(/<PageHero[\s>]/)
+      expect(text, `${route.name} 的页头没给标题`).toMatch(/<PageHero[^>]*[:\s]title=/s)
+      expect(text, `${route.name} 的页头没给说明句（caption）`).toMatch(/<PageHero[^>]*[:\s]caption=/s)
+      expect(text, `${route.name} 又传回了单字形图标 icon=（那颗渐变芯片已退役）`).not.toMatch(
+        /<PageHero[^>]*[:\s]icon=/s,
+      )
     }
   })
 
@@ -171,7 +197,7 @@ describe('UI 基座', () => {
       ['linear-gradient（渐变细线/渐变钮底）', /linear-gradient\s*\(/],
       ['radial-gradient（页面底那团蓝雾）', /radial-gradient\s*\(/],
       ['backdrop-filter（玻璃模糊）', /backdrop-filter/],
-      ["标题前的 ◆ 符号前缀", /content:\s*'◆'/],
+      ['标题前的 ◆ 符号前缀', /content:\s*'◆'/],
     ]
     for (const [name, pattern] of retired) {
       expect(pattern.test(css), `theme.css 里还留着 ${name}`).toBe(false)
@@ -222,13 +248,19 @@ describe('UI 基座', () => {
    */
   it('芯片：形状统一 999 圆角，语义色一律取自数据那一份（不许就地写死）', () => {
     const assistant = readRepoFile('frontend', 'src', 'views', 'AssistantView.vue').replace(/\/\*[\s\S]*?\*\//g, '')
-    expect(assistant, '助手页动作芯片不是芯片一族（圆角该是 999px）').toMatch(/\.caps__chip\s*\{[\s\S]{0,400}border-radius: 999px/)
-    expect(assistant, '芯片矮于 26px，点起来是"文字链"不是"按钮"').toMatch(/\.caps__chip\s*\{[\s\S]{0,400}min-height: 26px/)
+    expect(assistant, '助手页动作芯片不是芯片一族（圆角该是 999px）').toMatch(
+      /\.caps__chip\s*\{[\s\S]{0,400}border-radius: 999px/,
+    )
+    expect(assistant, '芯片矮于 26px，点起来是"文字链"不是"按钮"').toMatch(
+      /\.caps__chip\s*\{[\s\S]{0,400}min-height: 26px/,
+    )
 
     const panel = readRepoFile('frontend', 'src', 'components', 'map', 'MapPanel.vue').replace(/\/\*[\s\S]*?\*\//g, '')
     expect(panel, '风险芯片的颜色不是从 riskLegend() 那一份取的').toMatch(/chipStyle\(entry\.colorCss\)/)
     for (const banned of ['#cf1322', '#fa8c16', '#fadb14', '#1677ff']) {
-      expect(panel.toLowerCase(), `MapPanel 里写死了风险色 ${banned}（图例与图上会分成两张皮）`).not.toContain(`: ${banned}`)
+      expect(panel.toLowerCase(), `MapPanel 里写死了风险色 ${banned}（图例与图上会分成两张皮）`).not.toContain(
+        `: ${banned}`,
+      )
     }
     // 等级未知那一格是唯一允许的字面色（它不在 RISK_COLORS 里，也没有对应的图上要素）
     expect(panel, '「等级未知」的底色写法变了（原来是 #bfbfbf）').toContain('#bfbfbf')
@@ -293,7 +325,9 @@ describe('UI 基座', () => {
     for (const step of ['fast', 'base', 'slow', 'draw']) {
       expect(tokens, `tokens.ts 的 motion 少了 ${step} 档`).toMatch(new RegExp(`\\b${step}: '\\d+(\\.\\d+)?s'`))
     }
-    expect(vars, 'vars.ts 没把 motion 注成 --aeg-motion-*').toMatch(/--aeg-motion-|motion-\$\{k\}|\$\{varPrefix\}motion-/)
+    expect(vars, 'vars.ts 没把 motion 注成 --aeg-motion-*').toMatch(
+      /--aeg-motion-|motion-\$\{k\}|\$\{varPrefix\}motion-/,
+    )
 
     const srcDir = join(repoRoot(), 'frontend', 'src')
     const files = readdirSync(srcDir, { recursive: true })
@@ -325,7 +359,10 @@ describe('UI 基座', () => {
        全库走令牌的 transition 从 11 条变 10 条——地板跟着调到 10，防空跑的职责不变。 */
     expect(tokened, '一条走令牌的 transition 都没有——这条在空跑').toBeGreaterThanOrEqual(10)
     expect(strays, `写死了时长而没走令牌：\n${strays.join('\n')}`).toHaveLength(0)
-    expect(doubles, `还留着第二套动效令牌名 --motion-*（应统一为 --aeg-motion-*）：\n${doubles.join('\n')}`).toHaveLength(0)
+    expect(
+      doubles,
+      `还留着第二套动效令牌名 --motion-*（应统一为 --aeg-motion-*）：\n${doubles.join('\n')}`,
+    ).toHaveLength(0)
   })
 
   /**
@@ -373,7 +410,10 @@ describe('UI 基座', () => {
     ).toBeLessThanOrEqual(COLOR_BASELINE)
 
     for (const rel of ['theme/antd.ts', 'theme/vars.ts', 'theme/useTheme.ts', 'theme/chart.ts', 'theme/map.ts']) {
-      expect(strip(readFileSync(join(srcDir, rel), 'utf-8')), `${rel} 出现了字面色：派生层只能从 tokens.ts 取`).not.toMatch(HIT)
+      expect(
+        strip(readFileSync(join(srcDir, rel), 'utf-8')),
+        `${rel} 出现了字面色：派生层只能从 tokens.ts 取`,
+      ).not.toMatch(HIT)
     }
   })
 })

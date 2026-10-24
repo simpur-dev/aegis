@@ -394,7 +394,7 @@ describe('utils/graph 模型编辑', () => {
     expect(inboundSources(def, 'fetch_1')).toEqual([])
   })
 
-  it('17 类节点的类别归属唯一真源（nodes.py 的镜像）', () => {
+  it('19 类节点的类别归属唯一真源（nodes.py 的镜像）', () => {
     expect(Object.keys(NODE_SPECS).sort()).toEqual(
       [
         'api_call',
@@ -404,6 +404,7 @@ describe('utils/graph 模型编辑', () => {
         'delay',
         'degrade_to_rule',
         'device_control',
+        'end',
         'feedback_collect',
         'hazard_identify',
         'human_review',
@@ -411,6 +412,7 @@ describe('utils/graph 模型编辑', () => {
         'notify',
         'risk_assess',
         'situation_simulate',
+        'start',
         'threshold',
         'warning_generate',
         'warning_publish',

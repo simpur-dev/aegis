@@ -22,23 +22,35 @@ import { RISK_COLORS, type RiskLevel } from '@/api/types'
 /** 品牌色阶（浅色主题用偏深的蓝，深色主题用偏亮的蓝——同一族，两个方向） */
 export const brand = {
   /** 浅色主题主色：白字压上去 5.98:1（AA 过） */
-  light: { base: '#2563EB', hover: '#1D4ED8', active: '#1E40AF', soft: 'rgba(37, 99, 235, 0.12)', line: 'rgba(37, 99, 235, 0.22)' },
+  light: {
+    base: '#2563EB',
+    hover: '#1D4ED8',
+    active: '#1E40AF',
+    soft: 'rgba(37, 99, 235, 0.12)',
+    line: 'rgba(37, 99, 235, 0.22)',
+  },
   /** 深色主题主色：底是深蓝黑，同一段蓝要提一档才够对比 */
-  dark: { base: '#3B82F6', hover: '#60A5FA', active: '#2563EB', soft: 'rgba(59, 130, 246, 0.20)', line: 'rgba(59, 130, 246, 0.34)' },
+  dark: {
+    base: '#3B82F6',
+    hover: '#60A5FA',
+    active: '#2563EB',
+    soft: 'rgba(59, 130, 246, 0.20)',
+    line: 'rgba(59, 130, 246, 0.34)',
+  },
 } as const
 
 /** 语义槽位：两主题同名，值不同。少一个键就是换肤破绽。 */
 export const colorSlots = {
   light: {
-    'page': '#F2F4F8',
-    'card': '#FFFFFF',
-    'elevated': '#FFFFFF',
-    'sunken': '#EEF1F6',
-    'alter': '#F7F9FC',
-    'border': '#E6E8EF',
+    page: '#F2F4F8',
+    card: '#FFFFFF',
+    elevated: '#FFFFFF',
+    sunken: '#EEF1F6',
+    alter: '#F7F9FC',
+    border: '#E6E8EF',
     'border-subtle': '#EEF0F5',
     'border-strong': '#D4D8E3',
-    'text': '#0A0A0C',
+    text: '#0A0A0C',
     'text-secondary': '#5A6072',
     /**
      * 灰字这一档是**测出来的**：原来的 #6B7488 落在白卡上 4.69:1 勉强过，
@@ -47,7 +59,7 @@ export const colorSlots = {
      */
     'text-muted': '#626B7D',
     'text-inverse': '#FFFFFF',
-    'brand': brand.light.base,
+    brand: brand.light.base,
     'brand-hover': brand.light.hover,
     'brand-active': brand.light.active,
     'brand-soft': brand.light.soft,
@@ -57,21 +69,36 @@ export const colorSlots = {
     'status-danger': '#B91C1C',
     'status-info': '#1D4ED8',
     'overlay-scrim': 'rgba(15, 23, 42, 0.45)',
+    'editor-canvas': '#F6F7F9',
+    'editor-header': '#FFFFFF',
+    'editor-panel': '#FFFFFF',
+    'editor-node': '#FFFFFF',
+    'editor-node-border': '#E4E7EC',
+    'editor-dot': '#D0D5DD',
+    'editor-edge': '#98A2B3',
+    'editor-note-bg': '#FEF7E6',
+    'editor-note-border': '#F0D79B',
+    'editor-cat-io': '#2563EB',
+    'editor-cat-logic': '#7C3AED',
+    'editor-cat-intelligence': '#0F766E',
+    'editor-cat-human': '#B45309',
+    'editor-state-running': '#0E7490',
+    'editor-state-awaiting': '#7C3AED',
   },
   dark: {
-    'page': '#0B1220',
-    'card': '#111A2B',
-    'elevated': '#16223A',
-    'sunken': '#0E1728',
-    'alter': '#13203A',
-    'border': '#24344F',
+    page: '#0B1220',
+    card: '#111A2B',
+    elevated: '#16223A',
+    sunken: '#0E1728',
+    alter: '#13203A',
+    border: '#24344F',
     'border-subtle': '#1B2942',
     'border-strong': '#33475F',
-    'text': '#E6EDF7',
+    text: '#E6EDF7',
     'text-secondary': '#A7B4C9',
     'text-muted': '#8595AD',
     'text-inverse': '#0B1220',
-    'brand': brand.dark.base,
+    brand: brand.dark.base,
     'brand-hover': brand.dark.hover,
     'brand-active': brand.dark.active,
     'brand-soft': brand.dark.soft,
@@ -81,6 +108,21 @@ export const colorSlots = {
     'status-danger': '#F87171',
     'status-info': '#60A5FA',
     'overlay-scrim': 'rgba(2, 6, 16, 0.62)',
+    'editor-canvas': '#151A21',
+    'editor-header': '#171D26',
+    'editor-panel': '#1A202B',
+    'editor-node': '#1D232D',
+    'editor-node-border': '#344054',
+    'editor-dot': '#3A4354',
+    'editor-edge': '#5A6B82',
+    'editor-note-bg': '#3A2E1A',
+    'editor-note-border': '#6E5322',
+    'editor-cat-io': '#60A5FA',
+    'editor-cat-logic': '#A78BFA',
+    'editor-cat-intelligence': '#2DD4BF',
+    'editor-cat-human': '#FBBF24',
+    'editor-state-running': '#22D3EE',
+    'editor-state-awaiting': '#C4B5FD',
   },
 } as const satisfies Record<'light' | 'dark', Record<string, string>>
 
@@ -168,7 +210,15 @@ export const motion = { fast: '0.1s', base: '0.15s', slow: '0.2s', draw: '0.6s' 
 export const z = { sticky: 10, header: 100, drawer: 200, modal: 300, toast: 400 } as const
 
 /** 顶栏定高：提示条 top 与"浮层不压顶栏"那条判据都依赖它，收成一处 */
-export const layout = { headerHeight: 68, sidebarWidth: 232, sidebarCollapsed: 64, contentMaxWidth: 1720 } as const
+export const layout = {
+  headerHeight: 68,
+  sidebarWidth: 232,
+  sidebarCollapsed: 64,
+  contentMaxWidth: 1720,
+  editorHeaderHeight: 56,
+  editorPanelWidth: 400,
+  nodeWidth: 240,
+} as const
 
 /** 字体栈（离线自托管，不外链 CDN） */
 export const fontFamily = {

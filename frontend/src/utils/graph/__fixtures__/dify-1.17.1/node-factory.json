@@ -1,0 +1,90 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "execution": "executed"
+  },
+  "module": "web/app/components/workflow/utils/node.ts",
+  "functions": [
+    "genNewNodeTitleFromOld",
+    "getTopLeftNodePosition"
+  ],
+  "titleCases": [
+    {
+      "input": "节点",
+      "actual": "节点 (1)"
+    },
+    {
+      "input": "节点 (1)",
+      "actual": "节点 (2)"
+    },
+    {
+      "input": "节点 (9)",
+      "actual": "节点 (10)"
+    },
+    {
+      "input": "节点 (1) ",
+      "actual": "节点 (2)"
+    },
+    {
+      "input": "a(b)",
+      "actual": "a(b) (1)"
+    },
+    {
+      "input": "v2 (x)",
+      "actual": "v2 (x) (1)"
+    },
+    {
+      "input": " (3)",
+      "actual": "  (4)"
+    }
+  ],
+  "positionCases": [
+    {
+      "name": "two-nodes",
+      "nodes": [
+        {
+          "position": {
+            "x": 10,
+            "y": 20
+          }
+        },
+        {
+          "position": {
+            "x": -5,
+            "y": 100
+          }
+        }
+      ],
+      "actual": {
+        "x": -5,
+        "y": 20
+      }
+    },
+    {
+      "name": "single-node",
+      "nodes": [
+        {
+          "position": {
+            "x": 0,
+            "y": 0
+          }
+        }
+      ],
+      "actual": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "name": "empty",
+      "nodes": [],
+      "actual": {
+        "x": "Infinity",
+        "y": "Infinity"
+      }
+    }
+  ],
+  "note": "空数组上游返回 Infinity；JSON 中记为字符串，AEGIS 端口需显式定义空集行为"
+}

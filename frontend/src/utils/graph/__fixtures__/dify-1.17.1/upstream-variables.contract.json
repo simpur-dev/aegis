@@ -1,0 +1,89 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "modules": [
+      "web/app/components/workflow/hooks/use-nodes-available-var-list.ts",
+      "web/app/components/workflow/hooks/use-workflow-variables.ts"
+    ],
+    "provenance": "contract（上游依赖 i18n/tools/env/chat 变量，AEGIS 只保留祖先过滤与输出键）",
+    "tier": "T2"
+  },
+  "upstreamFacts": {
+    "candidateNodes": "getTreeLeafNodes 或 getBeforeNodesInSameBranchIncludeParent",
+    "extraSources": "environment/conversation/rag/snippet/tool 变量（AEGIS 不迁移）",
+    "grouping": "每个候选节点一组，含 availableVars/availableNodes"
+  },
+  "aegisContract": {
+    "scope": "目标节点的真实祖先（有向路径可达）",
+    "keys": "catalog 声明的输出键 ∪ 上次运行输出键；catalog 顺序优先",
+    "ordering": "按拓扑层升序，同层按 node_id 升序",
+    "omitEmptyGroups": true,
+    "nonAncestor": "不出现",
+    "referenceSyntax": "{{#node_id.key#}}"
+  },
+  "catalogOutputs": {
+    "start": ["region_code"],
+    "a": ["rain_10min", "region_code"],
+    "x": ["sensor_count"],
+    "b": ["risk_level"],
+    "c": [],
+    "y": ["ignored"]
+  },
+  "lastRunOutputs": {
+    "a": { "rain_10min": 12.5, "observed_at": "2026-10-22T09:00:00Z" },
+    "b": { "risk_level": "high" }
+  },
+  "nodes": ["start", "a", "x", "b", "c", "y"],
+  "edges": [
+    { "source": "start", "target": "a" },
+    { "source": "start", "target": "x" },
+    { "source": "a", "target": "b" },
+    { "source": "x", "target": "b" },
+    { "source": "b", "target": "c" },
+    { "source": "start", "target": "y" }
+  ],
+  "cases": [
+    {
+      "name": "ancestors-of-c",
+      "target": "c",
+      "expected": [
+        { "nodeId": "start", "keys": ["region_code"] },
+        { "nodeId": "a", "keys": ["rain_10min", "region_code", "observed_at"] },
+        { "nodeId": "x", "keys": ["sensor_count"] },
+        { "nodeId": "b", "keys": ["risk_level"] }
+      ],
+      "excluded": ["y", "c"]
+    },
+    {
+      "name": "ancestors-of-a",
+      "target": "a",
+      "expected": [{ "nodeId": "start", "keys": ["region_code"] }],
+      "excluded": ["x", "b", "c", "y", "a"]
+    },
+    {
+      "name": "root-has-no-upstream",
+      "target": "start",
+      "expected": [],
+      "emptyState": true
+    },
+    {
+      "name": "empty-output-group-omitted",
+      "target": "c",
+      "catalogOutputsOverride": { "x": [] },
+      "lastRunOutputsOverride": { "x": {} },
+      "expected": [
+        { "nodeId": "start", "keys": ["region_code"] },
+        { "nodeId": "a", "keys": ["rain_10min", "region_code", "observed_at"] },
+        { "nodeId": "b", "keys": ["risk_level"] }
+      ],
+      "note": "x 无任何输出键时整组省略，不渲染空组"
+    }
+  ],
+  "invalidReferenceCases": [
+    { "value": "{{#y.ignored#}}", "target": "c", "expected": "validation_failed（y 不是祖先）" },
+    { "value": "{{#a.unknown#}}", "target": "c", "expected": "运行时点名未知输出键" },
+    { "value": "{{#a.__proto__.x#}}", "target": "c", "expected": "validation_failed（原型污染守卫）" }
+  ]
+}

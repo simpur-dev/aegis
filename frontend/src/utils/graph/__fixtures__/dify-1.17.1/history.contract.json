@@ -1,0 +1,111 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "module": "web/app/components/workflow/hooks/use-workflow-history.ts",
+    "supportingSource": "web/app/components/workflow/store/workflow/index.ts:75 (zundo temporal, 未显式 limit)",
+    "provenance": "contract（React hook 不可直接执行；行为由源码逐行读取）",
+    "tier": "T2"
+  },
+  "upstreamFacts": {
+    "debounceMs": 500,
+    "eventEnum": [
+      "NodeTitleChange",
+      "NodeDescriptionChange",
+      "NodeDragStop",
+      "NodeChange",
+      "NodeConnect",
+      "NodePaste",
+      "NodeDelete",
+      "EdgeDelete",
+      "EdgeDeleteByDeleteBranch",
+      "EdgeSourceHandleChange",
+      "NodeAdd",
+      "NodeResize",
+      "NoteAdd",
+      "NoteChange",
+      "NoteDelete",
+      "LayoutOrganize"
+    ],
+    "notRecordedExamples": ["selection", "viewport", "hover", "note text editing (editor has own history)"],
+    "explicitLimit": null
+  },
+  "aegisContract": {
+    "shape": "past/present/future snapshots；快照只含 WorkflowDocument",
+    "limit": 50,
+    "recordOn": [
+      "addNode",
+      "removeNodes",
+      "moveNodes",
+      "connect",
+      "removeEdges",
+      "updateNode",
+      "insertOnEdge",
+      "paste",
+      "rename",
+      "setStartVariables",
+      "setNotes"
+    ],
+    "dragMerge": "拖动过程不记录；dragstop 提交一次 moveNodes，仅产生一条历史",
+    "undoRedo": "只替换文档，不做增量重放；新修改清空 future",
+    "emptyStack": "undo/redo 为 no-op 且不抛",
+    "labels": {
+      "addNode": "添加节点",
+      "removeNodes": "删除节点",
+      "moveNodes": "移动节点",
+      "connect": "连接节点",
+      "removeEdges": "删除连线",
+      "updateNode": "修改节点",
+      "insertOnEdge": "插入节点",
+      "paste": "粘贴",
+      "rename": "重命名",
+      "setStartVariables": "修改输入变量",
+      "setNotes": "编辑备注"
+    }
+  },
+  "cases": [
+    {
+      "name": "empty-stack",
+      "actions": [{ "kind": "undo" }, { "kind": "redo" }],
+      "expected": { "past": 0, "present": "initial", "future": 0 }
+    },
+    {
+      "name": "single-change",
+      "actions": [{ "kind": "commit", "command": "addNode" }],
+      "expected": { "past": 1, "present": "doc-1", "future": 0 }
+    },
+    {
+      "name": "drag-merges-to-one",
+      "actions": [
+        { "kind": "draftMove", "count": 5 },
+        { "kind": "commit", "command": "moveNodes" }
+      ],
+      "expected": { "past": 1, "present": "doc-moved", "future": 0 }
+    },
+    {
+      "name": "undo-redo",
+      "actions": [
+        { "kind": "commit", "command": "addNode" },
+        { "kind": "undo" },
+        { "kind": "redo" }
+      ],
+      "expected": { "past": 1, "present": "doc-1", "future": 0 }
+    },
+    {
+      "name": "new-change-after-undo-clears-future",
+      "actions": [
+        { "kind": "commit", "command": "addNode" },
+        { "kind": "commit", "command": "connect" },
+        { "kind": "undo" },
+        { "kind": "commit", "command": "rename" }
+      ],
+      "expected": { "past": 2, "present": "doc-renamed", "future": 0 }
+    },
+    {
+      "name": "limit-50",
+      "actions": [{ "kind": "commitMany", "count": 51, "command": "updateNode" }],
+      "expected": { "past": 50, "oldestDropped": true, "present": "doc-51", "future": 0 }
+    }
+  ]
+}

@@ -31,15 +31,15 @@ const dependsOnAgent = computed(() => props.data.def.type !== 'degrade_to_rule')
 
 <style scoped>
 .wf-intel__tags {
-  margin-top: 4px;
+  margin: 0;
 }
 .wf-intel__tag {
   display: inline-block;
   padding: 0 6px;
-  border: 1px solid #d3adf7;
-  border-radius: 3px;
-  background: #f9f0ff;
-  color: #531dab;
+  border: 1px solid color-mix(in srgb, var(--aeg-color-editor-cat-intelligence) 34%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--aeg-color-editor-cat-intelligence) 12%, transparent);
+  color: var(--aeg-color-editor-cat-intelligence);
   font-size: 11px;
 }
 </style>

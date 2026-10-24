@@ -1,0 +1,69 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "modules": [
+      "web/app/components/workflow/hooks/use-workflow-organize.helpers.ts",
+      "web/app/components/workflow/utils/elk-layout.ts"
+    ],
+    "provenance": "contract（上游布局用 elkjs；AEGIS 复用现有 layerPositions，不引入 elkjs）",
+    "tier": "T2"
+  },
+  "upstreamFacts": {
+    "nodeSize": { "width": 244, "height": 100 },
+    "algorithm": "elk.layered",
+    "direction": "RIGHT",
+    "spacing": {
+      "nodeNodeBetweenLayers": 100,
+      "nodeNode": 80
+    },
+    "alignment": "同层节点按层内最大高度垂直居中"
+  },
+  "aegisContract": {
+    "nodeFootprint": { "width": 240, "height": 100 },
+    "direction": "left-to-right",
+    "horizontalGap": 100,
+    "verticalGap": 40,
+    "align": "同层节点按层内最大高度垂直居中",
+    "afterOrganize": "fitView",
+    "preserveDirection": true,
+    "noOverlap": true,
+    "doesNotIntroduceElk": true
+  },
+  "graph": {
+    "nodes": ["start", "a", "b", "c", "d"],
+    "edges": [
+      { "source": "start", "target": "a" },
+      { "source": "start", "target": "b" },
+      { "source": "a", "target": "c" },
+      { "source": "b", "target": "c" },
+      { "source": "c", "target": "d" }
+    ]
+  },
+  "cases": [
+    {
+      "name": "layered-order",
+      "expectedLayers": {
+        "start": 0,
+        "a": 1,
+        "b": 1,
+        "c": 2,
+        "d": 3
+      }
+    },
+    {
+      "name": "same-layer-same-x",
+      "expected": "a.x === b.x；start.x < a.x < c.x < d.x"
+    },
+    {
+      "name": "no-overlap",
+      "expected": "任意两个 240x100 节点矩形不相交"
+    },
+    {
+      "name": "unknown-layout-pruned",
+      "inputLayout": { "positions": { "ghost": { "x": 1, "y": 1 } } },
+      "expected": "ghost 被剪枝，不渲染、不报错"
+    }
+  ]
+}

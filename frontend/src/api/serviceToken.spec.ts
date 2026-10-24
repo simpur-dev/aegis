@@ -118,10 +118,23 @@ describe('覆盖面：谁发请求谁带凭据', () => {
    */
   function instanceOwningModules(): string[] {
     const dir = join(repoRoot(), 'frontend', 'src', 'api')
-    return readdirSync(dir)
-      .filter((name) => name.endsWith('.ts') && !name.endsWith('.spec.ts') && !name.endsWith('.d.ts'))
-      .filter((name) => readRepoFile('frontend', 'src', 'api', name).includes('axios.create('))
-      .map((name) => name.replace(/\.ts$/, ''))
+    const owners: string[] = []
+    const walk = (relative: string): void => {
+      const absolute = relative === '' ? dir : join(dir, relative)
+      for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+        const next = relative === '' ? entry.name : `${relative}/${entry.name}`
+        if (entry.isDirectory()) {
+          walk(next)
+          continue
+        }
+        if (!entry.name.endsWith('.ts') || entry.name.endsWith('.spec.ts') || entry.name.endsWith('.d.ts')) continue
+        if (readRepoFile('frontend', 'src', 'api', ...next.split('/')).includes('axios.create(')) {
+          owners.push(next.replace(/\.ts$/, ''))
+        }
+      }
+    }
+    walk('')
+    return owners
   }
 
   it('扫得到足够多的模块：扫描为空就是外壳坏了，不是"没有漏点"', () => {
@@ -130,7 +143,7 @@ describe('覆盖面：谁发请求谁带凭据', () => {
 
   it('凡是自建 axios 实例的 api 模块都装了令牌拦截器', () => {
     for (const name of instanceOwningModules()) {
-      const source = readRepoFile('frontend', 'src', 'api', `${name}.ts`)
+      const source = readRepoFile('frontend', 'src', 'api', ...`${name}.ts`.split('/'))
       expect(source, `${name}.ts 没装拦截器：开了令牌的部署里它那条链必 401`).toContain('installServiceToken(')
     }
   })

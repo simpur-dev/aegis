@@ -1,0 +1,100 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "execution": "executed"
+  },
+  "module": "web/app/components/workflow/utils/variable.ts",
+  "functions": [
+    "variableTransformer",
+    "normalizeWorkflowOutputName"
+  ],
+  "selectorCases": [
+    {
+      "name": "wrapped-string",
+      "input": "{{#node.key#}}",
+      "actual": [
+        "node",
+        "key"
+      ]
+    },
+    {
+      "name": "plain-dotted-string",
+      "input": "node.key",
+      "actual": [
+        "node",
+        "key"
+      ]
+    },
+    {
+      "name": "selector-to-string",
+      "input": [
+        "node",
+        "key"
+      ],
+      "actual": "{{#node.key#}}"
+    },
+    {
+      "name": "empty-string",
+      "input": "",
+      "actual": [
+        ""
+      ]
+    },
+    {
+      "name": "single-segment",
+      "input": "{{#node#}}",
+      "actual": [
+        "node"
+      ]
+    },
+    {
+      "name": "nested-path",
+      "input": "{{#a.b.c#}}",
+      "actual": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "name": "empty-selector",
+      "input": [],
+      "actual": "{{##}}"
+    },
+    {
+      "name": "plain-text",
+      "input": "plain text",
+      "actual": [
+        "plain text"
+      ]
+    },
+    {
+      "name": "embedded-reference",
+      "input": "prefix {{#node.key#}} suffix",
+      "actual": [
+        "prefix {{#node",
+        "key#}} suffix"
+      ]
+    }
+  ],
+  "normalizeCases": [
+    {
+      "actual": ""
+    },
+    {
+      "input": " x ",
+      "actual": "x"
+    },
+    {
+      "input": "",
+      "actual": ""
+    },
+    {
+      "input": "\t y \n",
+      "actual": "y"
+    }
+  ],
+  "aegisNote": "AEGIS 只接受 {{#node.path#}} 整串或点分字符串；内嵌引用与普通文本的边界由端口测试锁定"
+}

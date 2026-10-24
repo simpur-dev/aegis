@@ -15,7 +15,20 @@
 
 export type NodeCategory = 'io' | 'logic' | 'intelligence' | 'human'
 
-/** 后端 nodes.py 已注册的 17 类节点（含 1 类内部原语，见 NodeSpec.internal）；
+export type StickyNoteColor = 'amber' | 'blue' | 'green' | 'violet'
+
+/** 画布备注：只进版式、不参与执行（后端 documents.py 的同名模型）。 */
+export interface StickyNote {
+  note_id: string
+  x: number
+  y: number
+  width: number
+  height: number
+  text: string
+  color: StickyNoteColor
+}
+
+/** 后端 nodes.py 已注册的 19 类节点（含 1 类内部原语，见 NodeSpec.internal）；
  *  新增类型必须同步 NODE_SPECS，可拖进面板的那些还会由 PALETTE_GROUPS 自动带上。 */
 export type NodeType =
   | 'api_call'
@@ -25,6 +38,7 @@ export type NodeType =
   | 'delay'
   | 'degrade_to_rule'
   | 'device_control'
+  | 'end'
   | 'feedback_collect'
   | 'hazard_identify'
   | 'human_review'
@@ -32,6 +46,7 @@ export type NodeType =
   | 'notify'
   | 'risk_assess'
   | 'situation_simulate'
+  | 'start'
   | 'threshold'
   | 'warning_generate'
   | 'warning_publish'
@@ -83,13 +98,18 @@ export interface EdgeDef {
 
 export interface WorkflowDef {
   workflow_id: string
+  /** 同一模板的版本族；旧载荷没有这一格时按 workflow_id 自成一条 lineage。 */
+  lineage_id?: string
+  schema_version?: number
   name: string
   description: string
   version: number
   nodes: NodeDef[]
   edges: EdgeDef[]
   created_by: string
+  created_at?: string
   status: 'active' | 'archived'
+  content_hash?: string
 }
 
 export interface Position {
@@ -117,16 +137,34 @@ export interface FlowNode {
   data: FlowNodeData
 }
 
+/** 备注与执行节点同住画布图层，才能随视口平移缩放、并在节点下面正常叠放。 */
+export interface FlowNoteNode {
+  id: string
+  type: 'note'
+  position: Position
+  selected: boolean
+  data: { note: StickyNote }
+}
+
+export type GraphNode = FlowNode | FlowNoteNode
+
+/** 纯执行图视图（defToGraph 的产物）：备注由画布层另行拼进来。 */
+export interface WorkflowGraphView {
+  nodes: FlowNode[]
+  edges: FlowEdge[]
+}
+
 export interface FlowEdge {
   id: string
   source: string
   target: string
+  type: string
   label: string
   data: EdgeDef
 }
 
 export interface GraphView {
-  nodes: FlowNode[]
+  nodes: GraphNode[]
   edges: FlowEdge[]
 }
 
@@ -160,6 +198,7 @@ export const NODE_SPECS: Record<NodeType, NodeSpec> = {
     optional_config: [],
     min_config: {},
   },
+  end: { category: 'logic', required_config: [], optional_config: [], min_config: {} },
   feedback_collect: { category: 'logic', required_config: [], optional_config: ['wait_seconds'], min_config: {} },
   hazard_identify: { category: 'intelligence', required_config: [], optional_config: ['extra'], min_config: {} },
   human_review: { category: 'human', required_config: [], optional_config: ['prompt', 'options'], min_config: {} },
@@ -167,6 +206,7 @@ export const NODE_SPECS: Record<NodeType, NodeSpec> = {
   notify: { category: 'io', required_config: ['text'], optional_config: ['level'], min_config: {} },
   risk_assess: { category: 'intelligence', required_config: [], optional_config: ['upstream', 'extra'], min_config: {} },
   situation_simulate: { category: 'intelligence', required_config: [], optional_config: ['extra', 'upstream'], min_config: {} },
+  start: { category: 'logic', required_config: [], optional_config: ['variables'], min_config: {} },
   threshold: { category: 'logic', required_config: ['conditions'], optional_config: ['upstream', 'mode'], min_config: {} },
   warning_generate: { category: 'intelligence', required_config: [], optional_config: ['extra'], min_config: {} },
   warning_publish: { category: 'intelligence', required_config: [], optional_config: ['channels'], min_config: {} },
@@ -396,7 +436,7 @@ export interface DefToGraphOptions {
   selectedNodeId?: string | null
 }
 
-export function defToGraph(def: WorkflowDef, options: DefToGraphOptions = {}): GraphView {
+export function defToGraph(def: WorkflowDef, options: DefToGraphOptions = {}): WorkflowGraphView {
   const fallback = layerPositions(
     def.nodes.map((node) => node.node_id),
     def.edges,
@@ -423,6 +463,8 @@ export function defToGraph(def: WorkflowDef, options: DefToGraphOptions = {}): G
     id: edgeId(index, edge),
     source: edge.source,
     target: edge.target,
+    /* 自定义边（2px 状态色 + 中点插入）在 nodeComponents.ts 注册为 `workflow`。 */
+    type: 'workflow',
     label: edge.condition,
     data: edge,
   }))
@@ -436,7 +478,7 @@ export function defToGraph(def: WorkflowDef, options: DefToGraphOptions = {}): G
  * 但只裁服务端的话画布上还留着空格、存完重开才变——"保存改了我的名字"看着像 bug。
  * 在这里裁，提交的、留在 store 的、画布显示的是同一份。
  */
-export function graphToDef(view: GraphView, base: WorkflowDef): WorkflowDef {
+export function graphToDef(view: WorkflowGraphView, base: WorkflowDef): WorkflowDef {
   return {
     ...base,
     nodes: view.nodes.map((node) => ({ ...node.data.def, name: node.data.def.name.trim() })),
@@ -475,8 +517,8 @@ export function nextNodeId(def: WorkflowDef, type: string): string {
   )
 }
 
-/** 节点卡的实际尺寸（`.wf-node` 宽度钉死 208px，高度按最长的摘要条估）。 */
-export const NODE_FOOTPRINT = { width: 208, height: 120 }
+/** 节点卡的实际尺寸（`.wf-node` 宽度钉死 240px，高度按最长的摘要条估）。 */
+export const NODE_FOOTPRINT = { width: 240, height: 132 }
 
 /** 画布默认缩放。模板里的 `:default-viewport` 与快捷键 `0`（回到默认）共用这一个值。 */
 export const CANVAS_DEFAULT_ZOOM = 0.9

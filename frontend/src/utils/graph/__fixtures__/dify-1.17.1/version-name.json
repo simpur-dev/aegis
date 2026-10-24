@@ -1,0 +1,48 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "execution": "executed"
+  },
+  "module": "web/app/components/workflow/utils/version.ts",
+  "cases": [
+    {
+      "name": "marked-name",
+      "version": {
+        "marked_name": "灾中修订",
+        "version_number": 3
+      },
+      "defaultName": "默认",
+      "actual": "灾中修订"
+    },
+    {
+      "name": "version-number",
+      "version": {
+        "marked_name": "",
+        "version_number": 3
+      },
+      "defaultName": "默认",
+      "actual": "# 3"
+    },
+    {
+      "name": "version-number-zero",
+      "version": {
+        "version_number": 0
+      },
+      "defaultName": "默认",
+      "actual": "默认"
+    },
+    {
+      "name": "no-version",
+      "version": null,
+      "defaultName": "默认",
+      "actual": "默认"
+    },
+    {
+      "name": "undefined-version",
+      "defaultName": "默认",
+      "actual": "默认"
+    }
+  ]
+}

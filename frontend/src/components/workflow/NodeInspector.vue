@@ -2,8 +2,8 @@
 /** 选中节点的定义编辑器：名称/失败策略/SLA/超时/重试 + 类型参数。运行中操作见 RuntimeActions。 */
 import { computed } from 'vue'
 
-import { useWorkflowStore } from '@/stores/workflow'
 import {
+  findNode,
   MAX_ATTEMPTS,
   MAX_BACKOFF_MS,
   MAX_NODE_NAME_CHARS,
@@ -18,18 +18,30 @@ import {
 
 import ConfigFields from './ConfigFields.vue'
 import RuntimeActions from './RuntimeActions.vue'
+import { useEditorContext } from './editor/context'
 import { nodeMeta } from './registry'
 
-const store = useWorkflowStore()
+const { catalog, document: documentStore, editor } = useEditorContext()
 
-const node = computed<NodeDef | null>(() => store.selectedNode)
+const node = computed<NodeDef | null>(() => {
+  const def = documentStore.definition
+  if (def === null || editor.selectedNodeId === null) return null
+  return findNode(def, editor.selectedNodeId)
+})
 const meta = computed(() => (node.value === null ? null : nodeMeta(node.value.type)))
 const failureOptions = computed(() => Object.entries(ON_FAILURE_LABELS) as [OnFailure, string][])
 /** 只有声明了 upstream 的类型才需要与真实连线对齐（join 缺上游会在运行期才报错）。 */
 const canSyncUpstream = computed(() => node.value !== null && 'upstream' in node.value.config)
 
 function patch(next: NodePatch): void {
-  store.patchSelected(next)
+  if (node.value !== null) documentStore.patchNode(node.value.node_id, next)
+}
+
+function removeNode(): void {
+  const current = node.value
+  if (current === null) return
+  documentStore.removeNodes([current.node_id])
+  editor.select(documentStore.definition?.nodes[0]?.node_id ?? null)
 }
 
 function numberValue(event: Event): number | null {
@@ -85,7 +97,7 @@ function onConfig(next: Record<string, JsonValue>): void {
       <h3 class="wf-inspector__title">{{ meta?.label ?? node.type }}</h3>
       <code class="wf-inspector__id">{{ node.node_id }}</code>
     </header>
-    <p class="wf-inspector__desc">{{ store.descriptionByType[node.type] ?? meta?.description }}</p>
+    <p class="wf-inspector__desc">{{ catalog.descriptionByType[node.type] ?? meta?.description }}</p>
 
     <label class="wf-inspector__row">
       <span>节点显示名</span>
@@ -159,10 +171,10 @@ function onConfig(next: Record<string, JsonValue>): void {
     </fieldset>
 
     <div class="wf-inspector__actions">
-      <button v-if="canSyncUpstream" type="button" class="wf-inspector__button" @click="store.syncUpstreamConfig(node.node_id)">
+      <button v-if="canSyncUpstream" type="button" class="wf-inspector__button" @click="documentStore.syncUpstreamConfig(node.node_id)">
         按连线回填 upstream
       </button>
-      <button type="button" class="wf-inspector__button wf-inspector__button--danger" @click="store.removeSelected()">
+      <button type="button" class="wf-inspector__button wf-inspector__button--danger" @click="removeNode">
         删除节点
       </button>
     </div>

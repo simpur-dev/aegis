@@ -7,7 +7,6 @@
 import { useVueFlow, type Connection, type NodeDragEvent, type NodeMouseEvent } from '@vue-flow/core'
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 
-import type { WorkflowStore } from '@/stores/workflow'
 import {
   CANVAS_DEFAULT_ZOOM,
   canvasShortcut,
@@ -22,6 +21,7 @@ import {
   type Position,
 } from '@/utils/graph'
 
+import type { EditorContext } from './editor/context'
 import { createNodeDef, NODE_DRAG_MIME, nodeMeta } from './registry'
 
 /**
@@ -43,18 +43,21 @@ export function visibleFlowBox(
   return { x: tl.x, y: tl.y, width: br.x - tl.x, height: br.y - tl.y }
 }
 
-/** 画布上的不透明浮层（小地图、缩放控件）——落在它们底下的节点等于没显示出来。 */
+/** 画布上的不透明浮层（小地图、缩放控件、覆盖式编排面板）——落在它们底下的节点等于没显示出来。 */
 export function overlayFlowBoxes(
   target: EventTarget | null,
   project: (point: Position) => Position,
 ): FlowBox[] {
   if (!(target instanceof HTMLElement)) return []
-  return [...target.querySelectorAll('.vue-flow__minimap, .vue-flow__controls')]
+  /* 编排面板挂在 `.ed-canvas` **外面**（它是覆盖在画布上的兄弟节点），只量画布内部就永远躲不开它：
+     真机量到第三颗节点落进面板那 400px 里，被压住 26×122px。所以以 `.ed-body` 为搜索根。 */
+  const root = target.closest('.ed-body') ?? target
+  return [...root.querySelectorAll('.vue-flow__minimap, .vue-flow__controls, .ed-toolbar, .ed-panel')]
     .map((el) => visibleFlowBox(el, project))
     .filter((box): box is FlowBox => box !== null)
 }
 
-export function useWorkflowCanvas(store: WorkflowStore) {
+export function useWorkflowCanvas({ catalog, document: documentStore, editor, run }: EditorContext) {
   const { screenToFlowCoordinate, fitView, zoomIn, zoomOut, zoomTo, viewport } = useVueFlow()
 
   /** 描边补偿系数（数学在 `strokeCompensation`，那里有单测）。 */
@@ -97,7 +100,14 @@ export function useWorkflowCanvas(store: WorkflowStore) {
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.defaultPrevented || isTypingAt(event.target)) return
+    if (event.defaultPrevented) return
+    // Mod+S 立即落草稿：自动保存还在 800ms 防抖里时，让人自己决定"现在就存"。
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault()
+      void documentStore.flush()
+      return
+    }
+    if (isTypingAt(event.target)) return
     const action = canvasShortcut(event.key, event.ctrlKey || event.metaKey || event.altKey)
     if (action === null) return
     event.preventDefault()
@@ -116,47 +126,78 @@ export function useWorkflowCanvas(store: WorkflowStore) {
     document.removeEventListener('visibilitychange', onVisibilityChange)
   })
 
+  /** 只有"换了一份文档"才收拢视野；每次编辑都会替换文档对象，不能拿它当信号。 */
   watch(
-    () => store.current?.workflow_id ?? '',
-    (workflowId) => {
-      if (workflowId !== '') void fitToGraph()
+    () => documentStore.documentEpoch,
+    () => {
+      if (documentStore.definition !== null) void fitToGraph()
     },
   )
 
   const view = computed<GraphView>(() => {
-    const def = store.current
+    const def = documentStore.definition
     if (def === null) return { nodes: [], edges: [] }
     const states: Record<string, { state: NodeState; attempts: number; note: string }> = {}
-    for (const run of store.instance?.nodes ?? []) {
-      states[run.node_id] = { state: run.state, attempts: run.attempts, note: run.notes.at(-1) ?? '' }
+    for (const nodeRun of run.instance?.nodes ?? []) {
+      states[nodeRun.node_id] = {
+        state: nodeRun.state,
+        attempts: nodeRun.attempts,
+        note: nodeRun.notes.at(-1) ?? '',
+      }
     }
-    return defToGraph(def, {
-      positions: store.positions,
+    const graph = defToGraph(def, {
+      positions: documentStore.document?.layout.positions ?? {},
       states,
-      descriptions: store.descriptionByType,
-      selectedNodeId: store.selectedNodeId,
+      descriptions: catalog.descriptionByType,
+      selectedNodeId: editor.selectedNodeId,
     })
+    /* 备注排在执行节点之前：同一叠放层里后渲染的节点盖住便签，与 Dify 的“便签垫底”一致。 */
+    const notes = (documentStore.document?.layout.notes ?? []).map((note) => ({
+      id: note.note_id,
+      type: 'note' as const,
+      position: { x: note.x, y: note.y },
+      selected: editor.selectedNoteId === note.note_id,
+      data: { note },
+    }))
+    return { nodes: [...notes, ...graph.nodes], edges: graph.edges }
   })
 
   function onConnect(connection: Connection): void {
-    store.connect(connection.source, connection.target)
+    documentStore.connect(connection.source, connection.target)
+  }
+
+  /** 工具栏/空白双击添加节点时，把视口坐标换成 flow 坐标（与拖放落点同一个投影函数）。 */
+  function screenPointToFlow(x: number, y: number): Position {
+    return screenToFlowCoordinate({ x, y })
   }
 
   function onNodeClick({ node }: NodeMouseEvent): void {
-    store.select(node.id)
+    if (node.type === 'note') {
+      editor.selectNote(node.id)
+      return
+    }
+    editor.select(node.id)
   }
 
   function onPaneClick(): void {
-    store.select(null)
+    editor.select(null)
   }
 
   /** 首次拖动前把自动布局坐标固化，避免新节点/旧节点混用两套坐标系而重叠。 */
   function onNodeDragStart(): void {
-    store.seedPositions(Object.fromEntries(view.value.nodes.map((node) => [node.id, node.position])))
+    const positions: Record<string, Position> = {}
+    for (const node of view.value.nodes) {
+      if (node.type !== 'note') positions[node.id] = node.position
+    }
+    documentStore.seedPositions(positions)
   }
 
   function onNodeDragStop({ node }: NodeDragEvent): void {
-    store.moveNode(node.id, { x: node.position.x, y: node.position.y })
+    if (node.type === 'note') {
+      documentStore.updateNote(node.id, { x: node.position.x, y: node.position.y })
+      return
+    }
+    documentStore.moveNode(node.id, { x: node.position.x, y: node.position.y })
   }
 
   function onDragOver(event: DragEvent): void {
@@ -167,7 +208,7 @@ export function useWorkflowCanvas(store: WorkflowStore) {
   function onDrop(event: DragEvent): void {
     event.preventDefault()
     const raw = event.dataTransfer?.getData(NODE_DRAG_MIME) ?? ''
-    const def = store.current
+    const def = documentStore.definition
     /** nodeMeta 非空即证明该类型在注册表内，故把 string 收窄为 NodeType 是安全的。 */
     if (def === null || nodeMeta(raw) === null) return
     const position = screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
@@ -175,8 +216,9 @@ export function useWorkflowCanvas(store: WorkflowStore) {
        只躲压叠不躲可视区时又被推到画布下沿之外（y=704..957，画布底 880）；
        收进框内后又压在小地图那块不透明卡片下（39×156px）。三种"看不见"一起交给让位逻辑。 */
     const taken = view.value.nodes.map((node) => ({ x: node.position.x, y: node.position.y }))
-    store.addNode(
-      createNodeDef(raw as NodeType, nextNodeId(def, raw)),
+    const created = createNodeDef(raw as NodeType, nextNodeId(def, raw))
+    documentStore.addNode(
+      created,
       freeDropPosition(
         taken,
         position,
@@ -185,6 +227,7 @@ export function useWorkflowCanvas(store: WorkflowStore) {
         overlayFlowBoxes(event.currentTarget, screenToFlowCoordinate),
       ),
     )
+    editor.select(created.node_id)
   }
 
   return {
@@ -198,5 +241,6 @@ export function useWorkflowCanvas(store: WorkflowStore) {
     onNodeDragStop,
     onDragOver,
     onDrop,
+    screenPointToFlow,
   }
 }

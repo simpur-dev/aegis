@@ -60,7 +60,9 @@ body .ant-card {
   border-radius: var(--aeg-radius-lg);
   background: var(--aeg-color-card);
   box-shadow: var(--aeg-shadow-sm);
-  transition: box-shadow var(--aeg-motion-base) ease, border-color var(--aeg-motion-base) ease;
+  transition:
+    box-shadow var(--aeg-motion-base) ease,
+    border-color var(--aeg-motion-base) ease;
 }
 body .ant-card-hoverable:hover {
   border-color: var(--aeg-color-border-strong);
@@ -172,7 +174,9 @@ body .ant-btn-default:not(:disabled):hover {
    环应该跟着元素的圆角走，所以这里只画环不改形状。 */
 body :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--aeg-color-card), 0 0 0 4px var(--aeg-color-brand-line);
+  box-shadow:
+    0 0 0 2px var(--aeg-color-card),
+    0 0 0 4px var(--aeg-color-brand-line);
 }
 body .ant-input:focus-visible,
 body .ant-select-focused .ant-select-selector,
@@ -335,7 +339,7 @@ body .stat-cell .ant-statistic-content-suffix {
 @media (prefers-reduced-motion: reduce) {
   body .ant-card,
   .status-dot.live,
-  .wf__polling::before {
+  .ed-head__polling::before {
     animation: none !important;
   }
   /* antd 自己那几支无限循环也在名单里：按钮加载态的 `loadingCircle`、Spin 的 `antRotate`/`antSpinMove`、
@@ -359,13 +363,15 @@ body .stat-cell .ant-statistic-content-suffix {
 }
 
 /* 「实例状态轮询中」此前是一句静止的文本——它说的恰恰是"此刻还在动"，
-   配一颗和顶栏事件流同款的脉冲点才对得上。 */
-.wf__polling {
+   配一颗和顶栏事件流同款的脉冲点才对得上。
+   2026-10-23 编排页换成沉浸式编辑器之后，这句文本住在 `EditorHeader.vue` 的 `.ed-head__polling`，
+   旧的 `.wf__polling` 随那一版页头一起退役（选择器留在这儿等于没有：命不中任何元素）。 */
+.ed-head__polling {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
-.wf__polling::before {
+.ed-head__polling::before {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -382,20 +388,26 @@ body .stat-cell .ant-statistic-content-suffix {
 /* —— 画布连线：库里默认是 1px 的浅灰 #b1b1b7，而 zoom 作用在整个变换层上——
      真机打开那份 111 节点的定义，fit 落在 zoom=0.318，1px 只剩 **0.32 设备像素**，
      线基本看不见；而"看全局"恰恰要缩到那一档。所以按 `--canvas-stroke-k`（1/zoom，封顶 3）补偿，
-     颜色走 `text-muted`（浅主题 slate 中灰、深主题亮灰，两档在各自画布底上都看得清）。
-     参照 n8n `CanvasEdge.vue:212` 的同一条做法。 —— */
-.wf__canvas .vue-flow__edge-path {
-  stroke: var(--aeg-color-text-muted);
+     参照 n8n `CanvasEdge.vue:212` 的同一条做法。
+     颜色不在这里：连线按两端运行态取色是 `WorkflowEdge.vue` 的 `is-*` 档位，这里只钉粗细。 —— */
+.ed-canvas .vue-flow__edge-path {
   stroke-width: calc(1.5px * var(--canvas-stroke-k, 1));
+  stroke-linecap: round;
 }
-.wf__canvas .vue-flow__edge.selected .vue-flow__edge-path {
-  stroke: var(--aeg-color-brand);
+
+/* —— 边中标签层（条件胶囊 + 中点 “+”）必须抬到节点卡之上。
+   真机量到 `.vue-flow__edge-labels` 的 z-index 是 auto，而库给每棵节点写内联 z-index
+   （普通 0、选中/拖动那棵 1000）——两颗竖着排的节点之间那个 “+” 正好落在上一棵卡的
+   "超时 5000 ms" 那行字下面，`document.elementFromPoint` 指到的是节点子树：
+   "在中间插一步"这条动线在默认布局下点不到。比库里给选中节点的 1000 再高一档。 —— */
+.ed-canvas .vue-flow__edge-labels {
+  z-index: 1001;
 }
 
 /* —— 画布浮层：@vue-flow 的 minimap 默认只有一个 `background-color:#fff`，controls 只有 2px 投影，
      放进我们的画布里就是两块生硬的白方块（深色主题下更是一块发光的白板）。
      统一成卡片族同一套语言：`elevated` 底 + 令牌描边 + md 圆角 + md 投影。 —— */
-.wf__canvas .vue-flow__minimap {
+.ed-canvas .vue-flow__minimap {
   overflow: hidden;
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-md);
@@ -404,17 +416,17 @@ body .stat-cell .ant-statistic-content-suffix {
 }
 /* 空画布上这块"什么都没有的框"不画出来，但要留在 DOM 里——落点让位得量它的真实尺寸当禁落区，
    否则第一颗贴着右下角落的节点会在落好之后被刚挂载的小地图盖住（`visibility:hidden` 仍占布局）。 */
-.wf__canvas .vue-flow__minimap.is-ghost {
+.ed-canvas .vue-flow__minimap.is-ghost {
   visibility: hidden;
 }
-.wf__canvas .vue-flow__controls {
+.ed-canvas .vue-flow__controls {
   overflow: hidden;
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-md);
   background: var(--aeg-color-elevated);
   box-shadow: var(--aeg-shadow-md);
 }
-.wf__canvas .vue-flow__controls-button {
+.ed-canvas .vue-flow__controls-button {
   width: 22px;
   height: 22px;
   padding: 6px;
@@ -423,9 +435,9 @@ body .stat-cell .ant-statistic-content-suffix {
   color: var(--aeg-color-text-secondary);
   fill: currentColor;
 }
-.wf__canvas .vue-flow__controls-button:hover {
+.ed-canvas .vue-flow__controls-button:hover {
   background: var(--aeg-color-brand-soft);
 }
-.wf__canvas .vue-flow__controls-button:last-child {
+.ed-canvas .vue-flow__controls-button:last-child {
   border-bottom: none;
 }

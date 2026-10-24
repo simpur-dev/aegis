@@ -1,0 +1,366 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "execution": "executed"
+  },
+  "module": "web/app/components/workflow/utils/clipboard.ts",
+  "functions": [
+    "sanitizeClipboardValueByDefault",
+    "isClipboardValueCompatibleWithDefault",
+    "isClipboardNodeStructurallyValid",
+    "isClipboardEdgeStructurallyValid",
+    "parseWorkflowClipboardText",
+    "stringifyWorkflowClipboardData"
+  ],
+  "sanitizeCases": [
+    {
+      "name": "undefined-default-passthrough",
+      "incoming": {
+        "a": 1
+      },
+      "actual": {
+        "a": 1
+      },
+      "compatible": true
+    },
+    {
+      "name": "array-default-array-incoming",
+      "def": [
+        1,
+        2
+      ],
+      "incoming": [
+        3
+      ],
+      "actual": [
+        3
+      ],
+      "compatible": true
+    },
+    {
+      "name": "array-default-non-array-incoming",
+      "def": [
+        1,
+        2
+      ],
+      "incoming": "x",
+      "actual": [
+        1,
+        2
+      ],
+      "compatible": false
+    },
+    {
+      "name": "object-default-non-object-incoming",
+      "def": {
+        "a": 1,
+        "b": {
+          "c": 2
+        }
+      },
+      "incoming": "x",
+      "actual": {
+        "a": 1,
+        "b": {
+          "c": 2
+        }
+      },
+      "compatible": false
+    },
+    {
+      "name": "object-merge-union",
+      "def": {
+        "a": 1,
+        "b": "x",
+        "nested": {
+          "c": 2,
+          "d": true
+        }
+      },
+      "incoming": {
+        "a": 5,
+        "nested": {
+          "c": 9
+        },
+        "extra": "kept"
+      },
+      "actual": {
+        "a": 5,
+        "b": "x",
+        "nested": {
+          "c": 9,
+          "d": true
+        },
+        "extra": "kept"
+      },
+      "compatible": true
+    },
+    {
+      "name": "number-default-nan",
+      "def": 7,
+      "incoming": "NaN",
+      "actual": 7,
+      "compatible": false
+    },
+    {
+      "name": "number-default-finite",
+      "def": 7,
+      "incoming": 8,
+      "actual": 8,
+      "compatible": true
+    },
+    {
+      "name": "string-default-number-incoming",
+      "def": "x",
+      "incoming": 1,
+      "actual": "x",
+      "compatible": false
+    },
+    {
+      "name": "boolean-default-mismatch",
+      "def": true,
+      "incoming": "true",
+      "actual": true,
+      "compatible": false
+    }
+  ],
+  "structuralCases": [
+    {
+      "name": "node-valid",
+      "value": {
+        "id": "n1",
+        "type": "custom",
+        "data": {},
+        "position": {
+          "x": 1,
+          "y": 2
+        }
+      },
+      "fn": "node",
+      "actual": true
+    },
+    {
+      "name": "node-missing-data",
+      "value": {
+        "id": "n1",
+        "type": "custom",
+        "position": {
+          "x": 1,
+          "y": 2
+        }
+      },
+      "fn": "node",
+      "actual": false
+    },
+    {
+      "name": "node-nan-position",
+      "value": {
+        "id": "n1",
+        "type": "custom",
+        "data": {},
+        "position": {
+          "x": "NaN",
+          "y": 2
+        }
+      },
+      "fn": "node",
+      "actual": false
+    },
+    {
+      "name": "node-non-object",
+      "value": "x",
+      "fn": "node",
+      "actual": false
+    },
+    {
+      "name": "edge-valid",
+      "value": {
+        "id": "e1",
+        "source": "n1",
+        "target": "n2"
+      },
+      "fn": "edge",
+      "actual": true
+    },
+    {
+      "name": "edge-missing-target",
+      "value": {
+        "id": "e1",
+        "source": "n1"
+      },
+      "fn": "edge",
+      "actual": false
+    },
+    {
+      "name": "edge-non-object",
+      "value": [],
+      "fn": "edge",
+      "actual": false
+    }
+  ],
+  "parseCases": [
+    {
+      "name": "empty-text",
+      "text": "",
+      "current": "2",
+      "actual": {
+        "nodes": [],
+        "edges": [],
+        "isVersionMismatch": false
+      }
+    },
+    {
+      "name": "invalid-json",
+      "text": "{",
+      "current": "2",
+      "actual": {
+        "nodes": [],
+        "edges": [],
+        "isVersionMismatch": false
+      }
+    },
+    {
+      "name": "wrong-kind",
+      "text": "{\"kind\":\"other\",\"version\":\"2\",\"nodes\":[{\"id\":\"n1\",\"type\":\"custom\",\"data\":{\"type\":\"start\"},\"position\":{\"x\":1,\"y\":2}},{\"id\":7,\"type\":\"custom\",\"data\":{},\"position\":{\"x\":0,\"y\":0}},{\"id\":\"n2\",\"type\":\"custom\",\"data\":{\"type\":\"end\"},\"position\":{\"x\":\"3\",\"y\":4}}],\"edges\":[{\"id\":\"e1\",\"source\":\"n1\",\"target\":\"n2\"},{\"id\":\"e2\",\"source\":\"n1\"},{\"id\":\"e3\",\"source\":\"n1\",\"target\":\"n2\",\"targetHandle\":\"x\"}]}",
+      "current": "2",
+      "actual": {
+        "nodes": [],
+        "edges": [],
+        "isVersionMismatch": false
+      }
+    },
+    {
+      "name": "missing-version",
+      "text": "{\"kind\":\"dify-workflow-clipboard\",\"version\":2,\"nodes\":[{\"id\":\"n1\",\"type\":\"custom\",\"data\":{\"type\":\"start\"},\"position\":{\"x\":1,\"y\":2}},{\"id\":7,\"type\":\"custom\",\"data\":{},\"position\":{\"x\":0,\"y\":0}},{\"id\":\"n2\",\"type\":\"custom\",\"data\":{\"type\":\"end\"},\"position\":{\"x\":\"3\",\"y\":4}}],\"edges\":[{\"id\":\"e1\",\"source\":\"n1\",\"target\":\"n2\"},{\"id\":\"e2\",\"source\":\"n1\"},{\"id\":\"e3\",\"source\":\"n1\",\"target\":\"n2\",\"targetHandle\":\"x\"}]}",
+      "current": "2",
+      "actual": {
+        "nodes": [],
+        "edges": [],
+        "isVersionMismatch": false
+      }
+    },
+    {
+      "name": "nodes-not-array",
+      "text": "{\"kind\":\"dify-workflow-clipboard\",\"version\":\"2\",\"nodes\":{},\"edges\":[{\"id\":\"e1\",\"source\":\"n1\",\"target\":\"n2\"},{\"id\":\"e2\",\"source\":\"n1\"},{\"id\":\"e3\",\"source\":\"n1\",\"target\":\"n2\",\"targetHandle\":\"x\"}]}",
+      "current": "2",
+      "actual": {
+        "nodes": [],
+        "edges": [],
+        "isVersionMismatch": false
+      }
+    },
+    {
+      "name": "mixed-validity-version-mismatch",
+      "text": "{\"kind\":\"dify-workflow-clipboard\",\"version\":\"2\",\"nodes\":[{\"id\":\"n1\",\"type\":\"custom\",\"data\":{\"type\":\"start\"},\"position\":{\"x\":1,\"y\":2}},{\"id\":7,\"type\":\"custom\",\"data\":{},\"position\":{\"x\":0,\"y\":0}},{\"id\":\"n2\",\"type\":\"custom\",\"data\":{\"type\":\"end\"},\"position\":{\"x\":\"3\",\"y\":4}}],\"edges\":[{\"id\":\"e1\",\"source\":\"n1\",\"target\":\"n2\"},{\"id\":\"e2\",\"source\":\"n1\"},{\"id\":\"e3\",\"source\":\"n1\",\"target\":\"n2\",\"targetHandle\":\"x\"}]}",
+      "current": "1",
+      "actual": {
+        "nodes": [
+          {
+            "id": "n1",
+            "type": "custom",
+            "data": {
+              "type": "start"
+            },
+            "position": {
+              "x": 1,
+              "y": 2
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "e1",
+            "source": "n1",
+            "target": "n2"
+          },
+          {
+            "id": "e3",
+            "source": "n1",
+            "target": "n2",
+            "targetHandle": "x"
+          }
+        ],
+        "sourceVersion": "2",
+        "isVersionMismatch": true
+      }
+    },
+    {
+      "name": "same-version",
+      "text": "{\"kind\":\"dify-workflow-clipboard\",\"version\":\"2\",\"nodes\":[{\"id\":\"n1\",\"type\":\"custom\",\"data\":{\"type\":\"start\"},\"position\":{\"x\":1,\"y\":2}},{\"id\":7,\"type\":\"custom\",\"data\":{},\"position\":{\"x\":0,\"y\":0}},{\"id\":\"n2\",\"type\":\"custom\",\"data\":{\"type\":\"end\"},\"position\":{\"x\":\"3\",\"y\":4}}],\"edges\":[{\"id\":\"e1\",\"source\":\"n1\",\"target\":\"n2\"},{\"id\":\"e2\",\"source\":\"n1\"},{\"id\":\"e3\",\"source\":\"n1\",\"target\":\"n2\",\"targetHandle\":\"x\"}]}",
+      "current": "2",
+      "actual": {
+        "nodes": [
+          {
+            "id": "n1",
+            "type": "custom",
+            "data": {
+              "type": "start"
+            },
+            "position": {
+              "x": 1,
+              "y": 2
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "e1",
+            "source": "n1",
+            "target": "n2"
+          },
+          {
+            "id": "e3",
+            "source": "n1",
+            "target": "n2",
+            "targetHandle": "x"
+          }
+        ],
+        "sourceVersion": "2",
+        "isVersionMismatch": false
+      }
+    }
+  ],
+  "stringifyRoundTrip": "{\"kind\":\"dify-workflow-clipboard\",\"version\":\"2\",\"nodes\":[{\"id\":\"n1\",\"type\":\"custom\",\"data\":{\"type\":\"start\"},\"position\":{\"x\":1,\"y\":2}}],\"edges\":[{\"id\":\"e1\",\"source\":\"n1\",\"target\":\"n2\"}]}",
+  "securityCases": [
+    {
+      "name": "proto-key-in-incoming",
+      "def": {
+        "a": 1
+      },
+      "incoming": {
+        "__proto__": {
+          "polluted": true
+        }
+      },
+      "upstreamActual": {
+        "ownKeys": [
+          "a"
+        ],
+        "prototypePolluted": true
+      },
+      "aegisExpectation": {
+        "ownKeys": [
+          "a"
+        ],
+        "prototypePolluted": false,
+        "droppedKeys": [
+          "__proto__"
+        ]
+      },
+      "note": "上游 merged[key]=value 会触发 __proto__ setter；AEGIS 端口必须过滤 __proto__/prototype/constructor"
+    }
+  ],
+  "aegisOnlyCases": [
+    {
+      "name": "size-cap",
+      "limitBytes": 2097152,
+      "expectation": "超限显式错误"
+    },
+    {
+      "name": "read-failure",
+      "expectation": "显式错误而非静默空结果"
+    }
+  ]
+}

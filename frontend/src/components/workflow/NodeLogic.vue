@@ -42,7 +42,7 @@ const summary = computed<string>(() => {
 
 <style scoped>
 .wf-logic__summary {
-  margin: 4px 0 0;
-  color: #434343;
+  margin: 0;
+  color: var(--aeg-color-text-secondary);
 }
 </style>

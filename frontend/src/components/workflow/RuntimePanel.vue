@@ -5,33 +5,32 @@
  */
 import { computed, ref } from 'vue'
 
-import { useWorkflowStore } from '@/stores/workflow'
 import FreshnessBar from '@/components/FreshnessBar.vue'
 import { INSTANCE_STATUS_LABELS, isInstanceStatus, type InstanceStatus } from '@/utils/graph'
 
 import RunTimeline from './RunTimeline.vue'
+import { useEditorContext } from './editor/context'
 
-const store = useWorkflowStore()
+const { document: documentStore, run } = useEditorContext()
 
 const abortReason = ref('')
 const onlyWaiting = ref(false)
 
 /** 实例载荷里只有 node_id，名字得回自己手上这份定义取；取不到就退回 ID（不猜名字）。 */
 const nodeNames = computed<Record<string, string>>(() =>
-  Object.fromEntries((store.current?.nodes ?? []).map((node) => [node.node_id, node.name])),
+  Object.fromEntries((documentStore.definition?.nodes ?? []).map((node) => [node.node_id, node.name])),
 )
-const timelineRuns = computed(() => store.instance?.nodes ?? [])
+const timelineRuns = computed(() => run.instance?.nodes ?? [])
 
 const statusLabel = computed<string>(() => {
-  const status = store.instanceStatus
+  const status = run.instanceStatus
   return status === null ? '未选择实例' : INSTANCE_STATUS_LABELS[status]
 })
 
-/** 界面提示：启动跑的是已保存版本，画布上未保存的改动不参与本次执行。 */
+/** 启动跑的是已发布版本，画布上未发布的草稿改动不参与本次执行。 */
 const boundVersion = computed<string>(() => {
-  const def = store.current
-  if (def === null) return ''
-  return def.workflow_id === '' ? '定义尚未保存，无法启动' : `将执行已保存的 v${def.version}`
+  const version = documentStore.publishedVersion
+  return version === null ? '尚未发布版本，无法启动实例' : `将执行已发布的 v${version}`
 })
 
 function label(status: string): string {
@@ -43,11 +42,11 @@ function statusTone(status: string): InstanceStatus | 'unknown' {
 }
 
 function start(): void {
-  void store.startInstance()
+  void run.startInstance()
 }
 
 function abort(): void {
-  void store.abortInstance(abortReason.value)
+  void run.abortInstance(abortReason.value)
   abortReason.value = ''
 }
 
@@ -59,9 +58,9 @@ function abort(): void {
  * 没有任何一处说明"有几张在等人"——`/dashboard`、`/warnings` 上"核签/待签/人工"字样各 0 次。
  * 一张工单等着的是"这条预警要不要按现状生效"，靠人滚动去撞见是不负责任的。
  */
-const waitingRows = computed(() => store.instances.filter((row) => row.status === 'waiting'))
+const waitingRows = computed(() => run.instances.filter((row) => row.status === 'waiting'))
 const listedInstances = computed(() => {
-  const newestFirst = [...store.instances].reverse()
+  const newestFirst = [...run.instances].reverse()
   const ranked = [...newestFirst].sort((a, b) => (b.status === 'waiting' ? 1 : 0) - (a.status === 'waiting' ? 1 : 0))
   return onlyWaiting.value ? ranked.filter((row) => row.status === 'waiting') : ranked
 })
@@ -71,28 +70,33 @@ const listedInstances = computed(() => {
   <section class="wf-run">
     <h3 class="wf-run__title">运行实例</h3>
     <div class="wf-run__bar">
-      <button type="button" class="wf-run__button wf-run__button--primary" :disabled="!store.canSave || store.current?.workflow_id === ''" @click="start">
+      <button
+        type="button"
+        class="wf-run__button wf-run__button--primary"
+        :disabled="documentStore.publishedWorkflowId === null"
+        @click="start"
+      >
         启动实例
       </button>
-      <button type="button" class="wf-run__button wf-run__button--danger" :disabled="!store.instanceMutable" @click="abort">
+      <button type="button" class="wf-run__button wf-run__button--danger" :disabled="!run.instanceMutable" @click="abort">
         中止
       </button>
       <input v-model="abortReason" class="wf-run__input" type="text" placeholder="中止理由（可选）" maxlength="128" />
     </div>
     <p class="wf-run__state">
       <span>{{ statusLabel }}</span>
-      <span v-if="store.polling" class="wf-run__polling">轮询中</span>
-      <span v-else-if="store.instance !== null" class="wf-run__paused">已停止轮询</span>
-      <code v-if="store.instance !== null">{{ store.instance.instance_id }}</code>
+      <span v-if="run.polling" class="wf-run__polling">轮询中</span>
+      <span v-else-if="run.instance !== null" class="wf-run__paused">已停止轮询</span>
+      <code v-if="run.instance !== null">{{ run.instance.instance_id }}</code>
     </p>
     <p class="wf-run__hint">{{ boundVersion }}</p>
-    <p v-if="store.awaitingNodes.length > 0" class="wf-run__awaiting">
-      待人工核签：{{ store.awaitingNodes.map((run) => run.node_id).join('、') }}
+    <p v-if="run.awaitingNodes.length > 0" class="wf-run__awaiting">
+      待人工核签：{{ run.awaitingNodes.map((node) => node.node_id).join('、') }}
     </p>
-    <p v-if="store.instance?.error" class="wf-run__error">{{ store.instance.error }}</p>
+    <p v-if="run.instance?.error" class="wf-run__error">{{ run.instance.error }}</p>
 
     <h4 class="wf-run__subtitle">
-      服务端实例（{{ store.instances.length }}）
+      服务端实例（{{ run.instances.length }}）
       <label v-if="waitingRows.length > 0 || onlyWaiting" class="wf-run__waiting">
         等人签 {{ waitingRows.length }} 张
         <input v-model="onlyWaiting" type="checkbox" data-testid="only-waiting" />
@@ -100,8 +104,8 @@ const listedInstances = computed(() => {
       </label>
     </h4>
     <FreshnessBar
-      :fetched-at="store.instancesUpdatedAt"
-      :label="`服务端实例（${store.instances.length}） ｜ 每 15 秒自己对一遍`"
+      :fetched-at="run.instancesUpdatedAt"
+      :label="`服务端实例（${run.instances.length}） ｜ 每 15 秒自己对一遍`"
       :interval-ms="15_000"
       stacked
     />
@@ -113,8 +117,8 @@ const listedInstances = computed(() => {
         <button
           type="button"
           class="wf-run__pick"
-          :class="[`is-${statusTone(row.status)}`, { 'is-picked': store.instance?.instance_id === row.instance_id }]"
-          @click="store.focusInstance(row.instance_id)"
+          :class="[`is-${statusTone(row.status)}`, { 'is-picked': run.instance?.instance_id === row.instance_id }]"
+          @click="run.focusInstance(row.instance_id)"
         >
           <span class="wf-run__id">{{ row.instance_id }}</span>
           <span class="wf-run__state">{{ label(row.status) }}</span>
@@ -122,7 +126,7 @@ const listedInstances = computed(() => {
         </button>
       </li>
     </ul>
-    <p v-if="store.instances.length === 0" class="wf-run__hint">尚无实例。</p>
+    <p v-if="run.instances.length === 0" class="wf-run__hint">尚无实例。</p>
     <h4 class="wf-run__subtitle">执行步骤</h4>
     <RunTimeline :runs="timelineRuns" :names="nodeNames" />
   </section>

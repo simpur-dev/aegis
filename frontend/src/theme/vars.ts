@@ -34,6 +34,9 @@ export function staticVars(): Record<string, string> {
   for (const [k, v] of Object.entries(motion)) out[`${varPrefix}motion-${k}`] = v
   for (const [k, v] of Object.entries(z)) out[`${varPrefix}z-${k}`] = `${v}`
   out[`${varPrefix}header-height`] = `${layout.headerHeight}px`
+  out[`${varPrefix}editor-header-height`] = `${layout.editorHeaderHeight}px`
+  out[`${varPrefix}editor-panel-width`] = `${layout.editorPanelWidth}px`
+  out[`${varPrefix}node-width`] = `${layout.nodeWidth}px`
   out[`${varPrefix}sidebar-width`] = `${layout.sidebarWidth}px`
   out[`${varPrefix}sidebar-collapsed`] = `${layout.sidebarCollapsed}px`
   out[`${varPrefix}content-max`] = `${layout.contentMaxWidth}px`

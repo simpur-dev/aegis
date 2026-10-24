@@ -1,0 +1,185 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "execution": "executed"
+  },
+  "module": "web/app/components/workflow/utils/keyboard-movement.ts",
+  "cases": [
+    {
+      "key": "ArrowLeft",
+      "modifiers": "plain",
+      "actual": {
+        "x": -5,
+        "y": 0
+      }
+    },
+    {
+      "key": "ArrowLeft",
+      "modifiers": "shift",
+      "actual": {
+        "x": -20,
+        "y": 0
+      }
+    },
+    {
+      "key": "ArrowLeft",
+      "modifiers": "alt",
+      "actual": null
+    },
+    {
+      "key": "ArrowLeft",
+      "modifiers": "ctrl",
+      "actual": null
+    },
+    {
+      "key": "ArrowLeft",
+      "modifiers": "meta",
+      "actual": null
+    },
+    {
+      "key": "ArrowLeft",
+      "modifiers": "shift-alt",
+      "actual": null
+    },
+    {
+      "key": "ArrowRight",
+      "modifiers": "plain",
+      "actual": {
+        "x": 5,
+        "y": 0
+      }
+    },
+    {
+      "key": "ArrowRight",
+      "modifiers": "shift",
+      "actual": {
+        "x": 20,
+        "y": 0
+      }
+    },
+    {
+      "key": "ArrowRight",
+      "modifiers": "alt",
+      "actual": null
+    },
+    {
+      "key": "ArrowRight",
+      "modifiers": "ctrl",
+      "actual": null
+    },
+    {
+      "key": "ArrowRight",
+      "modifiers": "meta",
+      "actual": null
+    },
+    {
+      "key": "ArrowRight",
+      "modifiers": "shift-alt",
+      "actual": null
+    },
+    {
+      "key": "ArrowUp",
+      "modifiers": "plain",
+      "actual": {
+        "x": 0,
+        "y": -5
+      }
+    },
+    {
+      "key": "ArrowUp",
+      "modifiers": "shift",
+      "actual": {
+        "x": 0,
+        "y": -20
+      }
+    },
+    {
+      "key": "ArrowUp",
+      "modifiers": "alt",
+      "actual": null
+    },
+    {
+      "key": "ArrowUp",
+      "modifiers": "ctrl",
+      "actual": null
+    },
+    {
+      "key": "ArrowUp",
+      "modifiers": "meta",
+      "actual": null
+    },
+    {
+      "key": "ArrowUp",
+      "modifiers": "shift-alt",
+      "actual": null
+    },
+    {
+      "key": "ArrowDown",
+      "modifiers": "plain",
+      "actual": {
+        "x": 0,
+        "y": 5
+      }
+    },
+    {
+      "key": "ArrowDown",
+      "modifiers": "shift",
+      "actual": {
+        "x": 0,
+        "y": 20
+      }
+    },
+    {
+      "key": "ArrowDown",
+      "modifiers": "alt",
+      "actual": null
+    },
+    {
+      "key": "ArrowDown",
+      "modifiers": "ctrl",
+      "actual": null
+    },
+    {
+      "key": "ArrowDown",
+      "modifiers": "meta",
+      "actual": null
+    },
+    {
+      "key": "ArrowDown",
+      "modifiers": "shift-alt",
+      "actual": null
+    },
+    {
+      "key": "Enter",
+      "modifiers": "plain",
+      "actual": null
+    },
+    {
+      "key": "Enter",
+      "modifiers": "shift",
+      "actual": null
+    },
+    {
+      "key": "Enter",
+      "modifiers": "alt",
+      "actual": null
+    },
+    {
+      "key": "Enter",
+      "modifiers": "ctrl",
+      "actual": null
+    },
+    {
+      "key": "Enter",
+      "modifiers": "meta",
+      "actual": null
+    },
+    {
+      "key": "Enter",
+      "modifiers": "shift-alt",
+      "actual": null
+    }
+  ]
+}

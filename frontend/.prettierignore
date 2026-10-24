@@ -1,0 +1,10 @@
+dist
+coverage
+node_modules
+test-results
+playwright-report
+
+# 旧工作流文件在批次 B 重写前不做全仓格式化，避免行为改动与格式化混在一起。
+src/components/workflow/*.ts
+src/components/workflow/*.vue
+src/components/workflow/__tests__

@@ -18,13 +18,14 @@ import { useTheme } from '@/theme/useTheme'
  * 为什么收：八页平铺时三类受众（值班业务 / 运维取证 / 演示玩具）混在同一排，
  * 顶栏那个"流程步进器"样式还暗示着并不存在的顺序——外人打开无从下手。
  * 现在侧栏按受众分两组（值班主线 / 系统），顶栏只留"我在哪页 + 后端与事件流状态 + 主题"，
- * 智能助手是每页可见的悬浮入口（合并进抽屉之前先指向 /assistant 页）。
+ * 智能助手是每页可见的常驻入口，贴在侧栏导航下面那一行（合并进抽屉之前先指向 /assistant 页）。
  *
  * 颜色一律读 `--aeg-*` 令牌（真源 src/theme/tokens.ts），动效只走 `--aeg-motion-*`：
  * 这两条由 src/uiTheme.spec.ts 的棘轮门禁钉住，写字面色就是往回退。
  */
 
 const route = useRoute()
+const immersive = computed(() => route.meta?.immersive === true)
 const currentKey = computed(() => (route.name as string) ?? 'dashboard')
 const pageTitle = computed(() => (route.meta?.title as string) ?? 'AEGIS')
 
@@ -152,10 +153,11 @@ const statusTitle = computed<string>(() =>
        antd 默认英文空态 "No data"（此前是一张张截图发现再逐页补 emptyText）。
        逐页补只能盖住写过的表，语言包一次盖住整类。 -->
   <a-config-provider :theme="theme" :locale="zhCN">
-    <div class="app-shell">
+    <div class="app-shell" :class="{ 'is-immersive': immersive }">
       <!-- 侧栏：品牌 + 分组导航 + 智能体迷你状态 + 收起钮。宽度走布局令牌
-           （--aeg-sidebar-width 232 / --aeg-sidebar-collapsed 64），不许在这儿写死像素。 -->
-      <aside class="sidebar" :class="{ 'is-collapsed': collapsed }" data-testid="sidebar">
+           （--aeg-sidebar-width 232 / --aeg-sidebar-collapsed 64），不许在这儿写死像素。
+           沉浸式路由（工作流编辑器）自带头部与画布，不显示应用外壳。 -->
+      <aside v-if="!immersive" class="sidebar" :class="{ 'is-collapsed': collapsed }" data-testid="sidebar">
         <div class="side-brand">
           <span class="brand-logo" aria-hidden="true">A</span>
           <span class="brand-name">AEGIS</span>
@@ -181,6 +183,20 @@ const statusTitle = computed<string>(() =>
           </div>
         </nav>
 
+        <!-- 智能助手：常驻工具，不占一级导航分组。它原先是右下角那颗悬浮胶囊，
+             真机量到它会压在页脚文字、台账分页器与表页码按钮上（1440/1000/900 三档都压），
+             值班台上"点不动的页码"不是可以接受的东西，所以入口收回侧栏这条固定的操作列里。 -->
+        <router-link
+          class="side-assistant"
+          :class="{ active: currentKey === 'assistant' }"
+          to="/assistant"
+          title="智能助手"
+          aria-label="智能助手"
+          data-testid="assistant-entry"
+        >
+          <span class="side-assistant__label">{{ collapsed ? '助手' : '智能助手' }}</span>
+        </router-link>
+
         <div class="side-agents" :class="`is-${agentsTone}`" :title="agentsHint" data-testid="side-agents">
           <span class="status-dot" :class="agentsTone === 'idle' ? '' : agentsTone"></span>
           <span class="side-agents__text">{{ agentsText }}</span>
@@ -190,17 +206,21 @@ const statusTitle = computed<string>(() =>
           type="button"
           class="side-collapse"
           :aria-expanded="!collapsed"
+          :aria-label="collapsed ? '展开侧栏' : '收起侧栏'"
+          :title="collapsed ? '展开侧栏' : '收起侧栏'"
           data-testid="side-collapse"
           @click="toggleCollapse"
         >
-          {{ collapsed ? '展开侧栏' : '收起侧栏' }}
+          <!-- 收起态的轨道只有 64px：四个字的"展开侧栏"会在轨道里折成两行（真机 @900 量到），
+               所以短成一枚箭头，完整含义交给 aria-label/title。 -->
+          {{ collapsed ? '»' : '收起侧栏' }}
         </button>
       </aside>
 
       <div class="main-col">
         <!-- 顶栏只留三件事：我在哪页（左）、后端与事件流状态（中右）、主题（右）。
              页名放这里是给"从侧栏点进来之后忘了去了哪"的人一个固定锚点。 -->
-        <header class="topbar">
+        <header v-if="!immersive" class="topbar">
           <div class="topbar-left">
             <h1 class="topbar-title">{{ pageTitle }}</h1>
           </div>
@@ -237,22 +257,17 @@ const statusTitle = computed<string>(() =>
           </div>
         </header>
 
-        <main class="main-content">
+        <main class="main-content" :class="{ 'is-immersive': immersive }">
           <router-view />
           <!-- 服务令牌条常驻页脚：一台机器填一次，但"这台开了鉴权"必须每页都说得出口（§4.8.1） -->
-          <ServiceTokenBar />
+          <ServiceTokenBar v-if="!immersive" />
           <!-- 页脚跟着内容走，不钉在视口底：钉着的话每一页都永久吃掉一条，
                而编排页那种"占满一屏"的布局还要去猜它的高度 -->
-          <footer class="footer">
+          <footer v-if="!immersive" class="footer">
             AEGIS · Adaptive Emergency Geo-hazard Intelligence System ｜ 西藏山地灾害多智能体协同调控技术与平台
           </footer>
         </main>
       </div>
-
-      <!-- 智能助手常驻入口：每一页都点得到。合并成右侧抽屉之前，先指向 /assistant 页。 -->
-      <router-link class="assistant-fab" to="/assistant" title="智能助手" data-testid="assistant-fab">
-        助手
-      </router-link>
     </div>
   </a-config-provider>
 </template>
@@ -352,7 +367,9 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text-secondary);
   text-decoration: none;
   white-space: nowrap;
-  transition: background-color var(--aeg-motion-base) ease, color var(--aeg-motion-base) ease;
+  transition:
+    background-color var(--aeg-motion-base) ease,
+    color var(--aeg-motion-base) ease;
 }
 .side-item__label {
   font-size: var(--aeg-font-sm);
@@ -406,6 +423,18 @@ const statusTitle = computed<string>(() =>
   display: none;
 }
 
+/* 收起态只有 64px：组名"值班主线"四个 12px 的字加左右内边距正好越过这条宽度，
+   于是竖着折成两行（真机 @900 量到的就是它）。组名收掉，改用一条分隔线保住
+   "这是两组、不是一排平级页签"的形状——那正是 2026-10-17 信息架构收并的目的本身。 */
+.sidebar.is-collapsed .side-group__label {
+  display: none;
+}
+.sidebar.is-collapsed .side-group + .side-group {
+  margin-top: var(--aeg-space-s3);
+  padding-top: var(--aeg-space-s3);
+  border-top: 1px solid var(--aeg-color-border-subtle);
+}
+
 .side-collapse {
   flex: 0 0 auto;
   margin: 0 var(--aeg-space-s2) var(--aeg-space-s3);
@@ -418,7 +447,9 @@ const statusTitle = computed<string>(() =>
   font-size: var(--aeg-font-xs);
   font-weight: var(--aeg-weight-semibold);
   cursor: pointer;
-  transition: background-color var(--aeg-motion-base) ease, color var(--aeg-motion-base) ease;
+  transition:
+    background-color var(--aeg-motion-base) ease,
+    color var(--aeg-motion-base) ease;
 }
 .side-collapse:hover {
   background: var(--aeg-color-brand-soft);
@@ -567,7 +598,9 @@ const statusTitle = computed<string>(() =>
   font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
   cursor: pointer;
-  transition: background-color var(--aeg-motion-base) ease, color var(--aeg-motion-base) ease;
+  transition:
+    background-color var(--aeg-motion-base) ease,
+    color var(--aeg-motion-base) ease;
 }
 .theme-switch__btn:hover {
   background: var(--aeg-color-brand-soft);
@@ -585,6 +618,18 @@ const statusTitle = computed<string>(() =>
   overflow-y: auto;
   padding: var(--aeg-space-s5) var(--aeg-space-s6);
 }
+.main-content.is-immersive {
+  height: 100vh;
+  overflow: hidden;
+  padding: 0;
+}
+.main-col:has(.main-content.is-immersive),
+.app-shell.is-immersive {
+  height: 100vh;
+}
+.app-shell.is-immersive {
+  background: var(--aeg-color-editor-canvas, var(--aeg-color-page));
+}
 .footer {
   padding: var(--aeg-space-s4);
   background: transparent;
@@ -593,29 +638,44 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text-secondary);
 }
 
-/* 助手悬浮入口：每页都点得到，压在内容之上但不挡操作（右下角是滚动条位之外的留白）。
-   它替代了原来一级页签里的"智能助手"——助手是随叫随到的工具，不该占一级导航。 */
-.assistant-fab {
-  position: fixed;
-  right: var(--aeg-space-s6);
-  bottom: var(--aeg-space-s6);
-  z-index: var(--aeg-z-header);
-  display: inline-flex;
+/* 助手常驻入口：贴在导航区下面的一条固定行。
+   它以前是右下角那颗悬浮胶囊，真机量到它会压在页脚文字、台账分页器与表页码按钮上
+   （1440/1000/900 三档都压）——值班台上"点不动的页码"不是可以接受的东西。 */
+.side-assistant {
+  display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  min-height: 40px;
-  padding: 0 var(--aeg-space-s5);
-  border-radius: var(--aeg-radius-pill);
+  min-height: 36px;
+  margin: 0 var(--aeg-space-s2) var(--aeg-space-s3);
+  padding: 0 var(--aeg-space-s2);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-md);
+  color: var(--aeg-color-text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background-color var(--aeg-motion-base) ease,
+    color var(--aeg-motion-base) ease;
+}
+.side-assistant__label {
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.side-assistant:hover {
+  border-color: var(--aeg-color-brand-line);
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-text);
+}
+.side-assistant.active {
+  border-color: transparent;
   background: var(--aeg-color-brand);
   color: var(--aeg-color-text-inverse);
-  font-size: var(--aeg-font-sm);
-  font-weight: var(--aeg-weight-bold);
-  text-decoration: none;
-  box-shadow: var(--aeg-shadow-md);
-  transition: background-color var(--aeg-motion-base) ease, transform var(--aeg-motion-base) ease;
 }
-.assistant-fab:hover {
-  background: var(--aeg-color-brand-hover);
-  transform: translateY(-1px);
+.sidebar.is-collapsed .side-assistant {
+  justify-content: center;
+  padding: 0;
 }
 
 /* 窄档只收状态文字：少显示一点，不是互相压上去。

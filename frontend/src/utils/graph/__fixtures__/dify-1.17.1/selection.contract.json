@@ -1,0 +1,78 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "module": "web/app/components/workflow/hooks/use-selection-interactions.ts",
+    "provenance": "contract（React/React Flow hook 不可直接执行；行为由源码读取）",
+    "tier": "T2"
+  },
+  "upstreamFacts": {
+    "selectionStart": "清空 _isBundled 标记",
+    "selectionChange": "框选中的节点/边置 _isBundled=true，其余 false",
+    "selectionDrag": "只读模式不移动；否则把拖动节点位置写回",
+    "selectionCancel": "清空 _isBundled",
+    "contextMenu": "仅框选矩形上触发 selection 右键菜单"
+  },
+  "aegisContract": {
+    "state": "editor store 保存 selectedNodeIds / selectedEdgeIds，不写进文档",
+    "marquee": "矩形与节点包围盒相交即选中",
+    "shiftClick": "切换单个节点选中态",
+    "blankClick": "清空选择",
+    "readOnly": "实例/版本模式禁止移动与删除，但允许选择与定位",
+    "history": "选择变化不产生历史"
+  },
+  "nodeGeometry": {
+    "footprint": { "width": 240, "height": 100 }
+  },
+  "nodes": [
+    { "id": "a", "position": { "x": 0, "y": 0 } },
+    { "id": "b", "position": { "x": 300, "y": 0 } },
+    { "id": "c", "position": { "x": 600, "y": 200 } }
+  ],
+  "cases": [
+    {
+      "name": "marquee-selects-three",
+      "actions": [{ "kind": "marquee", "rect": { "x": -10, "y": -10, "width": 900, "height": 400 } }],
+      "expected": { "selectedNodeIds": ["a", "b", "c"] }
+    },
+    {
+      "name": "marquee-partial-intersection",
+      "actions": [{ "kind": "marquee", "rect": { "x": 200, "y": 20, "width": 100, "height": 20 } }],
+      "expected": { "selectedNodeIds": ["a", "b"] }
+    },
+    {
+      "name": "shift-click-adds",
+      "actions": [
+        { "kind": "click", "nodeId": "a", "shift": false },
+        { "kind": "click", "nodeId": "b", "shift": true }
+      ],
+      "expected": { "selectedNodeIds": ["a", "b"] }
+    },
+    {
+      "name": "shift-click-toggles-off",
+      "actions": [
+        { "kind": "click", "nodeId": "a", "shift": false },
+        { "kind": "click", "nodeId": "a", "shift": true }
+      ],
+      "expected": { "selectedNodeIds": [] }
+    },
+    {
+      "name": "blank-click-clears",
+      "actions": [
+        { "kind": "click", "nodeId": "a", "shift": false },
+        { "kind": "clickBlank" }
+      ],
+      "expected": { "selectedNodeIds": [] }
+    },
+    {
+      "name": "readonly-drag-blocked",
+      "actions": [
+        { "kind": "click", "nodeId": "a", "shift": false },
+        { "kind": "moveNodes", "nodeIds": ["a"], "delta": { "x": 50, "y": 0 } }
+      ],
+      "readOnly": true,
+      "expected": { "selectedNodeIds": ["a"], "positions": { "a": { "x": 0, "y": 0 } } }
+    }
+  ]
+}

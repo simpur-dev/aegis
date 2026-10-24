@@ -34,12 +34,12 @@ const options = computed<string[]>(() => {
 
 <style scoped>
 .wf-human__prompt {
-  margin: 4px 0 0;
-  color: #434343;
+  margin: 0;
+  color: var(--aeg-color-text-secondary);
 }
 .wf-human__options {
   margin: 2px 0 0;
-  color: #531dab;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--aeg-color-editor-state-awaiting);
+  font-family: var(--aeg-font-mono);
 }
 </style>

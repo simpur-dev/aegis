@@ -35,18 +35,20 @@ import {
   TIBET_RECTANGLE,
   toUnlocatedItems,
 } from '@/components/map/entities'
-import { collectFacts, initialMachine, NOT_PROBED_YET, reduceOffline, tileUrlForTemplate } from '@/components/map/offline'
+import {
+  collectFacts,
+  initialMachine,
+  NOT_PROBED_YET,
+  reduceOffline,
+  tileUrlForTemplate,
+} from '@/components/map/offline'
 import type { OfflineMachine } from '@/components/map/offline'
 import MapPanel from '@/components/map/MapPanel.vue'
 import AmapMap from '@/components/map/AmapMap.vue'
 import { terrainProbeUrl } from '@/components/map/terrain'
 import type { LayerName, MapScene, MapSceneInfo } from '@/components/map/viewer'
 import { useTheme } from '@/theme/useTheme'
-import {
-  readBasemapMode,
-  writeBasemapMode,
-  type BasemapMode,
-} from '@/components/map/external'
+import { readBasemapMode, writeBasemapMode, type BasemapMode } from '@/components/map/external'
 
 /** 数据轮询与源探针周期：野外弱网下"少而稳"胜过"快而抖"。 */
 const DATA_REFRESH_MS = 30_000
@@ -120,7 +122,9 @@ const countsTotal = computed(() => layerCounts(layers.value))
 const riskCounts = computed(() => riskLevelCounts(layers.value))
 const unlocated = computed(() => toUnlocatedItems(layers.value.unplaced))
 const detail = computed(() => detailOf(layers.value, selectedId.value))
-const plottedTotal = computed(() => plottedCount(filterLayersByViewport({ bbox: bbox.value, layers: viewLayers.value }), visibility.value))
+const plottedTotal = computed(() =>
+  plottedCount(filterLayersByViewport({ bbox: bbox.value, layers: viewLayers.value }), visibility.value),
+)
 const regionOptions = computed(() =>
   [...new Set([...anchors.value.map((anchor) => anchor.code), ...readings.value.map((reading) => reading.region_code)])]
     .filter(Boolean)
@@ -128,7 +132,10 @@ const regionOptions = computed(() =>
 )
 
 /** fetch 只在这一处取全局引用，便于探针与建场共用同一注入点。 */
-function probeFetch(url: string, init?: { method?: string; signal?: AbortSignal }): Promise<{ ok: boolean; status: number }> {
+function probeFetch(
+  url: string,
+  init?: { method?: string; signal?: AbortSignal },
+): Promise<{ ok: boolean; status: number }> {
   if (typeof fetch === 'undefined') return Promise.resolve({ ok: false, status: 0 })
   return fetch(url, init)
 }
@@ -188,7 +195,9 @@ async function load(): Promise<void> {
     collected.push('后端尚未开放 GET /api/v1/stations：站点经纬度不可得，缺坐标的站点进「未定位清单」，不落 (0,0)。')
   }
   if (isMissingResource(rejectedReason(anchorFile))) {
-    collected.push(`未找到 ${MAP_ASSET_PATHS.regionAnchors}：区域锚点缺失，预警与站点无处落点（烘焙说明见 public/basemaps/README.md）。`)
+    collected.push(
+      `未找到 ${MAP_ASSET_PATHS.regionAnchors}：区域锚点缺失，预警与站点无处落点（烘焙说明见 public/basemaps/README.md）。`,
+    )
   }
   if (isMissingResource(rejectedReason(zoneFile))) {
     collected.push(`未找到 ${MAP_ASSET_PATHS.hazardZones}：灾害分区面为空图层。`)
@@ -212,7 +221,12 @@ async function initScene(): Promise<void> {
       // prefer:'template'：本地烘过真 OSM 瓦片时优先用它们（探针命中 z0/0/0 才算可达），
       // 没烘（新克隆）就自动退回仓库自带的合成 PMTiles——两条路都是同源，降级链不变。
       // maximumLevel 必须与烘焙档位一致：写 14 而瓦只到 z10，Cesium 会去要 z11–z14 并吃一串 404。
-      basemap: { template: MAP_ASSET_PATHS.basemapTemplate, pmtilesUrl: MAP_ASSET_PATHS.pmtiles, prefer: 'template', maximumLevel: 10 },
+      basemap: {
+        template: MAP_ASSET_PATHS.basemapTemplate,
+        pmtilesUrl: MAP_ASSET_PATHS.pmtiles,
+        prefer: 'template',
+        maximumLevel: 10,
+      },
       fetchLike: probeFetch,
       onViewChanged: (next, nextZoom) => {
         bbox.value = next ? expandBBox(next) : null
@@ -353,7 +367,14 @@ watch(visibility, (value) => {
           : '底图、地形与矢量瓦片由本进程自托管，弱网与断网下仍可用。'
       "
     />
-    <a-card size="small" :title="basemapMode === 'amap' ? '一张图 · 高德在线底图（JS API）' : '一张图 · 自托管离线三维（Cesium + quantized-mesh + PMTiles）'">
+    <a-card
+      size="small"
+      :title="
+        basemapMode === 'amap'
+          ? '一张图 · 高德在线底图（JS API）'
+          : '一张图 · 自托管离线三维（Cesium + quantized-mesh + PMTiles）'
+      "
+    >
       <template #extra>
         <a-space wrap>
           <!-- 底图档：默认离线自托管（交付形态，见 external.ts 的默认档论证）；高德是带 key 的 JS API 档，加载失败会在图上说明 -->
@@ -371,7 +392,15 @@ watch(visibility, (value) => {
           <span class="muted">自动刷新 30s</span>
         </a-space>
       </template>
-      <a-alert v-for="note in notes" :key="note" type="warning" show-icon banner :message="note" style="margin-bottom: 4px" />
+      <a-alert
+        v-for="note in notes"
+        :key="note"
+        type="warning"
+        show-icon
+        banner
+        :message="note"
+        style="margin-bottom: 4px"
+      />
       <!-- 定位这颗按钮先前点了没反应也不解释；现在把"退不回全局视野的原因"说一句 -->
       <p v-if="focusNote" class="muted" data-testid="focus-note">{{ focusNote }}</p>
     </a-card>
@@ -384,21 +413,28 @@ watch(visibility, (value) => {
             <AmapMap v-if="basemapMode === 'amap'" :plan="plan" @select="selectFeature" />
             <template v-else>
               <div ref="host" class="map-host" />
-              <div v-if="!sceneInfo && !sceneError" class="map-placeholder">正在加载三维场景（地图引擎独立分块，按需下载）…</div>
-              <div v-if="sceneError" class="map-placeholder">
-              <div>三维场景不可用：{{ sceneError }}</div>
-              <div class="hint">
-                右侧面板与清单仍可用。首次部署需把
-                需把地图引擎的静态资源目录（Workers / Assets / ThirdParty / Widgets）拷到
-                <code>public/cesium/</code>，并烘焙底图与地形资产（清单见 public/basemaps/README.md、public/terrain/README.md）。
+              <div v-if="!sceneInfo && !sceneError" class="map-placeholder">
+                正在加载三维场景（地图引擎独立分块，按需下载）…
               </div>
-            </div>
+              <div v-if="sceneError" class="map-placeholder">
+                <div>三维场景不可用：{{ sceneError }}</div>
+                <div class="hint">
+                  右侧面板与清单仍可用。首次部署需把 需把地图引擎的静态资源目录（Workers / Assets / ThirdParty /
+                  Widgets）拷到
+                  <code>public/cesium/</code>，并烘焙底图与地形资产（清单见
+                  public/basemaps/README.md、public/terrain/README.md）。
+                </div>
+              </div>
             </template>
           </div>
           <div class="scene-bar">
             <!-- 视野与缩放是 Cesium 相机的量，高德档下没有这两个数，别摆一个假"未就绪" -->
             <span v-if="basemapMode === 'offline'">
-              视野：{{ bbox ? `${bbox.west.toFixed(2)}, ${bbox.south.toFixed(2)} → ${bbox.east.toFixed(2)}, ${bbox.north.toFixed(2)}` : '未就绪' }}
+              视野：{{
+                bbox
+                  ? `${bbox.west.toFixed(2)}, ${bbox.south.toFixed(2)} → ${bbox.east.toFixed(2)}, ${bbox.north.toFixed(2)}`
+                  : '未就绪'
+              }}
             </span>
             <span>· 上图要素 {{ plottedTotal }} · 未定位 {{ unlocated.length }}</span>
             <span v-if="basemapMode === 'offline'">· 缩放 {{ zoom }}</span>
@@ -476,7 +512,9 @@ watch(visibility, (value) => {
   background: var(--aeg-color-card);
 }
 .scene-bar .hint {
-  color: #fa8c16;
+  /* 这行提示原来写死 #fa8c16——在白底卡上是 2.38:1，12px 小字根本读不清（真机体检按 4.5:1 拦下）。
+     警告档走令牌：浅主题 #B45309、深主题 #FBBF24，两档都在自己的卡面上过 4.5:1。 */
+  color: var(--aeg-color-status-warning);
 }
 .muted {
   font-size: 12px;

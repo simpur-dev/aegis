@@ -44,5 +44,22 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     include: ['src/**/*.spec.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary'],
+      include: [
+        'src/utils/graph/**/*.ts',
+        'src/composables/workflow/**/*.ts',
+        'src/stores/workflow/**/*.ts',
+        'src/api/workflow/codec.ts',
+      ],
+      exclude: ['**/__tests__/**', '**/__fixtures__/**', '**/*.spec.ts'],
+      thresholds: {
+        lines: 90,
+        functions: 90,
+        statements: 90,
+        branches: 85,
+      },
+    },
   },
 })

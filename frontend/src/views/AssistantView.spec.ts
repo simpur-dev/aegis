@@ -574,6 +574,8 @@ describe('换页再回来：对话要接得上（后端会话还在时限内）'
     expect(byTestid(second, 'frame-answer').text()).toContain('红色预警')
   })
 
+  // 70 帧的渲染在 v8 覆盖率插桩下约为裸跑的 2.4 倍（本机实测 2.8s → 6.6s），
+  // 5s 默认超时会把工具链开销误判成业务失败。只放宽这一条，不改断言。
   it('存回浏览器的只留最近 60 帧', async () => {
     const many: AssistantFrame[] = Array.from({ length: 70 }, (_unused, index) => ({ type: 'answer', text: `第 ${index} 句` }))
     mockedChat.mockReturnValue(framesOf(many))
@@ -583,7 +585,7 @@ describe('换页再回来：对话要接得上（后端会话还在时限内）'
     const raw = window.sessionStorage.getItem('aegis.assistant.session.v1')
     if (raw === null) throw new Error('没写进浏览器存储，刷新就接不上')
     expect((JSON.parse(raw) as { frames: AssistantFrame[] }).frames).toHaveLength(60)
-  })
+  }, 15_000)
 
   /** 「清空时间线」是显式动作：清这一屏的记录，但会话号归会话号，后端那 30 分钟还接得上。 */
   it('清空时间线不顺手把会话号也丢了', async () => {

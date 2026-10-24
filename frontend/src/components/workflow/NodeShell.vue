@@ -1,12 +1,17 @@
 <script setup lang="ts">
 /**
- * 全部画布节点共用的外框：类型标签、状态徽标、SLA/超时读数与左右 Handle。
- * 类别差异通过默认插槽注入，避免 16 类节点各写一份近似重复的模板。
+ * 全部画布节点共用的外框：分类图标、标题、状态点、SLA/超时读数与左右 Handle。
+ * 类别差异通过默认插槽注入，避免 18 类节点各写一份近似重复的模板。
+ *
+ * 尺寸与层级对齐 Dify 工作流节点（240px 宽、16px 圆角、handle 顶部 16px），
+ * 颜色只走 `--aeg-*` 令牌：暗色主题下由令牌翻面，组件里不再写一套 hex。
  */
 import { Handle, Position } from '@vue-flow/core'
 import { computed } from 'vue'
 
-import { stateStyle, type NodeState } from '@/utils/graph'
+import { categoryOfNode, stateStyle, type NodeState } from '@/utils/graph'
+
+import NodeIcon from './NodeIcon.vue'
 
 const props = defineProps<{
   label: string
@@ -21,99 +26,158 @@ const props = defineProps<{
 const style = computed(() => stateStyle(props.state ?? 'pending'))
 const stateClass = computed(() => (props.state === null ? 'is-idle' : style.value.className))
 const badge = computed(() => (props.state === null ? '未运行' : style.value.label))
+const category = computed(() => categoryOfNode(props.nodeType))
 </script>
 
 <template>
   <div
     class="wf-node"
     :class="[stateClass, { 'is-selected': selected }]"
-    :style="{ '--wf-accent': props.state === null ? '#8c8c8c' : style.color }"
+    :style="{
+      '--wf-accent': props.state === null ? 'var(--aeg-color-text-muted)' : style.color,
+      '--wf-cat': `var(--aeg-color-editor-cat-${category})`,
+    }"
   >
-    <Handle type="target" :position="Position.Left" />
+    <Handle type="target" :position="Position.Left" class="wf-node__handle" :style="{ top: '16px' }" />
     <div class="wf-node__head">
-      <span class="wf-node__title" :title="label">{{ label }}</span>
-      <span class="wf-node__badge">{{ badge }}</span>
+      <span class="wf-node__icon"><NodeIcon :category="category" /></span>
+      <span class="wf-node__ident">
+        <span class="wf-node__title" :title="label">{{ label }}</span>
+        <span class="wf-node__type">{{ nodeType }}</span>
+      </span>
+      <span class="wf-node__badge">
+        <span class="wf-node__dot" aria-hidden="true"></span>{{ badge }}
+      </span>
     </div>
-    <div class="wf-node__type">{{ nodeType }}</div>
-    <slot />
+    <div class="wf-node__body"><slot /></div>
     <div class="wf-node__meta">
       <span>SLA {{ slaMs }} ms</span>
       <span>超时 {{ timeoutMs }} ms</span>
       <span v-if="props.state !== null">已试 {{ attempts }} 次</span>
     </div>
-    <Handle type="source" :position="Position.Right" />
+    <Handle type="source" :position="Position.Right" class="wf-node__handle" :style="{ top: '16px' }" />
   </div>
 </template>
 
 <style scoped>
 .wf-node {
-  /* 宽度钉死：卡片原先只有 min-width，标题一长就把盒子往右撑，
-     真机在一份 11 节点的定义上量到相邻两颗压叠 20×37px。长标题改省略号，
-     全文看 title 提示与右侧检查器。 */
-  width: 208px;
-  padding: 8px 10px;
-  /* 描边跟着 zoom 补偿（`--canvas-stroke-k` 由画布按 1/zoom 算，封顶 3）：
-     变换层缩放会把 1px 边框一起缩掉，0.318 档就只剩 0.32 设备像素。 */
-  border: calc(1px * var(--canvas-stroke-k, 1)) solid #d9d9d9;
-  border-left: calc(3px * var(--canvas-stroke-k, 1)) solid var(--wf-accent, #8c8c8c);
-  border-radius: 6px;
-  background: #fff;
-  color: #262626;
+  /* 宽度钉死：标题一长就撑盒会把相邻节点压叠；长标题改省略号，
+     全文看 title 提示与右侧检查器。240px 与 Dify `NODE_WIDTH` 对齐。 */
+  width: var(--aeg-node-width, 240px);
+  padding: 12px 12px 8px;
+  /* 描边按 `--canvas-stroke-k`（1/zoom，封顶 3）补偿：zoom 作用在整张变换层上，
+     写死 1px 的卡片描边在"看全局"那一档（fit 到 0.48）只剩 0.48 设备像素，
+     一整片节点会糊成一块块没有边的白板；类别条同一套补偿，否则 3px 的色条同样看不见。 */
+  border: calc(1px * var(--canvas-stroke-k, 1)) solid var(--aeg-color-editor-node-border);
+  border-left: calc(3px * var(--canvas-stroke-k, 1)) solid var(--wf-accent, var(--aeg-color-text-muted));
+  border-radius: 16px;
+  background: var(--aeg-color-editor-node);
+  color: var(--aeg-color-text);
   font-size: 12px;
   line-height: 1.5;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
+  box-shadow: var(--aeg-shadow-sm);
+  transition:
+    border-color var(--aeg-motion-base) ease,
+    box-shadow var(--aeg-motion-base) ease;
 }
 .wf-node.is-selected {
-  /* 原来是 antd 默认蓝 #1677ff，和我们移植的主色 #2563eb 并存＝同一屏两种蓝（两张皮）。 */
-  border-color: #2563eb;
-  box-shadow: 0 0 0 2px rgb(37 99 235 / 25%);
+  border-color: var(--aeg-color-brand);
+  box-shadow: 0 0 0 2px var(--aeg-color-brand-line);
 }
 .wf-node.is-running {
-  border-color: #13c2c2;
+  border-color: var(--aeg-color-editor-state-running);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--aeg-color-editor-state-running) 28%, transparent);
 }
 .wf-node.is-failed,
 .wf-node.is-timeout {
-  background: #fff1f0;
+  border-color: var(--aeg-color-status-danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--aeg-color-status-danger) 24%, transparent);
 }
 .wf-node.is-awaiting-human {
-  background: #f9f0ff;
+  border-color: var(--aeg-color-editor-state-awaiting);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--aeg-color-editor-state-awaiting) 26%, transparent);
 }
-.wf-node.is-idle {
+.wf-node.is-succeeded,
+.wf-node.is-degraded,
+.wf-node.is-bypassed {
+  border-color: var(--aeg-color-status-success);
+}
+.wf-node.is-idle .wf-node__title {
   color: var(--aeg-color-text-secondary);
 }
 .wf-node__head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
 }
-.wf-node__title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  font-size: 13px;
+.wf-node__icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--wf-cat) 14%, transparent);
+  color: var(--wf-cat);
 }
-.wf-node__badge {
-  padding: 0 6px;
-  border-radius: 10px;
-  background: var(--wf-accent, #8c8c8c);
-  color: #fff;
-  font-size: 11px;
+.wf-node__ident {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+.wf-node__title {
+  overflow: hidden;
+  color: var(--aeg-color-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .wf-node__type {
+  overflow: hidden;
+  color: var(--aeg-color-text-muted);
+  font-family: var(--aeg-font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wf-node__badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
   color: var(--aeg-color-text-secondary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.wf-node__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--wf-accent);
+}
+.wf-node__body:not(:empty) {
+  margin-top: 8px;
 }
 .wf-node__meta {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 6px;
-  padding-top: 4px;
-  border-top: 1px dashed #f0f0f0;
-  color: var(--aeg-color-text-secondary);
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--aeg-color-border-subtle);
+  color: var(--aeg-color-text-muted);
+  font-size: 11px;
+}
+.wf-node__handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--aeg-color-editor-node);
+  background: var(--aeg-color-editor-edge);
+}
+.wf-node:hover .wf-node__handle,
+.wf-node.is-selected .wf-node__handle {
+  background: var(--aeg-color-brand);
 }
 </style>

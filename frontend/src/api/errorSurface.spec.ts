@@ -2,10 +2,13 @@
  * 五个 HTTP 客户端对同一次后端拒绝要说同一句话（跨客户端一致性门禁）。
  *
  * 这个仓库里错误包装是**分五份**的：`api/client.ts`（六张页的读接口）、
- * `api/map.ts`、`api/workflow.ts`、`api/reports.ts`、`api/assistant.ts`——
+ * `api/map.ts`、`api/workflow/client.ts`、`api/reports.ts`、`api/assistant.ts`——
  * 各自带隔离边界（并行开发时互不波及），代价就是同一类错误会长成五种样子。
  * 真机把接口打成 422 逐页扫下来时，前四份都在还原原因，只剩一张图还在打
  * `数据读取失败：Request failed with status code 422`。
+ *
+ * 工作流那一份在 ADR-0010 之后改成了类型化 `WorkflowError`：原因照旧到界面上，
+ * 但 HTTP 码改放进 `status` 字段，不再拼进 message，也不再漏 axios 的英文原话。
  *
  * 所以这条门禁不测某个页面偏好什么措辞，只钉三件底线：
  * ① 后端那句原文必须到界面上（不许只剩 HTTP 码）；
@@ -21,7 +24,8 @@ import { createApiClient } from './client'
 import { createAssistantApiClient } from './assistant'
 import { createMapApiClient } from './map'
 import { createReportsApiClient, toReportBody } from './reports'
-import { createWorkflowClient } from './workflow'
+import { WorkflowError } from './workflow/contract'
+import { createWorkflowClient } from './workflow/client'
 
 const REASON = 'Value must be a positive integer'
 
@@ -41,20 +45,28 @@ function failingInstance(status: number, data: unknown): AxiosInstance {
 }
 
 /** 五个客户端各挑一条真会走的出口：方法名不同，但都经过自己的 dispatch。 */
-function calls(): Array<{ name: string; run: (instance: AxiosInstance) => Promise<unknown> }> {
+function calls(): Array<{ name: string; typed?: boolean; run: (instance: AxiosInstance) => Promise<unknown> }> {
   return [
     { name: '通用读接口', run: (instance) => createApiClient(instance).health() },
     { name: '一张图', run: (instance) => createMapApiClient(instance).stations() },
-    { name: '流程编排', run: (instance) => createWorkflowClient(instance).definitions() },
+    { name: '流程编排', typed: true, run: (instance) => createWorkflowClient(instance).definitions() },
     { name: '人工上报', run: (instance) => createReportsApiClient(instance).submit(toReportBody({ reporter: '巡护员', region_code: '540121', note: '沟道泥位抬升 1.2 米' })) },
     { name: '智能助手', run: (instance) => createAssistantApiClient(instance).capabilities() },
   ]
 }
 
-async function messageOf(run: (instance: AxiosInstance) => Promise<unknown>, status: number, data: unknown): Promise<string> {
+interface Surface {
+  message: string
+  status: number | null
+}
+
+async function surfaceOf(run: (instance: AxiosInstance) => Promise<unknown>, status: number, data: unknown): Promise<Surface> {
   return await run(failingInstance(status, data))
-    .then(() => '')
-    .catch((error: unknown) => (error instanceof Error ? error.message : String(error)))
+    .then(() => ({ message: '', status: null }))
+    .catch((error: unknown) => ({
+      message: error instanceof Error ? error.message : String(error),
+      status: error instanceof WorkflowError ? error.status : null,
+    }))
 }
 
 describe('五份客户端的失败面一致', () => {
@@ -62,24 +74,39 @@ describe('五份客户端的失败面一致', () => {
     detail: [{ loc: ['query', 'limit'], msg: REASON, type: 'greater_than' }],
   }
 
-  for (const { name, run } of calls()) {
+  for (const { name, typed, run } of calls()) {
     it(`${name}：422 的数组原因要翻出来，不剩英文原话`, async () => {
-      const message = await messageOf(run, 422, validationBody)
-      expect(message, name).toContain(REASON)
-      expect(message, name).toContain('422')
-      expect(message, name).not.toContain('[object Object]')
-      expect(message, name).not.toContain('Request failed with status code')
+      const surface = await surfaceOf(run, 422, validationBody)
+      expect(surface.message, name).toContain(REASON)
+      if (typed === true) {
+        expect(surface.status, name).toBe(422)
+      } else {
+        expect(surface.message, name).toContain('422')
+      }
+      expect(surface.message, name).not.toContain('[object Object]')
+      expect(surface.message, name).not.toContain('Request failed with status code')
     })
 
     it(`${name}：字符串 detail（后端自己给的那句）原样带出`, async () => {
-      const message = await messageOf(run, 503, { detail: '依赖不可用：认知镜像未装配（降级中）' })
-      expect(message, name).toContain('依赖不可用：认知镜像未装配（降级中）')
-      expect(message, name).toContain('503')
+      const surface = await surfaceOf(run, 503, { detail: '依赖不可用：认知镜像未装配（降级中）' })
+      expect(surface.message, name).toContain('依赖不可用：认知镜像未装配（降级中）')
+      if (typed === true) {
+        expect(surface.status, name).toBe(503)
+      } else {
+        expect(surface.message, name).toContain('503')
+      }
     })
 
     it(`${name}：没有响应体时留住 axios 那句话，不编一个中文原因`, async () => {
-      const message = await messageOf(run, 500, undefined)
-      expect(message, name).toContain('Request failed with status code 500')
+      const surface = await surfaceOf(run, 500, undefined)
+      if (typed === true) {
+        // 类型化传输层用中文码表兜底，但错误码仍在：axios 原话一律不进界面
+        expect(surface.status, name).toBe(500)
+        expect(surface.message, name).not.toContain('Request failed with status code')
+        expect(surface.message.trim(), name).not.toBe('')
+      } else {
+        expect(surface.message, name).toContain('Request failed with status code 500')
+      }
     })
   }
 
@@ -91,10 +118,10 @@ describe('五份客户端的失败面一致', () => {
    */
   it('后端返回整页 HTML 时截一行就够，不把页面塞进提示', async () => {
     const page502 = `<html><head><title>502 Bad Gateway</title></head><body>${'网关诊断信息 '.repeat(60)}<hr></body></html>`
-    const message = await messageOf(calls()[0].run, 502, page502)
-    expect(message).toContain('接口调用失败（HTTP 502）')
-    expect(message).toContain('502 Bad Gateway')
-    expect(message).not.toContain('</html>')
-    expect(message.length).toBeLessThanOrEqual(240)
+    const surface = await surfaceOf(calls()[0].run, 502, page502)
+    expect(surface.message).toContain('接口调用失败（HTTP 502）')
+    expect(surface.message).toContain('502 Bad Gateway')
+    expect(surface.message).not.toContain('</html>')
+    expect(surface.message.length).toBeLessThanOrEqual(240)
   })
 })

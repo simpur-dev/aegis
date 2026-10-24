@@ -1,0 +1,53 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "execution": "executed"
+  },
+  "module": "web/app/components/workflow/utils/common.ts",
+  "locale": "zh-CN",
+  "timeZone": "Asia/Shanghai",
+  "cases": [
+    {
+      "name": "no-timestamp-default",
+      "args": [
+        null,
+        null
+      ],
+      "actual": " (Running)"
+    },
+    {
+      "name": "zero-timestamp",
+      "args": [
+        0,
+        null
+      ],
+      "actual": " (Running)"
+    },
+    {
+      "name": "fixed-timestamp",
+      "args": [
+        1700000000,
+        null
+      ],
+      "actual": " (06:13:20)"
+    },
+    {
+      "name": "custom-fallback-word",
+      "args": [
+        null,
+        "running"
+      ],
+      "actual": " (Running)"
+    },
+    {
+      "name": "custom-fallback-empty",
+      "args": [
+        null,
+        ""
+      ],
+      "actual": " ()"
+    }
+  ]
+}

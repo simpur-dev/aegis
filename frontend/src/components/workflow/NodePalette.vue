@@ -1,16 +1,16 @@
 <script setup lang="ts">
 /**
- * 左侧节点面板：16 类节点按类别分组，支持拖放到画布或直接点击追加。
+ * 左侧节点面板：18 类节点按类别分组，支持拖放到画布或直接点击追加。
  * 展示不依赖后端（注册表已含中文名与描述），node-types 接口返回后仅替换描述文案。
  */
 import { computed } from 'vue'
 
-import { useWorkflowStore } from '@/stores/workflow'
 import { nextNodeId, type NodeType } from '@/utils/graph'
 
+import { useEditorContext } from './editor/context'
 import { createNodeDef, NODE_DRAG_MIME, NODE_META, PALETTE_GROUPS } from './registry'
 
-const store = useWorkflowStore()
+const { catalog, document: documentStore, editor } = useEditorContext()
 
 const groups = computed(() =>
   PALETTE_GROUPS.map((group) => ({
@@ -18,15 +18,17 @@ const groups = computed(() =>
     items: group.types.map((type) => ({
       type,
       label: NODE_META[type].label,
-      description: store.descriptionByType[type] ?? NODE_META[type].description,
+      description: catalog.descriptionByType[type] ?? NODE_META[type].description,
     })),
   })),
 )
 
 function append(type: NodeType): void {
-  const def = store.current
+  const def = documentStore.definition
   if (def === null) return
-  store.addNode(createNodeDef(type, nextNodeId(def, type)))
+  const node = createNodeDef(type, nextNodeId(def, type))
+  documentStore.addNode(node)
+  editor.select(node.node_id)
 }
 
 function onDragStart(event: DragEvent, type: NodeType): void {

@@ -1,0 +1,201 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "execution": "executed"
+  },
+  "module": "web/app/components/workflow/utils/edge.ts",
+  "upstreamStatusEnum": {
+    "NotStart": "not-start",
+    "Waiting": "waiting",
+    "Listening": "listening",
+    "Running": "running",
+    "Succeeded": "succeeded",
+    "Failed": "failed",
+    "Exception": "exception",
+    "Retry": "retry",
+    "Stopped": "stopped",
+    "Paused": "paused"
+  },
+  "cases": [
+    {
+      "status": "not-start",
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "not-start",
+      "isFailBranch": true,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "waiting",
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "waiting",
+      "isFailBranch": true,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "listening",
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "listening",
+      "isFailBranch": true,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "running",
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-handle)"
+    },
+    {
+      "status": "running",
+      "isFailBranch": true,
+      "actual": "var(--color-workflow-link-line-failure-handle)"
+    },
+    {
+      "status": "succeeded",
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-success-handle)"
+    },
+    {
+      "status": "succeeded",
+      "isFailBranch": true,
+      "actual": "var(--color-workflow-link-line-success-handle)"
+    },
+    {
+      "status": "failed",
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-error-handle)"
+    },
+    {
+      "status": "failed",
+      "isFailBranch": true,
+      "actual": "var(--color-workflow-link-line-error-handle)"
+    },
+    {
+      "status": "exception",
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-failure-handle)"
+    },
+    {
+      "status": "exception",
+      "isFailBranch": true,
+      "actual": "var(--color-workflow-link-line-failure-handle)"
+    },
+    {
+      "status": "retry",
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "retry",
+      "isFailBranch": true,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "stopped",
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "stopped",
+      "isFailBranch": true,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "paused",
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": "paused",
+      "isFailBranch": true,
+      "actual": "var(--color-workflow-link-line-normal)"
+    },
+    {
+      "status": null,
+      "isFailBranch": false,
+      "actual": "var(--color-workflow-link-line-normal)"
+    }
+  ],
+  "aegisCases": [
+    {
+      "state": "pending",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-editor-edge)"
+    },
+    {
+      "state": "ready",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-editor-edge)"
+    },
+    {
+      "state": "running",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-editor-state-running)"
+    },
+    {
+      "state": "running",
+      "isFailBranch": true,
+      "actual": "var(--aeg-color-status-danger)"
+    },
+    {
+      "state": "succeeded",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-status-success)"
+    },
+    {
+      "state": "succeeded",
+      "isFailBranch": true,
+      "actual": "var(--aeg-color-status-success)"
+    },
+    {
+      "state": "degraded",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-status-success)"
+    },
+    {
+      "state": "bypassed",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-status-success)"
+    },
+    {
+      "state": "failed",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-status-danger)"
+    },
+    {
+      "state": "timeout",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-status-danger)"
+    },
+    {
+      "state": "awaiting_human",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-editor-state-awaiting)"
+    },
+    {
+      "state": "skipped",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-editor-edge)"
+    },
+    {
+      "state": "cancelled",
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-editor-edge)"
+    },
+    {
+      "state": null,
+      "isFailBranch": false,
+      "actual": "var(--aeg-color-editor-edge)"
+    }
+  ],
+  "aegisMappingNote": "AEGIS NodeState 无 exception 值：由 timeout 承接异常失败，上游 Exception 分支折叠为危险色；aegisCases 枚举 AEGIS 全状态与 isFailBranch 组合"
+}

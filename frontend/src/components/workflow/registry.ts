@@ -1,9 +1,8 @@
 /**
  * 节点面板 / 检查器的元数据注册表（纯数据，无 Vue 依赖）。
  *
- * 节点的"类别归属"与"配置白名单"在 @/utils/graph 的 NODE_SPECS（后端 nodes.py 的镜像，17 类），
+ * 节点的"类别归属"与"配置白名单"在 @/utils/graph 的 NODE_SPECS（后端 nodes.py 的镜像，19 类），
  * 这里只补 UI 需要的中文名、字段编辑器形态与新建节点时的默认配置。
- * Record<NodeType, …> 的穷尽性由 TS 保证：后端新增类型时本文件编译即失败。
  * Record<NodeType, …> 的穷尽性由 TS 保证：后端新增类型时本文件编译即失败。
  */
 
@@ -46,6 +45,18 @@ const jsonField = (key: string, label: string, placeholder = 'JSON 数组或对�
 
 
 export const NODE_META: Record<NodeType, NodeMeta> = {
+  start: {
+    label: '开始',
+    description: '起点：声明运行输入变量',
+    fields: [jsonField('variables', '输入变量', '[{"name":"region_code","type":"string"}]')],
+    defaults: { variables: [] },
+  },
+  end: {
+    label: '结束',
+    description: '终点：标记流程结束',
+    fields: [],
+    defaults: {},
+  },
   data_fetch: {
     label: '数据接入',
     description: '数据接入：按区域/指标拉取最新读数',

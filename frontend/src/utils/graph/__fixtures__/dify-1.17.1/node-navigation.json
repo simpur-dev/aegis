@@ -1,0 +1,33 @@
+{
+  "upstream": {
+    "repo": "langgenius/dify",
+    "tag": "1.17.1",
+    "commit": "8387590ace4a094de812b7847fc6a4c3a27cd52b",
+    "execution": "executed"
+  },
+  "module": "web/app/components/workflow/utils/node-navigation.ts",
+  "execution": "executed-with-fake-dom",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "setCenterCalls": [
+    {
+      "x": 420,
+      "y": 400,
+      "options": {
+        "zoom": 1,
+        "duration": 800
+      }
+    }
+  ],
+  "expected": {
+    "x": 420,
+    "y": 400,
+    "options": {
+      "zoom": 1,
+      "duration": 800
+    }
+  },
+  "note": "AEGIS 端口改用 Pinia action + Vue Flow setViewport；数学语义保持 x+25% 宽、y+25% 高"
+}
