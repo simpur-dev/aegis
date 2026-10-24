@@ -104,6 +104,54 @@ jobs:
           # ignore 会让"报告没生成"这种半失败静默通过；这里 pytest 一定产出 junit，缺了就是出事。
           if-no-files-found: error
 
+  coverage:
+    name: 新增 workflow 模块覆盖率（6 个模块 ≥90%）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - name: 安装依赖
+        # 被计量的 13 个文件是内核与 API/契约用例，不触持久层/图谱等可选腿的驱动。
+        run: uv sync --frozen --extra dev
+      - name: 覆盖率（逐模块底线 90%）
+        # 把 `--cov` 挂到全量套件上会让每个测试的每一行都过一遍 tracer；这里只跑 291 条相关用例，
+        # 掉线时也能直接看到是哪个模块。`--cov-branch` 一起算，分支漏测不能靠行数蒙过去。
+        # 单独成 job 而不是塞进 gate：同一个 job 里第二次 `uv run pytest` 如果不写 junit，
+        # 就等于开了一条"没有计数证据的 pytest 步骤"，本地守卫用例会把 gate 判红。
+        run: >
+          uv run pytest -q
+          tests/unit/test_workflow_documents.py tests/unit/test_workflow_lifecycle.py
+          tests/unit/test_workflow_lineage_store.py tests/unit/test_workflow_errors.py
+          tests/unit/test_workflow_node_dispatch_matrix.py tests/unit/test_workflow_engine.py
+          tests/unit/test_workflow_model.py tests/unit/test_workflow_builtin_templates.py
+          tests/unit/test_workflow_legacy_fixtures.py tests/unit/test_workflow_properties.py
+          tests/api/test_workflow_api.py tests/api/test_workflow_lineage_api.py
+          tests/contract/test_workflow_lifecycle_contract.py
+          --cov=aegis.workflow.documents --cov=aegis.workflow.drafts
+          --cov=aegis.workflow.publishing --cov=aegis.workflow.errors
+          --cov=aegis.workflow.ports --cov=aegis.workflow.store
+          --cov-branch --cov-fail-under=90
+          --cov-report=term-missing --cov-report=xml:reports/coverage-workflow.xml
+          --junitxml=reports/junit-coverage.xml
+      - name: 计数守卫（覆盖率绿也得证明自己跑过用例）
+        run: uv run python scripts/ci_junit_guard.py reports/junit-coverage.xml
+      - name: 上传覆盖率与计数
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workflow-coverage-report
+          path: |
+            backend/reports/coverage-workflow.xml
+            backend/reports/junit-coverage.xml
+          if-no-files-found: error
+
   frontend:
     name: 前端门禁（类型 / 单测 / 构建）
     runs-on: ubuntu-latest
@@ -120,8 +168,14 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # workflow 新目录的规范与格式只覆盖新目录与 WorkflowView.vue：全仓一次性格式化会把重构混进无关 diff。
+      - run: npm run lint:workflow
+      - run: npm run format:check:workflow
       - run: npm run typecheck
       - run: npm run test
+      # 阈值只挂在 utils/graph、composables/workflow、stores/workflow、api/workflow/codec.ts 上；
+      # 这些目录尚未建成前，vite.config.ts 的 include 不会命中任何文件，覆盖率表为空但阈值不误判。
+      - run: npm run test:coverage
       - run: npm run build
 
   frontend-e2e:

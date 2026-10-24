@@ -38,6 +38,7 @@ uploads/
 node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/coverage/
 npm-debug.log*
 
 # 编辑器与系统
