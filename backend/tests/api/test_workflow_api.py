@@ -219,6 +219,32 @@ async def test_旧创建违反文档不变量时是400不是500(container: Platf
 
 
 @pytest.mark.asyncio
+async def test_upstream引用没连线的节点时400点名缺的那条边(container: PlatformContainer) -> None:
+    """画布上"参数点了个没连线的上游"是 D3 表单专门拦的那类错，服务端这侧的口径要在 HTTP 层留证。
+
+    引擎在定义期就判（`_validate_wired_upstreams`），但判对了不等于说清楚了：拒因必须带上
+    是哪个节点、点了谁、当前入边有什么，否则编排的人只能靠猜补哪条线。
+    """
+    async with _client(container) as client:
+        response = await client.post(
+            "/api/v1/workflow/definitions",
+            json={
+                "name": "缺连线的汇聚",
+                "description": "",
+                "nodes": [
+                    {"node_id": "src", "type": "delay", "name": "延时", "config": {"seconds": 0}},
+                    {"node_id": "j", "type": "join", "name": "汇聚", "config": {"upstream": ["src", "ghost"]}},
+                ],
+                "edges": [{"source": "src", "target": "j", "condition": ""}],
+            },
+        )
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert "j" in detail and "ghost" in detail, detail
+        assert "不是它的入边" in detail and "ghost → j" in detail, detail
+
+
+@pytest.mark.asyncio
 async def test_全空白的流程名是422不是500(container: PlatformContainer) -> None:
     """`"    "` 裁完是空串，`min_length=2` 就该在这儿判死。
 

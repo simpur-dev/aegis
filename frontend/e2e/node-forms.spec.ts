@@ -77,18 +77,18 @@ test('通报内容清空后必填红字落在它下面；上游候选与变量�
   await addBlock(page, '事件通报')
   await page.locator('[data-testid="panel-close"]').click()
 
-  /* 拖一条 fetch → notify 的连线：变量选择器的候选完全由连线决定。 */
+  /* 拖一条 fetch → notify 的连线：变量选择器的候选完全由连线决定。落点取 handle 自己的盒子。 */
+  const notifyIdForEdge = await nodeIdOf(page, '事件通报')
   const source = await page.locator(`[data-id="${fetchId}"] .vue-flow__handle.source`).boundingBox()
-  const notifyBox = await page.locator('.wf-node', { hasText: '事件通报' }).first().boundingBox()
+  const target = await page.locator(`[data-id="${notifyIdForEdge}"] .vue-flow__handle.target`).boundingBox()
   expect(source, '数据接入没有出线圆点').not.toBeNull()
-  expect(notifyBox, '事件通报量不到盒子').not.toBeNull()
-  if (source && notifyBox) {
-    const target = { x: notifyBox.x + 8, y: notifyBox.y + 16 }
+  expect(target, '事件通报没有入线圆点').not.toBeNull()
+  if (source && target) {
     await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
     await page.mouse.down()
-    await page.mouse.move(target.x, target.y, { steps: 12 })
+    await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 12 })
     await page.mouse.up()
-    await page.waitForTimeout(700)
+    await page.waitForTimeout(800)
   }
   await expect(page.locator('.vue-flow__edge-path'), '拖线后没有生成连线').toHaveCount(1)
 
@@ -114,14 +114,9 @@ test('通报内容清空后必填红字落在它下面；上游候选与变量�
   await expect(picker).toBeVisible()
   const notifyId = await nodeIdOf(page, '事件通报')
   await expect(picker.locator(`[data-testid="var-${fetchId}-rows"]`)).toBeVisible()
-  await expect(
-    picker.locator(`[data-testid="var-${notifyId}-notified"]`),
-    '自己不能是自己的上游',
-  ).toHaveCount(0)
+  await expect(picker.locator(`[data-testid="var-${notifyId}-notified"]`), '自己不能是自己的上游').toHaveCount(0)
   await picker.locator(`[data-testid="var-${fetchId}-rows"]`).click()
-  await expect(page.locator('[data-testid="field-text"] textarea')).toHaveValue(
-    `本轮共{{#${fetchId}.rows#}} 条读数`,
-  )
+  await expect(page.locator('[data-testid="field-text"] textarea')).toHaveValue(`本轮共{{#${fetchId}.rows#}} 条读数`)
   await expect(page.locator('[data-testid="field-text"]')).toContainText('已引用 1 处')
   /* 引用是从真实祖先点出来的，整图校验不该冒出新的红字。 */
   await expect(page.locator('[data-testid="node-issues-clean"]')).toBeVisible()
@@ -153,4 +148,132 @@ test('通报内容清空后必填红字落在它下面；上游候选与变量�
   await expect(upstream).toHaveValue(fetchId)
   await expect(page.locator('[data-testid="node-issues-clean"]')).toBeVisible()
   await page.screenshot({ path: 'test-results/d3/node-ref-upstream.png' })
+})
+
+/**
+ * 批次 D4 真机验收（一）：**18 类可上面板的节点逐类走一遍**，每类都要在面板里铺出自己的字段。
+ *
+ * `chain_stage` 不在这里——它是内部原语，面板按 `internal` 滤掉了（拖出来必然跑不起来），
+ * 它那一格（段名下拉）由组件单测覆盖。
+ * 判据取"字段格数 + 该类的专属编辑器在不在"，不取像素：像素归 `ui-overlap` 那套几何门禁。
+ */
+const FORMS: { query: string; fields: number; marker: string }[] = [
+  { query: '开始', fields: 1, marker: '[data-testid="var-add"]' },
+  { query: '结束', fields: 0, marker: '.wf-fields__empty' },
+  { query: '数据接入', fields: 3, marker: '[data-testid="field-region_code"] input' },
+  { query: '外部接口', fields: 3, marker: '[data-testid="variable-toggle"]' },
+  { query: '设备联动', fields: 3, marker: '[data-testid="variable-toggle"]' },
+  { query: '事件通报', fields: 2, marker: '[data-testid="variable-toggle"]' },
+  { query: '阈值判断', fields: 3, marker: '[data-testid="rule-editor-conditions"]' },
+  { query: '条件分支', fields: 3, marker: '[data-testid="rule-editor-rules"]' },
+  { query: '并行汇聚', fields: 1, marker: '[data-testid="node-ref-empty"]' },
+  { query: '延时等待', fields: 1, marker: '[data-testid="field-seconds"] input[type="number"]' },
+  { query: '反馈采集', fields: 1, marker: '[data-testid="field-wait_seconds"] input' },
+  { query: '灾种识别', fields: 1, marker: '[data-testid="field-extra"] textarea' },
+  { query: '风险定级', fields: 2, marker: '[data-testid="node-ref-empty"]' },
+  { query: '态势推演', fields: 2, marker: '[data-testid="node-ref-empty"]' },
+  { query: '预警生成', fields: 1, marker: '[data-testid="field-extra"] textarea' },
+  { query: '预警发布', fields: 1, marker: '[data-testid="list-add"]' },
+  { query: '规则降级', fields: 1, marker: '[data-testid="field-risk_level"] input' },
+  { query: '人工核签', fields: 2, marker: '[data-testid="list-add"]' },
+]
+
+test('18 类节点逐类在面板里铺出自己的表单', async ({ page }) => {
+  test.setTimeout(240_000)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.route('**/api/**', (route) => route.abort())
+  await page.goto('/workflow')
+  await page.waitForSelector(READY, { timeout: 45_000 })
+
+  const seen: string[] = []
+  for (const form of FORMS) {
+    await addBlock(page, form.query)
+    const fields = page.locator('[data-testid^="field-"]')
+    // 面板每次只画当前选中那颗：字段格数对得上，才说明这一类没有被别人的表单顶替。
+    await expect(fields, `${form.query} 的字段格数不对`).toHaveCount(form.fields)
+    if (form.fields === 0) {
+      await expect(page.locator(form.marker)).toBeVisible()
+    } else {
+      await expect(page.locator(form.marker).first(), `${form.query} 缺自己的编辑器`).toBeVisible()
+      /* 每类都要能真的改一格：空集合那一格先给"新增"按钮；
+         而 `upstream` 这类在没有入边时刻意不给控件（只能先去连线），那就得有明确的空态说明。 */
+      const first = fields.first()
+      const controls = await first.locator('input, textarea, select, button').count()
+      const hints = await first.locator('[data-testid="node-ref-empty"]').count()
+      expect(controls + hints, `${form.query} 第一格既没有可编辑控件，也没说清为什么没有`).toBeGreaterThan(0)
+    }
+    await expect(page.locator('[data-testid^="node-issues"]').first()).toBeVisible()
+    seen.push(form.query)
+    await page.locator('[data-testid="panel-close"]').click()
+  }
+  expect(seen).toHaveLength(18)
+  await expect(page.locator('.wf-node')).toHaveCount(18)
+  await page.screenshot({ path: 'test-results/d4/all-forms.png' })
+})
+
+test('深色 + 900px 窄档：表单与变量浮层读得清、不出屏', async ({ page }) => {
+  test.setTimeout(150_000)
+  await page.addInitScript(() => localStorage.setItem('aegis.theme', 'dark'))
+  await page.setViewportSize({ width: 900, height: 900 })
+  await page.route('**/api/**', (route) => route.abort())
+  await page.goto('/workflow')
+  await page.waitForSelector(READY, { timeout: 45_000 })
+
+  await addBlock(page, '数据接入')
+  const fetchId = await nodeIdOf(page, '数据接入')
+  await page.locator('[data-testid="panel-close"]').click()
+  await addBlock(page, '事件通报')
+  const notifyId = await nodeIdOf(page, '事件通报')
+  /* 先关面板再拖线：900 宽时那 400px 面板正压在画布右侧，不关就把落点盖掉了。 */
+  await page.locator('[data-testid="panel-close"]').click()
+  // 落点取 handle 自己的盒子：按卡片边角猜坐过两次事故（窄屏两张卡挨得近，猜的落点落在别人的卡上）。
+  const source = await page.locator(`[data-id="${fetchId}"] .vue-flow__handle.source`).boundingBox()
+  const target = await page.locator(`[data-id="${notifyId}"] .vue-flow__handle.target`).boundingBox()
+  expect(source, '数据接入没有出线圆点').not.toBeNull()
+  expect(target, '事件通报没有入线圆点').not.toBeNull()
+  if (source && target) {
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 12 })
+    await page.mouse.up()
+    await page.waitForTimeout(700)
+  }
+  await expect(page.locator('.vue-flow__edge-path'), '拖线没成功，后面的变量判据就是空跑').toHaveCount(1)
+  await selectNode(page, '事件通报')
+  await page.locator('[data-testid="panel-node"]').click()
+  await page.locator('[data-testid="variable-toggle"]').click()
+  await expect(page.locator('[data-testid="variable-picker"]')).toBeVisible()
+
+  /* 浮层不出屏：900 宽时面板占满右侧，变量列表的每颗按钮都还得点得到。 */
+  const boxes = await page.evaluate(() => {
+    const inside = (el: Element): boolean => {
+      const rect = el.getBoundingClientRect()
+      return rect.left >= 0 && rect.right <= window.innerWidth && rect.width > 0
+    }
+    return {
+      theme: document.documentElement.dataset.theme ?? '',
+      offscreen: [...document.querySelectorAll('.wf-varpicker__key, .wf-field__label')].filter((el) => !inside(el))
+        .length,
+      keys: document.querySelectorAll('.wf-varpicker__key').length,
+    }
+  })
+  expect(boxes.theme, '深色档没落到 DOM 上').toBe('dark')
+  expect(boxes.keys, '变量选择器一颗键都没铺出来——判据在空跑').toBeGreaterThan(0)
+  expect(boxes.offscreen, '窄屏深色下有元素被推出视口').toBe(0)
+
+  /* 深色下的可读性：字段文字不能与面板底同档（白底浅字是 B 批踩过的坑，反向也一样）。 */
+  const contrast = await page.evaluate(() => {
+    const parse = (color: string): [number, number, number] => {
+      const hit = /rgba?\((\d+), (\d+), (\d+)/.exec(color)
+      return hit ? [Number(hit[1]), Number(hit[2]), Number(hit[3])] : [0, 0, 0]
+    }
+    const lum = ([r, g, b]: [number, number, number]): number => 0.2126 * r + 0.7152 * g + 0.0722 * b
+    const panel = document.querySelector('.ed-panel')
+    const label = document.querySelector('.wf-field__label')
+    if (panel === null || label === null) return null
+    return Math.abs(lum(parse(getComputedStyle(panel).backgroundColor)) - lum(parse(getComputedStyle(label).color)))
+  })
+  expect(contrast, '读不到面板底与字段文字的颜色').not.toBeNull()
+  expect(contrast ?? 0, `深色下字段文字与面板底只差 ${String(contrast)} 档亮度`).toBeGreaterThan(60)
+  await page.screenshot({ path: 'test-results/d4/form-dark-900.png' })
 })

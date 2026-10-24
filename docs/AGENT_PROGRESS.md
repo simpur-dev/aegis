@@ -143,6 +143,27 @@
   前端 typecheck/lint/format ✓ + vitest **77 files / 1127 passed** +
   coverage **99.7/93.93/99.56/99.7** ✓ + build 31.90s；e2e 全量 **128 passed / 0 failed**，33.3 分钟。
   下一步：批次 D 专属表单与变量（19 类字段、变量语法端口、上游变量）。
+- 2026-10-24 轮次（工作流编辑器重构批次 D4 收口，方案 `mountain-trail-trout` D4）：
+  交付：① 两份性质测试——19 类"编辑→保存→重开"逐字段无损（编解码/store/画布三层各过一趟真 JSON），
+  以及面板判据与 `validateGraph` 的关系、上游变量合成的恒等式、`{{#a.b#}}` ⇄ `['a','b']` 互转；
+  ② HTTP 层留证：`upstream` 指了没连线的节点时旧 `/definitions` 回 **400** 并点名 `ghost → j` 这条缺的边，
+  草稿→发布回 **422 `validation_failed`** 同一句话且不留半个版本；
+  ③ 真机新增两条判据并跑通：18 类可上面板的节点逐类铺出自己的表单（字段格数 + 专属编辑器 + 可改或有空态）、
+  深色 + 900px 下变量浮层可读且无元素出屏。
+  性质测试把三条想当然的断言打回：面板与整图校验不是双向等价（面板多判"值形态"，已改成"超集"单向 +
+  一条钉住差异的用例）；空集合/无入边的格子本来就没有输入控件（判据改成"有控件或有空态说明"）；
+  窄屏按卡片边角猜拖线落点会落到别人的卡上（一律取 handle 自己的盒子，并先断言连线真的建了）。
+  另有三条环境事实：fast-check v4 没有 `stringOf`、`double({noDefaultInfinity})` 不再接受该约束、
+  `end` 无字段时 `constantFrom()` 直接抛；store 层测试 import 组件层会撞分层守卫。
+  变异检查 3 条全有效：`decodeNodeDef` 的 config 改成 `{}` → 红 3；删面板"白名单外参数"判定 → 红 2；
+  上游分组顺序整体 reverse → 红 3。外壳同批修掉一处坏法（vitest 汇总行带 ANSI 码，不剥就误判"空输出"）。
+  门禁：后端 ruff/mypy ✓ + pytest **3287 tests / 0 failed / 98 skipped**（D3 时 3285，本批 +2）；
+  前端 typecheck/lint/format ✓ + vitest **82 files / 1210 passed** + coverage **99.71/94/99.58/99.71** ✓ +
+  build 20.16s ✓；e2e `node-forms` **4 passed**，58.9s。
+  仍欠（不阻塞下一步）：全量 `ui-overlap`（需真后端 8321）本批未重跑；后端 `workflow/variables` 未落地，
+  `{{#…#}}` 对服务端仍是普通文本；19 类逐类"改完→保存→F5→读回"只在模型层由性质测试覆盖。
+  下一步：批次 E 试运行 + 实例图（preview/dry-run、`_previews` 隔离、实例模式画布、RunPanel 三档）。
+
 - 2026-10-24 轮次（工作流编辑器重构批次 D1–D3 收口，方案 `mountain-trail-trout`）：
   D1 交付：后端注册表自洽对账（`NodeRegistry.audit/assert_consistent`，`WorkflowEngine.__init__` 启动即判）+
   `/node-types` 补 `category/min_config/outputs` 三格；前端 `presentation.ts` 穷尽图标与强调色、

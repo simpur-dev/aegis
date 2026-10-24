@@ -245,6 +245,63 @@ class TestRevert:
 
 
 class TestValidationAndNotFound:
+    async def test_发布时上游引用没连线被指名(self, container: PlatformContainer) -> None:
+        """画布的"发布"走草稿→发布这条路，所以同一句拒因必须在 422 的 `detail.message` 里说清。
+
+        草稿写入只判文档不变量（图能画得出来）；节点参数与连线的对账在发布时做。
+        少了这一步，一张"参数点了个没连线的上游"的图能一路发布成功，到实例跑到那步才卡住。
+        """
+        async with _client(container) as client:
+            draft = await _new_draft(client, "缺连线的汇聚")
+            lineage = draft["lineage_id"]
+            document = draft["document"]
+            start_id = document["nodes"][0]["node_id"]
+            document["nodes"] += [
+                {
+                    "node_id": "src",
+                    "type": "delay",
+                    "name": "延时",
+                    "config": {"seconds": 0},
+                    "sla_ms": 5000,
+                    "timeout_ms": 5000,
+                    "on_failure": "retry",
+                    "retry": {"max_attempts": 1, "backoff_ms": 200},
+                },
+                {
+                    "node_id": "j",
+                    "type": "join",
+                    "name": "汇聚",
+                    "config": {"upstream": ["src", "ghost"]},
+                    "sla_ms": 5000,
+                    "timeout_ms": 5000,
+                    "on_failure": "retry",
+                    "retry": {"max_attempts": 1, "backoff_ms": 200},
+                },
+            ]
+            document["edges"] += [
+                {"source": start_id, "target": "src", "condition": ""},
+                {"source": "src", "target": "j", "condition": ""},
+            ]
+            put = await client.put(
+                f"/api/v1/workflow/lineages/{lineage}/draft",
+                json={"base_revision": draft["revision"], "document": document},
+            )
+            assert put.status_code == 200, put.text
+
+            blocked = await client.post(
+                f"/api/v1/workflow/lineages/{lineage}/publish",
+                json={"base_revision": put.json()["revision"]},
+            )
+            assert blocked.status_code == 422, blocked.text
+            detail = _error(blocked)
+            assert detail["code"] == "validation_failed"
+            assert "不是它的入边" in detail["message"] and "ghost → j" in detail["message"], detail
+            versions = await client.get(f"/api/v1/workflow/lineages/{lineage}/versions")
+            # 这条 lineage 只有草稿、从没发布成功过：版本列表按"没有这一族的可读版本"回 404，
+            # 关键是被拒的那一次没在版本族里留下半个版本。
+            assert versions.status_code == 404, versions.text
+            assert _error(versions)["code"] == "not_found"
+
     async def test_不支持的_schema_version_422(self, container: PlatformContainer) -> None:
         async with _client(container) as client:
             draft = await _new_draft(client, "schema 版本")

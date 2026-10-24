@@ -3454,5 +3454,76 @@ Start 变量名形状/重名/原型链名/超 32 项/默认值与类型不符、
 - 全量 e2e（`ui-overlap` 127 项）本轮没有重跑——它需要真后端 8321，且 D3 没改外壳几何；
   这条欠项与批次 D4 的收口一起补。
 
+## 工作流编辑器重构批次 D（D4）：性质测试、19 类逐类真机与 HTTP 层留证（2026-10-24）
+
+**性质测试（fast-check）两层各一份**：
+
+- `stores/workflow/__tests__/document.property.spec.ts`——**19 类"编辑 → 保存 → 重开"逐字段无损**。
+  一趟走三层：`encodeDocument` → 过一次真 JSON → `decodeWorkflowDocument`；store 层编辑 → `saveNow`
+  （假服务端也过一次 JSON）→ 换一台 store `openLineage` 读回；画布层 `defToGraph → graphToDef` 往返。
+  config 由该类型白名单的格 + 任意 JSON 值（含 `null`、嵌套对象、`__proto__` 当值）随机拼。
+- `components/workflow/__tests__/configValidation.property.spec.ts`——面板判据与整图校验的**关系**、
+  上游变量合成的**恒等式**、引用互转。
+
+**性质测试改写了三条原本写错的断言**（都是先按想当然写、被实跑打回）：
+
+| 原本写的 | 实测到的 | 落成的判据 |
+|---|---|---|
+| 面板与 `validateGraph` 双向等价（⇔） | 反例 `{"method":{},"url":[]}`：面板判"值形态"，`validateGraph`/后端 `validate_config` 只判必填、白名单、下限 | 单向"面板是超集" + 一条把差异钉死的用例（后端哪天判类型形态，这条就红） |
+| 每类第一格都有 input/textarea/select | `start` 空表只有"新增变量"按钮；`join` 在无入边时刻意不给控件、只给空态说明 | "有控件**或**有空态说明"，两者都没有才算缺陷 |
+| 拖线落点按卡片边角猜 | 900px 窄屏两张卡挨得近，猜的落点落在别人的卡上，连线数为 0 | 落点一律取 `.vue-flow__handle` 自己的盒子，并先断言连线真的建了再往下判 |
+
+另外三条是环境事实：`fc.stringOf` 与 `fc.double({noDefaultInfinity})` 在 fast-check v4 已不可用；
+`end` 无字段时 `fc.constantFrom()` 直接抛；store 层测试 import `components/**` 撞分层守卫（改从 `NODE_SPECS` 取白名单）。
+
+**HTTP 层留证（"引用非法节点被指名"）**：
+
+- 旧 `POST /definitions`：join 的 `upstream` 指了没连线的 `ghost` → **400**，
+  detail 里带 `节点 j 的 upstream='ghost' 不是它的入边（画布上缺少 ghost → j 这条连线；当前入边：['src']）`；
+- 草稿 → 发布：同一张图 → **422 `validation_failed`**，同一句话，且版本列表仍回 404（没留下半个版本）。
+  这两条的断言最初写成 `src → j`，被实测纠正成 `ghost → j`——引擎说的是"缺的那条边"，不是"已有的那条边"。
+
+**真机（构建产物 + preview 4175，目录不可达档）**：
+
+| 判据 | 结果 |
+|---|---|
+| 18 类可上面板的节点逐类铺出自己的表单（字段格数 + 专属编辑器 + 可改/有空态） | **passed**，17.6s；截图 `test-results/d4/all-forms.png` |
+| 深色 + 900px：变量浮层可读、无元素出屏、字段文字与面板底亮度差 > 60 | **passed**，3.7s；截图 `test-results/d4/form-dark-900.png` |
+| D3 那两条动线（条件逐行可编 / 必填与变量插入） | **passed**（拖线改成按 handle 落点后复跑） |
+
+`chain_stage` 不在逐类真机里：它是内部原语，面板按 `internal` 滤掉（拖出来必然跑不起来），
+那一格（段名下拉）由组件单测覆盖。
+
+**变异检查（D4 新增判据各一条，全部从字节备份还原并复绿）**：
+
+| 变异 | 红条数 |
+|---|---|
+| `decodeNodeDef` 的 config 改成 `{}`（无损被打破） | 3 |
+| 删掉面板的"白名单外参数"判定（超集关系被打破） | 2 |
+| 上游变量分组顺序整体 `.reverse()`（祖先先后被打破） | 3 |
+
+**实测门禁**：
+
+| 门禁 | 结果 |
+|---|---|
+| 后端 `ruff check` / `ruff format --check`（新增两枚用例） | All checks passed / already formatted |
+| 后端全量 `pytest --junitxml` | **3287 tests / 0 failures / 0 errors / 98 skipped**，rc=0（`backend/reports/junit-d4-gate.xml`；D3 时 3285，本批 +2） |
+| 前端 `typecheck` / `lint:workflow` / `format:check:workflow` | 全部 rc=0 |
+| 前端 `vitest run` | **82 files / 1210 passed**（D3 收口时 80/1200，本批 +2 文件 +10 条） |
+| 前端 `test:coverage` | 语句 **99.71** / 分支 **94** / 函数 **99.58** / 行 **99.71**，阈值 90/90/90/85 通过 |
+| 前端 `build` | 成功，20.16s |
+| e2e 构建产物档 `node-forms` | **4 passed / 0 failed**，58.9s |
+
+**这一批仍然没有证明的事**：
+
+- 全量 `ui-overlap`（127 项，需真后端 8321）本批没有重跑：D4 没改外壳几何与运行态面板，
+  但"没改"是推断不是证据，批次 E 开工前应先补一次基线；
+- 后端仍不解析 `{{#…#}}`（ADR-0009 §9 的 `workflow/variables` 未落地），所以"变量插入后发布校验通过"
+  目前只证明"不报错"，不证明"取到值"；运行时缺失输出键点名、引用数/深度上限都还没做；
+- 19 类逐类真机走的是"面板铺得出来、格子改得动"，没有逐类走"改完 → 保存 → F5 → 读回"——
+  那条动线在性质测试里覆盖了模型层，真机侧只在 D3 的两类上走过；
+- 深色档只量了亮度差与不出屏，没有逐格算对比度比值（`ui-overlap` 的对比度判据没扩到表单）。
+
+
 
 

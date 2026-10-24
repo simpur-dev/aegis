@@ -132,9 +132,7 @@ const addBlock = async (page: Page): Promise<void> => {
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] })
 
 test.describe('画布操作语法 @1440', () => {
-  test('框选→复制→粘贴→拖动→撤销 3 次→重做 3 次；输入框 Delete 不删节点；坏剪贴板只报错', async ({
-    page,
-  }) => {
+  test('框选→复制→粘贴→拖动→撤销 3 次→重做 3 次；输入框 Delete 不删节点；坏剪贴板只报错', async ({ page }) => {
     test.setTimeout(180_000)
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
@@ -160,11 +158,7 @@ test.describe('画布操作语法 @1440', () => {
     if (marquee === null) return
     await page.mouse.move(marquee.start.x, marquee.start.y)
     await page.mouse.down()
-    await page.mouse.move(
-      (marquee.start.x + marquee.end.x) / 2,
-      (marquee.start.y + marquee.end.y) / 2,
-      { steps: 6 },
-    )
+    await page.mouse.move((marquee.start.x + marquee.end.x) / 2, (marquee.start.y + marquee.end.y) / 2, { steps: 6 })
     await expect(page.locator('.ed-marquee'), '拖动时没有出现框选矩形').toHaveCount(1)
     await page.mouse.move(marquee.end.x, marquee.end.y, { steps: 6 })
     console.log(
@@ -205,7 +199,9 @@ test.describe('画布操作语法 @1440', () => {
       if (!frame) return -1
       return [...document.querySelectorAll('.wf-node')].filter((node) => {
         const r = node.getBoundingClientRect()
-        return r.left < frame.left - 1 || r.top < frame.top - 1 || r.right > frame.right + 1 || r.bottom > frame.bottom + 1
+        return (
+          r.left < frame.left - 1 || r.top < frame.top - 1 || r.right > frame.right + 1 || r.bottom > frame.bottom + 1
+        )
       }).length
     })
     expect(offView, `适配画布后仍有 ${offView} 颗节点在视野外——拖动判据会落空`).toBe(0)
@@ -236,7 +232,11 @@ test.describe('画布操作语法 @1440', () => {
       const after = afterDrag.find((row) => row.id === id)
       expect(before, `${id} 拖动前不在画布上`).toBeDefined()
       expect(after, `${id} 拖动后不在画布上`).toBeDefined()
-      return { id, dx: (after?.x ?? Number.NaN) - (before?.x ?? Number.NaN), dy: (after?.y ?? Number.NaN) - (before?.y ?? Number.NaN) }
+      return {
+        id,
+        dx: (after?.x ?? Number.NaN) - (before?.x ?? Number.NaN),
+        dy: (after?.y ?? Number.NaN) - (before?.y ?? Number.NaN),
+      }
     })
     console.log(`DRAG deltas=${JSON.stringify(deltas)}`)
     for (const row of deltas) {
@@ -304,7 +304,10 @@ test.describe('画布操作语法 @1440', () => {
 
     /* —— 输入框里按 Delete：那是删字符，不是删节点 —— */
     const countBeforeInput = await nodeCount(page)
-    await page.locator('.wf-node').first().click({ position: { x: 40, y: 14 } })
+    await page
+      .locator('.wf-node')
+      .first()
+      .click({ position: { x: 40, y: 14 } })
     const name = page.locator('[data-testid="editor-panel"] .wf-inspector__input').first()
     await expect(name, '选中节点后右栏没有参数输入框——判据在空跑').toBeVisible({ timeout: 10_000 })
     await name.click()
@@ -340,7 +343,10 @@ test.describe('画布操作语法 @1440', () => {
       await page.locator('[data-testid="panel-close"]').click()
       await page.waitForTimeout(300)
     }
-    await page.locator('.wf-node').first().click({ position: { x: 40, y: 14 } })
+    await page
+      .locator('.wf-node')
+      .first()
+      .click({ position: { x: 40, y: 14 } })
     await page.waitForTimeout(300)
     await page.keyboard.press('Delete')
     await page.waitForTimeout(600)
