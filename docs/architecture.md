@@ -81,7 +81,7 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 - **M1 内核**：契约、总线与网关、能力注册、规则/定级/拆解/预警/触达、降级链路、运行态存储、
   HTTP API、单元/契约/端到端/API/性能测试、容器编排与 CI。
 - **M2 工作流**（ADR-0004 已落地）：DAG + 状态机引擎、版本化模板与实例、运行中改图、
-  异常三段处置；注册节点类型 17 类（`chain_stage` 是内部原语，面板可拖 16 类）；Vue Flow 画布（`WorkflowView`）。
+  异常三段处置；注册节点类型 19 类（`chain_stage` 是内部原语，面板可拖 18 类，含 Start/End）；Vue Flow 画布（`WorkflowView`）。
   调度响应与重调度时延为实测，见 `docs/REPORT.md`。
 - **持久层**（ADR-0003 修订版）：PostgreSQL 17 + PostGIS + pgvector（asyncpg 直连、无 ORM）、
   有界写缓冲与重放去重；内存读视图保留，连接故障不换实现。

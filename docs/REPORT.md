@@ -3016,7 +3016,295 @@ HTTP API 层 1611 行/4 文件（`app.py` 独占 1125）→ 1802 行/15 文件�
 `backend/src/aegis` 合计 130 文件/32286 行 → 162 文件/32744 行。
 净增的 458 行全是每个新模块的头部说明与各自 import——这是这次归位的代价，说死在这儿。
 
+## 工作流编辑器重构批次 0：Dify 交互语法迁移的基线与硬门禁（2026-10-22）
 
+**结论**：批次 0 的硬门禁全部满足——克隆 SHA 与工作树、迁移清单、许可文本与守卫、工具链可复现、
+基线全绿、legacy fixtures 已冻结。**尚未进入批次 A**；ADR-0009/0010 待评审，评审通过后才开写业务代码。
 
+**克隆取证**：`langgenius/dify` tag `1.17.1`，`git rev-parse HEAD` 与 GitHub API 的 tag 指向一致：
+`8387590ace4a094de812b7847fc6a4c3a27cd52b`（2026-09-10）；`git status --short` 为空，克隆 193MB。
+本机 github.com:443 不可达，经只读镜像 `gh-proxy.com` 克隆，未改任何 git 配置。
+
+**迁移清单**：`docs/audit/DIFY_MIGRATION_INVENTORY.md` 登记 T1 9 项、T2 5 项、T3 4 组（含“不迁移”理由），
+并记下与计划的 7 处差异（以克隆为准）：`custom-edge.tsx` 真实路径、无 `node-catalog.ts`、
+后端引擎外置为 `graphon==0.7.0`、上游快捷键表无保存/帮助、剪贴板多一个 stringify、zundo 无显式上限等。
+T1/T2 的 14 个 fixture 已落 `frontend/src/utils/graph/__fixtures__/dify-1.17.1/`；
+T1 为执行结果，T2 为契约断言，来源在文件内标注。
+
+**许可**：`THIRD_PARTY_NOTICES.md` 收录修改版 Apache-2.0 的**完整** LICENSE 原文、来源 URL/tag/commit、
+文件清单模板与单租户边界。`frontend/src/utils/graph/__tests__/license.spec.ts` 的 5 条用例已绿：
+自测检查器、清单存在 T1/T2、已落盘文件必须有归属头、反向一致、生产代码禁 Dify 剪贴板 kind。
+上游两处缺陷已登记并将在端口时修正：剪贴板原型污染、`splice(-1, 1)` 误删末尾 handle。
+
+**工具链（本机实测，命令与产物计数）**：
+
+| 门禁 | 结果 |
+|---|---|
+| `uv lock --check` / `uv sync --frozen`（CI 全 extras） | 通过；新增 `pytest-cov 7.1.0` / `coverage 7.16.2` |
+| `uv run ruff format --check src tests scripts` | 334 files already formatted |
+| `uv run ruff check src tests scripts` | All checks passed |
+| `uv run mypy src` | Success: no issues found in 162 source files |
+| `uv run pytest -q --junitxml=reports/junit-gate.xml` | **tests=3152 / skipped=98 / ran=3054 / failures=0 / errors=0**，490.9s |
+| `scripts/ci_junit_guard.py reports/junit-gate.xml` | rc=0，计数与上表一致 |
+| `npm ci`（frontend，按 `package-lock.json`） | 412 packages，rc=0 |
+| `npm run lint:workflow` | rc=0（新目录 + `WorkflowView.vue`） |
+| `npm run format:check:workflow` | All matched files use Prettier code style |
+| `npm run typecheck` | rc=0 |
+| `npm run test` | **54 files / 890 tests passed**，19.58s |
+| `npm run test:coverage` | **54 files / 890 tests passed**，24.62s；覆盖率表 `All files 0/0`（见下） |
+| `npm run build` | 成功，58.05s（Cesium 独立 chunk，workflow chunk 未混入） |
+
+**覆盖率此刻是空转，必须说清**：阈值只挂在 `utils/graph`、`composables/workflow`、`stores/workflow`、
+`api/workflow/codec.ts`，这些目录在批次 0 只有测试/fixture、没有生产源码，所以 `All files 0/0` 是
+“没有目标可统计”，不是“覆盖率达标”。阈值配置已就位，等批次 B 落源码后才开始有牙。
+后端 `--cov` 同理：批次 0 尚无 `aegis.workflow.documents` 等模块，提前加 `--cov-fail-under=90`
+只会因“模块从未导入”恒红；CI 里已用注释钉住“随批次 B 接入”。
+
+**legacy fixtures**：`backend/tests/fixtures/workflow/legacy/` 冻结 8 份 `WorkflowDef` 原样 JSON
+（5 个内置模板 + 标准五段 + 核签模板 + 无 Start 旧定义）+ `manifest.json`（ID/签名/节点边数）。
+`tests/unit/test_workflow_legacy_fixtures.py` 7 条用例校验可解析、签名与计数不漂、5/5 覆盖、
+标准五段只含 `chain_stage`、核签模板三选项且不重复发布、所有旧定义均无 start/end。
+这 7 条已包含在上面 3152 的总数里。
+
+**一处必要的测试基础设施修正**：`AssistantView.spec.ts` 的“只留最近 60 帧”在 v8 插桩下
+从 2.78s 涨到 6.6s，撞上 5s 默认超时（裸跑绿、覆盖率跑红）。只给这一条放宽到 15s 并注释原因，
+断言未改——否则覆盖率门禁会在正确的代码上随机红，等于把工具链开销记成业务失败。
+
+**这一批没有证明的事**：
+- 覆盖率阈值还没有真正跑过任何 workflow 源码（0/0）；
+- CI 尚未在 GitHub 上跑过本批改动（本机口径，未 push）；
+- Playwright 真浏览器档、200 节点性能基线、无障碍/主题扫描属于后续批次；
+- ADR 尚未经用户评审，批次 A 不开工。
+
+## 工作流编辑器重构批次 A1：文档生命周期后端（2026-10-22）
+
+**结论**：A1 的硬验收全部满足——文档/版式/端口模型、lineage 与版本仓储、草稿 CAS、发布/恢复/重命名、
+8 个新端点、旧端点委托与 409 映射都已落地；全量后端套件 **3276 tests / 98 skipped / 3178 ran /
+0 failures / 0 errors**，336.7s。前端本批只补了 start/end 的契约镜像（见下），全量 vitest 仍
+**54 files / 890 tests**。**A2 尚未开工**；本段数字取自 21:12:12 启动的那次全量（junit 时间戳与
+336.7s 一致），20:16 的旧树产物与两次被中断的跑不计入。
+
+**文档模型（`workflow/documents.py`，378 行）**：`WorkflowDocument` 是草稿、预览、发布共用的只读快照
+（frozen，改一次产出新对象），带 `schema_version=1` 与 `lineage_id`；版式 `WorkflowLayout` 与节点/边分离，
+发布定义本身不携带画布坐标。上限与计划同口径：节点 200、边 500、备注 32、Start 变量 32、单节点 config 64KB、
+整份文档 2MB、每节点变量引用 32、路径深度 8；越界报错点名路径。Start/End 规则：各至多一个、Start 无入边且
+存在时必须是唯一根、所有节点从它可达、End 无出边；旧定义没有 Start 仍然合法（5 个内置模板与无 Start 旧定义
+全部过）。版式里已删除节点的坐标在 `mode="before"` 剪掉——旧版式残留是常态，保留只会越存越大。
+
+**canonical hash**：`orjson.dumps(..., OPT_SORT_KEYS)` 的 UTF-8 字节 + sha256，前缀 `sha256:`；
+覆盖 schema/name/description/nodes/edges/layout，排除 workflow_id/version/created_at/revision。
+键序、名称/说明/版式、节点顺序、前缀四组用例都钉住；发布时用同一哈希判定 `no_changes`。
+
+**仓储与服务（`store.py` 173 行改动、`drafts.py` 156 行、`publishing.py` 166 行）**：
+- lineage 按名字归族，最早版本的 `workflow_id` 就是 lineage id；旧定义首次保存时回填 lineage，
+  版本列表按版本升序返回、API 反转成最新在前并标 `is_current`；归档/恢复只翻状态，不动 lineage 与创建时间。
+- `save_next` 在仓储锁内取 max(version)+1；`save_next_named` 保留旧 create 的“同名再建 = 追加新版本”语义。
+- 草稿写入用 `base_revision` 做 CAS（不匹配 409 并带 `server_revision`），首次写入要求 0；
+  没有草稿但已有发布版本时，从最新版本文档投影出 revision=1 的草稿。
+- 发布在 lineage 应用锁内完成“比对 revision/哈希 + 写版本”：并发两路只有一路成功，另一路 409；
+  已归档 409 `archived`，内容未变 409 `no_changes`，改名撞名 409 `name_conflict`。
+- 恢复历史版本为草稿不删除后续版本；重命名同步整条 lineage 与草稿（未打开过草稿时只改版本）。
+- 旧 create/revise 共用锁内版本分配，并落文档快照（旧定义得到空版式但仍可读）。
+
+**8 个新端点**：`POST /lineages`（空白草稿自带 Start）、`GET /lineages/{id}/versions`、
+`GET /versions/{workflow_id}`（完整文档而非计数）、`GET|PUT /lineages/{id}/draft`、
+`POST /lineages/{id}/publish`、`POST /lineages/{id}/revert-to-draft`、`PATCH /lineages/{id}`。
+新端点统一错误体 `detail: {code, message, details}`；旧端点的 `detail` 列表/字符串形状原样保留。
+错误码与状态：`validation_failed`/`invalid_schema_version`/`document_too_large` 422，
+`not_found` 404，`revision_conflict`/`name_conflict`/`no_changes`/`archived` 409，`internal` 500。
+
+**两处计划外但必要的修补**：
+1. **前端跨端镜像按门禁报警补齐 start/end**：后端注册 19 类后，`graphNodeContract.spec.ts` 立刻红
+   （前端 `NODE_SPECS` 少 start/end）。补了 `NodeType`/`NODE_SPECS`/`NODE_META` 与两条测试的计数，
+   面板从 16 类变 18 类，全量 vitest 复跑 890 条全绿。画布侧的 Start 唯一性等交互约束按计划留给批次 B；
+   在这之前旧画布可以拖入多个 Start/End，后端会以 400 拒绝，而不是静默存坏图。
+2. **旧端点的文档校验异常映射 400**：注册 start/end 后，旧 create/revise 也可能送来违反文档不变量的图；
+   `document_from_definition` 抛的 Pydantic 异常此前会冒成 500。现收敛为 `WorkflowValidationError`（400），
+   并加了一条“两个起点 → 400”的 API 用例。
+
+**CI**：覆盖率门禁单独成 `coverage` job（6 个模块逐模块 ≥90%，`--cov-branch`，junit 计数守卫 + 产物上传）。
+拆分起因是本地守卫当场抓到 gate 里第二条 `uv run pytest` 没写 junit——同一 job 里再跑一次 pytest 会开出
+一条“没有计数证据的步骤”，这正是批次 0 那条守卫存在的理由。`test_ci_junit_guard.py` 17 条复跑全绿。
+
+**实测门禁**：
+
+| 门禁 | 结果 |
+|---|---|
+| `ruff format --check src tests scripts` | 345 files already formatted |
+| `ruff check src tests scripts` | All checks passed |
+| `mypy src` | Success: no issues found in 167 source files |
+| 工作流定向用例 | 203 passed |
+| 覆盖率 job 同口径 13 个文件 | **291 passed**，`Required test coverage of 90% reached. Total coverage: 96.95%` |
+| 全量 `pytest --junitxml` | **3276 tests / 98 skipped / 3178 ran / 0 failures / 0 errors**，336.7s |
+| `test_ci_junit_guard.py` | 17 passed |
+| 前端 `npm run typecheck` | rc=0 |
+| 前端 `npm run test` | **54 files / 890 tests passed** |
+
+覆盖率逐模块（行覆盖 / 分支漏测数）：documents 224/228（97%，4 个分支部分）、drafts 70/72（97%）、
+errors 33/33（100%）、ports 19/20（95%）、publishing 83/88（94%）、store 147/149（98%）；
+合计 590 条语句漏 14、164 个分支漏 9，总覆盖率 96.95%。
+
+**这一批没有证明的事**：
+- 仓储仍是进程内实现，重启会丢草稿与版本（任务 #53 未解，ADR-0003 的既定后置项）；
+- 新端点还没有前端调用方，F5 草稿恢复/发布 v1/v2 的真机验收属于 A2；
+- 旧 create/revise 没有 `base_revision`，并发修订两路都会成功（v2/v3），这是旧语义而非缺陷；
+  它们也不做 `no_changes` 判定；
+- 重命名只针对已发布 lineage（只有草稿、没有任何版本的 lineage 重命名返回 404）；
+- preview、变量运行期解析、200 节点性能与无障碍扫描属于后续批次；
+- CI 尚未在 GitHub 上跑过本批改动（本机口径，未 push）。
+
+## 工作流编辑器重构批次 A2：前端传输层、四 store 与真机验收（2026-10-23）
+
+**结论**：A2 的硬验收全部满足——`api/workflow/{contract,codec,client,index}.ts` 成为唯一传输面，
+旧 `api/workflow.ts` 与 814 行 `stores/workflow.ts` 删除，拆分出 `document/catalog/editor/run` 四个 setup
+store；自动保存 800ms 防抖、409 冲突暂停、1s/2s/4s 重试、`Mod+S` 强制落盘、`beforeunload` 守卫、
+`?lineage=&workflow=&instance=` 深链与旧定义无 layout 自动布局都已落地。全量后端套件
+**3276 tests / 98 skipped / 3178 ran / 0 failures / 0 errors**，357.2s；前端 **62 files / 991 tests**，
+覆盖率 **语句 99.83% / 分支 96.18% / 函数 100% / 行 99.83%**。真机 Chromium 跑通 F5 草稿恢复、
+发布 v1、改图再发布 v2 与版本列表。**本批没有改视觉外壳**：全屏编辑器、240px 节点、块选择器与
+边中 “+” 属于批次 B，`/workflow` 仍是 232px 侧栏 + 68px 顶栏 + PageHero + 208/340px 三栏的旧页面。
+
+**传输层**：`contract.ts` 264 行只描述响应形状，不 import axios/vue；`codec.ts` 667 行把
+`unknown → WorkflowDocument/WorkflowDef/版本/实例` 逐字段解析，未知版本、缺字段、错类型都带路径报错，
+未知节点类型降级为只读；`client.ts` 242 行是 workflow 侧唯一 axios 出口，统一注入令牌、超时与
+`WorkflowError {code,status,details}`；`index.ts` 13 行只做装配。没有任何 `any`、裸 axios 或
+`as WorkflowDocument` 直通。
+
+**四 store**：`document.ts` 681 行（草稿/发布/版本/自动保存/冲突）、`run.ts` 332 行（实例轮询/核签/
+中止/插入/旁路）、`catalog.ts` 113 行、`editor.ts` 72 行（draft/version/instance 三模式），
+`shared.ts` 20 行放错误描述与时钟。store 只存可序列化数据，Vue Flow 实例留在视图层；
+`editor/context.ts` 43 行做 typed provide/inject，组件不再直接拿 Pinia。旧 `components.spec.ts` 里
+针对单 store 的用例改写到对应 store 的测试目录，旧 `api.spec.ts`、`store.spec.ts` 删除。
+
+**自动保存与 URL**：脏 = 当前快照与基线不同；编辑后 800ms 防抖写回，带 `base_revision` 做 CAS；
+网络错误按 1s/2s/4s 重试最多三次，409 进入 conflict 并暂停自动保存，UI 显示“草稿已被其他会话修改”；
+请求带 AbortController 与序号，迟到响应不能覆盖新状态；`Mod+S` 立即 flush，关页/刷新有确认。
+URL 状态抽成 `composables/workflow/urlState.ts`（99 行，10 条用例）：版本模式只写 `workflow`，不写
+`lineage`；实例模式写 `instance` 与其 `workflow`；草稿模式写 `lineage` 及适用的实例/发布 ID；
+无关 query 参数保留，失效 ID 会被移除。
+
+**架构守卫与 CI**：`utils/graph/__tests__/architecture.spec.ts` 291 行、15 条用例，用 TypeScript AST
+扫 import 声明、export-from、`import = require`、动态 `import()` 与 import 类型，并抽取 SFC 的
+`<script>` 块；逐层断言 domain/composables/stores/components/transport/client/view 不得越界，
+只有 `client.ts` 能 import axios 和调用 `axios.create`。另断言扫描根非空、提取器与匹配器自证、
+CI 确实跑 `lint:workflow`/`format:check:workflow`/`test:coverage`、脚本覆盖五个目录 + 编排页、
+覆盖率阈值仍是 90/90/90/85。变异检查：向 `utils/graph/document.ts` 追加
+`import { ref } from 'vue'`（bytes 备份、事后还原），架构守卫恰好红 1 条（domain 层越界），rc=1；
+还原后无变异残留。
+
+**真机验收**（Playwright Chromium，隔离后端 `127.0.0.1:8321` + Vite `localhost:5174`）：
+
+| 步骤 | 实测 |
+|---|---|
+| 新建草稿并加 `data_fetch` | `草稿已自动保存 00:33:45 ｜ 尚未发布`，截图 `a2-01-draft-autosaved.png` |
+| F5 恢复 | 同一 lineage `wf_361742a621a3`、名称 `A2 验收 1792686824716`、节点数 1，截图 `a2-02-after-f5.png` |
+| 发布 v1 | 徽标“已发布 v1”，版本列表 `['v1']`，计数 `['1 节点 / 0 连线']`，截图 `a2-03-published-v1.png` |
+| 加 `notify` 后发布 v2 | 徽标“已发布 v2”，版本列表 `['v2','v1']`，计数 `['2 节点 / 0 连线','1 节点 / 0 连线']`，截图 `a2-04-published-v2.png` |
+
+控制台唯一的 4xx 是首次发布前 `GET /lineages/{id}/versions` 的 404——这是 A1 定下的“没有版本就 404”
+契约，store 按空列表处理；除此之外没有 console error 或非预期 4xx/5xx。
+
+**实测门禁**：
+
+| 门禁 | 结果 |
+|---|---|
+| 后端 `ruff format --check src tests scripts` | 345 files already formatted |
+| 后端 `ruff check src tests scripts` | All checks passed |
+| 后端 `mypy src` | Success: no issues found in 167 source files |
+| 后端全量 `pytest --junitxml` | **3276 tests / 98 skipped / 3178 ran / 0 failures / 0 errors**，357.2s |
+| `scripts/ci_junit_guard.py` | `tests=3276 skipped=98 ran=3178 failures=0 errors=0` |
+| 前端 `typecheck` / `lint:workflow` / `format:check:workflow` | 全部 rc=0 |
+| 前端 `npm run test` | **62 files / 991 tests passed** |
+| 前端 `test:coverage` | 语句 99.83 / 分支 96.18 / 函数 100 / 行 99.83，阈值门禁通过 |
+| 前端 `build` | 成功，18.18s |
+
+**这一批没有证明的事**：
+- 仓储仍是进程内实现，重启会丢草稿与版本（任务 #53）；验收后关停 8321/5174 进程，端口已确认释放；
+- 打开/运行/核签没有在真实浏览器里再走一遍，回归由全量 store/组件/契约用例覆盖；真机只覆盖
+  F5 草稿恢复、发布 v1/v2 与版本列表；
+- 两个空白画布都用默认名“未命名防控链路”时，第二次自动保存会因后端同名 409 失败，必须先改名；
+  这是真实 UX 边界，计划在批次 B 的空态/首次保存流程里消解；
+- 视觉未改：本批结束时 `/workflow` 仍是旧三栏页面，Dify 式沉浸外壳从批次 B 开始；
+- CI 尚未在 GitHub 上跑过本批改动（本机口径，未 push）。
+
+## 工作流编辑器重构批次 B：沉浸外壳、Dify 画布语法与真机收口（2026-10-23）
+
+**结论**：`/workflow` 现在是**沉浸式**页面（`route.meta.immersive`，应用侧栏/顶栏/令牌条/页脚整块不渲染），
+自带 56px 头部；节点卡 240 flow 像素、16px 圆角、图标+摘要+状态环，handle 上移到抬头 16px；
+加节点从"左栏拖面板"改成 Dify 的**块选择器**（工具条 / 空白双击 → 400px 浮层，搜索/分类/键盘/焦点归还）；
+右栏改成 400px **覆盖式**面板（运行态/定义/节点三档，页签选择存 `localStorage`，打开不挤压画布）；
+连线中点有 “+" 可直接插一步，条件留在进新节点那一段。三个 T1 端口（`node-factory`/`edge-color`/`connections`）
+带 Dify 1.17.1 行为 fixture 对拍，许可归属头与 `THIRD_PARTY_NOTICES` 齐备。
+
+真机门禁（构建产物 + 真后端）**第一轮 125 项红 66 项**，逐条查下去根因是三类：
+上一批外壳重写留下的**未验缺陷**、这一批把样式挂到 `.ed-canvas` 时**静默丢掉旧画布的补偿**、
+以及门禁自身**在等一个不存在的东西**。全部改掉之后复跑 **127 项全绿、0 红，32.3 分钟**。
+
+**外壳与画布的实测读数**（Playwright chromium，`vite preview` 4175 + 真后端 8000）：
+
+| 判据 | 实测 |
+|---|---|
+| 沉浸外壳 @1440 | 侧栏/顶栏/页脚+令牌条+助手入口计数 `0/0/0`，头部高 56，画布 `top=56 bottom=900 width=1440`，点阵按 zoom 还原 = **14×14**，工具条 4 枚 |
+| 400px 覆盖面板 | 面板 `left=1040 top=56 width=400`，画布宽度仍是 **1440**（没被挤），节点卡 flow 宽 **239.9999** |
+| 块选择器 | 400px 宽、`top≥56 bottom≤900`、打开即搜索框焦点、placeholder「搜索节点」、Esc 关闭并把焦点还给 `toolbar-add` |
+| 搜索添加→连线→保存→F5 | 坐标逐位相同：`start_1 (635.556, 358.444)`、`notify_1 (778.889, 555.556)`；URL 落 `?lineage=wf_b705bda822ae`，刷新后连线仍 1 条 |
+| 边中点 “+” 插入 | 三颗节点 `[开始, 事件通报, 事件通报]`、两段连线、条件标签只剩进新节点那条的 `high`；定义面板链路 `[start_1→notify_2]`、`[notify_2→notify_1]` |
+| 低 zoom 可读性 | fit 到 `zoom=0.483871` 时：连线 **1.50 设备像素**、卡片描边 0.97、类别条 2.90，45 节点全在视野内（0 出界），线色 `rgb(152,162,179)`（不是库里那支 `#b1b1b7`） |
+| 深色画布（第一次有机器证据） | 45 张卡：底色 `rgb(29,35,45)`（相对亮度 0.0165，暗面），标题压底色 **7.53:1**，连线 `rgb(90,107,130)` 对画布底 **3.21:1** |
+| 落点让位 | 连加三颗：压叠 0、出画布 0、**被浮层盖住 0**（覆盖面板那 400px 也算禁落区），zoom 稳在 0.9 |
+| 画布快捷键 | `0.9 →(-) 0.75 →(0) 0.9 →(+) 1.08 →(1) fit=1`；在“中止理由”输入框里按 `0` 得到字符 `"0"`、画布不动 |
+| 弹层内不变量 | monitor 上报弹层 10 个文本节点、预警详情抽屉 69 个，1440/1280/1100/1000 四档重叠/出屏/裁字/折行/对比度全 0（这批之前它们**从没跑完过**：无超时的 `networkidle` 在开着 SSE 的页面上干等到 180s） |
+| 悬停态 | 46 枚目标零问题；窄档 1000/900 各 24 枚零问题 |
+| 减动效 | 正常态每页都有循环动画（含头部那颗新脉冲点），开 reduce 之后 offenders=0 |
+
+**改掉的外壳缺陷**（都是上一批 `c1959b0` 侧栏收并的账，那晚的全量门禁其实没跑完）：
+
+- 助手悬浮胶囊压在正文上——实测页脚文字被压 **2035px²**、台账分页器“10 条/页” 206px²、
+  表页码 4/5 各 2–22px 宽、总览“案例知识层/`driver=in_memory`” 1037/881px²、预警空态说明 1200px²、
+  一张图卡片头“刷新” 400px²。入口收回侧栏一条常驻行（`.side-assistant`，`assistant-entry`），
+  决策 12 的“助手是常驻工具”不变，变的是它不再浮在正文之上；
+- 收起态 64px 轨道把“展开侧栏”和组名“值班主线”折成竖排两行——短成一枚 `»`（完整说法进 `aria-label`）
+  并在收起态隐藏组名、用分隔线保住分组形状；
+- 编辑器头部主入口按钮 30px，低于全站“页头动作区 ≥34px”地板（它现在是这一页的动作区）——统一 34px。
+
+**改掉的画布静默失效**：沉浸化后画布根改名 `.ed-canvas`，而描边补偿与浮层样式那段仍挂在
+退役的 `.wf__canvas` 上——**没有任何一条规则命得中**，单测与类型全绿，只有按设备像素量才看得见
+（连线 0.97 设备像素、缩放控件圆角 0）。同类形状还出现两次：卡片描边/类别条的 `calc(Npx * k)` 在
+重写节点卡时退化成写死像素；覆盖式面板挂在 `.ed-canvas` 外面，所以落点让位的浮层搜索根本来就找不到它。
+
+**变异记录**（每条都要“改坏即红、还原后字节一致”，`E:\python_xm\.aegis-e2e\mutate.py`）：
+连线丢补偿、卡片描边丢补偿、类别条丢补偿、落点禁落区退回只量画布内部、边中标签层撤掉抬层规则、
+`revealPanel` 换回 `openPanel`（面板被自己关掉）、头部按钮退回 30px、收起态组名重新折行、
+侧栏收起宽度偏离令牌档 —— **9 条全部有牙**。其中“边中标签层”第一条变异写的是 `z-index: 1`，
+**跑出来还是绿**（1 已经高于节点默认的 0），换成“把抬层那条规则整条删掉”才复现缺陷：
+变异要还原的是缺陷本身，不是随手改个数。单测侧另有 3 条：`insertNodeBetween` 不保条件、
+备注上限从 32 放宽、改名下限从 2 字放宽，各自红一条。
+
+**实测门禁**：
+
+| 门禁 | 结果 |
+|---|---|
+| 后端 `ruff format --check` / `ruff check` / `mypy src` | 345 files already formatted / All checks passed / no issues in 167 source files |
+| 后端全量 `pytest --junitxml` | **3276 tests / 98 skipped / 3178 ran / 0 failures / 0 errors**；`ci_junit_guard.py` 同数通过 |
+| 前端 `typecheck` / `lint:workflow` / `format:check:workflow` | 全部 rc=0 |
+| 前端 `vitest run` | **65 files / 1017 tests passed**（A2 收口时是 62 files / 991；本批新增编辑器组件、T1 端口对拍与许可守卫等用例，B6 又补了备注/边中点/节点-备注互斥/upstream 两支共 4 条） |
+| 前端 `test:coverage` | 语句 **99.73** / 分支 **95.26** / 函数 **100** / 行 **99.73**，阈值 90/90/90/85 通过 |
+| 前端 `build` | 成功（真机门禁的 webServer 每次重建，最后一趟 32.3 分钟跑完 127 项） |
+| `e2e/ui-overlap.spec.ts` 全量真机 | **127 passed / 0 failed**，rc=0（第一轮同一条命令是 66 红 59 绿） |
+| 颜色棘轮 | **139 → 110**（HEAD 同口径实量 139；逐文件对账见 `docs/UI_UX_REDESIGN_BRIEF.md` §18） |
+
+**这一批没有证明的事**：
+- 操作语法（框选/复制粘贴/撤销重做/右键菜单/快捷键表）是批次 C，试运行与实例图是批次 E，
+  19 类专属表单与变量语法是批次 D，版本面板完整版/冲突 Modal/导入导出与性能 harness 是批次 F——
+  本批只交付外壳、画布语法与三个 T1 端口；
+- `NodePalette.vue`（旧的拖拽面板）与画布的 HTML5 `onDrop` 链路**仍在但没有入口**：加节点已改走块选择器点选。
+  要么按 Dify 给块选择器补"拖出去放"的一档，要么连 `onDrop` 一起退役——**这条需要用户裁决**，本批没动；
+- 助手入口的形态改了（浮标 → 侧栏常驻行）。这是门禁实测压住可点控件之后的处置，
+  若用户要回到悬浮形态，需要连带解决"浮标盖住分页器/页码/页脚"这一类冲突，不是简单改 CSS；
+- 真机这一趟跑在**内存 store + mock runtime** 上：草稿/版本在重启后消失（任务 #53 未做），
+  且每跑一趟会在后端多留草稿与定义（`GATE-UI大定义` 幂等，不会重复种）；
+- 覆盖率阈值仍只挂在 `utils/graph`、`composables/workflow`、`stores/workflow`、`api/workflow/codec.ts`，
+  新目录 `components/workflow/editor/` 由单测与真机覆盖、不在阈值面上；
+- CI 还没在 GitHub 上跑过 A/B 两批的改动（本机口径，未 push、未提交）。
 
 
