@@ -61,11 +61,12 @@ aegis/
 
 ## 2. 部署与运行
 
-两条互不依赖的路径，命令都在本机逐条跑过（2026-10-12 全链路取证，Windows 11 + Docker Desktop/WSL2；
+两条路径，命令都在本机逐条跑过（2026-10-12 全链路取证，Windows 11 + Docker Desktop/WSL2；
 2026-10-17 复核：2.2 第 2 步 `config --quiet` 默认档与 app/iot/observability 四档在 docker 29.8.1 / compose v5.5.1 上仍通过，
 前端 `npm run build` 25.6s 通过）：
 
-- **路径 A · 本机进程**（日常开发、离线全测试、演练与报表）——不需要 Docker。
+- **路径 A · 本机进程 + Docker 中间件**（日常开发）：`npm run dev` 一条命令起 nats/postgres/neo4j、
+  本地后端（连容器那份 postgres）与 vite；**只有一份数据**，2026-10-24 起不再有 memory 形态的本地后端。
 - **路径 B · Docker 起后端与依赖**（真总线 + 真库 + 图谱 + 检索权重），**Web 端仍在宿主机跑**：
   `deploy/docker-compose.yml` 里没有前端服务，容器只编排后端与其依赖（如实写清，见 2.2 末）。
 
@@ -76,11 +77,11 @@ aegis/
 | `uv` | 0.12.19 | 后端唯一依赖管理器；它会自建虚拟环境，**不必**先装 Python |
 | Python | 虚拟环境里 3.12.13（`requires-python = ">=3.11"`） | 系统里那台 `python -V` 是 3.13.15，与项目无关，别用它跑 `uv run` |
 | `node` / `npm` | v24.11.1 / 11.6.2 | 前端与仓库根的 `npm run dev` 编排 |
-| `docker` + `docker compose` | 29.8.1 / v5.5.1 | 路径 B 才需要；compose 版本要支持 `--env-file` 与 `profiles` |
+| `docker` + `docker compose` | 29.8.1 / v5.5.1 | 两条路径都需要（A 要 postgres/neo4j 容器，`npm run dev` 会自己拉起 Docker Desktop）；compose 版本要支持 `--env-file` 与 `profiles` |
 | 磁盘 | 镜像合计 ~1.6GB（后端 688MB + postgres 892MB）＋检索权重 1.1GB | 权重不烧进镜像，靠只读卷挂进容器（见 2.2） |
 | 网络 | 构建期需要 pypi/apt 可达 | 内网/离线见 2.2 的"离线或内网"一段 |
 
-### 2.1 路径 A · 本机进程
+### 2.1 路径 A · 本机进程 + Docker 中间件
 
 ```bash
 # 1) 配置：LLM 与图谱项可留空，平台按规则引擎与内存案例库降级运行
@@ -91,9 +92,11 @@ cp .env.example backend/.env
 
 # 2) 依赖（三处：仓库根的 dev 编排、后端 uv、前端 npm）
 npm install                       # 根：只装 concurrently 一个开发依赖，专为下面那条 `npm run dev`
-cd backend && uv sync --extra dev
-#    ↑ 装 dev 就能把服务跑起来，但**跑不齐门禁**：可选子系统各自的驱动在别的 extra 里
-#      （aiomqtt 在 iot、pymysql 在 seekdb、asyncpg/pgvector 在 postgres……）。
+cd backend && uv sync --extra dev --extra postgres --extra graph --extra retrieval
+#    ↑ `npm run dev` 的本地后端连的是容器里那份 postgres（要 asyncpg/pgvector），知识层连容器 neo4j
+#      （要 neo4j/graphiti），检索权重腿要 onnxruntime；缺哪个 extra，对应那条腿就静默降级——
+#      状态以 `/api/v1/integrations` 为准。装 dev 能跑服务，但**跑不齐门禁**：其余驱动在别的 extra 里
+#      （aiomqtt 在 iot、pymysql 在 seekdb……）。
 #      要把整棵 tests/ 跑到与 CI 同集合，用下面这一句（`--extra` 是整表替换，必须一次列全）：
 #      uv sync --extra dev --extra perf --extra postgres --extra iot --extra analytics \
 #              --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp
@@ -113,13 +116,23 @@ uv run python scripts/ci_junit_guard.py reports/junit-local.xml   # 计数守卫
 # 4) 前端类型检查与单测
 cd ../frontend && npm run typecheck && npm run test
 
-# 5) 起服务：仓库根一条命令同时拉起两端（Ctrl+C 一次，两个进程一起收且不留孤儿——已实测）
-cd .. && npm run dev              # API http://127.0.0.1:8000/docs ｜ Web http://localhost:5173
-
-#    要分开跑或换端口（本机 8000 可能被别的东西听过 127.0.0.1，那样后端绑 0.0.0.0:8000 会
-#    "看着起来了"而前端全是 404），两个变量必须一起改，它们只有一个真源：
-#      cd backend  && AEGIS_HTTP_PORT=8321 uv run python -m aegis.main
-#      cd frontend && AEGIS_API_TARGET=http://127.0.0.1:8321 npm run dev
+# 5) 起服务：仓库根一条命令 = Docker 基础设施 + 本地后端 + 前端（一份数据）
+cd .. && npm run dev              # API http://127.0.0.1:8001/docs ｜ Web http://localhost:5173
+#
+#    顺序是固定的，脚本自己做完这五步（`scripts/dev.mjs`）：
+#      1. Docker 引擎没起就先拉起 Docker Desktop（最多等 4 分钟，超时直接报错，不静默降级）；
+#      2. `docker compose ... up -d` 起默认档：nats / postgres / neo4j；
+#      3. 等 postgres healthy，停掉容器里的 aegis-backend / aegis-frontend——
+#         本地后端接管，两个后端同时写同一个库会互相踩；
+#      4. 起本地后端：AEGIS_STORE_BACKEND=postgres、DSN 指向容器那个库，知识层连容器 neo4j，
+#         backend/data/models 在位时自动开检索权重；端口真源只有一个 AEGIS_DEV_PORT（默认 8001）；
+#      5. 起 vite，/api 代理到同一个端口。
+#
+#    所以本地后端与容器后端读写的是**同一份 postgres**，不存在"两边各存一份"。
+#    Ctrl+C 只停本地两端，容器保持运行；回到全容器形态：docker start aegis-backend aegis-frontend
+#    换端口：AEGIS_DEV_PORT=8321 npm run dev
+#    只起一端：npm run dev:backend / npm run dev:frontend
+#    （前端要显式指到容器后端：AEGIS_API_TARGET=http://127.0.0.1:8000 npm run dev:frontend）
 
 # 6) L3 智能体运行时三态：AEGIS_AGENT_RUNTIME = mock（默认，演练/压测对照）| real | off。
 #    real 需配 LLM key，且与 mock 互斥——一个订阅面只挂一副，杜绝双跑抢答。
@@ -130,23 +143,29 @@ cd .. && npm run dev              # API http://127.0.0.1:8000/docs ｜ Web http:
 跑起来后按这几条自查（都不需要额外工具）：
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/healthz    # 200
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/readyz     # 200
-curl -s http://127.0.0.1:8000/api/v1/integrations | head -c 400           # 每条腿的 driver，见 2.3
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8001/healthz    # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8001/readyz     # 200
+curl -s http://127.0.0.1:8001/api/v1/integrations | head -c 400           # 每条腿的 driver，见 2.3
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5173/dashboard  # 200（vite 代理到后端）
 ```
 
-默认这份配置起来时是**纯离线形态**：`store=memory`、`bus=memory`、`retrieval=off`、`knowledge=in_memory`、
-`analytics=off`、`tracing=local`——链路照跑、报表照出，但这些腿都还没接上（`/api/v1/integrations`
-会把这一件件事如实写出来，别把"200"读成"接上了"）。
+`npm run dev` 起来的是**一份数据**的形态：`store=postgres`、`memory=postgres`、
+`retrieval=bge-m3-int8`（`backend/data/models` 在位时）、`knowledge=graphiti`（没有 LLM key 时建索引失败、
+回退 16 条内置预案，状态行如实标 `degraded`——与容器版同形）、`tracing=otlp→jaeger`（observability 档起着时）、
+`analytics=off`、`delivery=mock`。这些腿接没接上以 `/api/v1/integrations` 为准，别把"200"读成"接上了"。
+
+要跑"完全离线"的规则引擎形态（不碰 Docker、`store=memory`、`bus=memory`、`retrieval=off`），
+手工 `cd backend && uv run python -m aegis.main` 即可（`backend/.env` 就是那套配置）。但那是**另一份数据**，
+别和 `npm run dev` 混着用——两套各存一份，正是 2026-10-24 之前"越用越乱"的来源。
 
 ### 2.2 路径 B · Docker：后端与依赖进容器（Web 端仍在宿主机）
 
 **先把形态说准**：`deploy/docker-compose.yml` 里**没有前端服务**——容器只编排后端与它依赖的中间件。
-Web 端沿用路径 A 的 `npm run dev`：vite 的代理默认就是 `http://127.0.0.1:8000`（`frontend/vite.config.ts`），
-而 compose 把后端发布在宿主机的同一个 8000 端口上，所以前端**不需要改任何参数**。
-本次实测到的是这条链的两端：容器 healthy 时宿主机 `curl :8000/readyz` 与 `:8000/api/v1/integrations` 都回 200；
-"本机 vite 转发到容器后端"这一档我**没有单独取证**（当时 5173 上配对的是本机后端）。
+路径 B 与路径 A 的差别只在"后端跑在哪"：路径 A（`npm run dev`）后端跑本机、连着容器里的同一份 postgres；
+路径 B 是后端也进容器（`--profile app`），**同一份数据，不是两份**。
+要让 vite 配容器后端：`AEGIS_API_TARGET=http://127.0.0.1:8000 npm run dev:frontend`
+（别直接 `npm run dev`——它会停掉容器后端让本地后端接管，见 2.1 步骤 5）。
+容器 healthy 时宿主机 `curl :8000/readyz` 与 `:8000/api/v1/integrations` 都回 200。
 要静态托管就 `npm run build`（实测 51.8s，产出 `frontend/dist` 约 50MB，含 Cesium/底图/地形资产），
 但得**自备反向代理**转发 `/api`、`/metrics`、`/healthz`、`/readyz` 四个前缀到后端——本仓不提供站点配置，
 `vite preview` 也不带代理（代理只配在 `server` 段），拿它当部署用会一路 404。
@@ -296,6 +315,9 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
     用后者——2026-10-12 实测：重启后事件列表读到 0 条，同一 trace 经审计端点仍 `found=true` 且五段凭证齐全。
 
 ### 2.4 出口一览
+
+> 端口口径：Docker 栈（路径 B）发布在 **8000**，本地 `npm run dev`（路径 A）起在 **8001**
+> （`AEGIS_DEV_PORT` 可改）。下面统一按 8000 写，本地开发时把端口换成 8001 即可。
 
 接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`
 装配事实（哪条腿在跑、哪条腿是瘸的）`http://localhost:8000/api/v1/integrations`——`/dashboard` 页底有同源面板

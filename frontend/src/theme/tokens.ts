@@ -90,6 +90,30 @@ export const colorSlots = {
     'editor-accent-slate': '#475569',
     'editor-state-running': '#0E7490',
     'editor-state-awaiting': '#7C3AED',
+    // 「雾底 + 玻璃」用的一组槽位：背景图之上还要有一层可读的底，玻璃卡才不像打翻的牛奶
+    'canvas-from': '#EAF4FF',
+    'canvas-via': '#F5FAFF',
+    'canvas-to': '#E8F1FF',
+    'glass-bg': 'rgba(255, 255, 255, 0.62)',
+    'glass-border': 'rgba(255, 255, 255, 0.78)',
+    'ball-surface': 'rgba(255, 255, 255, 0.86)',
+    'ball-ring': 'rgba(255, 255, 255, 0.92)',
+    'accent-ball-from': '#9B8CFF',
+    'accent-ball-to': '#6D5AE0',
+    'accent-ball-glow': 'rgba(139, 124, 246, 0.45)',
+    'accent-ball-text': '#FFFFFF',
+    // 一张图「深空皮肤」的太空底：两主题同值——那是"宇宙"，不随页面主题翻面
+    'space-globe': '#061326',
+    'deep-space': '#05030E',
+    // 空态里的强动作按钮（黑底白字）；两主题各自一套，不复用 text-inverse（深色主题里它是深色字）
+    'action-bg': '#1A1A1C',
+    'action-bg-hover': '#2C2C31',
+    'action-bg-active': '#0E0E10',
+    'action-text': '#FFFFFF',
+    // 「成 N · 败 N」徽标框：近白半透明底 + 细边 + 深字，压在玻璃卡上仍有层次
+    'stat-chip-bg': 'rgba(255, 255, 255, 0.86)',
+    'stat-chip-border': '#DCE5F2',
+    'stat-chip-text': '#3F4A5C',
   },
   dark: {
     page: '#0B1220',
@@ -135,6 +159,27 @@ export const colorSlots = {
     'editor-accent-slate': '#94A3B8',
     'editor-state-running': '#22D3EE',
     'editor-state-awaiting': '#C4B5FD',
+    'canvas-from': '#0A1020',
+    'canvas-via': '#0B1220',
+    'canvas-to': '#0A0F1C',
+    'glass-bg': 'rgba(20, 30, 48, 0.55)',
+    'glass-border': 'rgba(120, 150, 200, 0.22)',
+    'ball-surface': 'rgba(30, 44, 68, 0.82)',
+    'ball-ring': 'rgba(140, 170, 220, 0.35)',
+    'accent-ball-from': '#8B7CF6',
+    'accent-ball-to': '#5B49C8',
+    'accent-ball-glow': 'rgba(139, 124, 246, 0.5)',
+    'accent-ball-text': '#FFFFFF',
+    'space-globe': '#061326',
+    'deep-space': '#05030E',
+    // 深色主题下"最强的动作"是提亮：浅底深字（若沿用黑底，必须换成亮字，见提示词 §4.1）
+    'action-bg': '#E8EDF7',
+    'action-bg-hover': '#F7FAFF',
+    'action-bg-active': '#CBD6E6',
+    'action-text': '#0B1220',
+    'stat-chip-bg': 'rgba(28, 42, 64, 0.86)',
+    'stat-chip-border': '#2C3E5C',
+    'stat-chip-text': '#C9D5E6',
   },
 } as const satisfies Record<'light' | 'dark', Record<string, string>>
 
@@ -201,7 +246,7 @@ export const font = {
 
 /** 圆角：三档 + 胶囊。取 6/10/16 是为了**与今天的实测值一致**（旧 ConfigProvider 就是 10 与 16），
  *  半径不参与 4px 网格（那是间距的规矩），先不动它以免顺手改出视觉回归。 */
-export const radius = { sm: 6, md: 10, lg: 16, pill: 999 } as const
+export const radius = { sm: 6, md: 10, lg: 16, xl: 22, pill: 999 } as const
 
 export const shadow: Record<ThemeMode, Record<'sm' | 'md' | 'lg', string>> = {
   light: {

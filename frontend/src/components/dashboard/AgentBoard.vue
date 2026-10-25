@@ -29,7 +29,9 @@ function loadRatio(agent: AgentInfo): number {
         <span class="agent__loadbar" aria-hidden="true"><i :style="{ width: `${Math.round(loadRatio(agent) * 100)}%` }"></i></span>
         <span class="agent__loadnum">{{ agent.inflight }}/{{ agent.max_concurrency }}</span>
       </span>
-      <span class="agent__served" :title="`已服务 ${agent.served} 次，失败 ${agent.failed} 次`">成 {{ agent.served }} · 败 {{ agent.failed }}</span>
+      <span class="agent__served" :title="`已服务 ${agent.served} 次，失败 ${agent.failed} 次`"
+        >成 {{ agent.served }} · <span :class="{ 'agent__failed': agent.failed > 0 }">败 {{ agent.failed }}</span></span
+      >
     </div>
     <div v-if="!agents.length" class="empty-hero" data-testid="agents-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
@@ -122,12 +124,26 @@ function loadRatio(agent: AgentInfo): number {
   font-variant-numeric: tabular-nums;
   color: var(--aeg-color-text-secondary);
 }
+/* 「成 N · 败 N」徽标框：白底细边的小胶囊（深色主题是深底浅字，见 stat-chip-* 令牌）。
+   宽度用 min-width 钉住，数字从 0 涨到三位数时框不左右抖。失败数不为 0 时只把"败 N"染红，
+   不给整框描红边——满屏红边会盖过面板本身。 */
 .agent__served {
+  display: inline-flex;
   flex: 0 0 auto;
-  min-width: 84px;
-  text-align: right;
+  align-items: baseline;
+  justify-content: center;
+  min-width: 112px;
+  padding: var(--aeg-space-s2) var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-stat-chip-border);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-stat-chip-bg);
+  text-align: center;
+  white-space: nowrap;
   font-size: var(--aeg-font-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--aeg-color-text-muted);
+  color: var(--aeg-color-stat-chip-text);
+}
+.agent__failed {
+  color: var(--aeg-color-status-danger);
 }
 </style>

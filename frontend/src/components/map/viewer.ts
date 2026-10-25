@@ -32,6 +32,7 @@ import { BASEMAP_ATTRIBUTION, chooseBasemapSource, createBasemapSetup, DEFAULT_B
 import { mapPalette, type MapPalette } from '@/theme/map'
 import type { ThemeMode } from '@/theme/tokens'
 import { clearMapDebugHandle, publishMapDebugHandle } from './debugHandle'
+import { createEnergyPlanetCanvas } from './energyPlanet'
 import type {
   BBox,
   HazardZoneFeature,
@@ -76,6 +77,13 @@ export interface MapSceneOptions {
   onSelect?: (featureId: string | null) => void
   /** 建场时所处主题；之后的翻转由 `setTheme` 推进。缺省按浅色。 */
   themeMode?: ThemeMode
+  /**
+   * 「深空皮肤」：拉远到能看见地球弧线时，给地球叠一层程序化能量纹理 + 蓝色大气边缘 + 泛光。
+   *
+   * 默认关：其余页面（以及 `viewer.theme.spec.ts` 钉住的画面口径）保持原样，
+   * 只有「一张图」传 true。区域视图（默认约 1.7e6 m）不叠纹理，底图与要素色不变。
+   */
+  spaceLook?: boolean
 }
 
 export interface MapSceneInfo {
@@ -318,6 +326,12 @@ async function waitForContainerSize(element: HTMLElement, timeoutMs = 3_000): Pr
   })
 }
 
+/**
+ * 「深空视图」的高度门槛（米）。默认区域视野（西藏全域）相机高度约 1.7e6 m，
+ * 这个高度上还在看地图；3.5e6 m 以上才看得见地球弧线与大气边缘，那时才叠能量纹理。
+ */
+const SPACE_LOOK_HEIGHT_M = 3_500_000
+
 export async function createMapScene(el: HTMLElement, options: MapSceneOptions = {}): Promise<MapScene> {
   ensureCesiumBaseUrl()
   const cesium = await import('cesium')
@@ -431,7 +445,85 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     if (viewer.scene.sun) viewer.scene.sun.show = false
     if (viewer.scene.moon) viewer.scene.moon.show = false
   }
+  /**
+   * 深空皮肤（仅 options.spaceLook）：深蓝地球 + 蓝色大气边缘 + 泛光。
+   *
+   * 只改"看着像能量球"的那几件事——地球上的影像、地形与要素一个像素都不动，
+   * 所以拉回区域视图时还是原来那张图。默认关，其余页面与 `viewer.theme.spec.ts`
+   * 钉住的画面口径都不受影响。
+   */
+  function applySpaceLook(): void {
+    if (!options.spaceLook) return
+    const scene = viewer.scene
+    if (scene.skyAtmosphere) {
+      scene.skyAtmosphere.show = true
+      scene.skyAtmosphere.hueShift = 0.62
+      scene.skyAtmosphere.saturationShift = 0.42
+      scene.skyAtmosphere.brightnessShift = -0.3
+      scene.skyAtmosphere.atmosphereLightIntensity = 7
+    }
+    scene.globe.baseColor = cesium.Color.fromCssColorString(palette.spaceGlobe)
+    scene.backgroundColor = cesium.Color.fromCssColorString(palette.deepSpace)
+    const bloom = scene.postProcessStages?.bloom
+    if (!bloom) return
+    bloom.uniforms.glowOnly = false
+    bloom.uniforms.brightness = -0.35
+    bloom.uniforms.contrast = 128
+    bloom.uniforms.delta = 1
+    bloom.uniforms.sigma = 2
+    bloom.uniforms.stepSize = 1
+  }
+
+  /**
+   * 覆盖在球面上的程序化能量纹理。只在第一次真正进入深空视图时才生成——
+   * 常规区域视图进页面不该为一张 1024×512 的噪声付渲染成本。
+   */
+  let energyLayer: { alpha: number } | null = null
+  let energyLayerFailed = false
+
+  function ensureEnergyLayer(): void {
+    if (energyLayer || energyLayerFailed) return
+    try {
+      const canvas = createEnergyPlanetCanvas()
+      const provider = new cesium.SingleTileImageryProvider({
+        url: canvas.toDataURL('image/png'),
+        rectangle: cesium.Rectangle.MAX_VALUE,
+        // Cesium 1.x 把这两个当必填：缺了会抛 DevError 并停掉渲染循环
+        tileWidth: canvas.width,
+        tileHeight: canvas.height,
+      })
+      const layer = viewer.imageryLayers.addImageryProvider(provider) as unknown as { alpha: number }
+      layer.alpha = 0
+      energyLayer = layer
+    } catch (error) {
+      // 纹理只是观感增强：拿不到就退回纯深蓝地球，绝不能让一张贴图把地图渲染搞停
+      energyLayerFailed = true
+      console.warn('[map] 深空纹理不可用，回退到纯深蓝地球：', error)
+    }
+  }
+
+  /**
+   * 按相机高度切"深空视图"：只有看得见地球弧线时才叠能量纹理、开泛光。
+   * 区域视图（默认约 1.7e6 m）纹理透明度归零，底图、要素、取色全部保持原样。
+   */
+  function updateSpaceView(): void {
+    if (!options.spaceLook) return
+    const inSpace = viewer.camera.positionCartographic.height > SPACE_LOOK_HEIGHT_M
+    el.classList?.toggle('is-space-view', inSpace)
+    const bloom = viewer.scene.postProcessStages?.bloom
+    if (bloom) bloom.enabled = inSpace
+    if (inSpace) ensureEnergyLayer()
+    if (energyLayer) {
+      const next = inSpace ? 0.97 : 0
+      if (energyLayer.alpha !== next) {
+        energyLayer.alpha = next
+        viewer.scene.requestRender()
+      }
+    }
+  }
+
   applyPalette()
+  applySpaceLook()
   viewer.scene.globe.enableLighting = false
   /**
    * 瓦片队列有变化就重绘，而不是只在"排空"那一刻重绘。
@@ -500,6 +592,8 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     if (palette.mode === mode) return
     palette = mapPalette(mode)
     applyPalette()
+    // 深空皮肤会覆盖底色/大气，翻主题后要按新档再上一次，否则翻一次就掉回普通画布
+    applySpaceLook()
     for (const name of LAYER_NAMES) signatures[name] = '#aegis-rebuild-for-theme#'
     if (lastData) render(lastData)
     viewer.scene.requestRender()
@@ -512,6 +606,7 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   }, cesium.ScreenSpaceEventType.LEFT_CLICK)
 
   const onCameraChanged = (): void => {
+    updateSpaceView()
     options.onViewChanged?.(currentBBox(), currentZoom())
   }
   viewer.camera.percentageChanged = 0.25

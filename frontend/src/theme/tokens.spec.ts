@@ -82,8 +82,8 @@ describe('设计令牌真源', () => {
     expect(sizes.length).toBeGreaterThanOrEqual(6)
   })
 
-  it('圆角只有阶上的四档', () => {
-    expect(Object.values(radius).sort((a, b) => a - b)).toEqual([6, 10, 16, 999])
+  it('圆角只有阶上的五档', () => {
+    expect(Object.values(radius).sort((a, b) => a - b)).toEqual([6, 10, 16, 22, 999])
   })
 
   it('两主题的语义槽位同名同集合——少一个键，切深色就是一块白底补丁', () => {
@@ -172,5 +172,27 @@ describe('设计令牌真源', () => {
     expect(root.style.getPropertyValue('--aeg-space-s4')).toBe('16px')
     applyTheme('light')
     expect(root.style.getPropertyValue('--aeg-color-card').trim()).toBe('#FFFFFF')
+  })
+
+  it('动作按钮与「成/败」徽标：文字落在自己的底上都过 AA（两主题各算一遍）', () => {
+    /** 徽标底是半透明的：先按卡片底色合成一次，再算对比度（直接拿 rgba 比是没意义的） */
+    function over(baseHex: string, top: string): string {
+      const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(top.trim())
+      if (!m) return top
+      const alpha = m[4] === undefined ? 1 : Number(m[4])
+      const base = hex(baseHex)
+      const blend = (topChannel: number, baseChannel: number) => Math.round(topChannel * alpha + baseChannel * (1 - alpha))
+      const channels = [blend(Number(m[1]), base.r), blend(Number(m[2]), base.g), blend(Number(m[3]), base.b)]
+      return `#${channels.map((v) => v.toString(16).padStart(2, '0')).join('')}`
+    }
+
+    for (const mode of ['light', 'dark'] as const) {
+      const slots = colorSlots[mode]
+      expect(ratio(slots['action-text'], slots['action-bg']), `${mode} 主题：动作按钮文字读不清`).toBeGreaterThanOrEqual(4.5)
+      expect(ratio(slots['action-text'], slots['action-bg-hover']), `${mode} 主题：hover 态文字读不清`).toBeGreaterThanOrEqual(4.5)
+      expect(ratio(slots['action-text'], slots['action-bg-active']), `${mode} 主题：active 态文字读不清`).toBeGreaterThanOrEqual(4.5)
+      const chip = over(slots.card, slots['stat-chip-bg'])
+      expect(ratio(slots['stat-chip-text'], chip), `${mode} 主题：成/败徽标文字读不清（合成底 ${chip}）`).toBeGreaterThanOrEqual(4.5)
+    }
   })
 })

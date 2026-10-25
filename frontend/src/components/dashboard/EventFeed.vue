@@ -26,12 +26,12 @@ function headlineOf(event: StreamEvent): string {
       <span class="evt__text" :title="event.subject">{{ headlineOf(event) }}</span>
       <span class="evt__subject">{{ event.subject }}</span>
     </div>
-    <div v-if="!events.length" class="empty-hero" data-testid="events-empty">
+    <div v-if="!events.length" class="empty-hero empty-hero--compact" data-testid="events-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
       <div>
         <div class="empty-hero__title">事件流还没有消息</div>
         <div class="empty-hero__desc">SSE 连上后链路每一步都会落在这里；一直空白就先跑一次演练看链路是否启动。</div>
-        <router-link class="empty-hero__action" to="/workflow">去流程编排跑一次链路 →</router-link>
+        <router-link class="empty-hero__action empty-hero__cta" to="/workflow">去流程编排跑一次链路 →</router-link>
       </div>
     </div>
   </div>

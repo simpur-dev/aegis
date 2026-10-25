@@ -26,6 +26,11 @@ import { useTheme } from '@/theme/useTheme'
 
 const route = useRoute()
 const immersive = computed(() => route.meta?.immersive === true)
+/**
+ * 「一张图」是 Cesium 全屏画布，不铺全局雾底：
+ * 背景图透上来会让地球边缘发灰，也违背"地图页只认自己的黑底"这条既有口径。
+ */
+const isMapPage = computed(() => route.name === 'map')
 const currentKey = computed(() => (route.name as string) ?? 'dashboard')
 const pageTitle = computed(() => (route.meta?.title as string) ?? 'AEGIS')
 
@@ -154,6 +159,8 @@ const statusTitle = computed<string>(() =>
        逐页补只能盖住写过的表，语言包一次盖住整类。 -->
   <a-config-provider :theme="theme" :locale="zhCN">
     <div class="app-shell" :class="{ 'is-immersive': immersive }">
+      <!-- 全局雾底：离线资产 + 模糊 + 柔光，只铺在非沉浸式页面上；一张图单独豁免（见 isMapPage）。 -->
+      <div v-if="!immersive" class="app-backdrop" :class="{ 'is-hidden': isMapPage }" aria-hidden="true" />
       <!-- 侧栏：品牌 + 分组导航 + 智能体迷你状态 + 收起钮。宽度走布局令牌
            （--aeg-sidebar-width 232 / --aeg-sidebar-collapsed 64），不许在这儿写死像素。
            沉浸式路由（工作流编辑器）自带头部与画布，不显示应用外壳。 -->
@@ -694,5 +701,75 @@ const statusTitle = computed<string>(() =>
     min-width: 0;
     padding: 8px 10px;
   }
+}
+
+/* ——— 全局雾底（玻璃拟态的"底"） ———
+   素材是离线资产 `public/backgrounds/aegis-horizon.webp`（不外链任何 CDN）：
+   淡蓝→粉紫的地平线渐变，模糊 46px + 放大 1.1 后只剩柔和的色团，不抢卡片的字。
+   渐变兜底用画布令牌，两主题各一套。一张图（Cesium 全屏）由 isMapPage 隐藏这层。 */
+.app-shell {
+  background: transparent;
+}
+.app-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: linear-gradient(135deg, var(--aeg-color-canvas-from) 0%, var(--aeg-color-canvas-via) 45%, var(--aeg-color-canvas-to) 100%);
+}
+.app-backdrop::before {
+  content: '';
+  position: absolute;
+  inset: -48px;
+  background-image: url('/backgrounds/aegis-horizon.webp');
+  background-size: cover;
+  background-position: center;
+  filter: blur(46px) saturate(1.12);
+  transform: scale(1.1);
+  opacity: 0.95;
+}
+/* 柔光：左上偏白、右侧一点淡蓝，和参考图的光斑同向；深色主题换成紫蓝 */
+.app-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 18% 8%, var(--aeg-color-ball-surface), transparent 55%),
+    radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 60%);
+  opacity: 0.55;
+}
+html[data-theme='dark'] .app-backdrop::before {
+  filter: blur(46px) brightness(0.4) saturate(1.35);
+  opacity: 0.85;
+}
+html[data-theme='dark'] .app-backdrop::after {
+  background:
+    radial-gradient(circle at 18% 8%, var(--aeg-color-accent-ball-glow), transparent 58%),
+    radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 62%);
+  opacity: 0.45;
+}
+.app-backdrop.is-hidden {
+  display: none;
+}
+
+/* 侧栏与顶栏也换成玻璃：同一档模糊，和卡片是同一套语言 */
+.sidebar,
+.topbar {
+  position: relative;
+  z-index: 1;
+  background: var(--aeg-color-glass-bg);
+  backdrop-filter: blur(var(--aeg-glass-blur));
+}
+.sidebar {
+  border-right: 1px solid var(--aeg-color-glass-border);
+}
+.topbar {
+  border-bottom: 1px solid var(--aeg-color-glass-border);
+  box-shadow: none;
+}
+.main-col {
+  position: relative;
+  z-index: 1;
 }
 </style>

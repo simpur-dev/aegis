@@ -234,6 +234,59 @@ body .empty-hero__action:hover {
   text-decoration: underline;
 }
 
+/* —— 态势总览三块空态的「紧凑档」+ 实心动作按钮 ——
+   只挂在新增的 `--compact` / `__cta` 两个类上：监测页、预警页用的是基类，
+   基类一行没动，所以那两页的空态高度与蓝字链接保持原样（提示词 §3 的方案甲）。 */
+body .empty-hero--compact {
+  gap: 12px;
+  padding: 12px 16px;
+}
+body .empty-hero--compact .empty-hero__icon {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  font-size: var(--aeg-font-md);
+}
+body .empty-hero--compact .empty-hero__title {
+  margin-bottom: 4px;
+}
+/* 描述降到 sm(12px)：11px 中文在深色底上太紧，12px 是"还能一眼读完"的底线 */
+body .empty-hero--compact .empty-hero__desc {
+  font-size: var(--aeg-font-sm);
+  line-height: var(--aeg-lh-normal);
+}
+body .empty-hero__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  margin-top: 8px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-action-bg);
+  box-shadow: var(--aeg-shadow-sm);
+  color: var(--aeg-color-action-text);
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color var(--aeg-motion-base) ease;
+}
+body .empty-hero__cta:hover {
+  background: var(--aeg-color-action-bg-hover);
+  /* 基类那条 hover 下划线必须在这里显式关掉，否则按钮文字带下划线 */
+  text-decoration: none;
+}
+body .empty-hero__cta:active {
+  background: var(--aeg-color-action-bg-active);
+}
+body .empty-hero__cta:focus-visible {
+  outline: 2px solid var(--aeg-color-brand);
+  outline-offset: 2px;
+}
+
 /* "使用提示"式列表与 dashed 状态胶囊：指标页与助手页共用，所以放基座而不是页面里。 */
 body .tip-list {
   margin: 4px 0 0;

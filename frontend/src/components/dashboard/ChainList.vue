@@ -76,12 +76,12 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
         <span v-if="chain.degradations.length" class="chain__degraded" :title="chain.degradations.join('；')">降级</span>
       </div>
     </div>
-    <div v-if="!chains.length" class="empty-hero" data-testid="chains-empty">
+    <div v-if="!chains.length" class="empty-hero empty-hero--compact" data-testid="chains-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
       <div>
         <div class="empty-hero__title">还没有链路执行记录</div>
         <div class="empty-hero__desc">在监测页发起一次演练（激增/背景任一），五段链路就会跑起来并出现在这里。</div>
-        <router-link class="empty-hero__action" to="/monitor">去监测页发起演练 →</router-link>
+        <router-link class="empty-hero__action empty-hero__cta" to="/monitor">去监测页发起演练 →</router-link>
       </div>
     </div>
   </div>

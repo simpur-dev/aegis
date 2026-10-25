@@ -31,6 +31,8 @@ export function staticVars(): Record<string, string> {
   for (const [k, v] of Object.entries(font.weight)) out[`${varPrefix}weight-${k}`] = `${v}`
   for (const [k, v] of Object.entries(font.lineHeight)) out[`${varPrefix}lh-${k}`] = `${v}`
   for (const [k, v] of Object.entries(radius)) out[`${varPrefix}radius-${k}`] = v === 999 ? '999px' : `${v}px`
+  // 玻璃卡的背景模糊量：只在这一处定义，卡片们引 var，别各写一个 blur(18px)
+  out[`${varPrefix}glass-blur`] = '18px'
   for (const [k, v] of Object.entries(motion)) out[`${varPrefix}motion-${k}`] = v
   for (const [k, v] of Object.entries(z)) out[`${varPrefix}z-${k}`] = `${v}`
   out[`${varPrefix}header-height`] = `${layout.headerHeight}px`

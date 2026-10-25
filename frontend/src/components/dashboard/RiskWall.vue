@@ -48,12 +48,12 @@ defineProps<{ cells: RiskCell[]; windowSize: number }>()
       </div>
     </div>
     <!-- 卡片级空态一律用带出口的芯片块：同一屏不许并排两种空态习语（antd 居中大插图没有出口）。 -->
-    <div v-if="!cells.length" class="empty-hero" data-testid="region-empty">
+    <div v-if="!cells.length" class="empty-hero empty-hero--compact" data-testid="region-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
       <div>
         <div class="empty-hero__title">还没有研判结论</div>
         <div class="empty-hero__desc">这面墙按最近 {{ windowSize }} 条链路归集，跑一次演练就会落点。</div>
-        <router-link class="empty-hero__action" to="/monitor">去监测页发起演练 →</router-link>
+        <router-link class="empty-hero__action empty-hero__cta" to="/monitor">去监测页发起演练 →</router-link>
       </div>
     </div>
   </div>

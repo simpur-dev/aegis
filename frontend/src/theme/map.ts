@@ -35,6 +35,9 @@ export interface MapPalette {
   readonly labelBackground: string
   /** 图元描边（点与聚合环）：与字色同档，负责把风险色块从底图里"抠"出来。 */
   readonly markerOutline: string
+  /** 深空皮肤：拉远到看得见地球弧线时用的球面底色与太空底（两主题同值）。 */
+  readonly spaceGlobe: string
+  readonly deepSpace: string
   readonly labelBackgroundAlpha: number
   /** 风险填充档：把上游给的任一档 hex 归一到当前主题的对应档；认不出的原样返回。 */
   readonly fillFor: (cssColor: string) => string
@@ -67,6 +70,8 @@ export function mapPalette(mode: ThemeMode): MapPalette {
     labelHalo: c.card,
     labelBackground: c.elevated,
     markerOutline: c.text,
+    spaceGlobe: c['space-globe'],
+    deepSpace: c['deep-space'],
     labelBackgroundAlpha: 0.82,
     fillFor: (cssColor) => mapping[cssColor.toUpperCase()] ?? cssColor,
   }

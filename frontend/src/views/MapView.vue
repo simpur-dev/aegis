@@ -236,6 +236,9 @@ async function initScene(): Promise<void> {
         selectedId.value = featureId
       },
       themeMode: themeMode.value,
+      // 「深空皮肤」：只在拉远到能看见地球弧线时生效（高度门槛在 viewer.ts）。
+      // 只改画面观感，不动影像/地形/要素；其他页面不传这个开关，表现与之前一致。
+      spaceLook: true,
     })
     scene.value = created
     sceneInfo.value = created.info
@@ -477,10 +480,23 @@ watch(visibility, (value) => {
   position: relative;
 }
 .map-host {
+  position: relative;
   height: 68vh;
   min-height: 420px;
   width: 100%;
   background: #101923;
+}
+/*
+ * 「深空皮肤」的暗角：只在看得见地球弧线时压一圈，让球体边缘"浮"在星空里。
+ * 颜色本体由 viewer.ts 叠的程序化能量纹理负责——不对画布做整体调色，
+ * 那会把星空和要素一起染蓝。类名由 viewer.ts 按相机高度切换。
+ */
+.map-host.is-space-view::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 46%, transparent 42%, var(--aeg-color-overlay-scrim) 100%);
 }
 .map-placeholder {
   position: absolute;

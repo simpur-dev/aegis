@@ -63,7 +63,9 @@ def setup_logging(level: str = "INFO", *, json_output: bool = True) -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level.upper())
-    for noisy in ("uvicorn.access", "httpx"):
+    # neo4j 的 INFO 会按条吐 Graphiti 建索引时的 "index already exists" 通知（一次启动几十行），
+    # 对排障没有信息量；驱动自己的告警/错误仍按 WARNING 以上照常出。
+    for noisy in ("uvicorn.access", "httpx", "neo4j"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

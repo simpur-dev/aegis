@@ -6,8 +6,8 @@ import api from '@/api/client'
 import type { AgentInfo, ChainSummary, LatencyReport, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS } from '@/api/types'
 import { workflowApi } from '@/api/workflow'
-import PageHero from '@/components/PageHero.vue'
 import KpiStrip, { type KpiItem } from '@/components/dashboard/KpiStrip.vue'
+import PageHero from '@/components/PageHero.vue'
 import AgentBoard from '@/components/dashboard/AgentBoard.vue'
 import ChainList from '@/components/dashboard/ChainList.vue'
 import EventFeed from '@/components/dashboard/EventFeed.vue'
@@ -212,14 +212,6 @@ watch(
 
 <template>
   <div>
-    <PageHero title="态势总览" badge="实时" caption="值班员的第一屏：要人处理的待办、现场读数、风险瓦片、链路记录与实时事件流。">
-      <template #actions>
-        <span data-testid="dashboard-updated">
-          {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
-        </span>
-        <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
-      </template>
-    </PageHero>
     <!-- 值班员的任务入口：有单在等就顶到第一屏，和流程页的待办条同一句话、同一个数 -->
     <div v-if="pendingSign !== null && pendingSign > 0" class="dash-todos" data-testid="dashboard-todos">
       <span>有 {{ pendingSign }} 张工单在等人签。</span>
@@ -233,49 +225,187 @@ watch(
       data-testid="dashboard-error"
       class="dash-error"
     />
-    <KpiStrip :items="kpis" />
-    <a-row :gutter="12">
-      <a-col :xs="24" :lg="10">
-        <a-card :title="gridTitle" size="small" :loading="loading">
-          <RiskWall :cells="regionGrid" :window-size="CHAIN_WINDOW" />
-        </a-card>
-      </a-col>
+    <!--
+      玻璃拟态三栏骨架（2026-10-25）：
+      - KPI 球带放进主内容列：它的右边缘要和下方「链路执行记录」对齐，
+        同时右侧智能体栏从这一行就起头（与球带齐平），所以球带不能再横跨整页。
+      - 主内容 40:60 放「风险区域网格 + 链路执行记录」（原来的 10/14 栅格），事件流通栏；
+        理由是这两块是同一件事的两面（哪片区域危险 → 平台怎么处理），并排才好对读；
+        事件流是时间轴，横着铺一行比挤在半栏里更好扫。
+      - 智能体在线状态放右侧常驻栏：它是"平台还活着吗"的背景信息，
+        不该抢占主内容的首屏，但又必须一直看得见，所以 sticky。
+      - 全部面板共用 .glass-panel，不各写一份 backdrop-filter。
+    -->
+    <div class="dash-layout">
+      <div class="dash-main">
+        <KpiStrip :items="kpis">
+          <!-- 页头并进第一块玻璃卡：标题/徽标/说明/更新时间/刷新都与四颗球同属"值班员的第一屏"。
+               仍然用统一的 PageHero 组件（uiTheme 门禁要求常规页面必须接它），只是换个宿主。 -->
+          <template #header>
+            <div class="dash-hero">
+              <PageHero
+                title="态势总览"
+                badge="实时"
+                caption="值班员的第一屏：要人处理的待办、现场读数、风险瓦片、链路记录与实时事件流。"
+              >
+                <template #actions>
+                  <span data-testid="dashboard-updated">
+                    {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
+                  </span>
+                  <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
+                </template>
+              </PageHero>
+            </div>
+          </template>
+        </KpiStrip>
 
-      <a-col :xs="24" :lg="14">
-        <a-card :title="chainsTitle" size="small" :loading="loading">
-          <ChainList :chains="recentChains" />
-        </a-card>
-      </a-col>
-    </a-row>
+        <div class="dash-split">
+          <section class="glass-panel">
+            <a-card :title="gridTitle" size="small" :loading="loading">
+              <RiskWall :cells="regionGrid" :window-size="CHAIN_WINDOW" />
+            </a-card>
+          </section>
+          <section class="glass-panel">
+            <a-card :title="chainsTitle" size="small" :loading="loading">
+              <ChainList :chains="recentChains" />
+            </a-card>
+          </section>
+        </div>
 
-    <a-row :gutter="12" class="dash-row">
-      <a-col :xs="24" :lg="14">
-        <a-card title="智能体在线状态（经总线契约注册）" size="small">
-          <AgentBoard :agents="agents" />
-        </a-card>
-      </a-col>
-      <a-col :xs="24" :lg="10">
-        <a-card title="实时事件流（SSE）" size="small">
-          <EventFeed :events="events.slice(0, 8)" />
-        </a-card>
-      </a-col>
-    </a-row>
+        <section class="glass-panel">
+          <a-card title="实时事件流（SSE）" size="small">
+            <EventFeed :events="events.slice(0, 8)" />
+          </a-card>
+        </section>
 
-    <a-row class="dash-row">
-      <a-col :span="24">
-        <!-- 垫在明细之后：KPI 与链路要先占住首屏，但这块必须和它们在同一页——
-             判"预案为什么变慢"时翻的是这个，不是日志。 -->
-        <LegStatusPanel />
-      </a-col>
-    </a-row>
+        <section class="glass-panel">
+          <!-- 垫在明细之后：KPI 与链路要先占住首屏，但这块必须和它们在同一页——
+               判"预案为什么变慢"时翻的是这个，不是日志。 -->
+          <LegStatusPanel />
+        </section>
+      </div>
+
+      <aside class="dash-rail">
+        <section class="glass-panel">
+          <a-card title="智能体在线状态（经总线契约注册）" size="small">
+            <AgentBoard :agents="agents" />
+          </a-card>
+        </section>
+      </aside>
+    </div>
   </div>
 </template>
 
 <style scoped>
 /* KPI 托盘（.stat-cell）与空态（.empty-hero）的样式在 styles/theme.css：两页共用一份。 */
-.dash-row {
-  margin-top: var(--aeg-space-s3);
+
+/* 页头并进第一块玻璃卡：仍然用统一的 PageHero（uiTheme 门禁要求常规页面必须接它），
+   只是把宿主从页面顶部挪到 KpiStrip 的 header 插槽里，所以只吃掉它自带的下外边距。 */
+.dash-hero {
+  width: 100%;
 }
+.dash-hero :deep(.page-head) {
+  margin-bottom: 0;
+}
+
+/* 三栏大屏骨架：主内容 + 右侧常驻智能体栏（≥1280px 才分栏，更窄时折到主内容下方，
+   与侧栏 1000px 的收起断点保持同一种"先收窄、再折行"的观感）。 */
+.dash-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--aeg-space-s4);
+  align-items: start;
+}
+.dash-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--aeg-space-s4);
+  min-width: 0;
+}
+.dash-split {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--aeg-space-s4);
+}
+.dash-rail {
+  position: sticky;
+  top: var(--aeg-space-s4);
+  min-width: 0;
+}
+/* 窄栏里 agent id 收窄、能力标签让位：AgentBoard 的固定列（id/类型/负载条）在 340px 栏里
+   会顶破面板。id 本来就有省略号；能力标签（risk_assess 这类）在详情页里也看得到，
+   这里省掉换"一行读得完"更值。 */
+.dash-rail :deep(.agent__id) {
+  max-width: 110px;
+}
+.dash-rail :deep(.agent__caps) {
+  display: none;
+}
+.dash-rail :deep(.agent__loadbar) {
+  width: 32px;
+}
+.dash-rail :deep(.agent) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.dash-rail :deep(.agent__served) {
+  margin-left: auto;
+}
+.dash-rail .glass-panel {
+  overflow: hidden;
+}
+@media (max-width: 1279px) {
+  .dash-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash-rail {
+    position: static;
+  }
+}
+@media (max-width: 1100px) {
+  .dash-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 玻璃卡：一张半透明板 + 细白边 + 背景模糊；里层 antd 卡片的 chrome 全部让位，
+   只留标题的字距与小号字。所有面板共用这一个类，不许各写一份 backdrop-filter。 */
+.glass-panel {
+  padding: var(--aeg-space-s4);
+  border: 1px solid var(--aeg-color-glass-border);
+  border-radius: var(--aeg-radius-xl);
+  background: var(--aeg-color-glass-bg);
+  box-shadow: var(--aeg-shadow-md);
+  backdrop-filter: blur(var(--aeg-glass-blur));
+}
+.glass-panel :deep(.ant-card) {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+.glass-panel :deep(.ant-card-head) {
+  min-height: 0;
+  padding: 0 0 var(--aeg-space-s2);
+  border-bottom: 1px solid var(--aeg-color-glass-border);
+  background: transparent;
+}
+.glass-panel :deep(.ant-card-head-title) {
+  padding: 0;
+  color: var(--aeg-color-text);
+  font-size: var(--aeg-font-md);
+  font-weight: var(--aeg-weight-bold);
+  letter-spacing: 0.02em;
+  /* 标题加重之后会更长：允许折行，别用 antd 默认的省略号把"感知→研判→决策"截掉 */
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: var(--aeg-lh-snug);
+}
+.glass-panel :deep(.ant-card-body) {
+  padding: 0;
+  background: transparent;
+}
+
 .dash-error {
   margin-bottom: var(--aeg-space-s3);
 }
