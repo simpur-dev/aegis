@@ -114,6 +114,18 @@ export const colorSlots = {
     'stat-chip-bg': 'rgba(255, 255, 255, 0.86)',
     'stat-chip-border': '#DCE5F2',
     'stat-chip-text': '#3F4A5C',
+    // 监测页「时序曲线」重点卡：蓝底白线（白字压两端渐变都要过 AA，见 tokens.spec）
+    'chart-hero-from': '#2C56A8',
+    'chart-hero-to': '#3A6FC4',
+    'chart-hero-line': '#FFFFFF',
+    'chart-hero-text': '#FFFFFF',
+    'chart-hero-grid': 'rgba(255, 255, 255, 0.14)',
+    'chart-hero-axis': 'rgba(255, 255, 255, 0.38)',
+    'chart-hero-area-from': 'rgba(255, 255, 255, 0.14)',
+    'chart-hero-area-to': 'rgba(255, 255, 255, 0.01)',
+    // 重点卡换成"模糊底图"之后，还要压一层深蓝：底图有亮斑，白线会被吃掉
+    'chart-hero-shade-from': 'rgba(15, 37, 82, 0.55)',
+    'chart-hero-shade-to': 'rgba(28, 62, 122, 0.3)',
   },
   dark: {
     page: '#0B1220',
@@ -180,6 +192,17 @@ export const colorSlots = {
     'stat-chip-bg': 'rgba(28, 42, 64, 0.86)',
     'stat-chip-border': '#2C3E5C',
     'stat-chip-text': '#C9D5E6',
+    // 深色主题的重点卡换成靛蓝渐变；白线/近白字仍要过 3:1 / 4.5:1
+    'chart-hero-from': '#16294D',
+    'chart-hero-to': '#24497F',
+    'chart-hero-line': '#EAF2FF',
+    'chart-hero-text': '#EAF2FF',
+    'chart-hero-grid': 'rgba(234, 242, 255, 0.12)',
+    'chart-hero-axis': 'rgba(234, 242, 255, 0.32)',
+    'chart-hero-area-from': 'rgba(234, 242, 255, 0.12)',
+    'chart-hero-area-to': 'rgba(234, 242, 255, 0.01)',
+    'chart-hero-shade-from': 'rgba(8, 16, 34, 0.7)',
+    'chart-hero-shade-to': 'rgba(16, 34, 66, 0.48)',
   },
 } as const satisfies Record<'light' | 'dark', Record<string, string>>
 

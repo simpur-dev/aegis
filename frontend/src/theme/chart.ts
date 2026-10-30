@@ -72,3 +72,34 @@ export function chartTheme(mode: ThemeMode): Record<string, unknown> {
     bar: { barMaxWidth: space.s8 },
   }
 }
+
+/**
+ * 「蓝底白线」重点图的取色表（监测页时序曲线卡用）。
+ *
+ * 为什么单独导出而不塞进 `chartTheme`：整套主题是给所有图表用的，而这张卡的蓝底只属于它；
+ * 颜色仍全部来自 `colorSlots`，画布侧（ECharts）和 DOM 侧（卡片渐变）引用的是同一批令牌。
+ */
+export interface ChartHeroPalette {
+  from: string
+  to: string
+  line: string
+  text: string
+  grid: string
+  axis: string
+  areaFrom: string
+  areaTo: string
+}
+
+export function chartHero(mode: ThemeMode): ChartHeroPalette {
+  const c = colorSlots[mode]
+  return {
+    from: c['chart-hero-from'],
+    to: c['chart-hero-to'],
+    line: c['chart-hero-line'],
+    text: c['chart-hero-text'],
+    grid: c['chart-hero-grid'],
+    axis: c['chart-hero-axis'],
+    areaFrom: c['chart-hero-area-from'],
+    areaTo: c['chart-hero-area-to'],
+  }
+}

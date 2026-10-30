@@ -11,6 +11,9 @@ import SystemTerminal from '@/components/SystemTerminal.vue'
 import FreshnessBar from '@/components/FreshnessBar.vue'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import type { ChartOption } from '@/components/echarts'
+import { echarts } from '@/components/echarts'
+import { chartHero } from '@/theme/chart'
+import { useTheme } from '@/theme/useTheme'
 import { formatOperatingTime, operatingClock } from '@/utils/clock'
 import { ingestLatencyLabel } from '@/utils/ingestLatency'
 
@@ -45,24 +48,73 @@ function sortedUnion(...groups: string[][]): string[] {
  */
 const reportOpen = ref(false)
 
+/** 图卡配色跟着主题换：canvas 读不到 CSS 变量，取色必须从 theme/chart.ts 派生（见那边的说明）。 */
+const { resolved: themeMode } = useTheme()
+
+/**
+ * 最新一条**有效**读数：画布上劣化读数本来就是断点，右上角这块只报能用的数；
+ * 没有就写 `—`，不拿 0 或上一条 suspect 冒充。
+ */
+const latestOk = computed<TelemetryReading | null>(() => {
+  let best: TelemetryReading | null = null
+  for (const reading of readings.value) {
+    if (reading.quality_flag !== 'ok') continue
+    if (!best || reading.observed_at > best.observed_at) best = reading
+  }
+  return best
+})
+
 /** 图表与表格用的就是 `readings`：筛选已经交给后端，这里不再本地二次过滤（见 `load()`）。 */
-const chartOption = computed<ChartOption>(() => ({
-  title: { text: `${metric.value} 时序（${region.value || '全部区域'}）`, left: 'center' },
-  tooltip: { trigger: 'axis' },
-  grid: { left: 56, right: 24, bottom: 48 },
-  xAxis: { type: 'category', data: readings.value.map((r) => operatingClock(r.observed_at)) },
-  yAxis: { type: 'value', name: readings.value[0]?.unit ?? '' },
-  series: [
-    {
-      name: metric.value,
-      type: 'line',
-      smooth: true,
-      showSymbol: readings.value.length < 60,
-      data: readings.value.map((r) => (r.quality_flag === 'ok' ? r.value : null)),
-      connectNulls: false,
+const chartOption = computed<ChartOption>(() => {
+  const hero = chartHero(themeMode.value)
+  return {
+    // 标题由卡片头承担，画布里不再重复一行
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'line', lineStyle: { color: hero.line, type: 'dashed', width: 1 } },
     },
-  ],
-}))
+    grid: { left: 56, right: 24, top: 16, bottom: 48 },
+    xAxis: {
+      type: 'category',
+      data: readings.value.map((r) => operatingClock(r.observed_at)),
+      axisLine: { lineStyle: { color: hero.axis } },
+      axisTick: { show: false },
+      axisLabel: { color: hero.text },
+    },
+    yAxis: {
+      type: 'value',
+      name: readings.value[0]?.unit ?? '',
+      nameTextStyle: { color: hero.text },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: hero.text },
+      splitLine: { lineStyle: { color: hero.grid } },
+    },
+    series: [
+      {
+        name: metric.value,
+        type: 'line',
+        smooth: true,
+        showSymbol: readings.value.length < 60,
+        // 窗口 2000 条压进 400px 宽会糊成一条白带：按像素做 LTTB 抽样，形状还在、线看得清
+        sampling: 'lttb',
+        symbolSize: 4,
+        itemStyle: { color: hero.line },
+        // 线细到 1px（不要阴影：阴影会把线加粗成一团）；亮底上靠纯白和深色蒙层拉开对比
+        lineStyle: { color: hero.line, width: 1 },
+        // 白色低透明度面积：顶部稍亮、往下化开，压在蓝底上不遮网格
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: hero.areaFrom },
+            { offset: 1, color: hero.areaTo },
+          ]),
+        },
+        data: readings.value.map((r) => (r.quality_flag === 'ok' ? r.value : null)),
+        connectNulls: false,
+      },
+    ],
+  }
+})
 
 const columns = [
   { title: '站点', dataIndex: 'station_id', key: 'station_id' },
@@ -199,7 +251,7 @@ onBeforeUnmount(() => {
       </template>
     </PageHero>
 
-    <a-card size="small" title="数据接入与监测">
+    <a-card class="monitor-card" size="small" title="数据接入与监测">
       <a-space wrap>
         <a-select v-model:value="region" style="width: 180px" placeholder="区域">
           <a-select-option value="">全部区域</a-select-option>
@@ -220,12 +272,22 @@ onBeforeUnmount(() => {
 
     <a-row :gutter="12" style="margin-top: 12px">
       <a-col :xs="24" :lg="10">
-        <a-card size="small" title="时序曲线（劣化读数以缺口显示，不参与判定）">
+        <a-card class="monitor-card monitor-chart-hero" size="small" title="时序曲线（劣化读数以缺口显示，不参与判定）">
+          <!-- 右上角报"最新一条有效读数"：画布上可能全是断点，这块只报能用的数 -->
+          <template #extra>
+            <div class="chart-latest">
+              <span class="chart-latest__value">
+                {{ latestOk ? latestOk.value.toFixed(2) : '—'
+                }}<span class="chart-latest__unit">{{ latestOk?.unit ?? '' }}</span>
+              </span>
+              <span class="chart-latest__time">{{ latestOk ? operatingClock(latestOk.observed_at) : '尚无有效读数' }}</span>
+            </div>
+          </template>
           <EChart :option="chartOption" height="360px" />
         </a-card>
       </a-col>
       <a-col :xs="24" :lg="14">
-        <a-card size="small" title="最新遥测明细" :loading="loading">
+        <a-card class="monitor-card" size="small" title="最新遥测明细" :loading="loading">
           <a-table
             :columns="columns"
             :data-source="ledgerReadings"
@@ -273,3 +335,110 @@ onBeforeUnmount(() => {
     <SystemTerminal />
   </div>
 </template>
+
+<style scoped>
+/*
+ * 监测页三块卡统一成「玻璃板 + 大圆角 + 粗标题」：与态势总览同一套语言。
+ * 内边距用 16px（≈ 一个正文字的距离），卡片之间靠留白分开、不靠重边框。
+ */
+.monitor-card {
+  border: 1px solid var(--aeg-color-glass-border);
+  border-radius: var(--aeg-radius-xl);
+  background: var(--aeg-color-glass-bg);
+  box-shadow: var(--aeg-shadow-md);
+  backdrop-filter: blur(var(--aeg-glass-blur));
+}
+.monitor-card :deep(.ant-card-head) {
+  min-height: 0;
+  padding: var(--aeg-space-s4) var(--aeg-space-s4) 0;
+  border-bottom: none;
+  background: transparent;
+}
+.monitor-card :deep(.ant-card-head-title) {
+  padding: 0;
+  color: var(--aeg-color-text);
+  font-size: var(--aeg-font-md);
+  font-weight: var(--aeg-weight-bold);
+  letter-spacing: 0.01em;
+  white-space: normal;
+}
+.monitor-card :deep(.ant-card-body) {
+  padding: var(--aeg-space-s4);
+  background: transparent;
+}
+
+/*
+ * 「时序曲线」重点卡：底图换成蓝色几何光斑（本地资产，模糊 18px），再压一层深蓝渐变，
+ * 让白色细线成为画面里最亮的东西。DOM 侧读 --aeg-color-chart-hero-*，
+ * canvas 侧读 theme/chart.ts 的 chartHero()，两边同一批令牌。
+ */
+.monitor-chart-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--aeg-color-glass-border);
+  background: var(--aeg-color-chart-hero-from);
+  box-shadow: var(--aeg-shadow-lg);
+}
+.monitor-chart-hero::before {
+  content: '';
+  position: absolute;
+  inset: -40px;
+  background-image: url('/backgrounds/monitor-chart-bg.webp');
+  background-size: cover;
+  background-position: center;
+  filter: blur(10px) saturate(1.05);
+  transform: scale(1.1);
+  opacity: 0.95;
+}
+.monitor-chart-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, var(--aeg-color-chart-hero-shade-from), var(--aeg-color-chart-hero-shade-to));
+}
+.monitor-chart-hero :deep(.ant-card-head),
+.monitor-chart-hero :deep(.ant-card-body) {
+  position: relative;
+  z-index: 1;
+}
+.monitor-chart-hero :deep(.ant-card-head) {
+  border-bottom: 1px solid var(--aeg-color-chart-hero-grid);
+  background: transparent;
+}
+.monitor-chart-hero :deep(.ant-card-head-title) {
+  color: var(--aeg-color-chart-hero-text);
+}
+.monitor-chart-hero :deep(.ant-card-extra) {
+  padding: 0;
+}
+.monitor-chart-hero :deep(.ant-card-body) {
+  background: transparent;
+}
+
+/* 右上角：最新有效读数 + 观测时刻 */
+.chart-latest {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.chart-latest__value {
+  font-family: var(--aeg-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--aeg-font-lg);
+  font-weight: var(--aeg-weight-bold);
+  line-height: var(--aeg-lh-tight);
+  color: var(--aeg-color-chart-hero-text);
+}
+.chart-latest__unit {
+  margin-left: var(--aeg-space-s1);
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-semibold);
+  opacity: 0.85;
+}
+.chart-latest__time {
+  font-size: var(--aeg-font-xs);
+  opacity: 0.8;
+  color: var(--aeg-color-chart-hero-text);
+}
+</style>

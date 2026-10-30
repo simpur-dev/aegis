@@ -195,4 +195,14 @@ describe('设计令牌真源', () => {
       expect(ratio(slots['stat-chip-text'], chip), `${mode} 主题：成/败徽标文字读不清（合成底 ${chip}）`).toBeGreaterThanOrEqual(4.5)
     }
   })
+
+  it('时序曲线重点卡：白字/白线压在蓝色渐变的两端都够亮（两主题各算一遍）', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const slots = colorSlots[mode]
+      for (const stop of ['chart-hero-from', 'chart-hero-to'] as const) {
+        expect(ratio(slots['chart-hero-text'], slots[stop]), `${mode} 主题：重点卡文字在渐变端 ${stop} 读不清`).toBeGreaterThanOrEqual(4.5)
+        expect(ratio(slots['chart-hero-line'], slots[stop]), `${mode} 主题：重点卡折线在渐变端 ${stop} 不够醒目`).toBeGreaterThanOrEqual(3)
+      }
+    }
+  })
 })

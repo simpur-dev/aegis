@@ -118,7 +118,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div>
+  <div class="metrics-page">
     <PageHero title="考核指标" badge="实测" caption="数据来自运行时埋点，非人工填写。">
       <template #actions>
         <a-button @click="load">重新读取</a-button>
@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
       </template>
     </PageHero>
 
-    <a-card size="small" title="考核指标实测" :loading="loading">
+    <a-card class="metrics-card" size="small" title="考核指标实测" :loading="loading">
       <FreshnessBar
         :fetched-at="updatedAt"
         :label="`本页 ${Object.keys(report?.violations ?? {}).length} 项越限 ｜ 每 ${Math.round(REFRESH_MS / 1000)} 秒自动取一次`"
@@ -190,11 +190,11 @@ onBeforeUnmount(() => {
       </p>
     </a-card>
 
-    <a-card size="small" title="时延分布" style="margin-top: 12px">
+    <a-card class="metrics-card" size="small" title="时延分布">
       <EChart :option="chartOption" height="360px" />
     </a-card>
 
-    <a-card size="small" title="指标明细" style="margin-top: 12px">
+    <a-card class="metrics-card" size="small" title="指标明细">
       <a-table
         :data-source="rows"
         row-key="name"
@@ -277,5 +277,43 @@ onBeforeUnmount(() => {
   background: var(--aeg-tag-red-bg);
   color: var(--aeg-tag-red-text);
   font-size: var(--aeg-font-sm);
+}
+
+/* —— 与态势总览 / 监测预警同一套「玻璃板」：细边、22px 大圆角、粗标题、16px 内边距 ——
+   页头数字托盘（PageHero 的 #stats）和下面三块 a-card 一起换，避免半套样式。 */
+.metrics-page :deep(.page-head__stats) {
+  margin-top: var(--aeg-space-s4);
+  padding: var(--aeg-space-s4);
+  border: 1px solid var(--aeg-color-glass-border);
+  border-radius: var(--aeg-radius-xl);
+  background: var(--aeg-color-glass-bg);
+  box-shadow: var(--aeg-shadow-md);
+  backdrop-filter: blur(var(--aeg-glass-blur));
+}
+.metrics-card {
+  margin-top: var(--aeg-space-s4);
+  border: 1px solid var(--aeg-color-glass-border);
+  border-radius: var(--aeg-radius-xl);
+  background: var(--aeg-color-glass-bg);
+  box-shadow: var(--aeg-shadow-md);
+  backdrop-filter: blur(var(--aeg-glass-blur));
+}
+.metrics-card :deep(.ant-card-head) {
+  min-height: 0;
+  padding: var(--aeg-space-s4) var(--aeg-space-s4) 0;
+  border-bottom: none;
+  background: transparent;
+}
+.metrics-card :deep(.ant-card-head-title) {
+  padding: 0;
+  color: var(--aeg-color-text);
+  font-size: var(--aeg-font-md);
+  font-weight: var(--aeg-weight-bold);
+  letter-spacing: 0.01em;
+  white-space: normal;
+}
+.metrics-card :deep(.ant-card-body) {
+  padding: var(--aeg-space-s4);
+  background: transparent;
 }
 </style>
