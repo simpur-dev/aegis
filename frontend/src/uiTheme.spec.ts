@@ -258,10 +258,10 @@ describe('UI 基座', () => {
       /\.caps__chip\s*\{[\s\S]{0,400}min-height: 26px/,
     )
 
-    const panel = readRepoFile('frontend', 'src', 'components', 'map', 'MapPanel.vue').replace(/\/\*[\s\S]*?\*\//g, '')
+    const panel = readRepoFile('frontend', 'src', 'components', 'map', 'MapLayersPanel.vue').replace(/\/\*[\s\S]*?\*\//g, '')
     expect(panel, '风险芯片的颜色不是从 riskLegend() 那一份取的').toMatch(/chipStyle\(entry\.colorCss\)/)
     for (const banned of ['#cf1322', '#fa8c16', '#fadb14', '#1677ff']) {
-      expect(panel.toLowerCase(), `MapPanel 里写死了风险色 ${banned}（图例与图上会分成两张皮）`).not.toContain(
+      expect(panel.toLowerCase(), `MapLayersPanel 里写死了风险色 ${banned}（图例与图上会分成两张皮）`).not.toContain(
         `: ${banned}`,
       )
     }

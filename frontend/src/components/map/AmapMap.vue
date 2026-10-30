@@ -134,14 +134,14 @@ void render()
 </template>
 
 <style scoped>
-/* 高度必须是实值，不能是 100%：父级 .map-frame 高度 auto，百分比会塌缩成 0，
-   而 JS API 在建图那一刻量容器高——量到 0 画布就是 0 高，之后再也不长（真机量到 amap-layer 1714×0）。
-   68vh/420px 与 Cesium 那档的 .map-host 保持同一约定（MapView.vue）。 */
+/* 高度跟父级走：MapView 的 .map-frame 现在是绝对定位铺满（inset: 0），有确定高度，
+   所以这里用 100% 不会塌缩——原来那档 68vh 会把高德地图只画到上半屏，下面露出页面底色。
+   JS API 在建图那一刻量容器高，容器必须是满的（真机曾量到 amap-layer 1714×0）。 */
 .amap-frame {
   position: relative;
   width: 100%;
-  height: 68vh;
-  min-height: 420px;
+  height: 100%;
+  min-height: 0;
 }
 .amap-host {
   width: 100%;

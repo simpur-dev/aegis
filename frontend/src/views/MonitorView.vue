@@ -117,13 +117,13 @@ const chartOption = computed<ChartOption>(() => {
 })
 
 const columns = [
-  { title: '站点', dataIndex: 'station_id', key: 'station_id' },
-  { title: '区域', dataIndex: 'region_code', key: 'region_code' },
-  { title: '指标', dataIndex: 'metric', key: 'metric' },
-  { title: '数值', key: 'value' },
-  { title: '质量', dataIndex: 'quality_flag', key: 'quality_flag' },
-  { title: '观测时刻（UTC+8，最新在上）', dataIndex: 'observed_at', key: 'observed_at' },
-  { title: '接入时延', key: 'latency' },
+  { title: '站点', dataIndex: 'station_id', key: 'station_id', width: 104 },
+  { title: '区域', dataIndex: 'region_code', key: 'region_code', width: 56 },
+  { title: '指标', dataIndex: 'metric', key: 'metric', width: 74 },
+  { title: '数值', key: 'value', width: 88 },
+  { title: '质量', dataIndex: 'quality_flag', key: 'quality_flag', width: 56 },
+  { title: '观测时刻（UTC+8，最新在上）', dataIndex: 'observed_at', key: 'observed_at', width: 150 },
+  { title: '接入时延', key: 'latency', width: 140 },
 ]
 
 /**
@@ -271,7 +271,7 @@ onBeforeUnmount(() => {
     </a-card>
 
     <a-row :gutter="12" style="margin-top: 12px">
-      <a-col :xs="24" :lg="10">
+      <a-col :xs="24" :xl="10">
         <a-card class="monitor-card monitor-chart-hero" size="small" title="时序曲线（劣化读数以缺口显示，不参与判定）">
           <!-- 右上角报"最新一条有效读数"：画布上可能全是断点，这块只报能用的数 -->
           <template #extra>
@@ -286,17 +286,18 @@ onBeforeUnmount(() => {
           <EChart :option="chartOption" height="360px" />
         </a-card>
       </a-col>
-      <a-col :xs="24" :lg="14">
+      <a-col :xs="24" :xl="14">
         <a-card class="monitor-card" size="small" title="最新遥测明细" :loading="loading">
-          <a-table
-            :columns="columns"
-            :data-source="ledgerReadings"
-            :pagination="tablePagination"
-            row-key="(r: TelemetryReading) => r.station_id + r.observed_at"
-            size="small"
-            :scroll="{ x: 'max-content' }"
-            @change="onTableChange"
-          >
+          <!-- 不再声明横向滚动：字号收到 12px、单元格留白收到 8px，七列在版块内换行显示完 -->
+          <div class="monitor-table">
+            <a-table
+              :columns="columns"
+              :data-source="ledgerReadings"
+              :pagination="tablePagination"
+              row-key="(r: TelemetryReading) => r.station_id + r.observed_at"
+              size="small"
+              @change="onTableChange"
+            >
             <template #emptyText>
               <!-- 空态不能只说"暂无数据"：这一页的读数要么来自演练、要么来自真实上报，
                    值班员站在这儿想知道的是"那我做什么才会有数"。 -->
@@ -323,7 +324,8 @@ onBeforeUnmount(() => {
                 {{ formatOperatingTime(record.observed_at) }}
               </template>
             </template>
-          </a-table>
+            </a-table>
+          </div>
         </a-card>
       </a-col>
     </a-row>
@@ -440,5 +442,45 @@ onBeforeUnmount(() => {
   font-size: var(--aeg-font-xs);
   opacity: 0.8;
   color: var(--aeg-color-chart-hero-text);
+}
+
+/* 明细表收紧档：字号 12px + 单元格 8px，表头允许换行；
+   七列在版块里换行排完，不再出现横向滚动条 */
+.monitor-table :deep(.ant-table) {
+  font-size: var(--aeg-font-sm);
+}
+/* 列宽按列配置走，不再被内容撑开 */
+.monitor-table :deep(table) {
+  table-layout: fixed;
+}
+.monitor-table :deep(.ant-table-thead > tr > th) {
+  padding: var(--aeg-space-s2);
+  font-size: var(--aeg-font-sm);
+  line-height: var(--aeg-lh-snug);
+  white-space: normal;
+}
+.monitor-table :deep(.ant-table-tbody > tr > td) {
+  padding: var(--aeg-space-s2);
+  font-size: var(--aeg-font-sm);
+  line-height: var(--aeg-lh-snug);
+}
+/* 表格不再自带白底白框：透出玻璃卡本身的底，只留发丝分隔线（令牌色，不是纯白） */
+.monitor-table :deep(.ant-table),
+.monitor-table :deep(.ant-table-container),
+.monitor-table :deep(.ant-table-content),
+.monitor-table :deep(.ant-table-thead > tr > th),
+.monitor-table :deep(.ant-table-tbody > tr > td) {
+  background: transparent;
+}
+.monitor-table :deep(.ant-table-thead > tr > th) {
+  /* 表头压一层比卡片略深的底色，和明细行分开；仍是令牌色，不是纯白 */
+  background: var(--aeg-color-sunken);
+  border-bottom-color: var(--aeg-color-glass-border);
+}
+.monitor-table :deep(.ant-table-tbody > tr > td) {
+  border-bottom-color: var(--aeg-color-border-subtle);
+}
+.monitor-table :deep(.ant-table-tbody > tr.ant-table-row:hover > td) {
+  background: var(--aeg-color-brand-soft);
 }
 </style>

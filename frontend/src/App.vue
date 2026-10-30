@@ -25,11 +25,6 @@ import { useTheme } from '@/theme/useTheme'
 
 const route = useRoute()
 const immersive = computed(() => route.meta?.immersive === true)
-/**
- * 「一张图」是 Cesium 全屏画布，不铺全局雾底：
- * 背景图透上来会让地球边缘发灰，也违背"地图页只认自己的黑底"这条既有口径。
- */
-const isMapPage = computed(() => route.name === 'map')
 const currentKey = computed(() => (route.name as string) ?? 'dashboard')
 
 const health = ref<{ status: string; version: string } | null>(null)
@@ -109,8 +104,8 @@ const statusTitle = computed<string>(() =>
        逐页补只能盖住写过的表，语言包一次盖住整类。 -->
   <a-config-provider :theme="theme" :locale="zhCN">
     <div class="app-shell" :class="{ 'is-immersive': immersive }">
-      <!-- 全局雾底：离线资产 + 模糊 + 柔光，只铺在非沉浸式页面上；一张图单独豁免（见 isMapPage）。 -->
-      <div v-if="!immersive" class="app-backdrop" :class="{ 'is-hidden': isMapPage }" aria-hidden="true" />
+      <!-- 全局雾底：所有页面共用（含一张图与流程编排）——浅色/深色各一档，地图画布自己仍是深空底 -->
+      <div class="app-backdrop" aria-hidden="true" />
       <!-- 侧栏已退役（2026-10-30）：导航搬到顶栏做横向一排，顶栏不再铺底色。
            当前页用半透明白色圆角底标出；右侧自左向右是「状态 → 浅/深 → 品牌」。 -->
       <div class="main-col">
@@ -183,7 +178,7 @@ const statusTitle = computed<string>(() =>
           </div>
         </header>
 
-        <main class="main-content" :class="{ 'is-immersive': immersive }">
+        <main class="main-content" :class="{ 'is-immersive': immersive, 'is-map': route.name === 'map' }">
           <router-view />
           <!-- 服务令牌条常驻页脚：一台机器填一次，但"这台开了鉴权"必须每页都说得出口（§4.8.1） -->
           <ServiceTokenBar v-if="!immersive" />
@@ -438,6 +433,10 @@ const statusTitle = computed<string>(() =>
   overflow-y: auto;
   padding: var(--aeg-space-s5) var(--aeg-space-s6);
 }
+/* 一张图全屏：主内容不再留内边距，地图自己铺满顶栏以下 */
+.main-content.is-map {
+  padding: 0;
+}
 .main-content.is-immersive {
   height: 100vh;
   overflow: hidden;
@@ -448,7 +447,8 @@ const statusTitle = computed<string>(() =>
   height: 100vh;
 }
 .app-shell.is-immersive {
-  background: var(--aeg-color-editor-canvas, var(--aeg-color-page));
+  /* 编辑器外壳也让雾底透上来：画布与面板自己带底色，这里不再铺一整块深色板 */
+  background: transparent;
 }
 .footer {
   padding: var(--aeg-space-s4);
@@ -481,7 +481,7 @@ const statusTitle = computed<string>(() =>
 /* ——— 全局雾底（玻璃拟态的"底"） ———
    素材是离线资产 `public/backgrounds/aegis-horizon.webp`（不外链任何 CDN）：
    淡蓝→粉紫的地平线渐变，模糊 46px + 放大 1.1 后只剩柔和的色团，不抢卡片的字。
-   渐变兜底用画布令牌，两主题各一套。一张图（Cesium 全屏）由 isMapPage 隐藏这层。 */
+   渐变兜底用画布令牌，两主题各一套。所有页面共用（含一张图与流程编排）。 */
 .app-shell {
   background: transparent;
 }
@@ -523,9 +523,6 @@ html[data-theme='dark'] .app-backdrop::after {
     radial-gradient(circle at 18% 8%, var(--aeg-color-accent-ball-glow), transparent 58%),
     radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 62%);
   opacity: 0.45;
-}
-.app-backdrop.is-hidden {
-  display: none;
 }
 
 /* 顶栏透明：不再盖玻璃底（导航文字直接落在雾底上）；只保留层级，压住雾底 */

@@ -22,7 +22,7 @@ function withoutComments(code: string): string {
 
 const PURE_MODULES = ['./entities.ts', './offline.ts', './terrain.ts', './basemap.ts', './external.ts', './gcj02.ts']
 const RENDER_MODULES = ['./viewer.ts']
-const COMPONENTS = ['./MapPanel.vue', '../../views/MapView.vue']
+const COMPONENTS = ['./MapStatusPanel.vue', './MapLayersPanel.vue', '../../views/MapView.vue']
 const ALL_SOURCES = [...PURE_MODULES, ...RENDER_MODULES, ...COMPONENTS, '../../api/map.ts']
 const SPEC_FILES = [
   './entities.spec.ts',

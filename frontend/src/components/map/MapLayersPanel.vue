@@ -1,142 +1,61 @@
 <script setup lang="ts">
 /**
- * MapPanel.vue —— 「一张图」右侧信息面板（纯展示组件）。
+ * MapLayersPanel —— 「一张图」右列：图层开关 + 风险筛选 + 要素详情。
  *
- * 只有 props/emits：不取数、不判断、不认识 Cesium。
- * 所有字段都是 entities.ts / offline.ts 产出的 plain data，
- * 因此本组件的可测性靠那两层保证，这里不再重复逻辑（避免同一规则两处实现）。
+ * 从原 `MapPanel.vue` 拆出来的右半（2026-10-30）。仍然只有 props/emits：
+ * 不取数、不判断、不认识 Cesium。
  */
 
 import { computed } from 'vue'
 
-import type {
-  FeatureDetail,
-  LayerId,
-  LayerVisibility,
-  PlanLayer,
-  RejectedGeometry,
-  UnlocatedItem,
-  UnlocatedReason,
-} from '@/components/map/entities'
+import type { FeatureDetail, LayerId, LayerVisibility, PlanLayer } from '@/components/map/entities'
+import { hazardLabel, riskLabel, riskLegend } from '@/components/map/entities'
 import type { RiskLevel } from '@/api/types'
-import { hazardLabel, groupUnlocatedByReason, riskLabel, riskLegend, UNLOCATED_LABELS } from '@/components/map/entities'
-import type { NetworkStatus } from '@/components/map/offline'
-import { NETWORK_LABELS, NETWORK_TAG_COLORS } from '@/components/map/offline'
+import { chipStyle, countTextOf, LAYER_LABELS, layerRowsOf } from '@/components/map/panelParts'
 
 const props = defineProps<{
-  status: NetworkStatus
-  statusReason: string
-  basemapMessage: string
-  terrainMessage: string
   counts: Record<LayerId, number>
   visibility: LayerVisibility
-  unlocated: UnlocatedItem[]
-  rejected: RejectedGeometry[]
-  detail: FeatureDetail | null
   clustered: boolean
-  zoom: number
-  loading: boolean
-  /** 三维场景起不来的原因（null 表示正常）；此时面板仍然可用。 */
-  sceneError: string | null
   /** 风险等级筛选（空数组＝不过滤）。 */
   riskFilter: RiskLevel[]
   /** 各等级的要素数——芯片上的数字，也是图例的量化部分。 */
   riskCounts: Record<RiskLevel, number>
   /** 未筛选时的图层计数：筛选生效后行里要显示"筛后 / 全量"，不然数字看着像凭空少了。 */
   countsTotal: Record<LayerId, number>
+  detail: FeatureDetail | null
 }>()
 
 const emit = defineEmits<{
   (event: 'toggle', layer: PlanLayer, visible: boolean): void
   (event: 'toggleRisk', level: RiskLevel): void
-  (event: 'select', featureId: string): void
-  (event: 'refresh'): void
 }>()
 
 const legend = riskLegend()
+const layerRows = computed(() => layerRowsOf(props.counts))
 
-const LAYER_LABELS: Record<PlanLayer, string> = {
-  stations: '监测站点',
-  warnings: '预警落点',
-  reach: '触达标记',
-  hazards: '灾害分区面',
-  clusters: '聚合计数',
-}
-
-/** 图层开关 + 要素计数（聚合层单独一栏，因为它不是一种数据而是画法）。 */
-const layerRows = computed(() =>
-  (['stations', 'warnings', 'reach', 'hazards'] as LayerId[]).map((layer) => ({
-    layer,
-    label: LAYER_LABELS[layer],
-    count: props.counts[layer],
-  })),
-)
-
-/** 筛选生效时把全量一起说出来：数字变小要能说清是"筛掉了"，不是"数据没了"。 */
 function countText(layer: LayerId): string {
-  const shown = props.counts[layer]
-  return props.riskFilter.length === 0 ? String(shown) : `${shown} / ${props.countsTotal[layer]}`
+  return countTextOf(layer, props.counts, props.countsTotal, props.riskFilter.length)
 }
 
-/**
- * 芯片的三段颜色都由 `riskLegend()` 那一个色值算出来（同一份 `RISK_COLORS`，不另立第二套调色板）。
- *
- * 用 JS 拼 rgba 而不是 CSS `color-mix()`：自定义属性会原样收下不认识的函数，
- * 那时整条 `border` 声明会在计算值阶段失效——不如在这儿算干净，任何浏览器都是同一个结果。
- */
-function chipStyle(hex: string): Record<string, string> {
-  const rgb = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex)?.slice(1)
-  const [r, g, b] = (rgb ?? ['148', '163', '184']).map((pair) => Number.parseInt(pair, 16))
-  return {
-    '--chip': hex,
-    '--chip-line': `rgba(${r}, ${g}, ${b}, 0.35)`,
-    '--chip-wash': `rgba(${r}, ${g}, ${b}, 0.14)`,
-    '--chip-halo': `rgba(${r}, ${g}, ${b}, 0.18)`,
-  }
+function onToggle(layer: PlanLayer, visible: boolean): void {
+  emit('toggle', layer, visible)
 }
 
 const station = computed(() => (props.detail?.kind === 'station' ? props.detail : null))
 const warning = computed(() => (props.detail?.kind === 'warning' ? props.detail : null))
 const reach = computed(() => (props.detail?.kind === 'reach' ? props.detail : null))
 const zone = computed(() => (props.detail?.kind === 'hazard-zone' ? props.detail : null))
-// 分组规则本身在 entities.ts（本组件不判断），这里只是把那份结果摆出来
-const unlocatedGroups = computed(() => groupUnlocatedByReason(props.unlocated))
 
 const detailTitle = computed(() => props.detail?.title ?? '')
 const detailColor = computed(() => props.detail?.colorCss ?? '#8c8c8c')
 const detailRisk = computed(() => riskLabel(props.detail?.riskLevel ?? null))
 const detailHazard = computed(() => (props.detail ? hazardLabel(props.detail.hazardType) : ''))
-
-function onToggle(layer: PlanLayer, visible: boolean): void {
-  emit('toggle', layer, visible)
-}
 </script>
 
 <template>
   <div class="panel">
-    <a-card size="small" title="离线状态">
-      <template #extra>
-        <a-button size="small" :loading="props.loading" @click="emit('refresh')">刷新</a-button>
-      </template>
-      <a-space direction="vertical" size="small" style="width: 100%">
-        <a-tag :color="NETWORK_TAG_COLORS[props.status]">
-          {{ NETWORK_LABELS[props.status] }} · 缩放 {{ props.zoom }}
-        </a-tag>
-        <div class="note">{{ props.statusReason }}</div>
-        <a-divider style="margin: 4px 0" />
-        <div class="note">底图：{{ props.basemapMessage }}</div>
-        <div class="note">地形：{{ props.terrainMessage }}</div>
-        <a-alert
-          v-if="props.sceneError"
-          type="error"
-          show-icon
-          message="三维场景不可用"
-          :description="props.sceneError"
-        />
-      </a-space>
-    </a-card>
-
-    <a-card size="small" title="图层" class="mt">
+    <a-card size="small" title="图层">
       <a-space direction="vertical" size="small" style="width: 100%">
         <div v-for="entry in layerRows" :key="entry.layer" class="row">
           <a-switch
@@ -183,7 +102,7 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
       <span class="legend-item legend-item--static"><i style="background: #bfbfbf" /> 等级未知（不参与筛选）</span>
     </a-card>
 
-    <a-card size="small" title="要素详情（点击图上要素）" class="mt">
+    <a-card size="small" title="要素详情（点击图上要素）" class="detail-card">
       <a-empty v-if="!props.detail" description="未选中要素" />
       <a-descriptions v-else :column="1" bordered size="small" :title="detailTitle">
         <a-descriptions-item label="类型">{{ props.detail.kind }}</a-descriptions-item>
@@ -234,50 +153,8 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
           </a-descriptions-item>
         </template>
       </a-descriptions>
-    </a-card>
-
-    <a-card size="small" class="mt">
-      <template #title>
-        未定位清单
-        <a-tag v-if="props.unlocated.length" color="orange">{{ props.unlocated.length }}</a-tag>
-      </template>
-      <a-empty v-if="!props.unlocated.length" description="全部要素均已落到图上" />
-      <!-- 光给一个总数答不了"我到底缺哪几样"：站点缺坐标与区域没烘焙锚点
-           是两件要找不同的人办的事，混在一个数字里就都看不见了 -->
-      <div v-if="unlocatedGroups.length" class="unlocated-groups" data-testid="unlocated-groups">
-        <span v-for="group in unlocatedGroups" :key="group.reason" class="unlocated-group">
-          {{ group.label }} × {{ group.count }}
-        </span>
-      </div>
-      <!-- 上面那句"全部要素均已落到图上"已经说完了，这里再挂一个空列表就会叠出第二句
-           antd 默认的"暂无数据"（真机 @1440 空数据档量到：同一块卡里两句并存，互相打脸）。
-           所以列表只在真有内容时渲染。 -->
-      <a-list v-else-if="props.unlocated.length > 0" size="small" :data-source="props.unlocated">
-        <template #renderItem="{ item }">
-          <a-list-item>
-            <a-space direction="vertical" size="0" style="width: 100%">
-              <span class="unlocated-title">{{ item.title }}</span>
-              <span class="note">{{ UNLOCATED_LABELS[item.reason as UnlocatedReason] }}</span>
-            </a-space>
-            <template #actions>
-              <a-button type="link" size="small" @click="emit('select', item.id)">详情</a-button>
-            </template>
-          </a-list-item>
-        </template>
-      </a-list>
-      <div class="note tip">
-        宁可列清单，也不把无坐标要素画到 (0,0)：一个位于几内亚湾的假站点会被误读成"高原没灾情"。
-      </div>
-    </a-card>
-
-    <a-card v-if="props.rejected.length" size="small" title="未渲染的几何" class="mt">
-      <a-list size="small" :data-source="props.rejected">
-        <template #renderItem="{ item }">
-          <a-list-item>
-            <span class="note">#{{ item.index }} {{ item.id }} — {{ item.reason }}（{{ item.detail }}）</span>
-          </a-list-item>
-        </template>
-      </a-list>
+      <!-- 收起/展开入口挂在"要素详情"卡的右下角（由 MapView 传入按钮） -->
+      <slot name="detail-action" />
     </a-card>
   </div>
 </template>
@@ -288,8 +165,12 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
   flex-direction: column;
   gap: 12px;
 }
-.mt {
-  margin-top: 0;
+/* 「要素详情」卡是收起按钮的定位锚点：按钮挂在右下角，body 留出一点底部空间 */
+.detail-card {
+  position: relative;
+}
+.detail-card :deep(.ant-card-body) {
+  padding-bottom: 40px;
 }
 .row {
   display: flex;
@@ -309,9 +190,6 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
   font-size: 12px;
   color: var(--aeg-color-text-secondary);
   line-height: 1.6;
-}
-.tip {
-  margin-top: 8px;
 }
 .risk-chips {
   display: flex;
@@ -378,20 +256,5 @@ function onToggle(layer: PlanLayer, visible: boolean): void {
 .sample {
   font-size: 12px;
   line-height: 1.8;
-}
-.unlocated-groups {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: var(--aeg-color-text-secondary);
-}
-.unlocated-group {
-  border-left: 2px solid var(--aeg-color-status-warning);
-  padding-left: 6px;
-}
-.unlocated-title {
-  font-size: 13px;
 }
 </style>

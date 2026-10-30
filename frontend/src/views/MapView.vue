@@ -43,7 +43,8 @@ import {
   tileUrlForTemplate,
 } from '@/components/map/offline'
 import type { OfflineMachine } from '@/components/map/offline'
-import MapPanel from '@/components/map/MapPanel.vue'
+import MapStatusPanel from '@/components/map/MapStatusPanel.vue'
+import MapLayersPanel from '@/components/map/MapLayersPanel.vue'
 import AmapMap from '@/components/map/AmapMap.vue'
 import { terrainProbeUrl } from '@/components/map/terrain'
 import type { LayerName, MapScene, MapSceneInfo } from '@/components/map/viewer'
@@ -81,6 +82,22 @@ const hazardDocument = ref<unknown>(null)
 
 const loading = ref(false)
 const autoRefresh = ref(true)
+/** 左右两列悬浮面板是否收起：收起来只看地图。 */
+const panelsCollapsed = ref(false)
+/** 收起按钮点下去那一刻的位置（相对地图壳），展开按钮就浮回同一个角落 */
+const expandPos = ref<{ right: number; top: number } | null>(null)
+const shellRef = ref<HTMLElement | null>(null)
+
+function collapsePanels(event: MouseEvent): void {
+  const button = event.currentTarget as HTMLElement | null
+  const shell = shellRef.value
+  if (button && shell) {
+    const b = button.getBoundingClientRect()
+    const s = shell.getBoundingClientRect()
+    expandPos.value = { right: Math.max(12, Math.round(s.right - b.right)), top: Math.round(b.top - s.top) }
+  }
+  panelsCollapsed.value = true
+}
 const regionCode = ref<string>('')
 /** 第几趟 `load()`：换筛选、点刷新、30 秒自动刷新都算一次，只有最新那趟的结果才落页面。 */
 let loadSeq = 0
@@ -360,130 +377,219 @@ watch(visibility, (value) => {
 </script>
 
 <template>
-  <div>
-    <PageHero
-      title="应急一张图"
-      :badge="basemapMode === 'amap' ? '在线底图' : '离线三维'"
-      :caption="
-        basemapMode === 'amap'
-          ? '底图走高德 JS API 官方通道（key 放 frontend/.env.local，不入库）；要素坐标已按 WGS84→GCJ-02 纠偏。加载失败会在图上说明原因，切回「离线自托管」即恢复交付形态。'
-          : '底图、地形与矢量瓦片由本进程自托管，弱网与断网下仍可用。'
-      "
-    />
-    <a-card
-      size="small"
-      :title="
-        basemapMode === 'amap'
-          ? '一张图 · 高德在线底图（JS API）'
-          : '一张图 · 自托管离线三维（Cesium + quantized-mesh + PMTiles）'
-      "
-    >
-      <template #extra>
-        <a-space wrap>
-          <!-- 底图档：默认离线自托管（交付形态，见 external.ts 的默认档论证）；高德是带 key 的 JS API 档，加载失败会在图上说明 -->
-          <a-radio-group v-model:value="basemapMode" size="small" button-style="solid" data-testid="basemap-mode">
-            <a-radio-button value="offline">离线自托管</a-radio-button>
-            <a-radio-button value="amap">高德在线</a-radio-button>
-          </a-radio-group>
-          <a-select v-model:value="regionCode" style="width: 170px" placeholder="全部区域" @change="load">
-            <a-select-option value="">全部区域</a-select-option>
-            <a-select-option v-for="code in regionOptions" :key="code" :value="code">{{ code }}</a-select-option>
-          </a-select>
-          <a-button :loading="loading" @click="load">刷新</a-button>
-          <a-button @click="focusAll">定位到有点的区域</a-button>
-          <a-switch v-model:checked="autoRefresh" size="small" />
-          <span class="muted">自动刷新 30s</span>
-        </a-space>
-      </template>
-      <a-alert
-        v-for="note in notes"
-        :key="note"
-        type="warning"
-        show-icon
-        banner
-        :message="note"
-        style="margin-bottom: 4px"
+  <div ref="shellRef" class="map-shell" :class="{ 'is-panels-collapsed': panelsCollapsed }">
+    <!-- 顶部悬浮工具条：标题 + 底图/区域/刷新/定位/自动刷新，半透明压在图上 -->
+    <div class="map-floatbar">
+      <PageHero
+        class="map-floatbar__hero"
+        title="应急一张图"
+        :badge="basemapMode === 'amap' ? '在线底图' : '离线三维'"
+        :caption="
+          basemapMode === 'amap'
+            ? '底图走高德 JS API 官方通道（key 放 frontend/.env.local，不入库）；要素坐标已按 WGS84→GCJ-02 纠偏。加载失败会在图上说明原因，切回「离线自托管」即恢复交付形态。'
+            : '底图、地形与矢量瓦片由本进程自托管，弱网与断网下仍可用。'
+        "
       />
+      <a-space wrap class="map-floatbar__tools">
+        <!-- 底图档：默认离线自托管（交付形态，见 external.ts 的默认档论证）；高德是带 key 的 JS API 档，加载失败会在图上说明 -->
+        <a-radio-group v-model:value="basemapMode" size="small" button-style="solid" data-testid="basemap-mode">
+          <a-radio-button value="offline">离线自托管</a-radio-button>
+          <a-radio-button value="amap">高德在线</a-radio-button>
+        </a-radio-group>
+        <a-select v-model:value="regionCode" style="width: 150px" placeholder="全部区域" size="small" @change="load">
+          <a-select-option value="">全部区域</a-select-option>
+          <a-select-option v-for="code in regionOptions" :key="code" :value="code">{{ code }}</a-select-option>
+        </a-select>
+        <a-button size="small" :loading="loading" @click="load">刷新</a-button>
+        <a-button size="small" @click="focusAll">定位到有点的区域</a-button>
+        <a-switch v-model:checked="autoRefresh" size="small" />
+        <span class="muted">自动刷新 30s</span>
+      </a-space>
+    </div>
+
+    <!-- 提示：加载告警与"定位退不回全局"的原因，压在工具条下方 -->
+    <div v-if="notes.length || focusNote" class="map-floatnotes">
+      <a-alert v-for="note in notes" :key="note" type="warning" show-icon :message="note" />
       <!-- 定位这颗按钮先前点了没反应也不解释；现在把"退不回全局视野的原因"说一句 -->
       <p v-if="focusNote" class="muted" data-testid="focus-note">{{ focusNote }}</p>
-    </a-card>
+    </div>
 
-    <a-row :gutter="12" style="margin-top: 12px">
-      <a-col :xs="24" :lg="17">
-        <a-card size="small" :body-style="{ padding: '0' }">
-          <div class="map-frame">
-            <!-- 高德 JS API 是另一套渲染引擎，与 Cesium 不叠在同一块画布上：整块换表面 -->
-            <AmapMap v-if="basemapMode === 'amap'" :plan="plan" @select="selectFeature" />
-            <template v-else>
-              <div ref="host" class="map-host" />
-              <div v-if="!sceneInfo && !sceneError" class="map-placeholder">
-                正在加载三维场景（地图引擎独立分块，按需下载）…
-              </div>
-              <div v-if="sceneError" class="map-placeholder">
-                <div>三维场景不可用：{{ sceneError }}</div>
-                <div class="hint">
-                  右侧面板与清单仍可用。首次部署需把 需把地图引擎的静态资源目录（Workers / Assets / ThirdParty /
-                  Widgets）拷到
-                  <code>public/cesium/</code>，并烘焙底图与地形资产（清单见
-                  public/basemaps/README.md、public/terrain/README.md）。
-                </div>
-              </div>
-            </template>
+    <!-- 地图铺满整块，左右列与顶部条都是悬浮层 -->
+    <div class="map-frame">
+      <!-- 高德 JS API 是另一套渲染引擎，与 Cesium 不叠在同一块画布上：整块换表面 -->
+      <AmapMap v-if="basemapMode === 'amap'" :plan="plan" @select="selectFeature" />
+      <template v-else>
+        <div ref="host" class="map-host" />
+        <div v-if="!sceneInfo && !sceneError" class="map-placeholder">
+          正在加载三维场景（地图引擎独立分块，按需下载）…
+        </div>
+        <div v-if="sceneError" class="map-placeholder">
+          <div>三维场景不可用：{{ sceneError }}</div>
+          <div class="hint">
+            右侧面板与清单仍可用。首次部署需把 需把地图引擎的静态资源目录（Workers / Assets / ThirdParty /
+            Widgets）拷到
+            <code>public/cesium/</code>，并烘焙底图与地形资产（清单见
+            public/basemaps/README.md、public/terrain/README.md）。
           </div>
-          <div class="scene-bar">
-            <!-- 视野与缩放是 Cesium 相机的量，高德档下没有这两个数，别摆一个假"未就绪" -->
-            <span v-if="basemapMode === 'offline'">
-              视野：{{
-                bbox
-                  ? `${bbox.west.toFixed(2)}, ${bbox.south.toFixed(2)} → ${bbox.east.toFixed(2)}, ${bbox.north.toFixed(2)}`
-                  : '未就绪'
-              }}
-            </span>
-            <span>· 上图要素 {{ plottedTotal }} · 未定位 {{ unlocated.length }}</span>
-            <span v-if="basemapMode === 'offline'">· 缩放 {{ zoom }}</span>
-            <span v-if="plan.clustered" class="hint">· 已按网格聚合（圆点上的数字=该格要素数）</span>
-            <!-- 底图来源与坐标系要说在画面上：只写在代码注释里，看图的人无从知道落点被纠过偏 -->
-            <span class="hint">· 底图：{{ basemapSummary }}</span>
-          </div>
-        </a-card>
-      </a-col>
-      <a-col :xs="24" :lg="7">
-        <MapPanel
-          :status="machine.status"
-          :status-reason="machine.reason"
-          :basemap-message="sceneInfo?.basemapMessage ?? '尚未建场（状态见上方标签）'"
-          :terrain-message="sceneInfo?.terrainMessage ?? '尚未建场'"
-          :counts="counts"
-          :visibility="visibility"
-          :unlocated="unlocated"
-          :rejected="layers.rejected"
-          :detail="detail"
-          :clustered="plan.clustered"
-          :zoom="zoom"
-          :loading="loading"
-          :scene-error="sceneError"
-          :risk-filter="riskFilter"
-          :risk-counts="riskCounts"
-          :counts-total="countsTotal"
-          @toggle="onToggle"
-          @toggle-risk="onToggleRisk"
-          @select="selectFeature"
-          @refresh="load"
-        />
-      </a-col>
-    </a-row>
+        </div>
+      </template>
+    </div>
+
+    <!-- 左列：离线状态 + 未定位清单 + 未渲染的几何 -->
+    <div class="map-float-col map-float-col--left">
+      <MapStatusPanel
+        :status="machine.status"
+        :status-reason="machine.reason"
+        :basemap-message="sceneInfo?.basemapMessage ?? '尚未建场（状态见上方标签）'"
+        :terrain-message="sceneInfo?.terrainMessage ?? '尚未建场'"
+        :unlocated="unlocated"
+        :rejected="layers.rejected"
+        :zoom="zoom"
+        :loading="loading"
+        :scene-error="sceneError"
+        @refresh="load"
+        @select="selectFeature"
+      />
+    </div>
+
+    <!-- 右列：图层 + 风险筛选 + 要素详情；收起/展开按钮挂在「要素详情」卡右下角 -->
+    <div class="map-float-col map-float-col--right">
+      <MapLayersPanel
+        :counts="counts"
+        :visibility="visibility"
+        :clustered="plan.clustered"
+        :risk-filter="riskFilter"
+        :risk-counts="riskCounts"
+        :counts-total="countsTotal"
+        :detail="detail"
+        @toggle="onToggle"
+        @toggle-risk="onToggleRisk"
+      >
+        <template #detail-action>
+          <a-button
+            class="map-panel-toggle"
+            size="small"
+            :aria-pressed="panelsCollapsed"
+            title="收起两侧面板，只看地图"
+            data-testid="toggle-panels"
+            @click="collapsePanels"
+          >
+            收起 »
+          </a-button>
+        </template>
+      </MapLayersPanel>
+    </div>
+
+    <!-- 收起后右列滑出视口，留一枚悬浮按钮把它拉回来 -->
+    <a-button
+      v-if="panelsCollapsed"
+      class="map-expand-btn"
+      size="small"
+      title="展开两侧面板"
+      data-testid="toggle-panels-expand"
+      :style="expandPos ? { right: `${expandPos.right}px`, top: `${expandPos.top}px` } : undefined"
+      @click="panelsCollapsed = false"
+    >
+      « 展开面板
+    </a-button>
+
+    <div class="scene-bar">
+      <!-- 视野与缩放是 Cesium 相机的量，高德档下没有这两个数，别摆一个假"未就绪" -->
+      <span v-if="basemapMode === 'offline'">
+        视野：{{
+          bbox
+            ? `${bbox.west.toFixed(2)}, ${bbox.south.toFixed(2)} → ${bbox.east.toFixed(2)}, ${bbox.north.toFixed(2)}`
+            : '未就绪'
+        }}
+      </span>
+      <span>· 上图要素 {{ plottedTotal }} · 未定位 {{ unlocated.length }}</span>
+      <span v-if="basemapMode === 'offline'">· 缩放 {{ zoom }}</span>
+      <span v-if="plan.clustered" class="hint">· 已按网格聚合（圆点上的数字=该格要素数）</span>
+      <!-- 底图来源与坐标系要说在画面上：只写在代码注释里，看图的人无从知道落点被纠过偏 -->
+      <span class="hint">· 底图：{{ basemapSummary }}</span>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.map-frame {
+/* —— 全屏地图壳：铺满顶栏以下，所有信息都是浮层 —— */
+.map-shell {
   position: relative;
+  height: calc(100vh - var(--aeg-header-height));
+  overflow: hidden;
+}
+
+/* 顶部悬浮条（对应参考图地图内的「运维区域」横条） */
+.map-floatbar {
+  position: absolute;
+  top: var(--aeg-space-s3);
+  left: var(--aeg-space-s3);
+  right: var(--aeg-space-s3);
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--aeg-space-s3);
+  padding: var(--aeg-space-s2) var(--aeg-space-s4);
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-map-floatbar-bg);
+  backdrop-filter: blur(var(--aeg-glass-blur));
+  box-shadow: var(--aeg-shadow-md);
+}
+.map-floatbar__hero {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 页头收进悬浮条：只留标题与徽标，说明句已在 title 提示里 */
+.map-floatbar :deep(.page-head) {
+  margin: 0;
+}
+.map-floatbar :deep(.page-head__row) {
+  gap: var(--aeg-space-s2);
+}
+.map-floatbar :deep(.page-head__title) {
+  font-size: var(--aeg-font-md);
+}
+.map-floatbar :deep(.page-head__caption) {
+  display: none;
+}
+.map-floatbar__tools {
+  flex: 0 0 auto;
+}
+
+/* 告警与定位提示：条下方浮一小块，不挡地图拖拽 */
+.map-floatnotes {
+  position: absolute;
+  top: 78px;
+  left: var(--aeg-space-s3);
+  right: var(--aeg-space-s3);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: var(--aeg-space-s1);
+  pointer-events: none;
+}
+.map-floatnotes .muted {
+  align-self: flex-start;
+  margin: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-map-floatbar-bg);
+  backdrop-filter: blur(var(--aeg-glass-blur));
+}
+
+/* 地图铺满整块 */
+.map-frame {
+  position: absolute;
+  inset: 0;
 }
 .map-host {
-  position: relative;
-  height: 68vh;
-  min-height: 420px;
+  position: absolute;
+  inset: 0;
   width: 100%;
+  height: 100%;
   background: #101923;
 }
 /*
@@ -517,15 +623,115 @@ watch(visibility, (value) => {
   font-size: 12px;
   line-height: 1.7;
 }
+
+/* —— 左右两列悬浮面板 ——
+   列容器不吃鼠标事件，面板本体恢复 auto：中间地图仍可拖拽/缩放。
+   底色与主题相反（浅色主题用深蓝、深色主题用浅蓝），所以列内把"文字三档"整体反转：
+   子组件里的 .note/.label/.count/.risk-chip 都读这几个变量，一处反转、全列生效。 */
+.map-float-col {
+  --aeg-color-text: var(--aeg-color-map-panel-text);
+  --aeg-color-text-secondary: var(--aeg-color-map-panel-text-muted);
+  --aeg-color-text-muted: var(--aeg-color-map-panel-text-muted);
+  position: absolute;
+  top: 78px;
+  bottom: var(--aeg-space-s3);
+  z-index: 5;
+  width: 300px;
+  overflow-y: auto;
+  padding-right: 2px;
+  pointer-events: none;
+  scrollbar-width: thin;
+  color: var(--aeg-color-map-panel-text);
+  transition:
+    transform var(--aeg-motion-base) ease,
+    opacity var(--aeg-motion-base) ease;
+}
+.map-float-col--left {
+  left: var(--aeg-space-s3);
+}
+.map-float-col--right {
+  right: var(--aeg-space-s3);
+  width: 340px;
+}
+/* 收起态：两列滑出视口，底部状态条顺势铺满；收起的卡片也不再吃鼠标事件 */
+.map-shell.is-panels-collapsed .map-float-col--left {
+  opacity: 0;
+  transform: translateX(calc(-100% - var(--aeg-space-s3)));
+}
+.map-shell.is-panels-collapsed .map-float-col--right {
+  opacity: 0;
+  transform: translateX(calc(100% + var(--aeg-space-s3)));
+}
+.map-shell.is-panels-collapsed .map-float-col :deep(.ant-card) {
+  pointer-events: none;
+}
+.map-shell.is-panels-collapsed .scene-bar {
+  left: var(--aeg-space-s3);
+  right: var(--aeg-space-s3);
+}
+/* 收起按钮：定位在「要素详情」卡的右下角（锚点由 MapLayersPanel 的 .detail-card 提供） */
+.map-panel-toggle {
+  position: absolute;
+  right: var(--aeg-space-s3);
+  bottom: var(--aeg-space-s3);
+  z-index: 2;
+}
+/* 收起后把两列拉回来的悬浮按钮：位置取收起那一刻按钮的角落（内联 style 覆盖），
+   没有量到位置时落到右上角兜底 */
+.map-expand-btn {
+  position: absolute;
+  top: 78px;
+  right: var(--aeg-space-s3);
+  z-index: 7;
+  border-color: var(--aeg-color-map-panel-border);
+  background: var(--aeg-color-map-floatbar-bg);
+  backdrop-filter: blur(var(--aeg-glass-blur));
+}
+/* 面板本体：半透明玻璃，卡内白底一律去掉 */
+.map-float-col :deep(.ant-card) {
+  pointer-events: auto;
+  background: var(--aeg-color-map-panel-bg);
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-lg);
+  backdrop-filter: blur(var(--aeg-glass-blur));
+  box-shadow: var(--aeg-shadow-md);
+  color: var(--aeg-color-map-panel-text);
+}
+/* antd 组件自己带文字色，不跟随上面的变量，逐个扳到面板自己的那档 */
+.map-float-col :deep(.ant-card-head-title),
+.map-float-col :deep(.ant-descriptions-title) {
+  color: var(--aeg-color-map-panel-text);
+}
+.map-float-col :deep(.ant-descriptions-item-label),
+.map-float-col :deep(.ant-descriptions-item-content),
+.map-float-col :deep(.ant-empty-description) {
+  color: var(--aeg-color-map-panel-text-muted);
+}
+.map-float-col :deep(.ant-card-head) {
+  border-bottom: none;
+  background: transparent;
+}
+.map-float-col :deep(.ant-card-body) {
+  background: transparent;
+}
+
+/* 底部状态条：夹在两列之间的悬浮胶囊 */
 .scene-bar {
+  position: absolute;
+  left: 324px;
+  right: 352px;
+  bottom: var(--aeg-space-s3);
+  z-index: 6;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 4px 12px;
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-map-floatbar-bg);
+  backdrop-filter: blur(var(--aeg-glass-blur));
   font-size: 12px;
   color: var(--aeg-color-text-secondary);
-  border-top: 1px solid var(--aeg-color-border-subtle);
-  background: var(--aeg-color-card);
 }
 .scene-bar .hint {
   /* 这行提示原来写死 #fa8c16——在白底卡上是 2.38:1，12px 小字根本读不清（真机体检按 4.5:1 拦下）。
@@ -535,5 +741,19 @@ watch(visibility, (value) => {
 .muted {
   font-size: 12px;
   color: var(--aeg-color-text-secondary);
+}
+
+/* 1024 档：两列收窄，把中间的地图让出来 */
+@media (max-width: 1200px) {
+  .map-float-col {
+    width: 250px;
+  }
+  .map-float-col--right {
+    width: 280px;
+  }
+  .scene-bar {
+    left: 274px;
+    right: 292px;
+  }
 }
 </style>

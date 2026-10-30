@@ -73,16 +73,17 @@ describe('监测页的实时性：标题写着"最新"，数据就不能冻在�
   }
 
   /**
-   * 表格必须在自己家横向滚动，而不是把整页撑宽。
+   * 明细表不再靠横向滚动：七列用 12px 字号 + 8px 单元格在版块内换行排完。
    *
-   * 真机 900px 宽（值班指挥员的平板）走过一次：遥测明细最后两列"观测时刻 + 接入时延"
-   * 被推到 931–975px 处，页面出现横向滚动，右侧内容看不全——而这一页没有任何提示。
-   * 布局本身测不出来（jsdom 没有排版），这里钉的是"声明了内部滚动"这一条前提。
+   * 旧口径是"声明内部横向滚动"（900px 真机上最后两列仍被推到可视区外，
+   * 值班员得拖横向滚动条才读得到"接入时延"）；现在改成压缩排版，
+   * 这里钉的是"没有 scroll 声明 + 有 .monitor-table 紧凑容器"。
    */
-  it('遥测明细声明了内部横向滚动，窄屏不把整页撑宽', () => {
+  it('遥测明细不声明横向滚动，靠紧凑字号在版块内排完', () => {
     const wrapper = mountView()
     const table = wrapper.findComponent({ name: 'ATable' })
-    expect(table.props('scroll')).toEqual({ x: 'max-content' })
+    expect(table.props('scroll')).toBeUndefined()
+    expect(wrapper.find('.monitor-table').exists()).toBe(true)
   })
 
   it('每 15 秒自己再取一次遥测', async () => {

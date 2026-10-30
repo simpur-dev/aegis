@@ -788,7 +788,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--aeg-color-editor-canvas);
+  /* 画布区透出全局雾底（与态势/监测/指标同一张背景），节点与面板自己带底色 */
+  background: transparent;
   color: var(--aeg-color-text);
 }
 .ed-body {
@@ -800,7 +801,7 @@ onUnmounted(() => {
 .ed-canvas {
   position: absolute;
   inset: 0;
-  background: var(--aeg-color-editor-canvas);
+  background: transparent;
 }
 .ed-toolbar {
   position: absolute;

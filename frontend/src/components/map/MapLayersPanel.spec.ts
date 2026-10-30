@@ -1,5 +1,5 @@
 /**
- * MapPanel 的「风险芯片」单测。
+ * MapLayersPanel 的「风险芯片」单测（原 MapPanel.spec，2026-10-30 随组件拆分改名）。
  *
  * 这一排芯片同时承担两件事：图例（不点也要看得出每级什么色）与筛选（点下去只看这一级）。
  * 所以最贵的退化是**图例说谎**——芯片上的色和图上画的色不是同一份；这里直接拿
@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 import { RISK_COLORS } from '@/api/types'
 import type { RiskLevel } from '@/api/types'
-import MapPanel from '@/components/map/MapPanel.vue'
+import MapLayersPanel from '@/components/map/MapLayersPanel.vue'
 import { DEFAULT_LAYER_VISIBILITY, riskLegend } from '@/components/map/entities'
 
 const STUBS = {
@@ -36,22 +36,13 @@ const FILTERED = { stations: 2, warnings: 1, reach: 2, hazards: 0 }
 const RISK_COUNTS: Record<RiskLevel, number> = { 1: 3, 2: 0, 3: 2, 4: 0, 5: 0 }
 
 function mountPanel(riskFilter: RiskLevel[] = [], filtered = false) {
-  return mount(MapPanel, {
+  return mount(MapLayersPanel, {
     props: {
-      status: 'online' as never,
-      statusReason: '全部资源可达',
-      basemapMessage: '本地矢量瓦片可用',
-      terrainMessage: '本地地形可用',
       counts: filtered ? FILTERED : TOTAL,
       countsTotal: TOTAL,
       visibility: { ...DEFAULT_LAYER_VISIBILITY },
-      unlocated: [],
-      rejected: [],
       detail: null,
       clustered: false,
-      zoom: 6,
-      loading: false,
-      sceneError: null,
       riskFilter,
       riskCounts: RISK_COUNTS,
     },
