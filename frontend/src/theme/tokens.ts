@@ -114,6 +114,8 @@ export const colorSlots = {
     'stat-chip-bg': 'rgba(255, 255, 255, 0.86)',
     'stat-chip-border': '#DCE5F2',
     'stat-chip-text': '#3F4A5C',
+    // 透明顶栏上的"当前项"胶囊：半透明白，压在雾底上有层次但不抢戏
+    'topbar-pill-bg': 'rgba(255, 255, 255, 0.78)',
     // 监测页「时序曲线」重点卡：蓝底白线（白字压两端渐变都要过 AA，见 tokens.spec）
     'chart-hero-from': '#2C56A8',
     'chart-hero-to': '#3A6FC4',
@@ -192,6 +194,7 @@ export const colorSlots = {
     'stat-chip-bg': 'rgba(28, 42, 64, 0.86)',
     'stat-chip-border': '#2C3E5C',
     'stat-chip-text': '#C9D5E6',
+    'topbar-pill-bg': 'rgba(255, 255, 255, 0.18)',
     // 深色主题的重点卡换成靛蓝渐变；白线/近白字仍要过 3:1 / 4.5:1
     'chart-hero-from': '#16294D',
     'chart-hero-to': '#24497F',

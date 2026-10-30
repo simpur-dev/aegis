@@ -5,7 +5,6 @@ import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 
 import api from '@/api/client'
-import type { AgentInfo } from '@/api/types'
 import ServiceTokenBar from '@/components/ServiceTokenBar.vue'
 import { useEventStream } from '@/composables/useEventStream'
 import { antdTheme } from '@/theme/antd'
@@ -32,50 +31,9 @@ const immersive = computed(() => route.meta?.immersive === true)
  */
 const isMapPage = computed(() => route.name === 'map')
 const currentKey = computed(() => (route.name as string) ?? 'dashboard')
-const pageTitle = computed(() => (route.meta?.title as string) ?? 'AEGIS')
-
-const SIDEBAR_KEY = 'aegis.sidebar'
-const collapsed = ref(false)
-try {
-  collapsed.value = localStorage.getItem(SIDEBAR_KEY) === 'closed'
-  /* 没有存过偏好时，窄屏（值班平板）默认收起：232px 侧栏在 900px 宽只剩 668px 正文，
-     而这一档本来就要看遥测表。存过偏好就不猜侧，用户选过就算数。 */
-  if (localStorage.getItem(SIDEBAR_KEY) === null && window.innerWidth < 1000) collapsed.value = true
-} catch {
-  /* 隐私模式或存储被禁：用展开态，不拦页面 */
-}
-function toggleCollapse(): void {
-  collapsed.value = !collapsed.value
-  try {
-    localStorage.setItem(SIDEBAR_KEY, collapsed.value ? 'closed' : 'open')
-  } catch {
-    /* 存不下就算了，切换本身照样生效 */
-  }
-}
 
 const health = ref<{ status: string; version: string } | null>(null)
 const { events, connected, stalled } = useEventStream()
-
-/**
- * 侧栏底部的智能体迷你状态区：五智能体在线/降级/离线是这一页最该常驻的事实，
- * 但取不到就说取不到——`agentsLoaded` 为 false 时摆 "…"，不拿 0 冒充"都没上线"。
- */
-const agents = ref<AgentInfo[]>([])
-const agentsLoaded = ref(false)
-const agentsOnline = computed(() => agents.value.filter((a) => a.healthy).length)
-const agentsTone = computed(() => {
-  if (!agentsLoaded.value) return 'idle' as const
-  if (agents.value.length === 0) return 'bad' as const
-  return agentsOnline.value === agents.value.length ? ('ok' as const) : ('warn' as const)
-})
-const agentsText = computed(() =>
-  agentsLoaded.value ? `智能体 ${agentsOnline.value}/${agents.value.length} 在线` : '智能体状态未取到',
-)
-const agentsHint = computed(() =>
-  agentsLoaded.value
-    ? agents.value.map((a) => `${a.agent_id}：${a.healthy ? '在线' : '不健康'}`).join('｜')
-    : '智能体清单还没取到：刷新或检查后端',
-)
 
 let timer: number | undefined
 
@@ -84,13 +42,6 @@ async function probe(): Promise<void> {
     health.value = await api.health()
   } catch {
     health.value = null
-  }
-  try {
-    const list = await api.agents()
-    agents.value = list.items
-    agentsLoaded.value = true
-  } catch {
-    agentsLoaded.value = false
   }
 }
 
@@ -112,18 +63,17 @@ onBeforeUnmount(() => {
  * 浅色那一档的取值与改造前逐项相同（含 hover/active 往深走那两条，那是悬停态体检量出来的），
  * 所以"接令牌层"这一步不掺任何视觉变化——视觉回归由后面的逐页重做负责。
  */
-const { resolved, mode: pref, setMode } = useTheme()
+const { resolved, setMode } = useTheme()
 const theme = computed<ThemeConfig>(() => antdTheme(resolved.value))
 
 /**
- * 切换器三档都在明面上，不做"点一下翻一档"的循环钮——汇报现场没人知道还要再点几次。
- * 标签只许一个字：右列轨道 @1440 只有 295px，胶囊文案最长那档已经占掉 285px（真机量的），
- * 完整说法走 `title` 与 `aria-label`。
+ * 主题只留「浅 / 深」两档（`system` 的解析能力仍在 useTheme 里，老用户的
+ * `aegis.theme = 'system'` 照样按系统偏好落成亮/暗，只是不再给第三个按钮）。
+ * 高亮按 `resolved` 判断：偏好是 system 时也要指向实际生效的那一档。
  */
 const themeOptions = [
   { value: 'light' as const, short: '浅', label: '浅色（日常）' },
   { value: 'dark' as const, short: '深', label: '深色（大屏演示）' },
-  { value: 'system' as const, short: '随', label: '跟随系统' },
 ]
 
 /**
@@ -161,76 +111,38 @@ const statusTitle = computed<string>(() =>
     <div class="app-shell" :class="{ 'is-immersive': immersive }">
       <!-- 全局雾底：离线资产 + 模糊 + 柔光，只铺在非沉浸式页面上；一张图单独豁免（见 isMapPage）。 -->
       <div v-if="!immersive" class="app-backdrop" :class="{ 'is-hidden': isMapPage }" aria-hidden="true" />
-      <!-- 侧栏：品牌 + 分组导航 + 智能体迷你状态 + 收起钮。宽度走布局令牌
-           （--aeg-sidebar-width 232 / --aeg-sidebar-collapsed 64），不许在这儿写死像素。
-           沉浸式路由（工作流编辑器）自带头部与画布，不显示应用外壳。 -->
-      <aside v-if="!immersive" class="sidebar" :class="{ 'is-collapsed': collapsed }" data-testid="sidebar">
-        <div class="side-brand">
-          <span class="brand-logo" aria-hidden="true">A</span>
-          <span class="brand-name">AEGIS</span>
-          <span class="brand-sub">山地灾害协同调控</span>
-        </div>
-
-        <nav class="side-scroll" aria-label="主导航">
-          <div v-for="group in NAV_GROUPS" :key="group.key" class="side-group">
-            <p class="side-group__label">{{ group.label }}</p>
-            <router-link
-              v-for="item in group.items"
-              :key="item.key"
-              class="side-item"
-              :class="{ active: currentKey === item.key }"
-              :to="item.to"
-              :title="item.label"
-              :aria-label="item.label"
-              :aria-current="currentKey === item.key ? 'page' : undefined"
-              :data-testid="`side-${item.key}`"
-            >
-              <span class="side-item__label">{{ collapsed ? item.short : item.label }}</span>
-            </router-link>
-          </div>
-        </nav>
-
-        <!-- 智能助手：常驻工具，不占一级导航分组。它原先是右下角那颗悬浮胶囊，
-             真机量到它会压在页脚文字、台账分页器与表页码按钮上（1440/1000/900 三档都压），
-             值班台上"点不动的页码"不是可以接受的东西，所以入口收回侧栏这条固定的操作列里。 -->
-        <router-link
-          class="side-assistant"
-          :class="{ active: currentKey === 'assistant' }"
-          to="/assistant"
-          title="智能助手"
-          aria-label="智能助手"
-          data-testid="assistant-entry"
-        >
-          <span class="side-assistant__label">{{ collapsed ? '助手' : '智能助手' }}</span>
-        </router-link>
-
-        <div class="side-agents" :class="`is-${agentsTone}`" :title="agentsHint" data-testid="side-agents">
-          <span class="status-dot" :class="agentsTone === 'idle' ? '' : agentsTone"></span>
-          <span class="side-agents__text">{{ agentsText }}</span>
-        </div>
-
-        <button
-          type="button"
-          class="side-collapse"
-          :aria-expanded="!collapsed"
-          :aria-label="collapsed ? '展开侧栏' : '收起侧栏'"
-          :title="collapsed ? '展开侧栏' : '收起侧栏'"
-          data-testid="side-collapse"
-          @click="toggleCollapse"
-        >
-          <!-- 收起态的轨道只有 64px：四个字的"展开侧栏"会在轨道里折成两行（真机 @900 量到），
-               所以短成一枚箭头，完整含义交给 aria-label/title。 -->
-          {{ collapsed ? '»' : '收起侧栏' }}
-        </button>
-      </aside>
-
+      <!-- 侧栏已退役（2026-10-30）：导航搬到顶栏做横向一排，顶栏不再铺底色。
+           当前页用半透明白色圆角底标出；右侧自左向右是「状态 → 浅/深 → 品牌」。 -->
       <div class="main-col">
-        <!-- 顶栏只留三件事：我在哪页（左）、后端与事件流状态（中右）、主题（右）。
-             页名放这里是给"从侧栏点进来之后忘了去了哪"的人一个固定锚点。 -->
         <header v-if="!immersive" class="topbar">
-          <div class="topbar-left">
-            <h1 class="topbar-title">{{ pageTitle }}</h1>
-          </div>
+          <nav class="topnav" aria-label="主导航">
+            <template v-for="group in NAV_GROUPS" :key="group.key">
+              <router-link
+                v-for="item in group.items"
+                :key="item.key"
+                class="topnav__item"
+                :class="{ 'is-on': currentKey === item.key }"
+                :to="item.to"
+                :title="item.label"
+                :aria-current="currentKey === item.key ? 'page' : undefined"
+                :data-testid="`nav-${item.key}`"
+              >
+                {{ item.label }}
+              </router-link>
+            </template>
+            <!-- 智能助手是常驻工具，不占一级导航分组；仍是 App.vue 里唯一的字面跳转目标 -->
+            <router-link
+              class="topnav__item"
+              :class="{ 'is-on': currentKey === 'assistant' }"
+              to="/assistant"
+              title="智能助手"
+              aria-label="智能助手"
+              data-testid="assistant-entry"
+            >
+              智能助手
+            </router-link>
+          </nav>
+
           <div class="topbar-right">
             <div class="nav-status" :title="statusTitle" data-testid="nav-status">
               <span class="status-fact">
@@ -252,14 +164,21 @@ const statusTitle = computed<string>(() =>
                 :key="opt.value"
                 type="button"
                 class="theme-switch__btn"
-                :class="{ 'is-on': pref === opt.value }"
-                :aria-pressed="pref === opt.value"
+                :class="{ 'is-on': resolved === opt.value }"
+                :aria-pressed="resolved === opt.value"
                 :title="`${opt.label}主题`"
                 :data-testid="`theme-${opt.value}`"
                 @click="setMode(opt.value)"
               >
                 {{ opt.short }}
               </button>
+            </div>
+            <div class="topbrand" data-testid="brand">
+              <span class="brand-logo" aria-hidden="true">A</span>
+              <span class="topbrand__text">
+                <span class="brand-name">AEGIS</span>
+                <span class="brand-sub">山地灾害协同调控</span>
+              </span>
             </div>
           </div>
         </header>
@@ -282,40 +201,60 @@ const statusTitle = computed<string>(() =>
 <style>
 .app-shell {
   display: flex;
-  /* 外壳定高、侧栏与正文自己安排滚动：正文区自己滚，侧栏整高不滚（内容多了内部滚） */
+  /* 外壳定高：顶栏固定，正文区自己滚（侧栏已退役，不再有第二列） */
   height: 100vh;
   overflow: hidden;
   background: var(--aeg-color-page);
   color: var(--aeg-color-text);
 }
 
-/* —— 侧栏 ——
-   分组导航按受众分（值班主线 / 系统），不再是一排平级页签：
-   旧顶栏把值班业务、运维取证、演示玩具混在同一列，还摆成"流程顺序"的误导形状。 */
-.sidebar {
+/* —— 顶栏导航（侧栏退役后横向排）——
+   文字直接落在雾底上：没有底色、没有分隔线；当前页是一枚半透明白色胶囊。 */
+.topnav {
   display: flex;
-  flex-direction: column;
-  flex: 0 0 auto;
-  width: var(--aeg-sidebar-width);
-  border-right: 1px solid var(--aeg-color-border);
-  background: var(--aeg-color-card);
-  transition: width var(--aeg-motion-base) ease;
-}
-.sidebar.is-collapsed {
-  width: var(--aeg-sidebar-collapsed);
-}
-.side-brand {
-  display: flex;
-  flex-direction: column;
-  gap: var(--aeg-space-s1);
-  padding: var(--aeg-space-s4) var(--aeg-space-s4) var(--aeg-space-s3);
-  border-bottom: 1px solid var(--aeg-color-border);
-}
-.brand-link {
-  display: inline-flex;
   align-items: center;
-  gap: var(--aeg-space-s3);
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.topnav::-webkit-scrollbar {
+  display: none;
+}
+.topnav__item {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--aeg-space-s3);
+  border-radius: var(--aeg-radius-pill);
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
   text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background-color var(--aeg-motion-base) ease,
+    color var(--aeg-motion-base) ease;
+}
+.topnav__item:hover {
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-text);
+}
+.topnav__item.is-on {
+  background: var(--aeg-color-topbar-pill-bg);
+  box-shadow: inset 0 0 0 1px var(--aeg-color-glass-border);
+  color: var(--aeg-color-text);
+}
+
+/* 品牌：从侧栏搬到顶栏最右。图标 + 两行字横排——竖排会顶破 56px 的栏高。 */
+.topbrand {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  padding-left: var(--aeg-space-s3);
+  border-left: 1px solid var(--aeg-color-glass-border);
 }
 .brand-logo {
   display: flex;
@@ -329,8 +268,14 @@ const statusTitle = computed<string>(() =>
   font-size: var(--aeg-font-md);
   font-weight: var(--aeg-weight-bold);
 }
+.topbrand__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: var(--aeg-lh-tight);
+}
 .brand-name {
-  font-size: var(--aeg-font-md);
+  font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-bold);
   letter-spacing: 0.02em;
   color: var(--aeg-color-text);
@@ -339,138 +284,17 @@ const statusTitle = computed<string>(() =>
   font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-secondary);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* 收起态只留徽标：副标题先让位（它不表达状态，页名在顶栏也有一份） */
-.sidebar.is-collapsed .brand-name,
-.sidebar.is-collapsed .brand-sub {
-  display: none;
-}
-
-.side-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--aeg-space-s3) var(--aeg-space-s2);
-}
-.side-group + .side-group {
-  margin-top: var(--aeg-space-s4);
-}
-.side-group__label {
-  margin: 0 0 var(--aeg-space-s1);
-  padding: 0 var(--aeg-space-s2);
-  font-size: var(--aeg-font-xs);
-  font-weight: var(--aeg-weight-semibold);
-  color: var(--aeg-color-text-muted);
-}
-.side-item {
-  display: flex;
-  align-items: center;
-  min-height: 36px;
-  margin-bottom: 2px;
-  padding: 0 var(--aeg-space-s2);
-  border-radius: var(--aeg-radius-md);
-  color: var(--aeg-color-text-secondary);
-  text-decoration: none;
-  white-space: nowrap;
-  transition:
-    background-color var(--aeg-motion-base) ease,
-    color var(--aeg-motion-base) ease;
-}
-.side-item__label {
-  font-size: var(--aeg-font-sm);
-  font-weight: var(--aeg-weight-semibold);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.side-item:not(.active):hover {
-  background: var(--aeg-color-brand-soft);
-  color: var(--aeg-color-text);
-}
-.side-item.active {
-  background: var(--aeg-color-brand);
-  color: var(--aeg-color-text-inverse);
-}
-.sidebar.is-collapsed .side-item {
-  justify-content: center;
-  padding: 0;
-}
-
-/* 智能体迷你状态区：侧栏常驻的"平台还活着吗"答案。
-   idle 档（没取到）用灰点 + "未取到"，不许画成绿的——那会是假装在线。 */
-.side-agents {
-  display: flex;
-  align-items: center;
-  gap: var(--aeg-space-s2);
-  margin: 0 var(--aeg-space-s2) var(--aeg-space-s2);
-  padding: var(--aeg-space-s2);
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-md);
-  background: var(--aeg-color-sunken);
-  font-size: var(--aeg-font-xs);
-  font-weight: var(--aeg-weight-semibold);
-  color: var(--aeg-color-text-secondary);
-}
-.side-agents__text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.side-agents.is-ok .status-dot {
-  background: var(--aeg-color-status-success);
-}
-.side-agents.is-warn .status-dot {
-  background: var(--aeg-color-status-warning);
-}
-.side-agents.is-bad .status-dot {
-  background: var(--aeg-color-status-danger);
-}
-.sidebar.is-collapsed .side-agents__text {
-  display: none;
-}
-
-/* 收起态只有 64px：组名"值班主线"四个 12px 的字加左右内边距正好越过这条宽度，
-   于是竖着折成两行（真机 @900 量到的就是它）。组名收掉，改用一条分隔线保住
-   "这是两组、不是一排平级页签"的形状——那正是 2026-10-17 信息架构收并的目的本身。 */
-.sidebar.is-collapsed .side-group__label {
-  display: none;
-}
-.sidebar.is-collapsed .side-group + .side-group {
-  margin-top: var(--aeg-space-s3);
-  padding-top: var(--aeg-space-s3);
-  border-top: 1px solid var(--aeg-color-border-subtle);
-}
-
-.side-collapse {
-  flex: 0 0 auto;
-  margin: 0 var(--aeg-space-s2) var(--aeg-space-s3);
-  padding: var(--aeg-space-s2);
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-md);
-  background: transparent;
-  color: var(--aeg-color-text-secondary);
-  font-family: inherit;
-  font-size: var(--aeg-font-xs);
-  font-weight: var(--aeg-weight-semibold);
-  cursor: pointer;
-  transition:
-    background-color var(--aeg-motion-base) ease,
-    color var(--aeg-motion-base) ease;
-}
-.side-collapse:hover {
-  background: var(--aeg-color-brand-soft);
-  color: var(--aeg-color-text);
 }
 
 /* —— 顶栏 ——
-   只留"我在哪页 / 后端与事件流状态 / 主题"三件事，不透明 card 底 + 一条 border 分隔：
-   顶栏下面是会滚动的表格与 Cesium 画面，模糊那一层既贵（每帧重算）又让描边发灰。 */
+   透明：不铺底色、不画分隔线、不留阴影，导航文字直接落在页面雾底上。
+   右侧自左向右是「状态胶囊 → 浅/深 → 品牌」，整组贴右，三者同一竖直中心。 */
 .main-col {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  height: 100vh;
 }
 .topbar {
   display: flex;
@@ -479,21 +303,9 @@ const statusTitle = computed<string>(() =>
   gap: var(--aeg-space-s4);
   height: var(--aeg-header-height);
   padding: 0 var(--aeg-space-s6);
-  background: var(--aeg-color-card);
-  border-bottom: 1px solid var(--aeg-color-border);
-  box-shadow: var(--aeg-shadow-sm);
-}
-.topbar-left {
-  min-width: 0;
-}
-.topbar-title {
-  margin: 0;
-  font-size: var(--aeg-font-md);
-  font-weight: var(--aeg-weight-bold);
-  color: var(--aeg-color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 .topbar-right {
   display: flex;
@@ -614,9 +426,10 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text);
 }
 .theme-switch__btn.is-on {
-  background: var(--aeg-color-elevated);
-  box-shadow: var(--aeg-shadow-sm);
-  color: var(--aeg-color-brand-hover);
+  /* 半透明白色胶囊：压在雾底上有层次，但不像实心白块那样抢戏 */
+  background: var(--aeg-color-topbar-pill-bg);
+  box-shadow: inset 0 0 0 1px var(--aeg-color-glass-border);
+  color: var(--aeg-color-text);
 }
 
 .main-content {
@@ -645,45 +458,7 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text-secondary);
 }
 
-/* 助手常驻入口：贴在导航区下面的一条固定行。
-   它以前是右下角那颗悬浮胶囊，真机量到它会压在页脚文字、台账分页器与表页码按钮上
-   （1440/1000/900 三档都压）——值班台上"点不动的页码"不是可以接受的东西。 */
-.side-assistant {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  min-height: 36px;
-  margin: 0 var(--aeg-space-s2) var(--aeg-space-s3);
-  padding: 0 var(--aeg-space-s2);
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-md);
-  color: var(--aeg-color-text-secondary);
-  text-decoration: none;
-  white-space: nowrap;
-  transition:
-    background-color var(--aeg-motion-base) ease,
-    color var(--aeg-motion-base) ease;
-}
-.side-assistant__label {
-  font-size: var(--aeg-font-sm);
-  font-weight: var(--aeg-weight-semibold);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.side-assistant:hover {
-  border-color: var(--aeg-color-brand-line);
-  background: var(--aeg-color-brand-soft);
-  color: var(--aeg-color-text);
-}
-.side-assistant.active {
-  border-color: transparent;
-  background: var(--aeg-color-brand);
-  color: var(--aeg-color-text-inverse);
-}
-.sidebar.is-collapsed .side-assistant {
-  justify-content: center;
-  padding: 0;
-}
+/* 助手入口现在是顶栏导航里的一项（.topnav__item），不再有单独的悬浮/侧栏按钮。 */
 
 /* 窄档只收状态文字：少显示一点，不是互相压上去。
    侧栏是定宽的，顶栏右列在 ≤1290 把胶囊文字收成圆点即可，页名不受影响。 */
@@ -753,20 +528,10 @@ html[data-theme='dark'] .app-backdrop::after {
   display: none;
 }
 
-/* 侧栏与顶栏也换成玻璃：同一档模糊，和卡片是同一套语言 */
-.sidebar,
+/* 顶栏透明：不再盖玻璃底（导航文字直接落在雾底上）；只保留层级，压住雾底 */
 .topbar {
   position: relative;
   z-index: 1;
-  background: var(--aeg-color-glass-bg);
-  backdrop-filter: blur(var(--aeg-glass-blur));
-}
-.sidebar {
-  border-right: 1px solid var(--aeg-color-glass-border);
-}
-.topbar {
-  border-bottom: 1px solid var(--aeg-color-glass-border);
-  box-shadow: none;
 }
 .main-col {
   position: relative;
