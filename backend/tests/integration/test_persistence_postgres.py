@@ -151,6 +151,7 @@ class TestMigrations:
             "006_warning_audience_copies.sql",
             "007_agent_memory.sql",
             "008_threshold_suggestions.sql",
+            "009_workflow_runtime.sql",
         ]
 
 
@@ -334,6 +335,98 @@ class TestWorkflowPersistence:
         assert reloaded is not None
         assert reloaded.status is instance.status
         assert set(reloaded.nodes) == set(instance.nodes)
+
+    async def test_009_adds_runtime_snapshot_and_definition_lineage(self, store: PostgresStore) -> None:
+        pool = store.require_pool()
+        def_columns = {
+            r["column_name"]
+            for r in await pool.fetch("SELECT column_name FROM information_schema.columns WHERE table_name = 'workflow_definitions'")
+        }
+        instance_columns = {
+            r["column_name"]
+            for r in await pool.fetch("SELECT column_name FROM information_schema.columns WHERE table_name = 'workflow_instances'")
+        }
+        assert {"lineage_id", "content_hash"} <= def_columns
+        assert "runtime" in instance_columns
+
+    async def test_checkpoint_write_through_and_open_instance_recovery(self, store: PostgresStore) -> None:
+        """经端口走完整链路：定义写穿 → 实例检查点入缓冲 → 重启读面取回同一条现场。"""
+        from aegis.persistence.workflow_store import PostgresWorkflowPersistence
+        from aegis.workflow.model import InstanceStatus, NodeDef, NodeRun, NodeState, WorkflowDef, WorkflowInstance
+        from aegis.workflow.persistence import InstanceCheckpoint, WorkflowRuntime
+
+        definition = WorkflowDef(
+            workflow_id="wf_bbbbbbbbbbbb",
+            lineage_id="wf_bbbbbbbbbbbb",
+            name="检查点集成流程",
+            nodes=(NodeDef(node_id="sign", type="human_review", config={"prompt": "签"}),),
+        )
+        persistence = PostgresWorkflowPersistence(store)
+        persistence.save_definition(definition)
+        instance = WorkflowInstance(
+            instance_id="wfi_b1b2c3d4e5f6",
+            workflow_id=definition.workflow_id,
+            workflow_version=definition.version,
+            trace_id="trc_" + "ef" * 8,
+            status=InstanceStatus.WAITING,
+            nodes={"sign": NodeRun(node_id="sign", type="human_review", state=NodeState.AWAITING_HUMAN)},
+            created_at=now_iso(),
+        )
+        runtime = WorkflowRuntime(
+            definition=definition,
+            lineage_id=definition.lineage_id,
+            pending_waits={"sign": "是否发布"},
+            pending_options={"sign": ("approve", "reject")},
+            positions={"sign": {"x": 1.0, "y": 2.0}},
+        )
+        persistence.save_instance(InstanceCheckpoint(instance=instance, runtime=runtime))
+        await store.flush()
+
+        definitions = await persistence.load_definitions(limit=10)
+        assert [(d.workflow_id, d.lineage_id) for d in definitions] == [(definition.workflow_id, definition.lineage_id)]
+
+        checkpoints = await persistence.load_open_instances(limit=10)
+        assert [c.instance.instance_id for c in checkpoints] == [instance.instance_id]
+        restored = checkpoints[0]
+        assert restored.instance.status is InstanceStatus.WAITING
+        assert restored.runtime.pending_waits == {"sign": "是否发布"}
+        assert restored.runtime.positions == {"sign": {"x": 1.0, "y": 2.0}}
+        assert restored.runtime.definition.nodes[0].type == "human_review"
+
+    async def test_unparsable_runtime_snapshot_is_marked_failed_on_recovery(self, store: PostgresStore) -> None:
+        """坏快照若继续以 waiting 留在库里，每次重启都会重演一遍；读面必须就地收成终态。"""
+        from aegis.persistence.workflow_store import PostgresWorkflowPersistence
+        from aegis.workflow.model import InstanceStatus, NodeDef, NodeRun, WorkflowDef, WorkflowInstance
+
+        definition = WorkflowDef(
+            workflow_id="wf_cccccccccccc",
+            name="坏快照流程",
+            nodes=(NodeDef(node_id="a", type="delay", config={"seconds": 0}),),
+        )
+        await store.save_workflow_definition(definition)
+        instance = WorkflowInstance(
+            instance_id="wfi_c1b2c3d4e5f6",
+            workflow_id=definition.workflow_id,
+            workflow_version=definition.version,
+            trace_id="trc_" + "12" * 8,
+            status=InstanceStatus.WAITING,
+            nodes={"a": NodeRun(node_id="a", type="delay")},
+            created_at=now_iso(),
+        )
+        await store.save_workflow_instance(instance)
+        await store.flush()
+        assert (
+            await store.require_pool().fetchval("SELECT runtime FROM workflow_instances WHERE instance_id = $1", instance.instance_id) == {}
+        )
+
+        checkpoints = await PostgresWorkflowPersistence(store).load_open_instances(limit=10)
+        assert checkpoints == []
+        row = await store.require_pool().fetchrow(
+            "SELECT status, error FROM workflow_instances WHERE instance_id = $1", instance.instance_id
+        )
+        assert row["status"] == "failed"
+        assert "无法解析" in row["error"]
+        assert await store.require_pool().fetchval("SELECT count(*) FROM workflow_instances WHERE status = 'waiting'") == 0
 
 
 class TestWeakNetworkBehaviour:

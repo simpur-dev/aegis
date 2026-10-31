@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from aegis.bus.registry import AgentRegistry
+from aegis.bus.registry import AgentRegistry, SelectionReason, ServeBlocker
 from aegis.config import Settings
 from aegis.domain.enums import AgentType, HazardType
 from aegis.domain.messages import CapabilityRegistration
@@ -98,6 +98,84 @@ class TestRouting:
         registry.register(reg("assess.a", AgentType.ASSESS, ["risk_assess"]))
         registry.register(reg("plan.a", AgentType.PLAN, ["task_decompose"]))
         assert registry.online_count == 2
+
+
+class TestSelectionDiagnosis:
+    """`pick() is None` 只说"没人能接"，`explain()` 必须说清是哪一类没人能接。"""
+
+    def test_no_agents_is_its_own_reason(self, registry: AgentRegistry) -> None:
+        report = registry.explain(AgentType.ASSESS.value, "risk_assess")
+        assert report.reason is SelectionReason.NO_AGENTS
+        assert report.registered == 0
+        assert report.blockers == {}
+        assert report.summary() == "该类型智能体未注册"
+
+    def test_available_reports_no_blockers(self, registry: AgentRegistry) -> None:
+        registry.register(reg("assess.a", AgentType.ASSESS, ["risk_assess"]))
+        report = registry.explain(AgentType.ASSESS.value, "risk_assess")
+        assert report.reason is SelectionReason.AVAILABLE
+        assert report.available == 1
+        assert report.as_dict()["blockers"] == {}
+
+    def test_unhealthy_agent_is_all_unhealthy(self, registry: AgentRegistry) -> None:
+        registry.register(reg("assess.a", AgentType.ASSESS, ["risk_assess"]))
+        registry.get("assess.a").healthy = False
+        report = registry.explain(AgentType.ASSESS.value, "risk_assess")
+        assert report.reason is SelectionReason.ALL_UNHEALTHY
+        assert report.blockers == {ServeBlocker.UNHEALTHY: 1}
+
+    def test_saturated_agent_is_all_saturated(self, registry: AgentRegistry) -> None:
+        registry.register(reg("assess.a", AgentType.ASSESS, ["risk_assess"], concurrency=1))
+        registry.get("assess.a").inflight = 1
+        assert registry.explain(AgentType.ASSESS.value, "risk_assess").reason is SelectionReason.ALL_SATURATED
+
+    def test_missing_capability_is_named(self, registry: AgentRegistry) -> None:
+        registry.register(reg("assess.a", AgentType.ASSESS, ["other"]))
+        report = registry.explain(AgentType.ASSESS.value, "risk_assess")
+        assert report.reason is SelectionReason.CAPABILITY_MISSING
+        assert report.blockers == {ServeBlocker.CAPABILITY: 1}
+
+    def test_hazard_scope_mismatch_is_named(self, registry: AgentRegistry) -> None:
+        registry.register(reg("assess.a", AgentType.ASSESS, ["risk_assess"], hazards=["landslide"]))
+        report = registry.explain(AgentType.ASSESS.value, "risk_assess", "debris_flow")
+        assert report.reason is SelectionReason.HAZARD_MISMATCH
+        assert report.blockers == {ServeBlocker.HAZARD: 1}
+
+    def test_mixed_blockers_are_not_forced_into_one_reason(self, registry: AgentRegistry) -> None:
+        registry.register(reg("assess.a", AgentType.ASSESS, ["risk_assess"]))
+        registry.register(reg("assess.b", AgentType.ASSESS, ["risk_assess"], concurrency=1))
+        registry.get("assess.a").healthy = False
+        registry.get("assess.b").inflight = 1
+        report = registry.explain(AgentType.ASSESS.value, "risk_assess")
+        assert report.reason is SelectionReason.MIXED
+        assert report.blockers == {ServeBlocker.UNHEALTHY: 1, ServeBlocker.SATURATED: 1}
+        assert report.summary() == "注册 2 个，可用 0 个（失联 1、饱和 1）"
+
+    def test_partial_availability_keeps_full_counts(self, registry: AgentRegistry) -> None:
+        registry.register(reg("assess.a", AgentType.ASSESS, ["risk_assess"]))
+        registry.register(reg("assess.b", AgentType.ASSESS, ["risk_assess"]))
+        registry.get("assess.a").healthy = False
+        report = registry.explain(AgentType.ASSESS.value, "risk_assess")
+        assert report.reason is SelectionReason.AVAILABLE
+        assert report.available == 1
+        assert report.blockers == {ServeBlocker.UNHEALTHY: 1}
+
+    def test_entry_lists_every_blocker_without_short_circuit(self, registry: AgentRegistry) -> None:
+        entry = registry.register(reg("assess.a", AgentType.ASSESS, ["other"], concurrency=1))
+        entry.healthy = False
+        entry.inflight = 1
+        assert entry.serve_blockers("risk_assess") == (
+            ServeBlocker.UNHEALTHY,
+            ServeBlocker.SATURATED,
+            ServeBlocker.CAPABILITY,
+        )
+        assert entry.can_serve("risk_assess") is False
+
+    def test_agent_type_filter_does_not_leak_counts(self, registry: AgentRegistry) -> None:
+        registry.register(reg("plan.a", AgentType.PLAN, ["task_decompose"]))
+        report = registry.explain(AgentType.ASSESS.value, "risk_assess")
+        assert report.reason is SelectionReason.NO_AGENTS
+        assert report.registered == 0
 
 
 class TestHealth:

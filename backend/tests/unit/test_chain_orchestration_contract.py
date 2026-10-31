@@ -20,10 +20,12 @@ from typing import Any
 import pytest
 
 from aegis.agents.mock import start_mock_agents
-from aegis.domain.chain import STAGE_ORDER, ChainResult
+from aegis.domain.chain import STAGE_ORDER, ChainResult, StageResult
 from aegis.domain.messages import new_event_id, new_trace_id
 from aegis.pipeline.board import ChainBoard
-from aegis.pipeline.workflow_chain import STANDARD_CHAIN_TEMPLATE, WorkflowChain
+from aegis.pipeline.workflow_chain import STANDARD_CHAIN_TEMPLATE, ChainStations, WorkflowChain
+from aegis.workflow.engine import WorkflowEngine
+from aegis.workflow.nodes import WorkflowServices
 from conftest import REGION, readings_rain_burst
 
 # 三项读数都压在阈值之下：感知无命中，用于构造"停在一段 + 后四段 skipped"这条早退路径
@@ -327,3 +329,75 @@ class TestDagPathIsReal:
         perceive = next(node for node in detail["nodes"] if node["node_id"] == "perceive")
         assert perceive["state"] == "failed"
         assert "没有开过盘" in str(perceive.get("error")), perceive
+
+
+class TestInstanceTerminalState:
+    """链路产物必须带上承载它的实例终态。
+
+    段账只记"跑过的段"：实例在段之间失败、被中止或挂在人工节点时，已跑的段仍然各自 ok，
+    只看 `stages` 就会把一条没走完的链路报成 `ok=True`（P0-3）。
+    """
+
+    @staticmethod
+    async def _chain(container: Any, *, name: str, nodes: list[dict], edges: list[dict]) -> tuple[WorkflowChain, WorkflowEngine]:
+        stations = ChainStations(container.chain.stages)
+        engine = WorkflowEngine(
+            services=WorkflowServices(run_chain_stage=stations, http_call=_failing_http_call),
+            tracer=container.tracer,
+            settings=container.settings,
+        )
+        await engine.create_definition(name=name, description="", nodes=nodes, edges=edges)
+        return WorkflowChain(container.chain.stages, engine, stations=stations, template_name=name), engine
+
+    def test_离线构造的结果不因缺省实例字段被改判(self) -> None:
+        """没有实例可看的结果（单测/离线构造）沿用旧口径，且不输出空的 instance_status。"""
+        result = ChainResult(trace_id="trc_" + "0" * 16, event_id="evt_" + "0" * 12)
+        result.stages.append(StageResult("perceive", "local", True, 1.0))
+        assert result.ok is True
+        assert "instance_status" not in result.as_dict()
+
+    async def test_实例失败时链路不得报成功(self, container: Any) -> None:
+        chain, _ = await self._chain(
+            container,
+            name="失败链路",
+            nodes=[
+                {"node_id": "perceive", "type": "chain_stage", "config": {"stage": "perceive"}},
+                {
+                    "node_id": "boom",
+                    "type": "api_call",
+                    "config": {"method": "GET", "url": "http://example.test/x"},
+                    "on_failure": "abort",
+                    "retry": {"max_attempts": 0},
+                },
+            ],
+            edges=[{"source": "perceive", "target": "boom"}],
+        )
+        result = await chain.process(readings_rain_burst(), region_code=REGION)
+
+        assert result.instance_status == "failed"
+        assert result.verdict is None, "第二段失败后不该继续跑研判"
+        assert result.ok is False, "实例没跑完，链路却被报成成功"
+        assert any("未完成" in error for error in result.errors), result.errors
+        assert result.as_dict()["ok"] is False and result.as_dict()["instance_status"] == "failed"
+
+    async def test_等待人工的实例不算成功(self, container: Any) -> None:
+        """等待是"未完成"而不是"完成"：段账全绿也必须让调用方看见实例还挂着。"""
+        chain, _ = await self._chain(
+            container,
+            name="等待链路",
+            nodes=[
+                {"node_id": "perceive", "type": "chain_stage", "config": {"stage": "perceive"}},
+                {"node_id": "sign", "type": "human_review", "config": {}},
+            ],
+            edges=[{"source": "perceive", "target": "sign"}],
+        )
+        result = await chain.process(readings_rain_burst(), region_code=REGION)
+
+        assert result.instance_status == "waiting"
+        assert all(stage.ok for stage in result.stages), "已跑的段本身是成功的"
+        assert result.ok is False, "挂在人工节点上的链路不是走完了"
+        assert result.errors == [], "等待人工不是错误，原因写在实例状态里而不是 errors"
+
+
+async def _failing_http_call(_method: str, _url: str, _body: object = None) -> dict[str, Any]:
+    raise RuntimeError("外呼失败")

@@ -27,6 +27,7 @@ from aegis.domain.messages import (
 from aegis.persistence import rows
 from aegis.persistence.errors import MappingError
 from aegis.workflow.model import EdgeDef, InstanceStatus, NodeDef, NodeRun, NodeState, RetryPolicy, WorkflowDef, WorkflowInstance
+from aegis.workflow.persistence import InstanceCheckpoint, WorkflowRuntime
 
 # 与建表列一致（002_schema.sql + 006 增列；不含生成列/默认列），用于 arity 对照断言
 TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
@@ -581,6 +582,75 @@ class TestWorkflowMapping:
         failed = workflow_instance(status=InstanceStatus.FAILED, error="节点 assess 连续失败：上游无响应")
         row = as_row(rows.WORKFLOW_INSTANCE_COLUMNS, rows.workflow_instance_params(failed))
         assert rows.workflow_instance_from_row(row).error == failed.error
+
+    def test_definition_lineage_and_content_hash_columns_round_trip(self) -> None:
+        """lineage 与发布哈希是 009 新增列：漏写任何一列，修订历史就不再可回溯。"""
+        original = workflow_def(lineage_id="wf_" + "1" * 12, content_hash="a" * 32)
+        row = as_row(rows.WORKFLOW_DEF_COLUMNS, rows.workflow_def_params(original))
+        assert row["lineage_id"] == original.lineage_id
+        assert row["content_hash"] == original.content_hash
+        restored = rows.workflow_def_from_row(row)
+        assert (restored.lineage_id, restored.content_hash) == (original.lineage_id, original.content_hash)
+
+    def test_definition_row_predating_lineage_columns_reads_as_empty(self) -> None:
+        row = as_row(rows.WORKFLOW_DEF_COLUMNS, rows.workflow_def_params(workflow_def()))
+        row.pop("lineage_id")
+        row.pop("content_hash")
+        restored = rows.workflow_def_from_row(row)
+        # 旧行的空 lineage 由 WorkflowDef 回填成自身 ID，而不是留空串或 KeyError。
+        assert restored.lineage_id == restored.workflow_id
+        assert restored.content_hash == ""
+
+    def test_checkpoint_round_trip_keeps_runtime_side_ledger(self) -> None:
+        definition = workflow_def()
+        instance = workflow_instance(
+            workflow_id=definition.workflow_id,
+            status=InstanceStatus.WAITING,
+            finished_at=None,
+        )
+        runtime = WorkflowRuntime(
+            definition=definition,
+            lineage_id=definition.lineage_id,
+            decisions={"assess": {"choice": "approve", "by": "指挥员"}},
+            pending_waits={"assess": "确认是否升级响应"},
+            pending_options={"assess": ("approve", "reject")},
+            positions={"perceive": {"x": 12.0, "y": 34.0}},
+        )
+        checkpoint = InstanceCheckpoint(instance=instance, runtime=runtime)
+        instance_params, node_params = rows.workflow_checkpoint_params(checkpoint)
+        row = as_row(rows.WORKFLOW_INSTANCE_COLUMNS, instance_params)
+        node_rows = [as_row(rows.NODE_STATE_COLUMNS, params) for params in node_params]
+        assert row["runtime"]["pending_waits"] == {"assess": "确认是否升级响应"}
+
+        restored = rows.workflow_checkpoint_from_row(row, node_rows)
+        assert restored.instance.status is InstanceStatus.WAITING
+        assert restored.instance.nodes["assess"].state is NodeState.AWAITING_HUMAN
+        assert restored.runtime.lineage_id == definition.lineage_id
+        assert restored.runtime.decisions == runtime.decisions
+        assert restored.runtime.pending_waits == runtime.pending_waits
+        assert restored.runtime.pending_options == {"assess": ("approve", "reject")}
+        assert restored.runtime.positions == runtime.positions
+        assert restored.runtime.definition.signature() == definition.signature()
+
+    def test_checkpoint_without_runtime_snapshot_is_rejected(self) -> None:
+        """老行 / 直写实例没有定义快照：读侧必须报 MappingError，由调用方收成"不可恢复"。"""
+        row = as_row(rows.WORKFLOW_INSTANCE_COLUMNS, rows.workflow_instance_params(workflow_instance()))
+        assert row["runtime"] == {}
+        with pytest.raises(MappingError, match="运行态快照"):
+            rows.workflow_checkpoint_from_row(row, [])
+
+    def test_checkpoint_rejects_corrupt_runtime(self) -> None:
+        definition = workflow_def()
+        checkpoint = InstanceCheckpoint(
+            instance=workflow_instance(workflow_id=definition.workflow_id),
+            runtime=WorkflowRuntime(definition=definition),
+        )
+        instance_params, node_params = rows.workflow_checkpoint_params(checkpoint)
+        row = as_row(rows.WORKFLOW_INSTANCE_COLUMNS, instance_params)
+        row["runtime"] = {"definition": {"workflow_id": "不是契约 ID"}}
+        node_rows = [as_row(rows.NODE_STATE_COLUMNS, params) for params in node_params]
+        with pytest.raises(MappingError, match="不合契约"):
+            rows.workflow_checkpoint_from_row(row, node_rows)
 
 
 class TestTimestampHelpers:

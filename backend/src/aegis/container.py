@@ -163,6 +163,8 @@ class PlatformContainer:
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _started: bool = False
     _store_state: IntegrationState | None = None
+    #: 工作流持久态恢复失败的原因（恢复了多少见 `workflow.instance_stats` 的 recovered_*）。
+    workflow_recovery_error: str | None = None
     _retrieval_warm_error: str | None = None
     _knowledge_schema_error: str | None = None
     _knowledge_close_error: str | None = None
@@ -184,6 +186,9 @@ class PlatformContainer:
         self._store_state = await start_store(self.bundle, self.settings)
         # 阈值版本在启动期就位：第一条预警用的必须是"当前生效那一版"，而不是代码里的种子
         await self._load_rulebook()
+        # 定义与实例先接回内存，再注册内置模板：模板注册按名字幂等，
+        # 反过来的话每次重启都会把持久化模板再追加一版。
+        await self._restore_workflow_state()
         if self.analytics is not None:
             await self.analytics.open()
         if self.retrieval is not None:
@@ -243,6 +248,15 @@ class PlatformContainer:
         else:
             self.agent_runtime_state = "off" if runtime == "off" else "mock（未请求启动）"
 
+        if self.settings.env == "prod" and not self.real_agents and not self.mock_agents:
+            # 生产默认不拉 mock，真运行时要显式开启；剩下的形态是"智能体全在进程外"。
+            # 0 在线不是启动错误，但在外部接入完成前每条协同事务都会 no_agent 降级——
+            # 这条路必须在启动日志里说破，而不是等第一条预警卡住时才由值班员反推。
+            log.warning(
+                "生产环境本进程未启动智能体，等待外部智能体注册；在此之前协同事务将按 no_agent 降级",
+                extra={"agent_runtime": self.agent_runtime_state, "bus": self.transport.name},
+            )
+
         await register_builtin_templates(self.workflow)
         # 核签流程与灾种剧本分开注册：低置信度上报要能开出一张真人可签的工单
         await register_report_review_template(self.workflow)
@@ -266,6 +280,22 @@ class PlatformContainer:
                 "agent_runtime": self.agent_runtime_state,
             },
         )
+
+    async def _restore_workflow_state(self) -> None:
+        """从持久层接回定义与未终态实例；失败只记事实，不阻断启动。
+
+        内存后端没有可恢复的东西；`start_store` 已把连接失败写进 store 行，
+        这里不重复报同一条故障。真连上了但读恢复失败（例如迁移没跑、快照坏）
+        则留下 `workflow_recovery_error`，让它出现在 `/readyz` 的 chain 块里。
+        """
+        durability = self.bundle.durability
+        if durability is None or not getattr(durability, "connected", False):
+            return
+        try:
+            await self.workflow.restore_persisted_state()
+        except Exception as exc:
+            self.workflow_recovery_error = f"{type(exc).__name__}: {str(exc)[:300]}"
+            log.warning("工作流持久态恢复失败，实例面按空账本启动", extra={"error": self.workflow_recovery_error})
 
     async def _load_rulebook(self) -> None:
         """从规则库装配当前生效的阈值集（批次 C2）。
@@ -617,7 +647,12 @@ def create_container(
         on_readings=on_readings if analytics is not None else None,
     )
 
+    # 持久层实现延迟导入：内存后端部署不必把 asyncpg/pgvector 的依赖树拖进装配路径。
+    from aegis.persistence.workflow_store import build_workflow_persistence
+
     workflow = WorkflowEngine(
+        # 定义写穿 + 实例检查点：内存后端返回 None，引擎按纯内存运行（P1-5）。
+        persistence=build_workflow_persistence(bundle.durability),
         services=build_workflow_services(
             store=store,
             rule_engine=rule_engine,

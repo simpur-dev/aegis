@@ -25,10 +25,11 @@ from collections.abc import AsyncIterator
 
 import nats
 import pytest
+from nats.js import api as js_api
 
 from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway
-from aegis.bus.nats_bus import _STREAMS, NatsBus  # 删流要照同一份清单来，测试里不抄第二份
+from aegis.bus.nats_bus import _STREAM_MAX_AGE_SECONDS, _STREAMS, NatsBus  # 删流/保留期要照同一份清单来，测试里不抄第二份
 from aegis.bus.registry import AgentRegistry
 from aegis.config import Settings
 from aegis.contracts import ContractRegistry
@@ -128,7 +129,7 @@ class TestNatsBus:
             # durable 而不是临时队列订阅：订阅注册是一次往返，dispatch 紧跟着发出去时
             # 临时订阅可能还没生效，消息只留在流里没人收——这条用例就会偶发超时。
             # 站端在生产里用的本来就是 durable 消费者，这里按生产形态订。
-            await agent_bus.subscribe(subjects.agent_in(AgentType.ASSESS), agent_handler, queue="cg-assess", durable="cg-assess")
+            await agent_bus.subscribe(subjects.agent_in(AgentType.ASSESS, agent_id), agent_handler, queue="cg-assess", durable="cg-assess")
             reply = await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, {"region_code": "540121"}, trace_id=TRACE)
             assert reply.payload["confidence"] == pytest.approx(0.77)
             assert gateway.success_rate() == 1.0
@@ -205,4 +206,100 @@ class TestNatsBus:
             assert len(seen) == 1, "持久流应回放历史消息"
             await sub.cancel()
         finally:
+            await bus.close()
+
+    async def test_streams_carry_bounded_retention(self, stream_prefix: str) -> None:
+        """保留期不是服务端默认的"永久"：每个流都按平台口径设 max_age。"""
+        bus = await _make_bus(stream_prefix)
+        client = await nats.connect(NATS_URL)
+        try:
+            js = client.jetstream()
+            for suffix, _patterns in _STREAMS:
+                info = await js.stream_info(f"{stream_prefix}_{suffix}")
+                assert info.config.max_age == pytest.approx(_STREAM_MAX_AGE_SECONDS[suffix])
+        finally:
+            await client.close()
+            await bus.close()
+
+    async def test_unacked_handler_is_redelivered_and_bounded_by_max_deliver(self, stream_prefix: str) -> None:
+        """handler 抛错＝不回执：1s 后重投；投满 max_deliver 次即停，不会无限重投。
+
+        这三条正是"智能体收到但未回执时崩溃"的重投语义。旧实现把 ack_wait/max_deliver
+        留给服务端默认值（30s / 无限），平台从未用例钉住过它。
+        """
+        from aegis.domain.messages import make_event
+
+        bus = NatsBus(NATS_URL, stream_prefix=stream_prefix, ack_wait_seconds=1.0, max_deliver=2)
+        await bus.connect()
+        attempts: list[bytes] = []
+
+        async def poison(raw: bytes) -> None:
+            attempts.append(raw)
+            raise RuntimeError("handler failed")
+
+        try:
+            subject = subjects.data("rg01", "rain_10min")
+            await bus._subscribe_raw(subject, poison, queue=f"cg_poison_{stream_prefix}", durable=f"d_poison_{stream_prefix}")
+            await asyncio.sleep(0.3)  # 等消费者绑定完成
+            await bus.publish(
+                subject,
+                make_event(
+                    source="platform.connector_rg01",
+                    action=Action.TELEMETRY_READING.value,
+                    payload={"v": 1},
+                    trace_id=TRACE,
+                    target="platform.telemetry_sink",
+                ),
+            )
+            await asyncio.sleep(3.0)
+            assert len(attempts) == 2, f"应在 max_deliver=2 后停止重投，实际投递 {len(attempts)} 次"
+
+            client = await nats.connect(NATS_URL)
+            try:
+                info = await client.jetstream().consumer_info(f"{stream_prefix}_DATA", f"d_poison_{stream_prefix}")
+            finally:
+                await client.close()
+            assert info.config.ack_wait == pytest.approx(1.0)
+            assert info.config.max_deliver == 2
+        finally:
+            await bus.close()
+
+    async def test_existing_consumer_is_upgraded_to_the_platform_window(self, stream_prefix: str) -> None:
+        """既存 durable 消费者（旧默认 30s/无限）在绑定时被就地升级，且投递 subject 不变。
+
+        nats-py 在消费者已存在时会丢弃调用方传的 config；不对账就等于旧参数永远生效。
+        投递 subject 不能换：其他实例可能正绑在它上面。
+        """
+        bus = NatsBus(NATS_URL, stream_prefix=stream_prefix, ack_wait_seconds=1.5, max_deliver=2)
+        await bus.connect()
+        durable = f"d_upgrade_{stream_prefix}"
+        subject = subjects.agent_out(AgentType.PERCEIVE)
+        legacy_subject = f"_INBOX.legacy_{stream_prefix}"
+
+        async def sink(_raw: bytes) -> None:
+            return None
+
+        client = await nats.connect(NATS_URL)
+        js = client.jetstream()
+        try:
+            await js.add_consumer(
+                f"{stream_prefix}_AGENT",
+                config=js_api.ConsumerConfig(
+                    durable_name=durable,
+                    deliver_group=durable,
+                    deliver_subject=legacy_subject,
+                    filter_subject=subject,
+                    ack_wait=30.0,
+                    max_deliver=-1,
+                ),
+            )
+            sub = await bus._subscribe_raw(subject, sink, queue=f"cg_upgrade_{stream_prefix}", durable=durable)
+            await sub.cancel()
+
+            info = await js.consumer_info(f"{stream_prefix}_AGENT", durable)
+            assert info.config.ack_wait == pytest.approx(1.5)
+            assert info.config.max_deliver == 2
+            assert info.config.deliver_subject == legacy_subject, "升级不得改投递 subject：其他实例可能正绑在它上面"
+        finally:
+            await client.close()
             await bus.close()

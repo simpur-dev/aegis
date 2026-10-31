@@ -3605,3 +3605,89 @@ Start 变量名形状/重名/原型链名/超 32 项/默认值与类型不符、
   与画布运行态，D4 的"没改外壳"推断已不成立，批次 F 开工前必须补基线；
 - 未保存草稿的验收是网络层拦截 `PUT`（证明浏览器没发出去），不是服务端 revision 拒绝的实测——
   后者由 A1/A2 的契约用例覆盖。
+
+## 智能体调度与实现修复批次（P0–P2，2026-10-31）
+
+**边界：** 这一批来自对"智能体调度 + 智能体实现"的逐链路审计：总线注册/派发、网关选择与记账、
+感知/研判/决策/执行/反馈五条腿、工作流引擎的实例生命周期。动作表与消息信封不变；
+规范 §3 补了感知命中合并口径，迁移 009 补了实例运行态快照。工作树同时含 E3 未提交的 UI 改动，
+下表门禁按**整棵工作树**计量，不单指本批。
+
+**修复清单（每条都写"修前真栈会怎样"与判据）：**
+
+| 编号 | 修前后果 | 修复 | 判据 |
+|---|---|---|---|
+| P0-1 | 研判 `_recent_grade_p50_ms` 把 `LlmGateway.usage_records` 当属性迭代 → TypeError；该路径只在规则轨报红/橙时走，最该研判的事件反而被打回本地轨 | 台账按方法调用（`callable` 判定），取不到台账按 0 处理 | `test_assess_agent` |
+| P0-2 | `abort` 只改状态不取消 handler：被中止实例的节点仍在跑、仍产生外部副作用 | 实例持有 `running_tasks`；中止先落状态再逐个 `cancel()`，`_cancel_node` 只收口一次 | `test_workflow_engine` |
+| P1-4 | `bypass_node` 在实例 RUNNING 时会再起一条驱动循环，同一节点可能被两个循环各执行一遍 | `_drive` 按实例加锁，终态实例不再驱动 | `test_workflow_engine` |
+| P0-3 | 段账全绿、但图被 abort / 卡在人工节点时，`ChainResult.ok` 与 `chain_runs.ok` 仍记"成功" | 新增 `ChainResult.instance_status`，`ok` 以实例终态优先；`WorkflowChain` 吸收 `start_from_name` 的 detail，failed/aborted 原因进 `errors` | `test_chain_orchestration_contract`、`test_chain_blind_leg` |
+| P1-1 | 网关派到类型级 subject（广播）：N 个同类型本体各自执行一遍，网关只取第一封回执 | 派发改到 `agent.<type>.in.<agent_id>`；本体启动先订阅专属收件箱再发注册帧；类型级公共口的定向请求按 `request.target` 过滤；id 拼 subject 前校验合法性 | `test_gateway`、`test_agentkit`、`test_subjects` |
+| P1-2 | "全部失联/全部饱和/能力配错"都只报一句 `no_agent`，值班员只能翻日志猜 | `ServeBlocker` / `SelectionReason` / `SelectionReport` 分四类计数；`TxnRecord.reason` 落 taxonomy；各段 `_agent_ready` 把"注册了却没人能接"写进 `degradations` | `test_registry`、`test_stage_agent_availability` |
+| P1-3 | 感知智能体在册却从不被请求；事件命中按区域取用，同区域并发链路互相吞命中 | 请求/应答走 `assess.hazard`（带本批 readings，回收 `trigger_hits`，按 rule_id 去重）；事件命中带 trace + TTL 隔离；坏命中/跨区域命中写降级账；`RuleEngineDetector` 透传来源 rule_id；mock 应答与真实感知同形 | `test_perceive_dispatch_and_hits`（12 条） |
+| P1-6 | 流/消费者用传输层默认值：AGENT 流缺专属收件箱 subject、ack_wait 30s 短于 60s 事务预算、毒消息无限重投 | 流 `max_age` 按"过期重放是否有害"分档；AGENT 流补 `agent.*.in.>`；建流冲突时 `update_stream`；`_prepare_consumer` 把既存消费者对账到平台口径并保留 `deliver_subject`；装配点按 `sla_agent_txn_ms + 5s` 传 ack_wait | `test_nats_api_contract`（nats-py 签名守卫） |
+| P2 | 注册帧丢一次（重连/网关重启）本体永久不可见；同 trace 重复开盘静默覆盖；`/readyz` 不暴露"0 智能体在线" | 心跳携带完整 registration 时补登记（`self_healed` 计数）；生命周期帧先过 schema 校验；声明 id/type 与来源不符拒收；同 trace 重复开盘抛 `ChainBoardDuplicate`；`/readyz` 增 `agent_runtime` / `agents_degraded` / `chain.recovery_error`；生产无智能体启动时告警 | `test_gateway`、`test_registry`、`test_chain_board`、`test_api` |
+| P1-5 | 实例账本只在内存：重启即失（E3 批次把这条列为未证明项） | 定义写穿 + 实例检查点落 PostgreSQL（迁移 009：`runtime jsonb`、定义 `lineage_id`/`content_hash`）；端口在 `aegis.workflow.persistence`，适配器在 `persistence/workflow_store.py`；启动恢复 waiting（双向账一致）续跑，running 或不一致 waiting 显式 failed+interrupted；坏快照就地标 failed；恢复失败不阻断启动 | 见下节四层证据 |
+
+**P1-5 四层证据：**
+
+| 层 | 证据 |
+|---|---|
+| 单元 | `test_workflow_persistence.py` **6 passed**：定义写穿/恢复幂等、waiting 续跑保留现场、running 显式中断且第三次启动不再恢复、运行中改图与画布坐标随检查点恢复、等待账与节点状态不一致时显式中断 |
+| 行映射 | `test_persistence_rows.py` 新增 5 条：定义 lineage/hash 往返、009 之前的行按空串回退、检查点 runtime 往返、空 runtime 拒绝、坏 runtime 拒绝 |
+| 真 PostgreSQL | `test_persistence_postgres.py` **27 passed**（DSN 指向容器 `aegis-pg-agent-repair`）：迁移清单含 009；检查点写穿后重启可读回定义 lineage 与 runtime/挂起账/坐标；无 runtime 的坏行恢复时标 failed，且不再以 waiting 留在库里 |
+| 真栈演练 | 三个真实 uvicorn 进程 + 真 PostgreSQL，硬杀两次，**19/19 通过**（下节） |
+
+**真栈重启演练（`backend/.tmp-verify/restart_drill.py`，日志 `restart-drill/run.log`）：**
+
+| 判据 | 实测 |
+|---|---|
+| 首个进程持久层 | `/api/v1/integrations` 的 store 行 `driver=postgres`；启动恢复计数全 0 |
+| 重启前现场 | 核签实例 `waiting`、长延时实例 `running` 都在库；等待现场含定义快照与 `pending_waits`；定义 8 条（含 lineage/hash） |
+| 硬杀后恢复计数 | `recovered_instances=2`、`interrupted_instances=1`、`recovered_definitions=8`、`recovery_error=None` |
+| waiting 续跑 | 详情 `recovered=true`、状态仍 `waiting`、payload 原样；提交 approve 后 `succeeded` |
+| running 中断 | `failed` + `interrupted=true`，错误含"服务重启时实例仍在运行"，节点状态全部 `cancelled` |
+| 终态回写 | 库内一行 `succeeded`、一行 `failed`；中断原因写进 `error` |
+| 重启不追加版本 | 定义数 8 vs 8（模板注册按名幂等，且恢复先于模板注册） |
+| 第三次启动 | `recovered_instances=0`，中断实例不再被重复恢复 |
+
+**变异检查（格式收紧后的基线，逐条从字节备份还原）：**
+
+| 变异 | 结果 |
+|---|---|
+| M1 实例开跑不再落 running 检查点 | rc=1，红 1 条 |
+| M2 恢复时把运行中实例留在 running | rc=1，红 2 条 |
+| M3 等待账与节点状态不一致仍然接回 | rc=1，红 1 条 |
+
+还原后 `engine.py` sha256 前缀 `28cadb0c2153`（与当前文件一致），基线 **6 passed / rc=0**；
+日志 `backend/.tmp-verify/p15-mutation-postformat.log`，junit `p15-mutation.xml`。
+
+**实测门禁（格式与变异基线对齐后复跑）：**
+
+| 门禁 | 结果 |
+|---|---|
+| 后端全量 `pytest --junitxml` | **3387 tests / 0 failures / 0 errors / 104 skipped**，rc=0，480.5s（`backend/reports/junit-agent-repair.xml`） |
+| 后端 `ruff format --check` / `ruff check` | 341 files already formatted / All checks passed |
+| 后端 `mypy src` | Success: no issues found in 170 source files |
+| 覆盖率 job（CI 同款命令） | **321 tests / 0 fail**；8 模块全部 ≥94（persistence **100**、preview 100、errors 100、store 98、documents 97、drafts 97、ports 95、publishing 94），总 **97.36%**；`ci_junit_guard` tests=321 |
+| PG 集成 | **27 passed**（含迁移 009、检查点写穿/恢复、坏快照收口） |
+| 真栈重启演练 | **19/19**，rc=0 |
+| 前端 `typecheck` / `lint:workflow` / `format:check:workflow` | 全部 rc=0 |
+| 前端 `vitest run` | **82 files / 1245 passed** |
+| 前端 `build` | 成功，54.98s（chunk >900 kB 警告未变） |
+
+CI 覆盖率 job 已扩到 8 个模块、321 条相关用例，并纳入 `test_workflow_persistence.py`
+与 `--cov=aegis.workflow.persistence`；ADR-0009 §7 与 `docs/architecture.md` 的 D7 行同步改写。
+
+**这一批仍然没有证明的事：**
+
+- NATS 真栈未起：JetStream 参数由 nats-py 契约守卫与集成用例（需 `AEGIS_TEST_NATS_URL`，本机跳过）
+  覆盖；"两个网关/多个平台进程同时消费同一 durable"没有演练。
+- 重启演练的 bus 是 memory：它证明持久化与恢复语义，不证明 NATS 断线重投；演练只覆盖 `delay`
+  与人工核签两类节点，没有覆盖智能体腿在重启边界上的行为。
+- 感知请求腿在真机上只跑到 mock，真模型的 `assess.hazard` 耗时与坏载荷分布没有样本。
+- 实例写穿在库不可用时会进写缓冲（积压/丢弃计数在 store 行可见），但没有做长时间断库演练；
+  草稿、试运行、版式快照仍在进程内（#53 剩余项）。
+
+
+
+

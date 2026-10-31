@@ -15,6 +15,7 @@ from aegis.agents.agentkit import AgentKit, Reply
 from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway
 from aegis.bus.inmemory import InMemoryBus
+from aegis.bus.naming import consumer_name
 from aegis.bus.registry import AgentRegistry
 from aegis.domain.enums import Action, AgentType
 from aegis.domain.messages import AgentMessage, ModelInfo, make_request
@@ -139,6 +140,102 @@ class TestLifecycleAndResponse:
         assert agent.duplicates_skipped == 1
         await agent.stop()
         await gateway.close()
+
+
+class TestTargetedRouting:
+    """P1-1：类型级 subject 是广播，派单必须落到被选中的本体，本体也只认点名给它的请求。
+
+    修前网关一律发到 `agent.<type>.in`，每个同类型本体各订一个独立队列组 → 各收一份、
+    各执行一遍；网关只采纳第一封回执，于是"N 个智能体各做了一次动作"在台账上看起来只是一次成功。
+    """
+
+    async def _second(self, bus: InMemoryBus, agent_id: str) -> EchoAssess:
+        agent = EchoAssess(transport=bus, agent_type=AgentType.ASSESS, agent_id=agent_id, capabilities=["risk_assess"])
+        await agent.start(heartbeat_interval=0.05)
+        await bus.idle()
+        return agent
+
+    async def test_网关只派给一个本体_其余同类型不执行(self, bus: InMemoryBus, gateway: AgentGateway) -> None:
+        first = await bring_up(bus, gateway, AgentType.ASSESS, EchoAssess, "risk_assess", "assess.route01")
+        second = await self._second(bus, "assess.route02")
+
+        reply = await gateway.dispatch(
+            AgentType.ASSESS, Action.ASSESS_HAZARD, {"region_code": "540121", "hits": []}, trace_id=TRACE, capability="risk_assess"
+        )
+        await bus.idle()
+
+        assert reply.payload["assessed_by"] in {"assess.route01", "assess.route02"}
+        handled = {first.agent_id: first.handled, second.agent_id: second.handled}
+        assert sum(handled.values()) == 1, f"同类型本体都执行了一遍：{handled}"
+        await second.stop()
+        await first.stop()
+        await gateway.close()
+
+    async def test_公共口上的定向请求只由点名者执行(self, bus: InMemoryBus, gateway: AgentGateway) -> None:
+        """类型级公共口无法按地址投递：每个同类型本体都会收到一份，靠 request.target 过滤。"""
+        first = await bring_up(bus, gateway, AgentType.ASSESS, EchoAssess, "risk_assess", "assess.route03")
+        second = await self._second(bus, "assess.route04")
+        request = make_request(
+            source="platform.gateway",
+            target=first.agent_id,
+            action=Action.ASSESS_HAZARD.value,
+            payload={"region_code": "540121", "hits": []},
+            trace_id=TRACE,
+            reply_to="reply.gw00000003.inbox",
+            deadline_ms=800,
+        )
+        replies: list[AgentMessage] = []
+
+        async def collector(message: AgentMessage) -> None:
+            replies.append(message)
+
+        await bus.subscribe(request.reply_to or "", collector)
+        await bus.publish(subjects.agent_in(AgentType.ASSESS), request)
+        await bus.idle()
+        await asyncio.sleep(0.05)
+        await bus.idle()
+
+        assert [reply.source for reply in replies] == [first.agent_id], "公共口上的定向请求被非目标本体执行了"
+        assert second.handled == 0
+        await second.stop()
+        await first.stop()
+        await gateway.close()
+
+    async def test_先建收件箱再宣告上线(self) -> None:
+        """注册事件一到平台就可能派单：收件箱晚一步建立，第一条请求就落在空口上。"""
+        calls: list[tuple[str, str]] = []
+        sub_kwargs: list[dict[str, object]] = []
+
+        class _Transport:
+            name = "recording"
+
+            async def publish(self, subject: str, _message: AgentMessage) -> None:
+                calls.append(("publish", subject))
+
+            async def subscribe(self, subject: str, _handler: object, **kwargs: object) -> object:
+                calls.append(("subscribe", subject))
+                sub_kwargs.append(kwargs)
+
+                async def _cancel() -> None:
+                    return None
+
+                return type("Sub", (), {"cancel": staticmethod(_cancel)})()
+
+            async def connect(self) -> None: ...
+            async def close(self) -> None: ...
+
+        kit = EchoAssess(transport=_Transport(), agent_type=AgentType.ASSESS, agent_id="assess.order01", capabilities=["risk_assess"])
+        await kit.start(heartbeat_interval=5)
+        await kit.stop()
+
+        assert [kind for kind, _ in calls[:2]] == ["subscribe", "subscribe"], calls
+        assert calls[2] == ("publish", subjects.agent_hb(AgentType.ASSESS)), calls
+        assert calls[0][1] == subjects.agent_in(AgentType.ASSESS, "assess.order01")
+        assert calls[1][1] == subjects.agent_in(AgentType.ASSESS)
+        assert [kw.get("durable") for kw in sub_kwargs] == [
+            consumer_name("d_in", "assess", "assess.order01"),
+            consumer_name("d", "assess", "assess.order01"),
+        ], "两个收件口都必须 durable：专属口是网关默认派发目标，核心订阅在断线窗口里会把请求丢在流外无人取"
 
 
 class TestDeadlineDegradation:

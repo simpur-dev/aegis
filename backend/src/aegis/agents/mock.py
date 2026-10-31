@@ -81,7 +81,16 @@ class MockAgent:
         )
 
     async def start(self, *, heartbeat_interval: float = 1.0) -> None:
-        await self.transport.publish(subjects.agent_hb(self.agent_type), self._frame(Action.AGENT_REGISTER))
+        # 与 AgentKit 同序：先建收件箱再宣告上线，否则注册后立刻派来的第一条请求会落空。
+        # 专属口同样 durable：网关默认往这里派单，核心订阅断线即丢。
+        self._subs.append(
+            await self.transport.subscribe(
+                subjects.agent_in(self.agent_type, self.agent_id),
+                self._on_request,
+                queue=consumer_name("cg_in", self.agent_type.value, self.agent_id),
+                durable=consumer_name("d_in", self.agent_type.value, self.agent_id),
+            )
+        )
         self._subs.append(
             await self.transport.subscribe(
                 subjects.agent_in(self.agent_type),
@@ -92,6 +101,7 @@ class MockAgent:
                 durable=consumer_name("d", self.agent_type.value, self.agent_id),
             )
         )
+        await self.transport.publish(subjects.agent_hb(self.agent_type), self._frame(Action.AGENT_REGISTER))
         self._hb_task = asyncio.create_task(self._heartbeat_loop(heartbeat_interval), name=f"hb-{self.agent_id}")
 
     async def stop(self) -> None:
@@ -121,6 +131,9 @@ class MockAgent:
             return
 
     async def _on_request(self, request: AgentMessage) -> None:
+        # 公共收件口是广播：只处理点名的请求，替身也不能例外，否则"N 个替身都执行一遍"会被测试掩盖。
+        if request.target not in ("*", self.agent_id):
+            return
         # 接收方按 msg_id 幂等去重（规范 §1）：重复投递不得产生二次副作用
         if request.msg_id in self._seen_ids:
             self.duplicates_skipped += 1
@@ -178,7 +191,8 @@ class MockAgent:
         if self.agent_type is AgentType.EXECUTE:
             return self._execute(request)
         if self.agent_type is AgentType.PERCEIVE:
-            return {"anomalies": []}
+            # 与 PerceiveAgent 的应答同形：感知段回收的是 trigger_hits，空的含义是"没有新增命中"。
+            return {"anomaly_count": 0, "trigger_hits": []}
         return {"status": "ok", "warning_id": request.payload.get("warning_id", "")}
 
     def _assess(self, request: AgentMessage) -> dict[str, Any]:

@@ -71,6 +71,8 @@ class RuleEngineDetector:
             unit=parsed.unit,
             observed_at=parsed.observed_at,
             base_score=float(hit.score),
+            # 透传来源规则 id：感知段按 rule_id 与平台规则轨去重，同一条越限不能算两条证据。
+            rule_id=hit.rule_id,
         )
 
 

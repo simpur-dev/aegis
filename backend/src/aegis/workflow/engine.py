@@ -15,19 +15,21 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import orjson
 from pydantic import ValidationError
 
 from aegis.config import Settings, get_settings
-from aegis.domain.messages import new_trace_id, now_iso
+from aegis.domain.messages import new_trace_id, now_iso, parse_iso
 from aegis.errors import AegisError
 from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
 from aegis.workflow.documents import Position, WorkflowDocument, definition_from_document, document_from_definition
 from aegis.workflow.errors import WorkflowAppError, WorkflowErrorCode
 from aegis.workflow.model import (
+    TERMINAL_STATES,
     EdgeDef,
     InstanceStatus,
     NodeDef,
@@ -47,6 +49,7 @@ from aegis.workflow.nodes import (
     WorkflowServices,
     default_registry,
 )
+from aegis.workflow.persistence import InstanceCheckpoint, WorkflowPersistencePort, WorkflowRuntime
 from aegis.workflow.preview import (
     MAX_PREVIEW_PAYLOAD_BYTES,
     InMemoryPreviewStore,
@@ -59,6 +62,10 @@ from aegis.workflow.store import DuplicateWorkflowName, WorkflowRepository, new_
 log = logging.getLogger("aegis.workflow")
 
 ACTIVE_SOURCE_STATES = frozenset({NodeState.SUCCEEDED, NodeState.DEGRADED, NodeState.BYPASSED})
+TERMINAL_STATUSES = frozenset({InstanceStatus.SUCCEEDED, InstanceStatus.FAILED, InstanceStatus.ABORTED})
+#: 启动恢复一次最多载入多少条未终态实例。开放实例是"真工单"，不该被驻留上界挤掉；
+#: 这个数只防病态数据把启动拖死，命中时日志里会留下一条 warning。
+OPEN_INSTANCE_RECOVERY_LIMIT = 1_000
 
 
 class WorkflowValidationError(Exception):
@@ -89,6 +96,14 @@ def _as_workflow_error(exc: ValidationError) -> WorkflowValidationError:
     return WorkflowValidationError(reason)
 
 
+def _elapsed_seconds_since(created_at: str) -> float:
+    """计算实例已存活多久：恢复后的时长指标按真实墙钟算，而不是从本次进程启动开始。"""
+    try:
+        return max((datetime.now(UTC) - parse_iso(created_at)).total_seconds(), 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @dataclass(slots=True)
 class _MutableInstance:
     """运行态实例：节点定义快照 + 执行状态。快照保证模板修订不影响在途实例。"""
@@ -117,6 +132,12 @@ class _MutableInstance:
     preview_id: str | None = None
     #: 画布位置快照（启动时取版本 layout，运行中插节点就地补一条）。
     positions: dict[str, dict[str, float]] = field(default_factory=dict)
+    #: 正在执行的节点 handler：中止时逐个取消，避免"停了状态、停不住动作"。
+    running_tasks: dict[str, asyncio.Future[Any]] = field(default_factory=dict, repr=False)
+    #: 本次进程从持久层恢复出来的现场（读取面据此区分"一直在跑"与"重启后接上"）。
+    recovered: bool = False
+    #: 恢复时仍在 running、无法续跑的实例：被显式标成 FAILED 并留原因，不静默消失。
+    interrupted: bool = False
 
     def incoming(self, node_id: str) -> list[EdgeDef]:
         return [edge for edge in self.edges if edge.target == node_id]
@@ -152,6 +173,7 @@ class WorkflowEngine:
         max_parallel: int = 32,
         max_instances: int = 128,
         preview_store: InMemoryPreviewStore | None = None,
+        persistence: WorkflowPersistencePort | None = None,
     ) -> None:
         if max_parallel < 1:
             raise ValueError("max_parallel 必须 ≥ 1")
@@ -160,7 +182,8 @@ class WorkflowEngine:
         # 注意：WorkflowRepository / NodeRegistry 定义了 __len__，空实例是假值，
         # 用 `x or default` 会把调用方传入的空仓储/注册表静默替换掉（容量/测试注入失效），
         # 因此这里统一按 `is None` 判断是否使用默认值。
-        self._repository = repository if repository is not None else WorkflowRepository()
+        self._persistence = persistence
+        self._repository = repository if repository is not None else WorkflowRepository(persistence=persistence)
         self._registry = registry if registry is not None else default_registry()
         # 启动对账：目录是面板、变量选择器与发布校验的共同真源，坏一行就整表拒启。
         # 放在构造期而不是首次请求期——启动日志里第一条事实就该是"目录对上了"。
@@ -171,10 +194,12 @@ class WorkflowEngine:
         self._semaphore = asyncio.Semaphore(max_parallel)
         self._instances: dict[str, _MutableInstance] = {}
         self._locks: dict[str, asyncio.Lock] = {}
-        #: 实例只活在内存里（落库面尚未接），所以必须有上界：D7 之后每条预警都会起一个实例，
-        #: 无上界就是每报一次警漏一份节点状态在进程里，值班一个班次就吃掉几百 MB。
+        #: 实例的**热态**在内存（调度循环要同步读），落库由 `_checkpoint` 写穿；
+        #: 仍需上界：D7 之后每条预警都会起一个实例，终态实例不能无限累积。
         self._max_instances = int(max_instances)
         self.evicted_instances = 0
+        #: 启动恢复的记账：恢复了几条定义、接回几条实例、其中多少条只能标中断。
+        self.recovery_stats = {"definitions": 0, "instances": 0, "interrupted": 0}
         #: 试运行与正式实例分两本账：预览不进 `_instances`，也不参与淘汰/计数。
         self._previews = preview_store if preview_store is not None else InMemoryPreviewStore()
         self._dry_services = dry_run_services(self._services)
@@ -209,12 +234,20 @@ class WorkflowEngine:
 
     @property
     def instance_stats(self) -> dict[str, int]:
-        """在内存里留着几个实例、上界多大、累计被挤掉几个（D7 之后每条预警都起一个实例）。
+        """在内存里留着几个实例、上界多大、累计被挤掉几个，以及启动恢复了多少。
 
-        这三个数只有摆在一起才读得懂：`evicted_instances` 一直在涨说明容量小了，
-        而单独看它不知道上界在哪。
+        这些数只有摆在一起才读得懂：`evicted_instances` 一直在涨说明容量小了，
+        而单独看它不知道上界在哪；`recovered_instances/interrupted_instances`
+        说明当前账本里有多少是重启接回来的、其中多少只能收成失败。
         """
-        return {"held": len(self._instances), "capacity": self._max_instances, "evicted": self.evicted_instances}
+        return {
+            "held": len(self._instances),
+            "capacity": self._max_instances,
+            "evicted": self.evicted_instances,
+            "recovered_definitions": self.recovery_stats["definitions"],
+            "recovered_instances": self.recovery_stats["instances"],
+            "interrupted_instances": self.recovery_stats["interrupted"],
+        }
 
     def validate_definition(self, definition: WorkflowDef) -> None:
         """静态校验：节点类型已注册、配置合法、图无环、边引用存在。
@@ -384,6 +417,10 @@ class WorkflowEngine:
             "error": current.error,
             "preview": current.dry_run,
             "preview_id": current.preview_id,
+            # 重启接回来的实例与"一直在跑"要能分开：前者可能缺执行现场，
+            # 后者被标成 failed 说明它已经不可能再继续（见 `restore_persisted_state`）。
+            "recovered": current.recovered,
+            "interrupted": current.interrupted,
             "created_at": current.created_at,
             "finished_at": current.finished_at,
             # 核签工单要能让人看见"签的是什么"：上报文本、定级来源与转核签的原因都在 payload 里，
@@ -412,6 +449,140 @@ class WorkflowEngine:
                 "positions": {node_id: dict(position) for node_id, position in current.positions.items()},
             },
         }
+
+    # ---------- 持久化与重启恢复 ----------
+
+    async def restore_persisted_state(self) -> dict[str, int]:
+        """启动恢复：先定义后实例；未终态实例按"能续的续、不能续的显式中断"处置。
+
+        调用方（容器）负责在持久层不可达时跳过或接住异常——引擎不把"库没连上"
+        和"库里没有数据"混成同一种沉默。恢复是幂等的：同一进程重复调用不会重复登记。
+        """
+        stats = {"definitions": 0, "instances": 0, "interrupted": 0}
+        if self._persistence is None:
+            self.recovery_stats = stats
+            return stats
+        definitions = await self._persistence.load_definitions(limit=self._repository.capacity)
+        stats["definitions"] = await self._repository.restore_many(definitions)
+        checkpoints = await self._persistence.load_open_instances(limit=OPEN_INSTANCE_RECOVERY_LIMIT)
+        if len(checkpoints) >= OPEN_INSTANCE_RECOVERY_LIMIT:
+            log.warning("未终态实例达到恢复上限，剩余实例留在库中未载入", extra={"limit": OPEN_INSTANCE_RECOVERY_LIMIT})
+        for checkpoint in checkpoints:
+            instance = self._restore_instance(checkpoint)
+            if instance is None:
+                continue
+            stats["instances"] += 1
+            if instance.interrupted:
+                stats["interrupted"] += 1
+        self.recovery_stats = stats
+        log.info("工作流持久态已恢复", extra=stats)
+        return stats
+
+    def _restore_instance(self, checkpoint: InstanceCheckpoint) -> _MutableInstance | None:
+        snapshot = checkpoint.instance
+        if snapshot.instance_id in self._instances:
+            return None
+        if snapshot.status not in (InstanceStatus.RUNNING, InstanceStatus.WAITING):
+            return None
+        runtime = checkpoint.runtime
+        definition = runtime.definition
+        runs = {
+            node.node_id: (
+                snapshot.nodes[node.node_id].model_copy(deep=True)
+                if node.node_id in snapshot.nodes
+                else NodeRun(node_id=node.node_id, type=node.type)
+            )
+            for node in definition.nodes
+        }
+        instance = _MutableInstance(
+            instance_id=snapshot.instance_id,
+            definition=definition,
+            trace_id=snapshot.trace_id,
+            payload=dict(snapshot.payload),
+            nodes={node.node_id: node.model_copy(deep=True) for node in definition.nodes},
+            edges=[edge.model_copy(deep=True) for edge in definition.edges],
+            runs=runs,
+            status=snapshot.status,
+            error=snapshot.error,
+            decisions={node_id: dict(decision) for node_id, decision in runtime.decisions.items()},
+            pending_waits=dict(runtime.pending_waits),
+            pending_options={node_id: tuple(options) for node_id, options in runtime.pending_options.items()},
+            lineage_id=runtime.lineage_id or definition.lineage_id,
+            created_at=snapshot.created_at,
+            finished_at=snapshot.finished_at,
+            positions={node_id: dict(position) for node_id, position in runtime.positions.items()},
+            recovered=True,
+        )
+        # 重启后时延账本若按本次 perf_counter 起算，会凭空多出一条"跑了 0 秒"的样本；
+        # 把起点回拨到真实创建时刻，恢复后的时长仍是这条实例的真实存活时长。
+        instance.created_mono = time.perf_counter() - _elapsed_seconds_since(snapshot.created_at)
+
+        if snapshot.status is InstanceStatus.WAITING:
+            # 等待现场是双向账：每个挂起点都对应一个 awaiting_human 节点，反之亦然。
+            # 只查单向会漏掉"状态是 waiting、账上却没有挂起点"的坏行——那种实例接回来也永远续不了。
+            awaiting = {node_id for node_id, run in runs.items() if run.state is NodeState.AWAITING_HUMAN}
+            declared = set(instance.pending_waits)
+            if not declared or declared != awaiting:
+                self._interrupt(
+                    instance,
+                    f"恢复时等待点与节点状态不一致（挂起账 {sorted(declared)}，等待节点 {sorted(awaiting)}）",
+                )
+            else:
+                self._register_restored(instance)
+                log.warning(
+                    "已接回等待人工的实例",
+                    extra={"instance_id": instance.instance_id, "trace_id": instance.trace_id, "waits": sorted(instance.pending_waits)},
+                )
+                return instance
+        else:
+            unfinished = sorted(node_id for node_id, run in runs.items() if run.state not in TERMINAL_STATES)
+            self._interrupt(
+                instance,
+                f"服务重启时实例仍在运行：{len(unfinished)} 个节点未完成（{', '.join(unfinished[:5])}），执行现场已丢失，未自动续跑",
+            )
+        self._register_restored(instance)
+        # 中断是终态事实：立刻回写，下一次重启就不会再把它当成"可恢复的 running"。
+        self._checkpoint(instance)
+        return instance
+
+    def _register_restored(self, instance: _MutableInstance) -> None:
+        self._instances[instance.instance_id] = instance
+        self._locks.setdefault(instance.instance_id, asyncio.Lock())
+
+    @staticmethod
+    def _interrupt(instance: _MutableInstance, reason: str) -> None:
+        instance.interrupted = True
+        instance.status = InstanceStatus.FAILED
+        instance.error = reason
+        instance.finished_at = instance.finished_at or now_iso()
+        for run in instance.runs.values():
+            if run.state not in TERMINAL_STATES:
+                run.state = NodeState.CANCELLED
+                run.notes.append("服务重启：执行现场丢失，节点被标记取消")
+
+    def _checkpoint(self, instance: _MutableInstance) -> None:
+        """把当前现场投给持久层（写侧非阻塞）。只在生命周期里程碑调用，不在每次状态跳变时写。
+
+        定义快照取自实例自己的 nodes/edges：运行中改图之后，定义仓储里的那一版已经
+        不是这张图的真相，恢复必须按实例现场重建。
+        """
+        if self._persistence is None or instance.dry_run:
+            return
+        definition = instance.definition.model_copy(
+            update={
+                "nodes": [node.model_copy(deep=True) for node in instance.nodes.values()],
+                "edges": [edge.model_copy(deep=True) for edge in instance.edges],
+            }
+        )
+        runtime = WorkflowRuntime(
+            definition=definition,
+            lineage_id=instance.lineage_id,
+            decisions={node_id: dict(decision) for node_id, decision in instance.decisions.items()},
+            pending_waits=dict(instance.pending_waits),
+            pending_options={node_id: tuple(options) for node_id, options in instance.pending_options.items()},
+            positions={node_id: dict(position) for node_id, position in instance.positions.items()},
+        )
+        self._persistence.save_instance(InstanceCheckpoint(instance=instance.snapshot(), runtime=runtime))
 
     async def start(
         self,
@@ -569,14 +740,38 @@ class WorkflowEngine:
         if register:
             self._instances[instance.instance_id] = instance
             self._locks.setdefault(instance.instance_id, asyncio.Lock())
+            # 先落"这张图已经开跑"，再开始执行：进程在第一个节点里被杀时，
+            # 库里至少有一条 running 现场，重启才能把它显式收成 interrupted 而不是当没发生过。
+            self._checkpoint(instance)
         return instance
 
     async def _drive(self, instance: _MutableInstance) -> None:
+        """同一实例同一时刻只允许一条驱动循环。
+
+        `bypass_node` 在实例 RUNNING 时也会再起一条驱动；没有这把锁，两条循环可能同时
+        `_collect_ready` 到同一批节点，把同一个 handler 执行两遍。锁建在 `_instantiate`，
+        试运行实例不登记、也不需要并发驱动。
+
+        驱动结束（无论收敛到终态还是挂起等待人工）落一次检查点：节点状态是这一轮
+        执行的全部事实，写侧走持久层的缓冲，不阻塞调度。
+        """
+        lock = self._locks.get(instance.instance_id)
+        if lock is None:
+            await self._drive_once(instance)
+            self._checkpoint(instance)
+            return
+        async with lock:
+            if instance.status in TERMINAL_STATUSES:
+                return
+            await self._drive_once(instance)
+            self._checkpoint(instance)
+
+    async def _drive_once(self, instance: _MutableInstance) -> None:
         """主调度循环：每轮找出可执行节点并发执行，直到无可执行节点。
 
         事件驱动、无轮询等待：一轮 gather 只在"确有就绪节点"时挂起，就绪即执行。
-        一旦实例进入 FAILED（abort 策略）或 WAITING（等待人工决策），立即停止调度，
-        未触及的下游节点保持 pending —— 不得因为"暂时不可就绪"而被误判为级联跳过。
+        一旦实例进入 FAILED（abort 策略）、ABORTED（人工中止）或 WAITING（等待人工决策），
+        立即停止调度，未触及的下游节点保持 pending —— 不得因为"暂时不可就绪"而被误判为级联跳过。
 
         链路结构：一次驱动 = 一条 `workflow_instance` 跨度，其 traceID 由实例的契约 trace_id
         确定性映射而来，本轮就绪执行的节点跨度自动成为它的子节点（见 observability/instrumentation.py）。
@@ -607,7 +802,7 @@ class WorkflowEngine:
 
     async def _run_loop(self, instance: _MutableInstance) -> None:
         while True:
-            if instance.status in (InstanceStatus.FAILED, InstanceStatus.WAITING):
+            if instance.status in (InstanceStatus.FAILED, InstanceStatus.WAITING, InstanceStatus.ABORTED):
                 break
             ready = self._collect_ready(instance)
             if not ready:
@@ -680,6 +875,14 @@ class WorkflowEngine:
         run = instance.runs[node_id]
         spec = self._registry.require(node.type)
 
+        # 节点可能在本轮 collect 之后、handler 启动之前被 abort 波及：先认终态，
+        # 否则下面那句 `run.state = RUNNING` 会把已经 CANCELLED 的节点重新点亮。
+        if instance.status is InstanceStatus.ABORTED:
+            if run.state not in (NodeState.SUCCEEDED, NodeState.DEGRADED):
+                run.state = NodeState.CANCELLED
+                run.notes.append("实例已中止，节点未启动")
+            return
+
         run.schedule_latency_ms = (time.perf_counter() - (run.ready_mono or time.perf_counter())) * 1000
         if not instance.dry_run:
             self._tracer.record(
@@ -714,6 +917,9 @@ class WorkflowEngine:
         first_failure_mono: float | None = None
 
         while True:
+            if instance.status is InstanceStatus.ABORTED:
+                self._cancel_node(instance, run, node_id, node_span, "实例已中止，节点未启动")
+                return
             run.attempts += 1
             instrumentation.set_attributes(node_span, span_attrs={"aegis.node.attempt": run.attempts})
             context = NodeContext(
@@ -735,7 +941,21 @@ class WorkflowEngine:
             )
             try:
                 async with self._semaphore:
-                    outcome: NodeOutcome = await asyncio.wait_for(spec.handler(context, node.config), timeout=node.timeout_ms / 1000)
+                    if instance.status is InstanceStatus.ABORTED:
+                        self._cancel_node(instance, run, node_id, node_span, "实例已中止，节点未启动")
+                        return
+                    # NodeHandler 的返回类型是 Awaitable，不保证是 Coroutine：ensure_future 都能接住。
+                    handler_task = asyncio.ensure_future(spec.handler(context, node.config))
+                    instance.running_tasks[node_id] = handler_task
+                    try:
+                        outcome: NodeOutcome = await asyncio.wait_for(handler_task, timeout=node.timeout_ms / 1000)
+                    finally:
+                        instance.running_tasks.pop(node_id, None)
+            except asyncio.CancelledError:
+                if instance.status is InstanceStatus.ABORTED:
+                    self._cancel_node(instance, run, node_id, node_span, "实例已中止，执行被取消")
+                    return
+                raise
             except HumanRequired as wait:
                 run.state = NodeState.AWAITING_HUMAN
                 run.notes.append(f"等待人工决策: {wait.prompt}")
@@ -772,6 +992,10 @@ class WorkflowEngine:
             except Exception as exc:  # 未预期异常：归一为节点错误，避免整条链路崩
                 error = NodeError(f"节点执行异常: {exc.__class__.__name__}", detail={"reason": str(exc)[:200]})
             else:
+                # handler 已经跑完但中止先到：副作用可能已经发生，结果本身不能再算数。
+                if instance.status is InstanceStatus.ABORTED:
+                    self._cancel_node(instance, run, node_id, node_span, "实例已中止，执行结果被丢弃")
+                    return
                 run.output = dict(outcome.output)
                 if outcome.branch:
                     run.output.setdefault("branch", outcome.branch)
@@ -837,6 +1061,9 @@ class WorkflowEngine:
         run: NodeRun,
         error: Exception,
     ) -> str:
+        if instance.status is InstanceStatus.ABORTED:
+            run.state = NodeState.CANCELLED
+            return "stop"
         policy = node.on_failure
         if policy == "skip":
             run.state = NodeState.SKIPPED
@@ -861,6 +1088,23 @@ class WorkflowEngine:
         run.state = NodeState.FAILED
         return "stop"
 
+    def _cancel_node(
+        self,
+        instance: _MutableInstance,
+        run: NodeRun,
+        node_id: str,
+        node_span: Any,
+        note: str,
+    ) -> None:
+        """中止收口：只记一次终态与跨度，重复调用直接返回。"""
+        if run.finished_mono is not None:
+            return
+        run.state = NodeState.CANCELLED
+        run.notes.append(note)
+        self._record_node_latency(instance, run, node_id)
+        instrumentation.set_attributes(node_span, span_attrs={"aegis.node.state": run.state.value, "aegis.node.cancelled": True})
+        instrumentation.end_span(node_span)
+
     def _record_node_latency(
         self,
         instance: _MutableInstance,
@@ -882,7 +1126,7 @@ class WorkflowEngine:
         )
 
     def _finalise(self, instance: _MutableInstance) -> None:
-        if instance.status is InstanceStatus.WAITING:
+        if instance.status in (InstanceStatus.WAITING, InstanceStatus.ABORTED):
             return
         if instance.status is InstanceStatus.FAILED:
             instance.finished_at = instance.finished_at or now_iso()
@@ -945,6 +1189,7 @@ class WorkflowEngine:
         self._registry.require(node.type).validate_config(merged)
         node.config = merged
         instance.runs[node_id].notes.append(f"运行中改参: {sorted(config)}")
+        self._checkpoint(instance)
         return {"node_id": node_id, "config": merged}
 
     async def insert_node(
@@ -985,6 +1230,7 @@ class WorkflowEngine:
             raise WorkflowValidationError("插入节点后出现环，已拒绝")
         # 只在图确认合法后落位置：否则被拒绝的插入会在画布上留下一枚无主坐标。
         instance.positions[node_def.node_id] = {"x": placed.x, "y": placed.y}
+        self._checkpoint(instance)
         return {"instance_id": instance_id, "node_id": node_def.node_id, "after": after}
 
     async def bypass_node(self, instance_id: str, node_id: str, *, reason: str = "") -> dict[str, Any]:
@@ -1009,6 +1255,9 @@ class WorkflowEngine:
             instance.status = InstanceStatus.RUNNING
         if instance.status is InstanceStatus.RUNNING:
             await self._drive(instance)
+        else:
+            # 被旁路的实例若已终态（如失败/中止），`_drive` 不会跑，旁路事实仍需落库。
+            self._checkpoint(instance)
         return self.instance_detail(instance_id) or {}
 
     async def abort(self, instance_id: str, *, reason: str = "") -> dict[str, Any]:
@@ -1016,16 +1265,25 @@ class WorkflowEngine:
         # 幂等：已中止的实例再次中止不重复处置、不重复上报时延指标。
         if instance.status is InstanceStatus.ABORTED:
             return self.instance_detail(instance_id) or {}
-        for run in instance.runs.values():
-            if run.state in (NodeState.PENDING, NodeState.READY, NodeState.AWAITING_HUMAN):
-                run.state = NodeState.CANCELLED
+        # 先落状态再取消任务：handler 的 CancelledError 分支据此认出"这是中止，不是故障"。
         instance.status = InstanceStatus.ABORTED
         instance.error = reason or "人工中止"
         instance.finished_at = instance.finished_at or now_iso()
+        for run in instance.runs.values():
+            if run.state is NodeState.RUNNING:
+                run.state = NodeState.CANCELLED
+                run.notes.append("实例中止，执行被取消")
+            elif run.state in (NodeState.PENDING, NodeState.READY, NodeState.AWAITING_HUMAN):
+                run.state = NodeState.CANCELLED
+        # 停止动作本身：状态先变，再逐个取消 handler；不取消就只是"账面中止"。
+        for task in list(instance.running_tasks.values()):
+            task.cancel()
+        instance.running_tasks.clear()
         instance.pending_waits.clear()
         instance.pending_options.clear()
         if not instance.dry_run:
             self._tracer.record("workflow_instance_ms", (time.perf_counter() - instance.created_mono) * 1000, trace_id=instance.trace_id)
+        self._checkpoint(instance)
         return self.instance_detail(instance_id) or {}
 
     def _require_instance(self, instance_id: str) -> _MutableInstance:

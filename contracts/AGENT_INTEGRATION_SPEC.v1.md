@@ -56,7 +56,7 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 |---|---|---|---|---|
 | `perceive.anomaly` | perceive | out→event | `station_id`,`metric`,`value`,`observed_at`,`anomaly_score` | 弱信号/越限标注上报 |
 | `perceive.trigger_hit` | perceive | out→event | `rule_id`,`hazard_type`,`region_code`,`evidence_refs` | 触发条件命中（指标1 溯源依据） |
-| `assess.hazard` | platform→perceive/assess | in→request | `region_code`,`window`,`candidate_hazards` | 请求灾种识别 |
+| `assess.hazard` | platform→perceive/assess | in→request | `region_code`,`window`,`candidate_hazards` | 请求灾种识别。perceive 侧可附 `readings`（本批读数）；应答为 `trigger_hits`；assess 侧应答为 `assess.risk_level` |
 | `assess.risk_level` | assess | out→response | `hazard_type`,`region_code`,`risk_level`(1-5),`confidence`,`rationale`,`evidence_refs` | 定级结论 |
 | `plan.stu` | platform→plan | in→request | `event_id`,`risk`,`objective`,`constraints` | 请求任务拆解 |
 | `plan.stu_result` | plan | out→response | `task_units`(STU 数组，须过 stu.v1 校验) | 返回标准化任务单元集 |
@@ -67,6 +67,11 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 | `error.raise` | 双向 | out→error | `code`,`message`,`retryable` | 失败回执（见 §5） |
 
 **风险等级统一口径**：`risk_level` 1-5 对应红/橙/黄/蓝/无（1 最高），所有智能体与平台共用，禁止自定义分级。
+
+**感知命中的合并口径**：链路对 `trigger_hits` 按 `rule_id` 与本地规则命中去重合并。请求/应答
+（`assess.hazard` 的应答）只采纳与本链路同 `region_code` 的命中；主动事件 `perceive.trigger_hit`
+只有 `trace_id` 与本链路相同且在存活窗内才被采纳——同一区域的并发链路不会互相吞并命中。
+`perceive.anomaly` 是单点标注、无 `rule_id`/`hazard_type`，不参与命中合并。
 
 ## 4. 数据访问边界
 

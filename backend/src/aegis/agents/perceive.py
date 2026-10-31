@@ -12,11 +12,14 @@
 灾种归属从注入的规则表里读，规则表若把同一指标指向多个灾种就不猜（详见该类 docstring）。
 语义腿（§3.1 的文本线索）经注入的 `SemanticParser` 委派给平台自己的三路融合解析器，
 本内环不复做融合；缺解析器或解析器异常都如实降级并把"建议人工核签"外显，不拿猜测冒充抽取。
-装配现状：`start_real_agents` 尚无生产调用点（MA 上总线属集成步），本内环目前只由单测覆盖。
 
-产出与平台消费口径一致：`detect()` 返回的每条命中都是 `TriggerHit` 可校验的 dict
-（链路的 handle_agent_message 正用 `TriggerHit.model_validate(payload)` 收 trigger_hit 事件）。
-作为独立内环实现，经 emit_event 挂总线、被 _drain_agent_hits 合并的集成属 MB。
+接线（两条出口口径一致，都是 `TriggerHit` 可校验的 dict）：
+- **请求/应答**：感知段经网关派 `assess.hazard`（规范里平台→perceive 的"请求灾种识别"）
+  把本批读数交给本内环，回收应答里的 `trigger_hits` 并按 rule_id 去重合并；
+- **主动事件**：经 `emit_event` 发 `perceive.trigger_hit` 的事件命中，只有回带**同一条 trace**
+  才会被该链路采纳（`HazardStages._AgentHit`），按区域 + TTL 隔离，不串到并发的其他链路。
+生产装配点（`container` 的 `agent_runtime=real`）用的是 `runtime.build_agent_runtime`，
+它注入规则引擎 detector 与平台解析器——不再只由单测覆盖。
 """
 
 from __future__ import annotations
@@ -41,6 +44,9 @@ class StationAnomaly:
     unit: str
     observed_at: str
     base_score: float
+    #: 这条异常来自规则表里的哪条规则（`RuleEngineDetector` 透传）。留空表示内环自产的判据
+    #: （聚类/漂移/测试替身）——它不得冒充规则命中，否则与平台规则轨合并时会重复计一条证据。
+    rule_id: str = ""
 
 
 @runtime_checkable
@@ -155,7 +161,8 @@ class PerceiveAgent(AgentKit):
     @staticmethod
     def _single_hit(a: StationAnomaly) -> dict[str, Any]:
         return {
-            "rule_id": f"R-ANOMALY-{a.station_id}",
+            # 有来源规则就沿用规则 id：感知段与平台规则轨按 rule_id 去重，同一条越限只算一条证据。
+            "rule_id": a.rule_id or f"R-ANOMALY-{a.station_id}",
             "hazard_type": a.hazard_type,
             "region_code": a.region_code,
             "score": round(max(0.0, min(1.0, a.base_score)), 4),

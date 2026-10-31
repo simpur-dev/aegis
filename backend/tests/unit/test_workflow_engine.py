@@ -719,6 +719,119 @@ class TestRuntimeFlexibility:
         assert engine.instance_detail("wfi_" + "0" * 12) is None
 
 
+async def _wait_running_instance(engine: WorkflowEngine, node_id: str = "") -> str:
+    """轮询到实例出现（可选：某个节点已进入 running），返回 instance_id。
+
+    中止类用例必须挑"handler 真的在跑"的那一刻下手：`start()` 返回时实例要么已终态、
+    要么在等人，拿不到执行中途。指定 node_id 时等它变 running，避免靠 sleep 猜时序。
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 2.0
+    while loop.time() < deadline:
+        for row in engine.instances():
+            if not node_id:
+                return row["instance_id"]
+            states = {n["node_id"]: n["state"] for n in row["nodes"]}
+            if states.get(node_id) == "running":
+                return row["instance_id"]
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"等待实例进入 running 超时: {node_id or '(任意节点)'}")
+
+
+class TestAbortDuringExecution:
+    """中止必须停住动作，而不只是把状态改成 aborted。
+
+    旧实现只改 `instance.status`，在跑的 handler 照跑：动作发完之后 `_finalise` 又把实例
+    从 ABORTED 改写成 SUCCEEDED——屏幕上写"已中止"，通知其实已经发出去了。
+    """
+
+    async def test_中止运行中实例后不会被改写为成功(self) -> None:
+        seen: list[dict] = []
+
+        async def notify(payload: dict) -> None:
+            seen.append(payload)
+
+        engine = make_engine(WorkflowServices(notify=notify))
+        workflow_id = await make_definition(
+            engine,
+            [node("slow", "delay", {"seconds": 0.6}), node("alert", "notify", {"text": "事后通知"})],
+            [edge("slow", "alert")],
+        )
+        start_task = asyncio.create_task(engine.start(workflow_id, trace_id="trc_" + "23" * 8, payload={}))
+        instance_id = await _wait_running_instance(engine, "slow")
+        aborted = await engine.abort(instance_id, reason="误报解除")
+        detail = await asyncio.wait_for(start_task, timeout=2)
+
+        assert aborted["status"] == "aborted"
+        assert detail["status"] == "aborted", "中止先到，收尾不得把实例改写成 succeeded"
+        assert {n["node_id"]: n["state"] for n in detail["nodes"]} == {"slow": "cancelled", "alert": "cancelled"}
+        assert seen == [], "中止之后下游通知不许再发出去"
+
+    async def test_中止后排队等信号量的节点不执行(self) -> None:
+        """并发闸限 1：第二个根节点还在等信号量，中止必须让它连 handler 都不进。"""
+        calls: list[str] = []
+
+        async def http_call(method: str, url: str, body: object = None) -> dict:
+            calls.append(url)
+            return {"ok": True}
+
+        engine = make_engine(WorkflowServices(http_call=http_call), max_parallel=1)
+        workflow_id = await make_definition(
+            engine,
+            [
+                node("slow", "delay", {"seconds": 0.6}),
+                node("after_slow", "notify", {"text": "慢支路"}),
+                node("queued", "api_call", {"method": "GET", "url": "queued"}),
+                node("after_queued", "notify", {"text": "排队支路"}),
+            ],
+            [edge("slow", "after_slow"), edge("queued", "after_queued")],
+        )
+        start_task = asyncio.create_task(engine.start(workflow_id, trace_id="trc_" + "24" * 8, payload={}))
+        instance_id = await _wait_running_instance(engine, "slow")
+        await engine.abort(instance_id, reason="误报解除")
+        detail = await asyncio.wait_for(start_task, timeout=2)
+
+        states = {n["node_id"]: n["state"] for n in detail["nodes"]}
+        assert states["slow"] == "cancelled"
+        assert states["queued"] == "cancelled"
+        assert calls == [], "排队节点在中止后仍拿到了并发闸并执行了动作"
+
+    async def test_同一实例同一时刻只有一条驱动循环(self) -> None:
+        """bypass 在实例 RUNNING 时会再起一条驱动；没有实例锁，两条循环会同时
+        `_collect_ready` 到同一批节点，把同一个 handler 执行两遍。
+
+        判据取"bypass 必须等主驱动跑完"：实例锁在时 `bypass_node` 会阻塞到 0.3s 的两根
+        都结束；没有锁它毫秒级返回（顺手把下游通知发了）。
+        """
+        seen: list[dict] = []
+
+        async def notify(payload: dict) -> None:
+            seen.append(payload)
+
+        engine = make_engine(WorkflowServices(notify=notify))
+        workflow_id = await make_definition(
+            engine,
+            [
+                node("left", "delay", {"seconds": 0.3}),
+                node("right", "delay", {"seconds": 0.3}),
+                node("bridge", "delay", {"seconds": 0}),
+                node("alert", "notify", {"text": "只发一次"}),
+            ],
+            [edge("right", "bridge"), edge("bridge", "alert")],
+        )
+        start_task = asyncio.create_task(engine.start(workflow_id, trace_id="trc_" + "25" * 8, payload={}))
+        instance_id = await _wait_running_instance(engine, "left")
+        bypass_task = asyncio.create_task(engine.bypass_node(instance_id, "bridge", reason="不必要"))
+
+        await asyncio.sleep(0.05)
+        assert not bypass_task.done(), "实例锁失效：bypass 在主驱动仍在跑时就另起了一条驱动循环"
+
+        detail = await asyncio.wait_for(start_task, timeout=3)
+        await asyncio.wait_for(bypass_task, timeout=2)
+        assert detail["status"] == "succeeded"
+        assert len(seen) == 1, "同一个通知节点被执行了不止一次"
+
+
 def _trace(i: int) -> str:
     return "trc_" + format(i, "016x")
 

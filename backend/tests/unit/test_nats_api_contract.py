@@ -9,11 +9,19 @@ from __future__ import annotations
 import inspect
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from aegis.bus.nats_bus import NatsBus
+from aegis.bus.nats_bus import (
+    _STREAM_MAX_AGE_SECONDS,
+    _STREAMS,
+    ACK_WAIT_MARGIN_SECONDS,
+    DEFAULT_ACK_WAIT_SECONDS,
+    DEFAULT_MAX_DELIVER,
+    NatsBus,
+)
 
 
 def _params(func: Any) -> set[str]:
@@ -122,6 +130,44 @@ class TestNatsApiContract:
         assert bus.connected is False, "建流失败却把总线标成可用，等于让平台带着一台发不出消息的总线继续跑"
         assert closed == [True], "失败路径要把已建立的连接收掉，别留半死状态"
 
+    async def test_existing_stream_is_upgraded_instead_of_failing(self, monkeypatch) -> None:
+        """既存流的 subject 集合变了（新增本体收件箱）时，连接应把流升级到新配置而不是拒启。"""
+        import nats as nats_package
+        from nats.js.errors import APIError
+
+        from aegis.bus.nats_bus import _STREAMS
+
+        updated: list[Any] = []
+
+        class _Js:
+            async def add_stream(self, _config: Any) -> Any:
+                raise APIError(code=400, err_code=10058, description="stream name already in use")
+
+            async def update_stream(self, config: Any) -> Any:
+                updated.append(config)
+                return config
+
+        class _Client:
+            def jetstream(self) -> Any:
+                return _Js()
+
+            async def close(self) -> None:
+                return None
+
+        async def fake_connect(*_args: Any, **_kwargs: Any) -> Any:
+            return _Client()
+
+        monkeypatch.setattr(nats_package, "connect", fake_connect)
+        bus = NatsBus(stream_prefix="AEGIST")
+        await bus.connect()
+        try:
+            assert bus.connected is True
+            assert len(updated) == len(_STREAMS), "每个流都要按新配置对账，而不是只处理报错的那一个"
+            agent_stream = next(config for config in updated if config.name == "AEGIST_AGENT")
+            assert "agent.*.in.>" in agent_stream.subjects
+        finally:
+            await bus.close()
+
     async def test_durable_subscription_names_the_consumer_once(self, monkeypatch) -> None:
         """nats-py 把 `queue` 当消费者名：queue 与 durable 都给且不等会被当场拒绝。
 
@@ -129,8 +175,10 @@ class TestNatsApiContract:
         'cg_gateway_perceive'`——网关的持久订阅一条都建不起来，而替身总线照单全收。
         """
         import nats as nats_package
+        from nats.js.errors import NotFoundError
 
         captured: dict[str, Any] = {}
+        created: list[Any] = []
 
         class _Sub:
             async def drain(self) -> None:
@@ -138,6 +186,13 @@ class TestNatsApiContract:
 
         class _Js:
             async def add_stream(self, config: Any) -> Any:
+                return config
+
+            async def consumer_info(self, _stream: str, _consumer: str) -> Any:
+                raise NotFoundError
+
+            async def add_consumer(self, _stream: str, config: Any = None, **_kwargs: Any) -> Any:
+                created.append(config)
                 return config
 
             async def subscribe(self, subject: str, **kwargs: Any) -> Any:
@@ -148,6 +203,9 @@ class TestNatsApiContract:
         class _Client:
             def jetstream(self) -> Any:
                 return _Js()
+
+            def new_inbox(self) -> str:
+                return "_INBOX.contract"
 
             async def close(self) -> None:
                 return None
@@ -170,6 +228,8 @@ class TestNatsApiContract:
         assert captured["subject"] == "agent.perceive.out"
         assert captured["stream"] == "AEGIST_AGENT"
         assert captured["queue"] == captured["durable"] == "cg_perceive", "队列组名必须沿用消费者名，否则 nats-py 直接拒绝"
+        assert created[0].ack_wait == DEFAULT_ACK_WAIT_SECONDS, "新建消费者必须带上平台回执窗口，而不是服务端默认 30s"
+        assert created[0].max_deliver == DEFAULT_MAX_DELIVER, "毒消息必须有有限重投上限"
 
 
 class TestStreamRouting:
@@ -178,6 +238,7 @@ class TestStreamRouting:
         [
             ("data.rg01.rain_10min", "AEGIS_DATA"),
             ("agent.assess.in", "AEGIS_AGENT"),
+            ("agent.assess.in.assess.real01", "AEGIS_AGENT"),
             ("agent.assess.out", "AEGIS_AGENT"),
             ("agent.plan.hb", "AEGIS_AGENT"),
             ("workflow.wfi_0001.started", "AEGIS_WF"),
@@ -202,3 +263,197 @@ class TestStreamRouting:
         message = make_event(source="perceive.t01", action="perceive.anomaly", payload={}, trace_id="trc_" + "0" * 16)
         with pytest.raises(BusNotReadyError):
             await bus.publish("data.rg01.rain", message)
+
+
+async def _sink(_raw: bytes) -> None:
+    return None
+
+
+class _Sub:
+    async def drain(self) -> None:
+        return None
+
+
+def _install_fake_js(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    existing: Any | None = None,
+    add_error: Exception | None = None,
+    **bus_kwargs: Any,
+) -> SimpleNamespace:
+    """只实现"建流 + 消费者对账 + 绑定"所需接口的 JetStream 替身。"""
+    import nats as nats_package
+    from nats.js.errors import NotFoundError
+
+    streams: list[Any] = []
+    consumers: list[Any] = []
+    bound: dict[str, Any] = {}
+
+    class _Js:
+        async def add_stream(self, config: Any) -> Any:
+            streams.append(config)
+            return config
+
+        async def consumer_info(self, _stream: str, _consumer: str) -> Any:
+            if existing is None:
+                raise NotFoundError
+            return SimpleNamespace(config=existing)
+
+        async def add_consumer(self, _stream: str, config: Any = None, **_kwargs: Any) -> Any:
+            if add_error is not None:
+                raise add_error
+            consumers.append(config)
+            return config
+
+        async def subscribe(self, subject: str, **kwargs: Any) -> Any:
+            bound.update(kwargs)
+            bound["subject"] = subject
+            return _Sub()
+
+    class _Client:
+        def jetstream(self) -> Any:
+            return _Js()
+
+        def new_inbox(self) -> str:
+            return "_INBOX.fake"
+
+        async def close(self) -> None:
+            return None
+
+    async def fake_connect(*_args: Any, **_kwargs: Any) -> Any:
+        return _Client()
+
+    monkeypatch.setattr(nats_package, "connect", fake_connect)
+    return SimpleNamespace(bus=NatsBus(stream_prefix="AEGIST", **bus_kwargs), streams=streams, consumers=consumers, bound=bound)
+
+
+class TestJetStreamRetentionAndRedelivery:
+    def test_every_stream_has_a_bounded_retention(self) -> None:
+        assert set(_STREAM_MAX_AGE_SECONDS) == {suffix for suffix, _patterns in _STREAMS}, "每个流都必须显式给保留期，缺一个就是无限保留"
+        assert all(age > 0 for age in _STREAM_MAX_AGE_SECONDS.values())
+        for suffix in ("AGENT", "REPLY"):
+            assert _STREAM_MAX_AGE_SECONDS[suffix] <= 24 * 3600, f"{suffix} 流留得太久：过期请求重放会让智能体执行早已超时的动作"
+
+    async def test_streams_are_created_with_their_retention(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _install_fake_js(monkeypatch)
+        await fake.bus.connect()
+        try:
+            ages = {config.name.removeprefix("AEGIST_"): config.max_age for config in fake.streams}
+            assert ages == _STREAM_MAX_AGE_SECONDS
+        finally:
+            await fake.bus.close()
+
+    async def test_new_consumer_is_created_with_the_platform_ack_parameters(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _install_fake_js(monkeypatch, ack_wait_seconds=71.5, max_deliver=3)
+        await fake.bus.connect()
+        try:
+            await fake.bus._subscribe_raw("agent.perceive.out", _sink, queue="cg", durable="d_perceive")
+        finally:
+            await fake.bus.close()
+
+        assert len(fake.consumers) == 1
+        config = fake.consumers[0]
+        assert config.ack_wait == pytest.approx(71.5)
+        assert config.max_deliver == 3
+        assert config.deliver_group == "d_perceive"
+        assert config.filter_subject == "agent.perceive.out"
+        assert config.deliver_subject == "_INBOX.fake", "push 消费者必须带投递 subject"
+        assert fake.bound["config"] is config, "绑定必须用对账后的配置，而不是让 nats-py 自行取服务端默认"
+
+    async def test_queue_less_durable_gets_no_delivery_group(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """带组却没按队列订阅（或反之）会被 nats-py 当场拒绝——真机上刚踩过。"""
+        fake = _install_fake_js(monkeypatch)
+        await fake.bus.connect()
+        try:
+            await fake.bus._subscribe_raw("agent.perceive.out", _sink, durable="d_perceive")
+        finally:
+            await fake.bus.close()
+
+        assert fake.consumers[0].deliver_group is None
+        assert fake.bound["queue"] == ""
+
+    async def test_existing_consumer_is_upgraded_without_moving_its_delivery_subject(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from nats.js import api as js_api
+
+        existing = js_api.ConsumerConfig(
+            durable_name="d_perceive",
+            deliver_group="d_perceive",
+            deliver_subject="_INBOX.legacy",
+            filter_subject="agent.perceive.out",
+            ack_wait=30.0,
+            max_deliver=-1,
+        )
+        fake = _install_fake_js(monkeypatch, existing=existing, ack_wait_seconds=71.5, max_deliver=3)
+        await fake.bus.connect()
+        try:
+            await fake.bus._subscribe_raw("agent.perceive.out", _sink, queue="cg", durable="d_perceive")
+        finally:
+            await fake.bus.close()
+
+        assert len(fake.consumers) == 1
+        upgraded = fake.consumers[0]
+        assert upgraded.ack_wait == pytest.approx(71.5)
+        assert upgraded.max_deliver == 3
+        assert upgraded.deliver_subject == "_INBOX.legacy", "换投递 subject 会把已绑在它上面的其他实例踢下线"
+        assert fake.bound["config"].ack_wait == pytest.approx(71.5)
+
+    async def test_matching_consumer_is_not_rewritten(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from nats.js import api as js_api
+
+        existing = js_api.ConsumerConfig(
+            durable_name="d_perceive",
+            deliver_group="d_perceive",
+            deliver_subject="_INBOX.legacy",
+            filter_subject="agent.perceive.out",
+            ack_wait=71.5,
+            max_deliver=3,
+        )
+        fake = _install_fake_js(monkeypatch, existing=existing, ack_wait_seconds=71.5, max_deliver=3)
+        await fake.bus.connect()
+        try:
+            await fake.bus._subscribe_raw("agent.perceive.out", _sink, queue="cg", durable="d_perceive")
+        finally:
+            await fake.bus.close()
+
+        assert fake.consumers == [], "配置已对齐时不应每次连接都重写服务端消费者"
+
+    async def test_upgrade_failure_is_reported_instead_of_binding_the_old_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from nats.js import api as js_api
+
+        from aegis.errors import BusNotReadyError
+
+        existing = js_api.ConsumerConfig(
+            durable_name="d_perceive",
+            deliver_group="d_perceive",
+            deliver_subject="_INBOX.legacy",
+            filter_subject="agent.perceive.out",
+            ack_wait=30.0,
+            max_deliver=-1,
+        )
+        fake = _install_fake_js(
+            monkeypatch, existing=existing, add_error=RuntimeError("update rejected"), ack_wait_seconds=71.5, max_deliver=3
+        )
+        await fake.bus.connect()
+        try:
+            with pytest.raises(BusNotReadyError, match="升级失败"):
+                await fake.bus._subscribe_raw("agent.perceive.out", _sink, queue="cg", durable="d_perceive")
+        finally:
+            await fake.bus.close()
+
+        assert fake.bound == {}, "升级失败时不得回落到旧回执窗口继续绑定"
+
+    def test_ack_wait_covers_the_agent_transaction_budget(self) -> None:
+        from aegis.config import Settings
+        from aegis.integrations.channels import build_transport
+
+        settings = Settings(env="test", bus_backend="nats", sla_agent_txn_ms=42_000)
+        bus = build_transport(settings)
+        assert isinstance(bus, NatsBus)
+        assert bus.ack_wait_seconds == pytest.approx(42.0 + ACK_WAIT_MARGIN_SECONDS)
+        assert bus.ack_wait_seconds > settings.sla_agent_txn_ms / 1000.0, "回执窗口短于事务预算＝服务端会在智能体仍在处理时重投"
+
+    def test_defaults_cover_the_default_transaction_budget(self) -> None:
+        from aegis.config import Settings
+
+        assert Settings(env="test").sla_agent_txn_ms / 1000.0 < DEFAULT_ACK_WAIT_SECONDS
+        assert 0 < DEFAULT_MAX_DELIVER < 100

@@ -285,7 +285,7 @@ class TestChainRecall:
         async def record(message: AgentMessage) -> None:
             captured.append(message)
 
-        await bus.subscribe(subjects.agent_in(AgentType.PLAN), record)
+        await bus.subscribe(subjects.agent_in(AgentType.PLAN, "plan.wire01"), record)
         agent = MockAgent(
             transport=bus,
             agent_type=AgentType.PLAN,

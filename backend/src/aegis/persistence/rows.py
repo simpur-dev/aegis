@@ -27,6 +27,7 @@ from aegis.domain.messages import (
 )
 from aegis.persistence.errors import MappingError
 from aegis.workflow.model import NodeRun, WorkflowDef, WorkflowInstance
+from aegis.workflow.persistence import InstanceCheckpoint, WorkflowRuntime
 
 if TYPE_CHECKING:  # 仅用于类型标注：运行期不导入 pipeline，本层因此不牵动 services 依赖
     from aegis.domain.chain import ChainResult
@@ -108,7 +109,19 @@ CHAIN_COLUMNS = (
     "degradations",
     "finished_at",
 )
-WORKFLOW_DEF_COLUMNS = ("workflow_id", "name", "description", "version", "status", "created_by", "nodes", "edges", "signature")
+WORKFLOW_DEF_COLUMNS = (
+    "workflow_id",
+    "name",
+    "description",
+    "version",
+    "status",
+    "created_by",
+    "nodes",
+    "edges",
+    "signature",
+    "lineage_id",
+    "content_hash",
+)
 WORKFLOW_INSTANCE_COLUMNS = (
     "instance_id",
     "workflow_id",
@@ -120,6 +133,7 @@ WORKFLOW_INSTANCE_COLUMNS = (
     "results",
     "created_at",
     "finished_at",
+    "runtime",
 )
 NODE_STATE_COLUMNS = (
     "instance_id",
@@ -491,6 +505,8 @@ def workflow_def_params(definition: WorkflowDef) -> tuple[Any, ...]:
         nodes,
         edges,
         check_text(definition.signature(), field="signature"),
+        check_text(definition.lineage_id, field="lineage_id"),
+        check_text(definition.content_hash, field="content_hash"),
     )
 
 
@@ -506,6 +522,9 @@ def workflow_def_from_row(row: Mapping[str, Any]) -> WorkflowDef:
             "created_by": row["created_by"],
             "nodes": list(row["nodes"]),
             "edges": list(row["edges"]),
+            # 009 之前的行没有这两列；按空串回退，由仓储在恢复时按投影文档补算哈希。
+            "lineage_id": row.get("lineage_id") or "",
+            "content_hash": row.get("content_hash") or "",
         },
         field="workflow_definition",
     )
@@ -514,9 +533,11 @@ def workflow_def_from_row(row: Mapping[str, Any]) -> WorkflowDef:
 # ---------- workflow_instances / workflow_node_states ----------
 
 
-def workflow_instance_params(instance: WorkflowInstance) -> tuple[Any, ...]:
+def workflow_instance_params(instance: WorkflowInstance, *, runtime: Mapping[str, Any] | None = None) -> tuple[Any, ...]:
     check_json(instance.payload, field="payload")
     check_json(instance.results, field="results")
+    runtime_payload = dict(runtime or {})
+    check_json(runtime_payload, field="runtime")
     return (
         check_id(instance.instance_id, field="instance_id"),
         check_id(instance.workflow_id, field="workflow_id"),
@@ -528,6 +549,7 @@ def workflow_instance_params(instance: WorkflowInstance) -> tuple[Any, ...]:
         dict(instance.results),
         to_moment(instance.created_at),
         optional_moment(instance.finished_at),
+        runtime_payload,
     )
 
 
@@ -549,6 +571,27 @@ def workflow_instance_from_row(row: Mapping[str, Any], node_states: Sequence[Map
         },
         field="workflow_instance",
     )
+
+
+def workflow_checkpoint_params(checkpoint: InstanceCheckpoint) -> tuple[Any, list[Any]]:
+    """写缓冲的一项：实例行参数 + 该实例全部节点行参数（`_write_workflow_instance` 按此形状消费）。"""
+    return (
+        workflow_instance_params(checkpoint.instance, runtime=checkpoint.runtime.model_dump(mode="json")),
+        [node_state_params(checkpoint.instance.instance_id, run) for run in checkpoint.instance.nodes.values()],
+    )
+
+
+def workflow_checkpoint_from_row(row: Mapping[str, Any], node_states: Sequence[Mapping[str, Any]] = ()) -> InstanceCheckpoint:
+    """行 -> 恢复现场。runtime 缺失/坏掉是 MappingError：由恢复侧决定如何交代，不在这里猜。"""
+    instance = workflow_instance_from_row(row, node_states)
+    try:
+        runtime = WorkflowRuntime.model_validate(row.get("runtime") or {})
+    except ValidationError as exc:
+        raise MappingError(
+            "实例运行态快照不合契约",
+            detail={"instance_id": instance.instance_id, "invalid": len(exc.errors())},
+        ) from exc
+    return InstanceCheckpoint(instance=instance, runtime=runtime)
 
 
 def node_state_params(instance_id: str, run: NodeRun) -> tuple[Any, ...]:

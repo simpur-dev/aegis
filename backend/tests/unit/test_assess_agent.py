@@ -349,6 +349,11 @@ class TestBlindBudget:
     协同成功率因此掉到 0.81——收腿比"永远跑满三条腿"更对得起那个 ≤10s 的事务口径。
     """
 
+    async def test_网关台账是方法也能算出历史p50(self) -> None:
+        """真实网关的 usage_records 是方法；按属性迭代会让红/橙研判整段打回规则轨。"""
+        a, _ = assess_agent(verdict(4), history_ms=[1000.0, 3000.0])
+        assert a._recent_grade_p50_ms() == 2000.0
+
     async def test_慢首轮把预算吃紧时第二腿不跑(self) -> None:
         gw = SlowGateway(verdict(1), verdict(2), delays=[0.60])
         a = AssessAgent(
@@ -404,7 +409,11 @@ class TimingGateway(FakeGateway):
         super().__init__(*verdicts)
         self._delay = delay
         self.windows: list[tuple[float, float]] = []
-        self.usage_records = [SimpleNamespace(task="assess", latency_ms=float(ms)) for ms in (history_ms or [])]
+        self._usage = [SimpleNamespace(task="assess", latency_ms=float(ms)) for ms in (history_ms or [])]
+
+    def usage_records(self) -> list[Any]:
+        """与 LlmGateway 同形：台账是方法，不是属性。"""
+        return list(self._usage)
 
     async def chat_structured(self, messages, **kw: Any) -> Any:
         started = time.perf_counter()

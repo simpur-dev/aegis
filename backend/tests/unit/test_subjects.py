@@ -14,6 +14,18 @@ class TestBuilders:
         assert subjects.agent_out("perceive") == "agent.perceive.out"
         assert subjects.agent_hb(AgentType.PLAN) == "agent.plan.hb"
 
+    def test_agent_inbox_is_per_agent_and_extends_the_family_subject(self) -> None:
+        """本体收件箱是类型级公开口的下级层：两部订阅互不串味，流通配 `agent.*.in.>` 能盖住它。"""
+        inbox = subjects.agent_in(AgentType.ASSESS, "assess.real01")
+        assert inbox == "agent.assess.in.assess.real01"
+        assert subjects.subject_matches("agent.*.in.>", inbox)
+        assert not subjects.subject_matches("agent.*.in", inbox), "公共口不该收到专属收件箱的消息"
+
+    def test_agent_in_rejects_unaddressable_id(self) -> None:
+        """拼不出合法 token 的 id 会在 NATS 上静默收不到：构造期就拒绝，而不是上线后靠现象猜。"""
+        with pytest.raises(ValueError, match="subject"):
+            subjects.agent_in(AgentType.ASSESS, "Assess.Real01")
+
     def test_data_and_workflow(self) -> None:
         assert subjects.data("RG-01", "rain_10min") == "data.RG-01.rain_10min"
         assert subjects.workflow("wfi_abc", "started") == "workflow.wfi_abc.started"

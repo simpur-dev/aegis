@@ -22,9 +22,14 @@ from aegis.workflow.outbound import parse_host_list
 
 def build_transport(settings: Settings) -> BusTransport:
     if settings.bus_backend == "nats":
-        from aegis.bus.nats_bus import NatsBus  # 延迟导入：仅在启用时要求 nats 依赖
+        from aegis.bus.nats_bus import ACK_WAIT_MARGIN_SECONDS, NatsBus  # 延迟导入：仅在启用时要求 nats 依赖
 
-        return NatsBus(settings.nats_url, stream_prefix=settings.nats_stream_prefix)
+        return NatsBus(
+            settings.nats_url,
+            stream_prefix=settings.nats_stream_prefix,
+            # 回执窗口必须盖住一次协同事务的预算：短于预算时服务端会在智能体仍在处理时重投同一请求。
+            ack_wait_seconds=settings.sla_agent_txn_ms / 1000.0 + ACK_WAIT_MARGIN_SECONDS,
+        )
     return InMemoryBus()
 
 

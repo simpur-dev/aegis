@@ -60,10 +60,20 @@ class ChainResult:
     #: 各段应答携带的模型凭证（段名 → 凭证）。三段的生产者是三个 helper，而段的记账在主流程里，
     #: 两者之间要有明确中转，而不是让 helper 去改 stages。
     stage_models: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: 承载这条链路的**工作流实例**终态（succeeded/failed/waiting/aborted）。
+    #: 段账只记"跑过的段"，实例被 abort 或卡在人工节点时可能只剩成功的前几段——
+    #: 只看段就会把"图没跑完"报成成功。空串表示没有实例可看（离线构造的结果）。
+    instance_status: str = ""
 
     @property
     def ok(self) -> bool:
-        """链路成功 = 各段执行成功且无降级错误。无触发时同样成功（未告警是正确结果）。"""
+        """链路成功 = 实例终态成功 + 各段执行成功 + 无错误。无触发时同样成功（未告警是正确结果）。
+
+        实例状态优先于段账：引擎在段之间失败/中止时，已跑的段仍然 `ok=True`，
+        不拿实例终态兜底，`chain_runs.ok` 就会为一条没走完的链路记"成功"。
+        """
+        if self.instance_status and self.instance_status != "succeeded":
+            return False
         return all(s.ok for s in self.stages) and not self.errors
 
     @property
@@ -74,7 +84,7 @@ class ChainResult:
         return next((s for s in self.stages if s.name == name), None)
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "trace_id": self.trace_id,
             "event_id": self.event_id,
             "ok": self.ok,
@@ -88,6 +98,10 @@ class ChainResult:
             "reference_cases": self.reference_cases,
             "context_docs": self.context_docs,
         }
+        # 只在有实例时出现：离线构造的结果不该被写成 `instance_status: ""` 让读的人猜是"没实例"还是"漏填"。
+        if self.instance_status:
+            data["instance_status"] = self.instance_status
+        return data
 
 
 def model_receipt(response: AgentMessage) -> dict[str, Any] | None:

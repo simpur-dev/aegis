@@ -111,8 +111,13 @@ class AssessAgent(AgentKit):
             return False
 
     def _recent_grade_p50_ms(self) -> float:
-        """网关台账里 `assess` 任务的历史 p50：并行发车之前唯一能拿到的耗时事实。"""
-        records = getattr(self.llm, "usage_records", None) or []
+        """网关台账里 `assess` 任务的历史 p50：并行发车之前唯一能拿到的耗时事实。
+
+        台账在真实网关上是一个方法（`LlmGateway.usage_records()`）。按属性读会拿到绑定方法，
+        迭代它就是 TypeError——而这条路径只在规则轨报红/橙时才走，恰好把最该研判的事件打回本地轨。
+        """
+        ledger = getattr(self.llm, "usage_records", None)
+        records = ledger() if callable(ledger) else []
         latencies = sorted(float(record.latency_ms) for record in records if getattr(record, "task", "") == "assess")
         return percentile(latencies, 50) if latencies else 0.0
 

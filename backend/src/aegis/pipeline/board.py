@@ -28,6 +28,17 @@ class ChainBoardMissing(AegisError):
     code = ErrorCode.INTERNAL
 
 
+class ChainBoardDuplicate(AegisError):
+    """同一 trace 重复开盘：前一张还没收，后一张就来抢同一个键。
+
+    静默覆盖的后果不是"后者赢"这么简单：两条链路共用 trace 时，先收尾的那条会把另一条的盘
+    一起 pop 掉，后一条的 `chain_stage` 随即报"没有开过盘"，而被覆盖的那条产物再也读不到。
+    所以这里必须响亮拒绝，让调用方换 trace 或先收盘，而不是把并发错误伪装成随机失败。
+    """
+
+    code = ErrorCode.INTERNAL
+
+
 @dataclass(slots=True)
 class ChainBoard:
     """一条链路的进行中状态：产物 + 编排器需要传给各段的入参。
@@ -69,7 +80,16 @@ class ChainBoards:
         self._open: dict[str, ChainBoard] = {}
 
     def attach(self, board: ChainBoard) -> ChainBoard:
-        """挂一张已经备好的盘。开/挂/收三个动作同层，调用方不必知道内部字典叫什么。"""
+        """挂一张已经备好的盘。开/挂/收三个动作同层，调用方不必知道内部字典叫什么。
+
+        同一个 trace 只允许一张开着的盘：覆盖会让先收盘的一方把后一张盘 pop 掉（见
+        `ChainBoardDuplicate`）。收盘之后重新开同一 trace 是允许的——重试/回放走的就是这条路。
+        """
+        if board.trace in self._open:
+            raise ChainBoardDuplicate(
+                f"这条 trace 已经有一张开着的盘：{board.trace}",
+                detail={"trace": board.trace, "open_boards": len(self._open)},
+            )
         self._open[board.trace] = board
         return board
 

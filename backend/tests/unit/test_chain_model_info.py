@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aegis.bus.registry import SelectionReport
 from aegis.config import Settings
 from aegis.domain.chain import ChainResult, StageResult, model_receipt
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
@@ -67,8 +68,16 @@ class FakeRegistry:
     def __init__(self, present: set[str]) -> None:
         self._present = present
 
-    def pick(self, agent_type: str, capability: str) -> object | None:
-        return object() if agent_type in self._present else None
+    def explain(self, agent_type: str, capability: str | None = None, hazard_type: str | None = None) -> SelectionReport:
+        present = agent_type in self._present
+        return SelectionReport(
+            agent_type=agent_type,
+            capability=capability,
+            hazard_type=hazard_type,
+            registered=1 if present else 0,
+            available=1 if present else 0,
+            blockers={},
+        )
 
 
 class FakeGateway:

@@ -137,13 +137,15 @@ class WorkflowChain:
         )
 
         async def body() -> ChainResult:
+            detail: dict[str, Any] = {}
             try:
-                await self._engine.start_from_name(
+                detail = await self._engine.start_from_name(
                     self._template_name, trace_id=trace, payload={"board_trace": board.trace, "source": "hazard_chain"}
                 )
             finally:
                 self._stations.close(trace)
             board.finish()
+            _absorb_instance(board.result, detail)
             if self._on_result is not None:
                 await self._on_result(board.result)
             return board.result
@@ -153,3 +155,17 @@ class WorkflowChain:
     async def process_many(self, grouped: dict[str, list[TelemetryReading]]) -> list[ChainResult]:
         """多区域并发：一区域一个实例、一盘，互不阻塞（与固定顺序版同语义）。"""
         return list(await asyncio.gather(*(self.process(readings, region_code=region) for region, readings in grouped.items())))
+
+
+def _absorb_instance(result: ChainResult, detail: dict[str, Any]) -> None:
+    """把实例终态写进链路产物：段账全绿不等于图跑完了。
+
+    引擎按 `on_failure` 中止、或人工节点把实例挂成 waiting 时，`stages` 里只有已跑的那几段，
+    而它们各自都是 ok——不把实例终态带出来，`ChainResult.ok` 和 `chain_runs.ok` 就会为一条
+    没走完的链路记"成功"。失败原因也一并进 `errors`：实例状态是状态，原因才是值班员要看的。
+    """
+    status = str(detail.get("status") or "")
+    result.instance_status = status
+    if status in ("failed", "aborted"):
+        reason = str(detail.get("error") or "")
+        result.errors.append(f"工作流实例未完成（{status}）：{reason}" if reason else f"工作流实例未完成（{status}）")

@@ -88,7 +88,19 @@ class AgentKit:
         )
 
     async def start(self, *, heartbeat_interval: float = 1.0) -> None:
-        await self.transport.publish(subjects.agent_hb(self.agent_type), self._lifecycle_frame(Action.AGENT_REGISTER))
+        # 先订阅再注册：注册事件一到平台就可能派单，此刻收件箱还没建好，请求会落在空口上。
+        # 两个订阅缺一不可——专属收件箱是网关的默认派发口（同类型其他本体收不到），
+        # 类型级公共口留给只知道类型的外部发送方；后者由 `_on_request` 的 target 过滤兜底。
+        # 两个口都走 durable：专属口收的是网关的直接派单，核心 NATS 订阅在智能体短暂断线时
+        # 会直接丢消息（消息留在 JetStream 流里，却没有消费者去取），重投只能由持久消费者提供。
+        self._subs.append(
+            await self.transport.subscribe(
+                subjects.agent_in(self.agent_type, self.agent_id),
+                self._on_request,
+                queue=consumer_name("cg_in", self.agent_type.value, self.agent_id),
+                durable=consumer_name("d_in", self.agent_type.value, self.agent_id),
+            )
+        )
         self._subs.append(
             await self.transport.subscribe(
                 subjects.agent_in(self.agent_type),
@@ -97,6 +109,7 @@ class AgentKit:
                 durable=consumer_name("d", self.agent_type.value, self.agent_id),
             )
         )
+        await self.transport.publish(subjects.agent_hb(self.agent_type), self._lifecycle_frame(Action.AGENT_REGISTER))
         self._hb_task = asyncio.create_task(self._heartbeat_loop(heartbeat_interval), name=f"hb-{self.agent_id}")
 
     async def stop(self) -> None:
@@ -138,6 +151,10 @@ class AgentKit:
         return 0.0 if arrival is None else (time.perf_counter() - arrival) * 1000
 
     async def _on_request(self, request: AgentMessage) -> None:
+        # 类型级公共口是一份广播：每个同类型本体都会收到同一条。只处理点名的那个，
+        # 否则 N 个同类型智能体会各自执行一遍、各自回执——网关只取第一封，动作却已做了 N 次。
+        if request.target not in ("*", self.agent_id):
+            return
         if request.msg_id in self._seen:
             self.duplicates_skipped += 1
             return

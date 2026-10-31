@@ -162,6 +162,26 @@ class TestOpsEndpoints:
         assert body["status"] == "ready"
         assert body["bus"] == "memory"
         assert "store" in body
+        # 夹具只起了容器、没起智能体：探针必须同时给出"总线就绪"与"没人接单"两件事。
+        assert body["agents_online"] == 0
+        assert body["agents_degraded"] is True
+        assert body["agent_runtime"] == "mock（未请求启动）"
+
+    async def test_readyz_零在线后登记智能体即恢复(self, client: httpx.AsyncClient, container: PlatformContainer) -> None:
+        """`agents_degraded` 是当前事实而不是启动快照：外部智能体登记后必须立刻转绿。"""
+        from aegis.agents.mock import start_mock_agents
+
+        assert (await client.get("/readyz")).json()["agents_degraded"] is True
+        agents = await start_mock_agents(container.transport, heartbeat_interval=0.05)
+        await asyncio.sleep(0.1)
+        await container.transport.idle()
+        try:
+            body = (await client.get("/readyz")).json()
+            assert body["agents_online"] == 5
+            assert body["agents_degraded"] is False
+        finally:
+            for agent in agents:
+                await agent.stop()
 
     async def test_readyz带着链路进程内资源那一块(self, client: httpx.AsyncClient, container: PlatformContainer) -> None:
         """D7 收口后只剩一条编排路径：盘面漏收与实例被上界挤掉，是它仅有的两个进程内泄漏面。
@@ -173,6 +193,9 @@ class TestOpsEndpoints:
         assert before["open_boards"] == 0, "一次链路都没跑过就不是 0：说明启动过程里有人开了盘没收回"
         assert before["held"] == 0 and before["evicted"] == 0
         assert before["capacity"] >= 8, "容量下限由引擎守住（留太少会把还在被人看的实例也挤掉）"
+        # 内存后端没有恢复源：三个恢复计数必须显式为 0，恢复失败也要能在这里看见"没有失败"。
+        assert (before["recovered_definitions"], before["recovered_instances"], before["interrupted_instances"]) == (0, 0, 0)
+        assert before["recovery_error"] is None
 
         await container.chain.process([], region_code=REGION)
         after = (await client.get("/readyz")).json()["chain"]

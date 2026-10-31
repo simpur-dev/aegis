@@ -572,6 +572,8 @@ async def test_实例详情带图与结果(container: PlatformContainer) -> None
         detail = started.json()
         assert detail["preview"] is False
         assert detail["lineage_id"]
+        # 内存后端现场起跑：这两面必须是显式 False，不能靠响应模型缺省被前端读成 undefined。
+        assert detail["recovered"] is False and detail["interrupted"] is False
         assert detail["graph"]["nodes"] and detail["graph"]["edges"]
         expected = {node["node_id"] for node in detail["nodes"]}
         assert {node["node_id"] for node in detail["graph"]["nodes"]} == expected

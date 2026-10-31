@@ -279,7 +279,7 @@ async def drive_with_plan_agent(
     async def record(message: AgentMessage) -> None:
         captured.append(message)
 
-    await bus.subscribe(subjects.agent_in(AgentType.PLAN), record)
+    await bus.subscribe(subjects.agent_in(AgentType.PLAN, "plan.retr01"), record)
     agent = MockAgent(
         transport=bus,
         agent_type=AgentType.PLAN,

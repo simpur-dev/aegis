@@ -71,10 +71,12 @@ def test_分数直接取自规则不给装配点加戏() -> None:
     parsed = TelemetryReading.model_validate(reading)
     hits = engine.evaluate([parsed], region_code=REGION).hits
     assert hits, f"这条读数应能越限：{rule.rule_id}"
-    expected = max(hits, key=lambda hit: hit.score).score
+    decisive = max(hits, key=lambda hit: hit.score)
     anomaly = RuleEngineDetector(engine).flag(reading)
     assert anomaly is not None
-    assert anomaly.base_score == expected, "越限分数必须由规则给，装配点不得重标定"
+    assert anomaly.base_score == decisive.score, "越限分数必须由规则给，装配点不得重标定"
+    # 来源规则 id 必须透传：感知段按 rule_id 与平台规则轨去重，改名就等于同一条越限算两条证据。
+    assert anomaly.rule_id == decisive.rule_id
 
 
 def test_不合形状的读数判不了就沉默() -> None:

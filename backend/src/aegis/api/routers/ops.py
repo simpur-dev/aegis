@@ -52,14 +52,25 @@ def build_router() -> APIRouter:
         ready = ctn.transport.connected
         if not ready:
             raise HTTPException(status_code=503, detail="总线未连接")
+        online = ctn.registry.online_count
         return {
             "status": "ready",
             "bus": ctn.transport.name,
-            "agents_online": ctn.registry.online_count,
+            # 生产环境默认不拉本进程内的智能体（mock 只在非 prod 启动，真智能体可能外部部署）。
+            # 0 在线不代表总线不健康，但所有协同事务都会以 no_agent 降级——这两个事实必须一起读到，
+            # 否则探针给的是"一切正常"，值班要到第一条预警卡住才发现没人接单。
+            "agents_online": online,
+            "agent_runtime": ctn.agent_runtime_state,
+            "agents_degraded": online == 0,
             "store": ctn.store.snapshot(),
-            # D7 收口后链路只有一条编排路径，它的两种进程内资源都得能被看见（铁律 7）：
-            # 开着的盘面（漏收盘就是内存泄漏）与留在内存里的工作流实例（有上界，挤掉多少要记账）。
-            "chain": {**ctn.chain.stations.boards.snapshot(), **ctn.workflow.instance_stats},
+            # D7 收口后链路只有一条编排路径，它的进程内资源与持久态恢复事实都得能被看见：
+            # 开着的盘面（漏收盘就是内存泄漏）、留在内存里的实例（有上界，挤掉多少要记账）、
+            # 以及启动恢复失败的原因（恢复计数在 instance_stats 的 recovered_* 里）。
+            "chain": {
+                **ctn.chain.stations.boards.snapshot(),
+                **ctn.workflow.instance_stats,
+                "recovery_error": ctn.workflow_recovery_error,
+            },
         }
 
     @router.get("/api/v1/integrations", tags=["ops"])

@@ -59,6 +59,7 @@ from aegis.storage.store import (
     station_ledger_row,
 )
 from aegis.workflow.model import WorkflowDef, WorkflowInstance
+from aegis.workflow.persistence import InstanceCheckpoint
 
 if TYPE_CHECKING:  # 仅用于类型标注：ChainResult 的载荷只在写出时按方法调用取用
     from aegis.domain.chain import ChainResult
@@ -494,6 +495,46 @@ class PostgresStore:
                 return None
             states = await conn.fetch(f"SELECT * FROM {WF_NODE_TABLE} WHERE instance_id = $1 ORDER BY node_id", instance_id)
             return rows.workflow_instance_from_row(row, list(states))
+
+    async def load_open_workflow_instances(self, *, limit: int = 1_000) -> list[InstanceCheckpoint]:
+        """启动恢复的读面：只取 running/waiting 的实例现场，按创建时间升序（先起先恢复）。
+
+        快照坏掉的行不在这里抛：一张读不出来的图若继续以 running 留在库里，每次重启都会
+        重新出现一遍。就地标成 failed 并写清原因，让它变成值班面上一条可见的终态事实。
+        """
+        if limit <= 0:
+            raise QueryFailedError("limit 必须为正", detail={"limit": limit})
+        async with self.acquire() as conn:
+            records = await conn.fetch(
+                f"SELECT * FROM {WF_INSTANCE_TABLE} WHERE status IN ('running', 'waiting') ORDER BY created_at, instance_id LIMIT $1",
+                limit,
+            )
+            if not records:
+                return []
+            ids = [record["instance_id"] for record in records]
+            states = await conn.fetch(
+                f"SELECT * FROM {WF_NODE_TABLE} WHERE instance_id = ANY($1::text[]) ORDER BY instance_id, node_id",
+                ids,
+            )
+            grouped: dict[str, list[Any]] = {}
+            for state in states:
+                grouped.setdefault(str(state["instance_id"]), []).append(state)
+
+            checkpoints: list[InstanceCheckpoint] = []
+            for record in records:
+                instance_id = str(record["instance_id"])
+                try:
+                    checkpoints.append(rows.workflow_checkpoint_from_row(record, grouped.get(instance_id, [])))
+                except MappingError as exc:
+                    reason = f"恢复失败：持久化快照无法解析（{exc.message}），未自动续跑"
+                    await conn.execute(
+                        f"UPDATE {WF_INSTANCE_TABLE} SET status = 'failed', error = $2,"
+                        f" finished_at = COALESCE(finished_at, now()) WHERE instance_id = $1",
+                        instance_id,
+                        reason,
+                    )
+                    log.warning("实例快照无法恢复，已标记失败", extra={"instance_id": instance_id, "error": exc.message})
+            return checkpoints
 
     async def search_similar_tasks(
         self,

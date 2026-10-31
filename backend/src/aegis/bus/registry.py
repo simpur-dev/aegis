@@ -1,6 +1,8 @@
 """能力注册中心：智能体声明能力、心跳保活、按负载路由（规范 §6）。
 
-心跳判定用单调时钟；失联时触发降级回调，由平台侧走 fallback_policy，而不是让任务悬在总线上。
+心跳判定用单调时钟；失联只做两件事——标记 unhealthy、从候选集摘除。平台当前不注册
+`on_unhealthy` 回调，降级发生在派单侧：网关按 `SelectionReport.reason` 记账并抛
+`NoCapableAgentError`，工作流再按节点/STU 的降级策略处置。回调接口留给需要即时通知的装配方。
 """
 
 from __future__ import annotations
@@ -8,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from enum import StrEnum
 
 from aegis.config import Settings
 from aegis.domain.messages import CapabilityRegistration
@@ -22,6 +26,44 @@ UnhealthyCallback = Callable[[str, str], Awaitable[None]]
 
 class AgentOfflineError(AegisError):
     code = ErrorCode.NO_CAPABLE_AGENT
+
+
+class ServeBlocker(StrEnum):
+    """一个在册智能体接不了单的具体原因；一个本体可以同时命中多条。"""
+
+    UNHEALTHY = "unhealthy"
+    SATURATED = "saturated"
+    CAPABILITY = "capability"
+    HAZARD = "hazard"
+
+
+class SelectionReason(StrEnum):
+    """选择失败的**主导**原因：多因并存时就是 `MIXED`，完整计数看 `SelectionReport.blockers`。"""
+
+    AVAILABLE = "available"
+    NO_AGENTS = "no_agents"
+    ALL_UNHEALTHY = "all_unhealthy"
+    ALL_SATURATED = "all_saturated"
+    CAPABILITY_MISSING = "capability_missing"
+    HAZARD_MISMATCH = "hazard_mismatch"
+    MIXED = "mixed"
+
+
+#: 主导原因的判定次序：每条阻挡原因在**全部**候选上成立才算数；多条同时普及时取先出现者。
+#: 失联排在饱和前（本体根本没在跑），能力排在灾种前（更常见的配置错位）。
+_UNIVERSAL_REASONS: tuple[tuple[ServeBlocker, SelectionReason], ...] = (
+    (ServeBlocker.UNHEALTHY, SelectionReason.ALL_UNHEALTHY),
+    (ServeBlocker.SATURATED, SelectionReason.ALL_SATURATED),
+    (ServeBlocker.CAPABILITY, SelectionReason.CAPABILITY_MISSING),
+    (ServeBlocker.HAZARD, SelectionReason.HAZARD_MISMATCH),
+)
+
+_BLOCKER_LABELS: dict[str, str] = {
+    ServeBlocker.UNHEALTHY: "失联",
+    ServeBlocker.SATURATED: "饱和",
+    ServeBlocker.CAPABILITY: "缺能力",
+    ServeBlocker.HAZARD: "灾种不匹配",
+}
 
 
 @dataclass(slots=True)
@@ -39,14 +81,70 @@ class AgentEntry:
     def agent_id(self) -> str:
         return self.reg.agent_id
 
-    def can_serve(self, capability: str | None, hazard_type: str | None) -> bool:
+    def serve_blockers(self, capability: str | None = None, hazard_type: str | None = None) -> tuple[ServeBlocker, ...]:
+        """列出全部不可接单原因（而不是在第一个条件上短路）。
+
+        健康、容量、能力、灾种是四类**不同**的运营事实：合并成一个布尔之后，
+        "全部失联"与"能力配错"在调用侧长得一模一样，只能靠人去猜。
+        """
+        blockers: list[ServeBlocker] = []
+        if not self.healthy:
+            blockers.append(ServeBlocker.UNHEALTHY)
+        if self.inflight >= self.reg.max_concurrency:
+            blockers.append(ServeBlocker.SATURATED)
+        if capability and capability not in self.reg.capabilities:
+            blockers.append(ServeBlocker.CAPABILITY)
+        if hazard_type and self.reg.hazard_types and hazard_type not in self.reg.hazard_types:
+            blockers.append(ServeBlocker.HAZARD)
+        return tuple(blockers)
+
+    def can_serve(self, capability: str | None = None, hazard_type: str | None = None) -> bool:
         """健康、未饱和、能力与灾种域均匹配时才可接单。"""
-        return (
-            self.healthy
-            and self.inflight < self.reg.max_concurrency
-            and (not capability or capability in self.reg.capabilities)
-            and (not hazard_type or not self.reg.hazard_types or hazard_type in self.reg.hazard_types)
-        )
+        return not self.serve_blockers(capability, hazard_type)
+
+
+@dataclass(frozen=True, slots=True)
+class SelectionReport:
+    """一次候选筛选的诊断快照：`registered` 里为什么 `available` 是 0。"""
+
+    agent_type: str
+    capability: str | None
+    hazard_type: str | None
+    registered: int
+    available: int
+    blockers: dict[ServeBlocker, int]
+
+    @property
+    def reason(self) -> SelectionReason:
+        if self.registered == 0:
+            return SelectionReason.NO_AGENTS
+        if self.available > 0:
+            return SelectionReason.AVAILABLE
+        universal = {blocker for blocker, count in self.blockers.items() if count == self.registered}
+        for blocker, reason in _UNIVERSAL_REASONS:
+            if blocker in universal:
+                return reason
+        return SelectionReason.MIXED
+
+    def summary(self) -> str:
+        if self.registered == 0:
+            return "该类型智能体未注册"
+        head = f"注册 {self.registered} 个，可用 {self.available} 个"
+        if not self.blockers:
+            return head
+        detail = "、".join(f"{_BLOCKER_LABELS.get(blocker, blocker)} {count}" for blocker, count in self.blockers.items())
+        return f"{head}（{detail}）"
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "agent_type": self.agent_type,
+            "capability": self.capability,
+            "hazard_type": self.hazard_type,
+            "registered": self.registered,
+            "available": self.available,
+            "blockers": {blocker.value: count for blocker, count in self.blockers.items()},
+            "reason": self.reason.value,
+        }
 
 
 class AgentRegistry:
@@ -100,6 +198,32 @@ class AgentRegistry:
         if options := self.candidates(agent_type, capability, hazard_type):
             return options[0]
         return None
+
+    def explain(
+        self,
+        agent_type: str,
+        capability: str | None = None,
+        hazard_type: str | None = None,
+    ) -> SelectionReport:
+        """筛选失败时回答"为什么"：把四类阻挡原因分开计数，供网关错误与链路降级留痕。"""
+        entries = [e for e in self._entries.values() if e.reg.agent_type == agent_type]
+        blockers: Counter[ServeBlocker] = Counter()
+        available = 0
+        for entry in entries:
+            found = entry.serve_blockers(capability, hazard_type)
+            if found:
+                blockers.update(found)
+            else:
+                available += 1
+        ordered = {blocker: blockers[blocker] for blocker, _ in _UNIVERSAL_REASONS if blockers[blocker]}
+        return SelectionReport(
+            agent_type=agent_type,
+            capability=capability,
+            hazard_type=hazard_type,
+            registered=len(entries),
+            available=available,
+            blockers=ordered,
+        )
 
     def get(self, agent_id: str) -> AgentEntry | None:
         return self._entries.get(agent_id)

@@ -17,13 +17,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway
-from aegis.bus.registry import AgentRegistry
+from aegis.bus.registry import AgentRegistry, SelectionReason
 from aegis.config import Settings, get_settings
 from aegis.contracts import ContractRegistry
 from aegis.domain.chain import STAGE_ORDER, ChainResult, StageResult, model_receipt
@@ -94,6 +95,20 @@ class _AssessOutcome:
         return f"；{head}（{label}）"
 
 
+@dataclass(frozen=True, slots=True)
+class _AgentHit:
+    """一条来自总线事件的智能体命中，连同"它属于哪条链路、什么时候到的"。
+
+    命中载荷本身（`TriggerHit`）没有 trace 格，而事件在总线上是全局的：同区域两条链路相差几秒
+    开跑时，只按区域取命中会让先到的那条把另一条的命中吞掉。所以入盘时把 trace 与到达时刻
+    一起记下，取用时两条都验：`trace` 相同才合并，超过 TTL 的直接清出盘面（不会无限堆积）。
+    """
+
+    hit: TriggerHit
+    trace_id: str
+    received_mono: float
+
+
 class SuggestionSink(Protocol):
     """反馈段把"待人工确认的阈值建议"交给谁——由装配点注入，内核不认识持久层。
 
@@ -129,6 +144,7 @@ class HazardStages:
         warning_service: WarningService | None = None,
         dispatcher: DeliveryDispatcher | None = None,
         agent_hit_window: int = 512,
+        agent_hit_ttl_seconds: float | None = None,
         knowledge: KnowledgeProvider | None = None,
         retrieval: HybridRetrievalService | None = None,
         suggestions: SuggestionSink | None = None,
@@ -143,7 +159,10 @@ class HazardStages:
         self._task_parser = task_parser or TaskParser(contracts, settings=self._settings)
         self._warning_service = warning_service or WarningService(self._tracer, settings=self._settings)
         self._dispatcher = dispatcher
-        self._agent_hits: deque[TriggerHit] = deque(maxlen=agent_hit_window)
+        # 命中存活期对齐接入 SLA：超过"读数观测→入库"窗口的命中已不属于任何在跑的链路。
+        # 缺省不另立旋钮——多一个配置项就多一处"两个数互相打脸"的机会。
+        self._agent_hit_ttl = float(agent_hit_ttl_seconds if agent_hit_ttl_seconds is not None else self._settings.sla_ingest_seconds)
+        self._agent_hits: deque[_AgentHit] = deque(maxlen=agent_hit_window)
         self._warnings: dict[str, WarningRecord] = {}
         self._knowledge = knowledge
         self._retrieval = retrieval
@@ -177,17 +196,55 @@ class HazardStages:
     async def handle_agent_message(self, message: AgentMessage) -> None:
         if message.action == Action.PERCEIVE_TRIGGER_HIT.value:
             try:
-                self._agent_hits.append(TriggerHit.model_validate(message.payload))
+                hit = TriggerHit.model_validate(message.payload)
             except Exception as exc:
                 log.warning("智能体触发命中载荷非法", extra={"error": str(exc), "msg_id": message.msg_id})
+                return
+            # 事件类命中只有回带同一条 trace 才会被那条链路采纳（见 `_AgentHit`）。
+            # 用 perf_counter 而非 monotonic：后者在 Windows 上步进 15.6 ms，会让毫秒级的存活窗失效。
+            self._agent_hits.append(_AgentHit(hit=hit, trace_id=message.trace_id, received_mono=time.perf_counter()))
+        elif message.action == Action.PERCEIVE_ANOMALY.value:
+            # 感知标注是"这条读数像异常"的单点事实，没有 rule_id/hazard_type 可溯源，
+            # 不参与链路的命中合并；留一行可见记录，免得后来的人以为它悄悄丢了。
+            log.info(
+                "收到感知标注（不并入链路命中）",
+                extra={"msg_id": message.msg_id, "trace_id": message.trace_id, "station_id": message.payload.get("station_id")},
+            )
         elif message.action == Action.FEEDBACK_STATUS.value:
             log.info("收到反馈", extra={"warning_id": message.payload.get("warning_id")})
 
-    def _drain_agent_hits(self, region_code: str) -> list[TriggerHit]:
-        picked = [h for h in self._agent_hits if h.region_code == region_code]
-        for h in picked:
-            self._agent_hits.remove(h)
+    def _drain_agent_hits(self, region_code: str, trace_id: str) -> list[TriggerHit]:
+        """取走本条链路（同 trace、同区域）的智能体事件命中，顺手清掉过窗的旧命中。
+
+        其余链路的命中留在盘面上等它们自己的感知段——这是"同区域并发两条链路"不串味的关键：
+        旧的按区域取用会让先到的链路把别人的命中计入自己的预警。
+        """
+        cutoff = time.perf_counter() - self._agent_hit_ttl
+        kept: deque[_AgentHit] = deque(maxlen=self._agent_hits.maxlen)
+        picked: list[TriggerHit] = []
+        for entry in self._agent_hits:
+            if entry.received_mono <= cutoff:
+                continue  # 过窗：它的链路口径上早已结束，不再参与任何合并
+            if entry.trace_id == trace_id and entry.hit.region_code == region_code:
+                picked.append(entry.hit)
+            else:
+                kept.append(entry)
+        self._agent_hits = kept
         return picked
+
+    def _agent_ready(self, agent_type: AgentType, capability: str, result: ChainResult, *, stage: str) -> bool:
+        """本段该不该走智能体腿。
+
+        "一个也没注册"是纯本地部署形态（`StageResult.mode` 已是 local），不算降级；
+        "注册了却没人能接"是运营事故——失联、饱和、能力或灾种错位，必须把原因写进降级台账。
+        两种情形都曾经只表现为 mode=local，外部读不出"本该有智能体在跑"。
+        """
+        report = self._registry.explain(agent_type.value, capability)
+        if report.available:
+            return True
+        if report.reason is not SelectionReason.NO_AGENTS:
+            result.degradations.append(f"{stage}降级: 智能体暂不可用（{report.summary()}）")
+        return False
 
     # ---------- 段的统一入口（编排器只有这一个调用方） ----------
 
@@ -230,11 +287,15 @@ class HazardStages:
         preset_hits: list[TriggerHit] | None = None,
         intake: str = "telemetry",
     ) -> StageResult:
-        """命中（规则 ⊕ 智能体上报）写进 `result.hits`，返回感知段的账。"""
+        """命中（规则 ⊕ 智能体扫描 ⊕ 智能体事件）写进 `result.hits`，返回感知段的账。"""
         reported = intake == "report"
+        before = len(result.degradations)
         async with instrumentation.span("stage_perceive_ms", trace_id=trace) as span:
             with self._tracer.span("stage_perceive_ms", trace_id=trace) as sp:
-                hits, agent_hit_count = await self._perceive(readings, region, trace, preset_hits=preset_hits)
+                hits, agent_hit_count = await self._perceive(readings, region, trace, result, preset_hits=preset_hits, intake=intake)
+            if len(result.degradations) > before:
+                # 感知腿的派单失败/回收不合契约也是降级：只在台账末行可见，值班员要读到段尾才知道
+                instrumentation.mark_degraded(span, result.degradations[-1])
             # 阶段结论写在账本计时之外：跨度不参与任何时延测量
             instrumentation.set_attributes(
                 span,
@@ -259,18 +320,100 @@ class HazardStages:
         readings: list[TelemetryReading],
         region: str,
         trace: str,
+        result: ChainResult,
         *,
         preset_hits: list[TriggerHit] | None = None,
+        intake: str = "telemetry",
     ) -> tuple[list[TriggerHit], int]:
         # 上报腿的命中是 `services/semantic_parser` 用同一张规则表算出来的，这里不重算阈值。
         local_hits = list(preset_hits) if preset_hits is not None else self._rule_engine.evaluate(readings, region_code=region).hits
-        agent_hits = self._drain_agent_hits(region)
         merged = list(local_hits)
         seen = {h.rule_id for h in merged}
-        merged.extend(h for h in agent_hits if h.rule_id not in seen)
-        for _hit in agent_hits:
+        # 事件腿与扫描腿合并在同一张去重表上：同一条规则/同一条聚集命中只算一次。
+        adopted = self._adopt_agent_hits(merged, seen, self._drain_agent_hits(region, trace), trace)
+        reply_hits = await self._request_agent_hits(readings, region, trace, result, local_hits=local_hits, intake=intake)
+        adopted += self._adopt_agent_hits(merged, seen, reply_hits, trace)
+        return merged, adopted
+
+    def _adopt_agent_hits(self, merged: list[TriggerHit], seen: set[str], candidates: list[TriggerHit], trace: str) -> int:
+        """把智能体命中并入本地命中，返回真正被采纳的条数（重复的不算）。"""
+        adopted = 0
+        for hit in candidates:
+            if hit.rule_id in seen:
+                continue
+            seen.add(hit.rule_id)
+            merged.append(hit)
+            adopted += 1
             self._tracer.record("perceive_agent_hit_ms", 0.0, trace_id=trace, outcome="agent")
-        return merged, len(agent_hits)
+        return adopted
+
+    async def _request_agent_hits(
+        self,
+        readings: list[TelemetryReading],
+        region: str,
+        trace: str,
+        result: ChainResult,
+        *,
+        local_hits: list[TriggerHit],
+        intake: str,
+    ) -> list[TriggerHit]:
+        """把本批读数交给感知智能体扫一遍，回收 `trigger_hits`。
+
+        动作用规范里平台→perceive 的既有入口 `assess.hazard`（"请求灾种识别"），不新造动作：
+        v1 动作表是冻结集，新增一条要动双侧契约，而这条入口本来就声明给了 perceive。
+        没有读数就不派单——空扫描只会白烧一次事务，还回收不到任何可溯源命中。
+        """
+        if not readings:
+            return []
+        if not self._agent_ready(AgentType.PERCEIVE, "anomaly_detect", result, stage="感知"):
+            return []
+        candidates = sorted({h.hazard_type for h in local_hits}) or [h.value for h in HazardType if h is not HazardType.UNKNOWN]
+        try:
+            response = await self._gateway.dispatch(
+                AgentType.PERCEIVE,
+                Action.ASSESS_HAZARD,
+                {
+                    "region_code": region,
+                    "window": "1h",
+                    "candidate_hazards": candidates,
+                    "readings": [r.model_dump() for r in readings],
+                    "intake": intake,
+                },
+                trace_id=trace,
+                capability="anomaly_detect",
+                deadline_ms=self.agent_txn_ms,
+                ttl_ms=self.agent_txn_ttl_ms,
+            )
+        except AegisError as exc:
+            result.degradations.append(f"感知降级: {exc.message}")
+            return []
+        return self._parse_agent_hits(response.payload, region, result)
+
+    @staticmethod
+    def _parse_agent_hits(payload: dict[str, Any], region: str, result: ChainResult) -> list[TriggerHit]:
+        """回收感知应答：逐条过 `TriggerHit` 契约；坏载荷与跨区域命中都要在台账上留名。"""
+        raw = payload.get("trigger_hits")
+        if not isinstance(raw, list):
+            result.degradations.append("感知产出不含 trigger_hits，仅采用本地规则命中")
+            return []
+        hits: list[TriggerHit] = []
+        invalid = 0
+        foreign = 0
+        for item in raw:
+            try:
+                hit = TriggerHit.model_validate(item)
+            except Exception:
+                invalid += 1
+                continue
+            if hit.region_code != region:
+                foreign += 1
+                continue
+            hits.append(hit)
+        if invalid:
+            result.degradations.append(f"感知命中 {invalid} 条不合契约，已丢弃")
+        if foreign:
+            result.degradations.append(f"感知命中 {foreign} 条不属于区域 {region}，已丢弃")
+        return hits
 
     # ---------- ② 研判 ----------
 
@@ -325,7 +468,7 @@ class HazardStages:
         """结论与"这一段是谁答的、双盲走到哪一步"。降级路径的结论来自规则引擎或上报解析腿。"""
         local = preset_verdict or self._risk_engine.assess(hits, region_code=region)
         fallback_note = "采用上报解析定级" if preset_verdict is not None else "采用规则定级"
-        if self._registry.pick(AgentType.ASSESS.value, "risk_assess") is None:
+        if not self._agent_ready(AgentType.ASSESS, "risk_assess", result, stage="研判"):
             return _AssessOutcome(local, False)
         request_payload: dict[str, Any] = {
             "region_code": region,
@@ -427,7 +570,7 @@ class HazardStages:
         # "参考过哪些历史案例"都是这条链路的证据，不该只在智能体在线时才存在。
         references = await self._recall_cases(verdict, result)
         local = self._task_parser.parse(verdict, event_id=result.event_id)
-        if self._registry.pick(AgentType.PLAN.value, "task_decompose") is None:
+        if not self._agent_ready(AgentType.PLAN, "task_decompose", result, stage="决策"):
             return local
         # 检索块只在智能体在场时取：本地剧本不消费正文块，为它付一次 CPU 推理不值。
         context = await self._retrieve_context(verdict, result)
@@ -587,7 +730,7 @@ class HazardStages:
         draft = await self._warning_service.generate(verdict, event_id=result.event_id, trace_id=trace, started_at=started_at)
         record = draft.record
         used_agent = False
-        if self._registry.pick(AgentType.EXECUTE.value, "warn_publish") is not None:
+        if self._agent_ready(AgentType.EXECUTE, "warn_publish", result, stage="执行"):
             try:
                 response = await self._gateway.dispatch(
                     AgentType.EXECUTE,
@@ -718,9 +861,12 @@ class HazardStages:
         并把采纳结果记进台账。此前只广播不派发，于是智能体在册却收不到请求，那三件事在真栈上
         发生 0 次。
         """
+        before = len(result.degradations)
         async with instrumentation.span("stage_feedback_ms", trace_id=trace) as span:
             with self._tracer.span("stage_feedback_ms", trace_id=trace) as sp:
                 attribution, suggestion_ledger = await self._feedback(result.warning, trace, result)
+            if len(result.degradations) > before:
+                instrumentation.mark_degraded(span, result.degradations[-1])
             instrumentation.set_attributes(span, span_attrs={"aegis.reach_expected": result.warning is not None})
         return StageResult(
             "feedback",
@@ -762,7 +908,7 @@ class HazardStages:
         }
         response_state = "pending" if delivered else "unknown"
         attribution: dict[str, Any] | None = None
-        if self._registry.pick(AgentType.FEEDBACK.value, "reach_track") is not None:
+        if self._agent_ready(AgentType.FEEDBACK, "reach_track", result, stage="反馈"):
             try:
                 response = await self._gateway.dispatch(
                     AgentType.FEEDBACK,

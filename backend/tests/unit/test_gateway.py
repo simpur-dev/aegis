@@ -66,7 +66,7 @@ async def attach_responder(
             make_response(message, source=agent_id, payload=payload or {"risk_level": 2}),
         )
 
-    await bus.subscribe(subjects.agent_in(agent_type), _handle)
+    await bus.subscribe(subjects.agent_in(agent_type, agent_id), _handle)
 
 
 class TestValidation:
@@ -125,13 +125,44 @@ class TestDispatch:
         assert last.outcome == "no_agent"
         assert last.error_code == ErrorCode.NO_CAPABLE_AGENT.value
 
+    async def test_zero_agents_is_a_typed_reason(self, gateway: AgentGateway, registry: AgentRegistry) -> None:
+        with pytest.raises(NoCapableAgentError) as excinfo:
+            await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, {}, trace_id=TRACE)
+        diagnosis = excinfo.value.detail["diagnosis"]
+        assert diagnosis["reason"] == "no_agents"
+        assert diagnosis["registered"] == 0
+        assert "该类型智能体未注册" in excinfo.value.message
+        assert gateway.transactions[-1].reason == "no_agents"
+        assert gateway.transactions[-1].as_dict()["reason"] == "no_agents"
+
+    async def test_unhealthy_reason_is_not_swallowed(self, gateway: AgentGateway, registry: AgentRegistry) -> None:
+        """ "全部失联"与"能力配错"是不同处置动作，错误里必须分得开。"""
+        agent_id = register(registry, AgentType.ASSESS)
+        registry.get(agent_id).healthy = False
+        with pytest.raises(NoCapableAgentError) as excinfo:
+            await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, {}, trace_id=TRACE)
+        diagnosis = excinfo.value.detail["diagnosis"]
+        assert diagnosis["reason"] == "all_unhealthy"
+        assert diagnosis["blockers"] == {"unhealthy": 1}
+        assert diagnosis["registered"] == 1
+        assert gateway.transactions[-1].reason == "all_unhealthy"
+
+    async def test_capability_mismatch_is_named(self, gateway: AgentGateway, registry: AgentRegistry) -> None:
+        register(registry, AgentType.ASSESS, "other_capability")
+        with pytest.raises(NoCapableAgentError) as excinfo:
+            await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, {}, trace_id=TRACE, capability="risk_assess")
+        assert excinfo.value.detail["diagnosis"]["reason"] == "capability_missing"
+        assert excinfo.value.detail["diagnosis"]["blockers"] == {"capability": 1}
+
     async def test_saturated_agent_fails_fast(self, gateway: AgentGateway, registry: AgentRegistry) -> None:
         """容量饱和时快速失败（而非无界排队）：过载必须由降级/重调度显式处理。"""
         agent_id = register(registry, AgentType.ASSESS)
         registry.get(agent_id).inflight = registry.get(agent_id).reg.max_concurrency
-        with pytest.raises(NoCapableAgentError):
+        with pytest.raises(NoCapableAgentError) as excinfo:
             await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, {}, trace_id=TRACE)
         assert gateway.counters["no_agent"] == 1
+        assert excinfo.value.detail["diagnosis"]["reason"] == "all_saturated"
+        assert gateway.transactions[-1].reason == "all_saturated"
 
     async def test_happy_path(self, bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry) -> None:
         agent_id = register(registry, AgentType.ASSESS)
@@ -164,6 +195,25 @@ class TestDispatch:
         assert registry.get(agent_id).failed == 1
         await gateway.close()
 
+    async def test_dispatch_lands_on_the_selected_agents_inbox(
+        self, bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry
+    ) -> None:
+        """派单落到被选中本体的专属收件箱：只订自己收件箱的接入方（不订类型级公共口）也能被服务。"""
+        agent_id = register(registry, AgentType.ASSESS)
+        seen: list[AgentMessage] = []
+
+        async def inbox_only(message: AgentMessage) -> None:
+            seen.append(message)
+            await bus.publish(message.reply_to or "", make_response(message, source=agent_id, payload={"risk_level": 2}))
+
+        await gateway.start()
+        await bus.subscribe(subjects.agent_in(AgentType.ASSESS, agent_id), inbox_only)
+        reply = await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, {"region_code": "540121"}, trace_id=TRACE, deadline_ms=500)
+
+        assert reply.source == agent_id
+        assert seen and seen[0].target == agent_id, "请求信封里的 target 必须是选中的那个本体"
+        await gateway.close()
+
     async def test_error_reply_propagates(self, bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry) -> None:
         agent_id = register(registry, AgentType.ASSESS)
 
@@ -174,7 +224,7 @@ class TestDispatch:
             )
 
         await gateway.start()
-        await bus.subscribe(subjects.agent_in(AgentType.ASSESS), failing)
+        await bus.subscribe(subjects.agent_in(AgentType.ASSESS, agent_id), failing)
 
         with pytest.raises(AegisError) as info:
             await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, {}, trace_id=TRACE)
@@ -194,7 +244,7 @@ class TestDispatch:
             await bus._publish_raw(message.reply_to or "", json.dumps(payload).encode())
 
         await gateway.start()
-        await bus.subscribe(subjects.agent_in(AgentType.ASSESS), illegal_reply)
+        await bus.subscribe(subjects.agent_in(AgentType.ASSESS, agent_id), illegal_reply)
         with pytest.raises(UnregisteredActionError):
             await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, {}, trace_id=TRACE)
         await gateway.close()
@@ -318,14 +368,108 @@ class TestUplink:
         assert registry.get("assess.bad01") is None
         await gateway.close()
 
-    async def test_unknown_agent_heartbeat_is_harmless(self, bus: InMemoryBus, gateway: AgentGateway) -> None:
+    async def test_unknown_agent_heartbeat_is_harmless(self, bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry) -> None:
+        """没有 registration 的心跳只能证明"有人在发"，不能凭空造出一条能力声明。"""
         await gateway.start()
         await bus.publish(
             subjects.agent_hb("assess"),
             make_event(source="assess.ghost1", action=Action.AGENT_HEARTBEAT.value, payload={}, trace_id=TRACE, target="platform.registry"),
         )
         await bus.idle()
+        assert registry.get("assess.ghost1") is None
         assert gateway.counters["rejected"] == 0
+        assert gateway.counters["self_healed"] == 0
+        await gateway.close()
+
+    async def test_unknown_heartbeat_with_registration_self_heals(
+        self, bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry
+    ) -> None:
+        """注册帧丢在重连窗口里时，心跳携带的完整 registration 必须能把本体救回来。
+
+        不救的后果不是"少一条注册日志"：本体照常发心跳、照常上行，却永远进不了候选集，
+        所有派单都记 no_agent——而总线看起来一切正常。
+        """
+        await gateway.start()
+        registration = CapabilityRegistration(
+            agent_id="assess.recovered",
+            agent_type="assess",
+            capabilities=["risk_assess"],
+        )
+        frame = make_event(
+            source="assess.recovered",
+            action=Action.AGENT_HEARTBEAT.value,
+            payload={"agent_id": "assess.recovered", "registration": registration.model_dump()},
+            trace_id=TRACE,
+            target="platform.registry",
+        )
+        await bus.publish(subjects.agent_hb("assess"), frame)
+        await bus.idle()
+
+        entry = registry.get("assess.recovered")
+        assert entry is not None and entry.healthy, "心跳自愈必须同时登记并保活，否则下一次 sweep 立刻摘除"
+        assert gateway.counters["self_healed"] == 1
+        assert gateway.counters["rejected"] == 0
+
+        await bus.publish(subjects.agent_hb("assess"), frame.model_copy(update={"msg_id": "msg_" + "a" * 16}))
+        await bus.idle()
+        assert gateway.counters["self_healed"] == 1, "已在册的心跳只保活，不得每拍重复登记（会清零 inflight/served）"
+        await gateway.close()
+
+    @pytest.mark.parametrize(
+        ("source", "declared_id", "declared_type"),
+        [
+            ("assess.ghost2", "assess.other", "assess"),
+            ("assess.ghost3", "assess.ghost3", "plan"),
+        ],
+    )
+    async def test_心跳声明与来源实例或订阅类型不符时拒收(
+        self,
+        bus: InMemoryBus,
+        gateway: AgentGateway,
+        registry: AgentRegistry,
+        source: str,
+        declared_id: str,
+        declared_type: str,
+    ) -> None:
+        """心跳自愈是兜底，不是后门：声明只能登记"发送者自己"且必须落在订阅的类型上。"""
+        await gateway.start()
+        registration = CapabilityRegistration(
+            agent_id=declared_id,
+            agent_type=declared_type,
+            capabilities=["risk_assess"],
+        )
+        await bus.publish(
+            subjects.agent_hb("assess"),
+            make_event(
+                source=source,
+                action=Action.AGENT_HEARTBEAT.value,
+                payload={"agent_id": declared_id, "registration": registration.model_dump()},
+                trace_id=TRACE,
+                target="platform.registry",
+            ),
+        )
+        await bus.idle()
+        assert registry.get(declared_id) is None
+        assert gateway.counters["rejected"] == 1
+        assert gateway.counters["self_healed"] == 0
+        await gateway.close()
+
+    async def test_malformed_lifecycle_envelope_is_rejected(self, bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry) -> None:
+        """注册/心跳也走同一份契约：payload 超限的信封不得因为是"生命周期帧"就免检。"""
+        await gateway.start()
+        await bus.publish(
+            subjects.agent_hb("assess"),
+            make_event(
+                source="assess.swollen",
+                action=Action.AGENT_HEARTBEAT.value,
+                payload={f"k{index}": index for index in range(65)},
+                trace_id=TRACE,
+                target="platform.registry",
+            ),
+        )
+        await bus.idle()
+        assert registry.get("assess.swollen") is None
+        assert gateway.counters["rejected"] == 1
         await gateway.close()
 
     def test_result_handler_can_be_cleared(self, gateway: AgentGateway) -> None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aegis.bus.registry import SelectionReport
 from aegis.config import Settings
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit, make_request, make_response, now_iso
@@ -81,15 +82,30 @@ class _Gateway:
 
 
 class _Registry:
-    def pick(self, agent_type: str, capability: str) -> object | None:
-        return object() if agent_type == AgentType.ASSESS.value else None
+    def explain(self, agent_type: str, capability: str | None = None, hazard_type: str | None = None) -> Any:
+        present = agent_type == AgentType.ASSESS.value
+        return SelectionReport(
+            agent_type=agent_type,
+            capability=capability,
+            hazard_type=hazard_type,
+            registered=1 if present else 0,
+            available=1 if present else 0,
+            blockers={},
+        )
 
 
 class _NoAgentsRegistry:
     """一个智能体都不在册：研判必须落到规则降级轨，且不许冒充"双盲做过"。"""
 
-    def pick(self, agent_type: str, capability: str) -> object | None:
-        return None
+    def explain(self, agent_type: str, capability: str | None = None, hazard_type: str | None = None) -> Any:
+        return SelectionReport(
+            agent_type=agent_type,
+            capability=capability,
+            hazard_type=hazard_type,
+            registered=0,
+            available=0,
+            blockers={},
+        )
 
 
 class _Contracts:

@@ -94,11 +94,17 @@ WorkflowDocument
 
 ### 7. 持久化边界如实标注
 
-- 定义、草稿、预览、实例仍全部在**进程内**；重启即清空（内置模板按原名重建）。
-- `ports.py` 定义 `WorkflowRepositoryPort / DraftStorePort / PreviewStorePort / Clock / IdFactory`，
-  内存实现由容器注入。它的作用是**为 #53 预留替换点**，不是宣称已经持久化。
-- UI 必须显示“本次进程内，重启后清空”；ADR 与部署文档不得把内存实现写成持久能力。
-- 接 Postgres 时只替换端口实现，应用层不改；这是 #53 的验收口径。
+- 配了持久层（`AEGIS_STORAGE_BACKEND=postgres` 且库可达）时，**工作流定义与实例检查点写穿 PostgreSQL**：
+  `workflow_definitions` 带 `lineage_id/content_hash`，`workflow_instances.runtime` 保存实例自己的
+  定义快照、挂起账、人工决策与画布位置。启动时先接回定义与未终态实例，再按名注册内置模板。
+- 恢复语义分两类：`waiting` 且挂起账与节点状态**双向一致**的实例接回后可继续核签；
+  `running`（或挂起账对不上的 `waiting`）就地收成 `failed` 并标记 `interrupted` 回写，
+  不假装能续跑。实例详情的 `recovered/interrupted` 与 `/readyz` 的恢复计数是这条边界的对外读取面。
+- **草稿、预览与发布文档快照仍全部在进程内**：重启后草稿与版式（layout）会丢，定义与运行历史不会。
+  UI 只对草稿/版式声明"本次进程内，重启后清空"。
+- 写侧只投有界写缓冲（与遥测/预警同一条路径），库抖不阻塞调度；读侧只在启动恢复时触库。
+- 端口在 `aegis.workflow.persistence`（应用层只依赖协议），PostgreSQL 适配器在
+  `aegis.persistence.workflow_store`；未配置持久层时引擎保持纯内存语义（恢复计数恒 0）。
 
 ### 8. Start / End 与旧定义兼容
 
@@ -155,7 +161,9 @@ WorkflowDocument
 - 正面：编辑器有“未发布更改”概念；版本可追溯且不可变；试运行零副作用；旧定义无 Start 仍可读；
   存储可替换而不改应用层；前后端对“有无变化”只有一个真源（服务端哈希）。
 - 代价：多出 lineage/草稿/预览三组对象与一套错误模型；前端必须处理 409 冲突与恢复提示；
-  进程内实现意味着重启清空，演示与评审时必须如实说明；哈希纳入 layout 意味着纯版式调整也会产生新版本
+  草稿、预览与版式快照仍在进程内，重启会丢（定义与实例账本已写穿 PostgreSQL）；
+  哈希纳入 layout 意味着纯版式调整也会产生新版本
   （换取画布状态可回溯，这是有意的取舍）。
-- 待办：#53 落库（替换 ports 实现，不改应用层）；批次 E 的 preview 包装与 spy；批次 A 的并发发布与
+- 待办：#53 剩余部分（草稿/预览/发布文档快照落库，替换 `DraftStorePort / PreviewStorePort` 实现，
+  不改应用层）；批次 E 的 preview 包装与 spy；批次 A 的并发发布与
   revision 冲突用例；归档/恢复的完整状态机测试。

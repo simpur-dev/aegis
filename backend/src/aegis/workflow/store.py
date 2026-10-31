@@ -11,10 +11,13 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aegis.workflow.documents import WorkflowDocument, document_from_definition, document_hash
 from aegis.workflow.model import EdgeDef, NodeDef, WorkflowDef
+
+if TYPE_CHECKING:
+    from aegis.workflow.persistence import WorkflowPersistencePort
 
 
 def new_workflow_id() -> str:
@@ -42,7 +45,7 @@ class WorkflowRepository:
     - `_documents` 保存发布时的完整文档快照——版式不属于 `WorkflowDef`，但必须可回溯。
     """
 
-    def __init__(self, capacity: int = 2_000) -> None:
+    def __init__(self, capacity: int = 2_000, *, persistence: WorkflowPersistencePort | None = None) -> None:
         if capacity <= 0:
             raise ValueError("capacity 必须为正")
         self._by_id: dict[str, WorkflowDef] = {}
@@ -54,13 +57,44 @@ class WorkflowRepository:
         self._documents: dict[str, WorkflowDocument] = {}
         self._capacity = capacity
         self._lock = asyncio.Lock()
+        #: 写穿口：每次真正插/改定义后把这一版投给持久层。读路径仍走内存索引，
+        #: 与运行态存储"读模型 + 写缓冲"同一套分工（见 `persistence/postgres.py` 模块注释）。
+        self._persistence = persistence
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    def _persist(self, definition: WorkflowDef) -> None:
+        if self._persistence is not None:
+            self._persistence.save_definition(definition)
+
+    async def restore_many(self, definitions: Sequence[WorkflowDef]) -> int:
+        """启动恢复：把库里的定义灌回内存索引，**不回写**持久层。
+
+        按 (name, version) 升序插入：`_insert_locked` 只在"版本号不小于当前最大"时
+        改写 `_latest`，倒序灌入会让最新版在后续旧版插入时保持正确，但 lineage 的
+        归属会取决于先插入哪一版——升序才是与首次创建同序的口径。
+        已存在的 workflow_id 直接跳过：恢复可重复调用（例如测试里同一进程重建引擎）。
+        """
+        restored = 0
+        async with self._lock:
+            for definition in sorted(definitions, key=lambda item: (item.name, item.version, item.workflow_id)):
+                if definition.workflow_id in self._by_id:
+                    continue
+                content_hash = definition.content_hash or document_hash(document_from_definition(definition))
+                self._insert_locked(definition.model_copy(update={"content_hash": content_hash}))
+                restored += 1
+        return restored
 
     async def save(self, definition: WorkflowDef) -> WorkflowDef:
         async with self._lock:
             lineage = self._resolve_lineage(definition)
             content_hash = definition.content_hash or document_hash(document_from_definition(definition))
             normalized = definition.model_copy(update={"lineage_id": lineage, "content_hash": content_hash})
-            return self._insert_locked(normalized)
+            inserted = self._insert_locked(normalized)
+            self._persist(inserted)
+            return inserted
 
     async def save_next(self, definition: WorkflowDef, *, document: WorkflowDocument) -> WorkflowDef:
         """锁内分配下一个版本号并把文档快照一起落账。
@@ -97,6 +131,7 @@ class WorkflowRepository:
         )
         inserted = self._insert_locked(stored)
         self._documents[inserted.workflow_id] = document
+        self._persist(inserted)
         return inserted
 
     def _insert_locked(self, definition: WorkflowDef) -> WorkflowDef:
@@ -214,6 +249,7 @@ class WorkflowRepository:
                 renamed = renamed.model_copy(update={"content_hash": document_hash(renamed_document)})
                 self._by_id[workflow_id] = renamed
                 self._index[(name, renamed.version)] = workflow_id
+                self._persist(renamed)
             self._versions[name] = sorted(old_versions)
             self._latest[name] = ids[-1]
             self._lineage_by_name[name] = lineage_id

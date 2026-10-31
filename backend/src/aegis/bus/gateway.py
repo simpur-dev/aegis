@@ -1,10 +1,12 @@
 """总线网关：契约校验 + 幂等去重 + 能力路由 + 协同事务台账 + 时延埋点。
 
 这是平台侧与智能体侧的唯一交汇点，《智能体接入规范》§1/§3/§5/§8 的机制实现：
-- 上行/下行消息 100% 经 JSON Schema 校验，不合规拒收（E_SCHEMA_INVALID）；
+- 上行/下行消息（含注册/心跳帧）100% 经 JSON Schema 校验，不合规拒收（E_SCHEMA_INVALID）；
 - 动作必须在注册表内（E_UNREGISTERED_ACTION）；
 - request→response 构成一次协同事务，成功/失败/超期在此记账 → 协同成功率指标；
-- 上行消息 ts → 网关处理时刻 → 共享同步时延指标（≤3s）。
+- 上行消息 ts → 网关处理时刻 → 共享同步时延指标（≤3s）；
+- 未知来源的心跳若携带完整 registration，就地补登记：注册帧丢一次（总线重连/网关重启）
+  不应让本体永久不可见，而它随后发生的一切上行都会被当成"未知智能体"静默吞掉。
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import partial
 from typing import Any
 
 from aegis.bus import subjects
@@ -59,6 +62,8 @@ class TxnRecord:
     latency_ms: float
     at: str
     error_code: str | None = None
+    #: 仅 no_agent 有意义：no_agents / all_unhealthy / all_saturated / capability_missing / hazard_mismatch / mixed
+    reason: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -70,6 +75,7 @@ class TxnRecord:
             "latency_ms": round(self.latency_ms, 3),
             "at": self.at,
             "error_code": self.error_code,
+            "reason": self.reason,
         }
 
 
@@ -111,6 +117,8 @@ class AgentGateway:
             "duplicate": 0,
             "dropped_ttl": 0,
             "no_agent": 0,
+            # 心跳自愈登记次数：注册帧丢失后靠心跳补登记的智能体，运营侧要能看见这条兜底腿真的跑过。
+            "self_healed": 0,
         }
 
     # ---------- 生命周期 ----------
@@ -125,7 +133,12 @@ class AgentGateway:
                     durable=consumer_name("cg_gateway", agent_type.value),
                 )
             )
-            self._subs.append(await self._transport.subscribe(subjects.agent_hb(agent_type), self._on_heartbeat))
+            self._subs.append(
+                await self._transport.subscribe(
+                    subjects.agent_hb(agent_type),
+                    partial(self._on_heartbeat, expected_type=agent_type),
+                )
+            )
         log.info("网关已启动", extra={"subscriptions": len(self._subs)})
 
     async def close(self) -> None:
@@ -192,6 +205,11 @@ class AgentGateway:
             capability=capability or "",
         )
         if (entry := self._registry.pick(agent_type.value, capability, hazard_type)) is None:
+            # 失败必须可归因：零注册、全部失联、全部饱和、能力/灾种错位是四种不同的处置动作，
+            # 压成一句"无可用智能体"就只能靠人翻日志猜。
+            report = self._registry.explain(agent_type.value, capability, hazard_type)
+            reason = report.reason.value
+            message = f"无可用智能体: type={agent_type.value} capability={capability}（{report.summary()}）"
             self.counters["no_agent"] += 1
             self._record_txn(
                 TxnRecord(
@@ -203,18 +221,19 @@ class AgentGateway:
                     latency_ms=0.0,
                     at=now_iso(),
                     error_code=ErrorCode.NO_CAPABLE_AGENT.value,
+                    reason=reason,
                 )
             )
             instrumentation.mark_error(
                 txn_span,
-                f"无可用智能体: type={agent_type.value} capability={capability}",
+                message,
                 code=ErrorCode.NO_CAPABLE_AGENT.value,
-                outcome="no_agent",
+                outcome=f"no_agent:{reason}",
             )
             instrumentation.end_span(txn_span)
             raise NoCapableAgentError(
-                f"无可用智能体: type={agent_type.value} capability={capability}",
-                detail={"agent_type": agent_type.value, "capability": capability},
+                message,
+                detail={"agent_type": agent_type.value, "capability": capability, "diagnosis": report.as_dict()},
             )
 
         budget_ms = deadline_ms or self._default_deadline_ms
@@ -244,7 +263,9 @@ class AgentGateway:
         entry.inflight += 1
         started = time.perf_counter()
         try:
-            response = await self._transport.request(subjects.agent_in(agent_type), request, timeout_ms=budget_ms)
+            # 派到被选中本体的专属收件箱：类型级 subject 是广播，N 个同类型智能体会各自执行一遍，
+            # 而网关只取第一封回执——选谁只影响"谁的回信被采纳"，不影响"动作被做了几次"。
+            response = await self._transport.request(subjects.agent_in(agent_type, entry.agent_id), request, timeout_ms=budget_ms)
         except DeadlineExceededError as timeout_exc:
             latency = (time.perf_counter() - started) * 1000
             entry.failed += 1
@@ -368,22 +389,77 @@ class AgentGateway:
 
     # ---------- 上行：智能体 → 平台 ----------
 
-    async def _on_heartbeat(self, message: AgentMessage) -> None:
+    async def _on_heartbeat(self, message: AgentMessage, *, expected_type: AgentType | None = None) -> None:
+        if message.action not in (Action.AGENT_REGISTER.value, Action.AGENT_HEARTBEAT.value):
+            return
+        try:
+            self.validate(message)
+        except AegisError as exc:
+            self.counters["rejected"] += 1
+            log.warning(
+                "生命周期消息被拒",
+                extra={"agent_id": message.source, "action": message.action, "reason": exc.message},
+            )
+            return
+
         if message.action == Action.AGENT_REGISTER.value:
-            raw = message.payload.get("registration")
-            if not isinstance(raw, dict):
-                log.warning("注册载荷缺失 registration 字段", extra={"agent_id": message.source})
-                return
-            try:
-                self._registry.register(CapabilityRegistration.model_validate(raw))
-            except Exception as exc:
+            self._register_lifecycle(message, expected_type=expected_type)
+            return
+
+        if self._registry.heartbeat(message.source):
+            return
+        # 心跳由 AgentKit/Mock 携带完整 registration。注册帧只在启动时发一次，丢在重连窗口里
+        # 就再也没有第二次机会——本体会一直有心跳、却永远进不了候选集，所有派单都记 no_agent。
+        if self._register_lifecycle(message, expected_type=expected_type, via_heartbeat=True):
+            self._registry.heartbeat(message.source)
+            self.counters["self_healed"] += 1
+            log.warning(
+                "未知智能体心跳，已按注册载荷补登记",
+                extra={
+                    "agent_id": message.source,
+                    "agent_type": expected_type.value if expected_type is not None else None,
+                },
+            )
+
+    def _register_lifecycle(
+        self,
+        message: AgentMessage,
+        *,
+        expected_type: AgentType | None,
+        via_heartbeat: bool = False,
+    ) -> bool:
+        """从注册/心跳帧的 payload 登记本体；载荷与来源对不上就拒收，绝不按来源猜登记。"""
+        label = "心跳" if via_heartbeat else "注册"
+        raw = message.payload.get("registration")
+        if not isinstance(raw, dict):
+            if via_heartbeat:
+                # 规范只要求启动期 register 带能力声明；老接入方的心跳可能只有空 payload，
+                # 这属于"无法自愈"而不是违约，保持原有静默，不计入 rejected。
+                log.debug("未知智能体心跳未携带 registration，无法补登记", extra={"agent_id": message.source})
+            else:
                 self.counters["rejected"] += 1
-                log.warning("智能体注册载荷非法", extra={"agent_id": message.source, "error": str(exc)})
-            return
-        if message.action != Action.AGENT_HEARTBEAT.value:
-            return
-        if not self._registry.heartbeat(message.source):
-            log.debug("未知智能体心跳", extra={"agent_id": message.source})
+                log.warning(f"{label}载荷缺失 registration 字段", extra={"agent_id": message.source})
+            return False
+        try:
+            registration = CapabilityRegistration.model_validate(raw)
+        except Exception as exc:
+            self.counters["rejected"] += 1
+            log.warning(f"{label}载荷非法", extra={"agent_id": message.source, "error": str(exc)})
+            return False
+        if registration.agent_id != message.source or (expected_type is not None and registration.agent_type != expected_type.value):
+            self.counters["rejected"] += 1
+            log.warning(
+                f"{label}声明与来源不符",
+                extra={
+                    "agent_id": message.source,
+                    "declared_id": registration.agent_id,
+                    "declared_type": registration.agent_type,
+                    "subject_type": expected_type.value if expected_type is not None else None,
+                },
+            )
+            return False
+        self._registry.register(registration)
+        return True
 
     async def _on_agent_out(self, message: AgentMessage) -> None:
         # 智能体 → 平台这一腿单独成跨度：它跑在订阅任务里、没有活动父节点，

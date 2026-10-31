@@ -156,6 +156,10 @@ class InstanceDetailOut(BaseModel):
     error: str | None = None
     preview: bool = False
     preview_id: str | None = None
+    # 重启恢复的读取面：`recovered` 表示这条现场来自持久层；
+    # `interrupted` 表示它重启时仍在跑、执行现场已丢失，只能收成 failed。
+    recovered: bool = False
+    interrupted: bool = False
     created_at: str
     finished_at: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
