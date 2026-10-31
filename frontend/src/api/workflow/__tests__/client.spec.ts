@@ -255,6 +255,75 @@ describe('workflow gateway：旧端点', () => {
   })
 })
 
+describe('workflow gateway：试运行与实例图', () => {
+  it('试运行：POST /previews 带上画布文档，GET /previews/{id} 取回同一份只读结果', async () => {
+    const { client, seen } = clientWith((config) =>
+      config.method === 'post'
+        ? {
+            status: 201,
+            data: wireInstance({
+              instance_id: 'pvp_1',
+              preview: true,
+              preview_id: 'pvp_1',
+              status: 'succeeded',
+              graph: { nodes: [wireNode()], edges: [], positions: { fetch_1: { x: 0, y: 0 } } },
+            }),
+          }
+        : { status: 200, data: wireInstance({ instance_id: 'pvp_1', preview: true, preview_id: 'pvp_1' }) },
+    )
+
+    const created = await client.createPreview({
+      document: decodeWorkflowDocument(wireDocument()),
+      payload: { alert: '沟道泥位抬升' },
+    })
+    const fetched = await client.getPreview('pvp_1')
+
+    expect(seen[0]?.method).toBe('post')
+    expect(seen[0]?.url).toBe('/api/v1/workflow/previews')
+    expect(seen[0]?.body).toMatchObject({
+      document: { lineage_id: WF, name: '链路' },
+      payload: { alert: '沟道泥位抬升' },
+    })
+    expect(seen[0]?.body).not.toHaveProperty('lineage_id')
+    expect(seen[1]?.method).toBe('get')
+    expect(seen[1]?.url).toBe('/api/v1/workflow/previews/pvp_1')
+    expect(created.preview).toBe(true)
+    expect(created.graph.nodes[0]?.node_id).toBe('fetch_1')
+    expect(fetched.preview_id).toBe('pvp_1')
+  })
+
+  it('试运行也接受 lineage_id：服务端自己取草稿', async () => {
+    const { client, seen } = clientWith(() => ({
+      status: 201,
+      data: wireInstance({ instance_id: 'pvp_1', preview: true, preview_id: 'pvp_1' }),
+    }))
+    await client.createPreview({ lineage_id: WF })
+    expect(seen[0]?.body).toEqual({ lineage_id: WF })
+  })
+
+  it('插入节点带落点时原样送出', async () => {
+    const { client, seen } = clientWith(() => ({
+      status: 200,
+      data: { instance_id: 'wfi_1', node_id: 'notify_1', after: 'review_1' },
+    }))
+    await client.insertNode('wfi_1', {
+      after: 'review_1',
+      node: {
+        node_id: 'notify_1',
+        type: 'notify',
+        name: '通报',
+        config: { text: '注意' },
+        sla_ms: 5_000,
+        timeout_ms: 5_000,
+        on_failure: 'retry',
+        retry: { max_attempts: 1, backoff_ms: 200 },
+      },
+      position: { x: 300, y: 40 },
+    })
+    expect(seen[0]?.body).toMatchObject({ after: 'review_1', position: { x: 300, y: 40 } })
+  })
+})
+
 describe('workflow gateway：lineage 生命周期', () => {
   it('新建草稿 / 读草稿 / 存草稿 / 发布 / 恢复 / 改名', async () => {
     const { client, seen } = clientWith((config) => {

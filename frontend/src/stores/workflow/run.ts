@@ -5,12 +5,14 @@
  * 不修改草稿；focusInstance 把那一版文档作为只读快照放进画布。
  */
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import {
+  encodeDocument,
   toNodeInput,
   workflowApi,
   type DecisionInput,
+  type InsertNodeInput,
   type InstanceDetail,
   type InstanceNodeRun,
   type LabelCapture,
@@ -23,14 +25,22 @@ import {
   findNode,
   isInstanceStateTerminal,
   isInstanceStatus,
+  layerPositions,
   type InstanceStatus,
   type JsonValue,
   type NodeDef,
   type NodeState,
+  type Position,
 } from '@/utils/graph'
+import {
+  DOCUMENT_SCHEMA_VERSION,
+  canonicalDocumentJson,
+  copyNodeDef,
+  type WorkflowDocument,
+} from '@/utils/graph/document'
 
 import { useDocumentStore } from './document'
-import { useEditorStore } from './editor'
+import { useEditorStore, type EditorMode } from './editor'
 import { describeFailure } from './shared'
 
 const POLL_INTERVAL_MS = 1_500
@@ -54,6 +64,8 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
     const instances = ref<InstanceDetail[]>([])
     const instancesUpdatedAt = ref<string | null>(null)
     const instance = ref<InstanceDetail | null>(null)
+    /** 试运行结果：与正式实例分开存放，实例列表/轮询都不认它。 */
+    const preview = ref<InstanceDetail | null>(null)
     const polling = ref(false)
     const capture = ref<{ instanceId: string; nodeId: string; text: string; landed: boolean } | null>(null)
 
@@ -61,6 +73,11 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
     let queueTimer: ReturnType<typeof setInterval> | null = null
     let listToken = 0
     let viewToken = 0
+    let previewToken = 0
+    /** 试运行对应的是哪一份文档；草稿一改，旧结果就不能再画在画布上。 */
+    let previewSignature: string | null = null
+    /** 进实例前在哪一档：返回时回到同一处，而不是一律当草稿。 */
+    let modeBeforeInstance: EditorMode | null = null
 
     const runs = computed<Map<string, InstanceNodeRun>>(
       () => new Map((instance.value?.nodes ?? []).map((run) => [run.node_id, run])),
@@ -69,6 +86,23 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
     const instanceStatus = computed<InstanceStatus | null>(() => {
       const raw = instance.value?.status
       return raw !== undefined && isInstanceStatus(raw) ? raw : null
+    })
+
+    const previewStatus = computed<InstanceStatus | null>(() => {
+      const raw = preview.value?.status
+      return raw !== undefined && isInstanceStatus(raw) ? raw : null
+    })
+
+    /**
+     * 画布上该叠哪一份运行态。
+     *
+     * 实例模式只认实例（它画的是实例自己的图）；只读版本不叠状态；
+     * 草稿模式只认试运行——正式实例的状态属于另一张图，叠上来会把两版节点认错。
+     */
+    const canvasRuns = computed<InstanceNodeRun[]>(() => {
+      if (editorStore.mode.kind === 'instance') return instance.value?.nodes ?? []
+      if (editorStore.mode.kind === 'version') return []
+      return preview.value?.nodes ?? []
     })
 
     /** 实例仍可操作 = 未进入终态（model.py TERMINAL）。 */
@@ -125,10 +159,63 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
       }
     }
 
+    /**
+     * 实例详情 → 画布文档。
+     *
+     * 图来自详情自身的快照（含运行中插入的节点），不是版本文档；坐标缺哪颗就按分层兜底，
+     * 所以没有 layout 的旧实例也能画出来。
+     */
+    function instanceDocument(detail: InstanceDetail): WorkflowDocument {
+      const nodes = detail.graph.nodes.map(copyNodeDef)
+      const edges = detail.graph.edges.map((edge) => ({ ...edge }))
+      const ids = nodes.map((node) => node.node_id)
+      let fallback: Record<string, Position> = {}
+      if (ids.length > 0) {
+        try {
+          fallback = layerPositions(ids, edges)
+        } catch {
+          // 图有环也不该让整页崩：坐标退回原点，环路本身由后端在图校验里拦。
+        }
+      }
+      const positions: Record<string, Position> = {}
+      for (const nodeId of ids) {
+        positions[nodeId] = detail.graph.positions[nodeId] ?? fallback[nodeId] ?? { x: 0, y: 0 }
+      }
+      const lineage = detail.lineage_id === '' ? detail.workflow_id : detail.lineage_id
+      const current = documentStore.document
+      const sameLineage = current !== null && current.lineage_id === lineage
+      const known = documentStore.versions.find((row) => row.workflow_id === detail.workflow_id)?.name
+      return {
+        schema_version: DOCUMENT_SCHEMA_VERSION,
+        lineage_id: lineage,
+        name: known ?? (sameLineage ? current.name : '运行实例'),
+        description: sameLineage ? current.description : '',
+        nodes,
+        edges,
+        layout: { positions, viewport: null, notes: [] },
+      }
+    }
+
+    /** 空图（旧后端没给 graph）时保持现有画布，不用一张空图把人正在看的东西换掉。 */
+    function bindInstanceCanvas(detail: InstanceDetail): void {
+      if (detail.graph.nodes.length === 0) return
+      documentStore.bindInstanceDocument(instanceDocument(detail))
+    }
+
     function applyInstanceSnapshot(instanceId: string, snapshot: InstanceDetail): boolean {
       if (instance.value?.instance_id !== instanceId) return false
       instance.value = snapshot
+      // 实例运行中插节点后，画布上的图也要跟着长出来——否则右侧说"已插入"、画布纹丝不动。
+      if (editorStore.mode.kind === 'instance' && editorStore.mode.instanceId === instanceId) {
+        documentStore.syncInstanceDocument(instanceDocument(snapshot))
+      }
       return true
+    }
+
+    function currentNodeOf(detail: InstanceDetail): string | null {
+      const awaiting = detail.nodes.find((node) => node.state === 'awaiting_human')
+      const failed = detail.nodes.find((node) => node.state === 'failed')
+      return (awaiting ?? failed ?? detail.nodes[0])?.node_id ?? null
     }
 
     async function startInstance(payload: Record<string, JsonValue> = {}): Promise<boolean> {
@@ -137,31 +224,118 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
         editorStore.setError('请先发布工作流版本再启动实例')
         return false
       }
+      if (editorStore.mode.kind !== 'instance') modeBeforeInstance = editorStore.mode
       return editorStore.runAction(async () => {
         const token = ++viewToken
         const created = await gateway.startInstance({ workflow_id: workflowId, payload })
         await syncInstancesQuietly()
         if (token !== viewToken) return
+        clearPreview()
         instance.value = created
+        bindInstanceCanvas(created)
+        editorStore.setMode({ kind: 'instance', instanceId: created.instance_id, readOnly: true })
+        editorStore.select(currentNodeOf(created))
         startPolling()
       }, '启动实例失败')
     }
 
     async function focusInstance(instanceId: string): Promise<boolean> {
       stopPolling()
+      if (editorStore.mode.kind !== 'instance') modeBeforeInstance = editorStore.mode
       return editorStore.runAction(async () => {
         const token = ++viewToken
         const detail = await gateway.instance(instanceId)
         if (token !== viewToken) return
         instance.value = detail
-        const definition = await gateway.getVersionDocument(detail.workflow_id)
-        if (token !== viewToken) return
-        documentStore.bindInstanceDocument(definition)
+        bindInstanceCanvas(detail)
         editorStore.setMode({ kind: 'instance', instanceId, readOnly: true })
-        const awaiting = detail.nodes.find((node) => node.state === 'awaiting_human') ?? detail.nodes[0]
-        editorStore.select(awaiting?.node_id ?? null)
+        editorStore.select(currentNodeOf(detail))
         startPolling()
       }, '读取实例失败')
+    }
+
+    function clearPreview(): void {
+      previewToken += 1
+      preview.value = null
+      previewSignature = null
+    }
+
+    /**
+     * 试运行：把**当前画布上的草稿**送给服务端跑一遍，包括还没保存的改动。
+     *
+     * 结果只进 `preview`，不碰实例账本、不轮询；外部动作由服务端换成回执。
+     */
+    async function startPreview(payload: Record<string, JsonValue> = {}): Promise<boolean> {
+      const document = documentStore.document
+      if (document === null) {
+        editorStore.setError('画布尚未初始化')
+        return false
+      }
+      if (editorStore.mode.kind === 'instance') {
+        editorStore.setError('先返回草稿再试运行：试运行跑的是画布上的草稿')
+        return false
+      }
+      if (editorStore.mode.kind !== 'draft') {
+        editorStore.setError('当前是只读版本视图：先恢复为草稿，再试运行')
+        return false
+      }
+      if (document.lineage_id === '') {
+        editorStore.setError('空白画布还没有 lineage：先保存草稿或打开一份定义，再试运行')
+        return false
+      }
+      return editorStore.runAction(async () => {
+        const token = ++previewToken
+        const result = await gateway.createPreview({ document: encodeDocument(document), payload })
+        if (token !== previewToken) return
+        preview.value = result
+        previewSignature = canonicalDocumentJson(document)
+        editorStore.setMode({ kind: 'draft' })
+        editorStore.select(currentNodeOf(result))
+      }, '试运行失败')
+    }
+
+    /** 草稿一改，旧试运行结果就不能再画在画布上：它说的是另一张图。 */
+    watch(
+      () => documentStore.document,
+      (current) => {
+        if (preview.value === null) return
+        if (current === null || previewSignature === null || canonicalDocumentJson(current) !== previewSignature) {
+          clearPreview()
+        }
+      },
+    )
+
+    /** 返回进入实例前的那一档：草稿从收起的那份原样放回，不打接口。 */
+    async function exitInstance(): Promise<boolean> {
+      stopPolling()
+      const previous = modeBeforeInstance
+      const lineage = instance.value?.lineage_id ?? instance.value?.workflow_id ?? ''
+      if (previous?.kind === 'version') {
+        if (!(await documentStore.openVersion(previous.workflowId))) return false
+        leaveInstance(previous)
+        return true
+      }
+      if (documentStore.restoreDraft()) {
+        leaveInstance({ kind: 'draft' })
+        return true
+      }
+      if (lineage !== '') {
+        if (!(await documentStore.openLineage(lineage))) return false
+      } else {
+        documentStore.resetDocument()
+      }
+      leaveInstance({ kind: 'draft' })
+      return true
+    }
+
+    function leaveInstance(mode: EditorMode): void {
+      stopPolling()
+      instance.value = null
+      capture.value = null
+      clearPreview()
+      modeBeforeInstance = null
+      editorStore.setMode(mode)
+      editorStore.select(null)
     }
 
     /** 队列顺序与 RuntimePanel 一致（新到旧、等人签优先），打开的就是首行那张。 */
@@ -180,7 +354,7 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
         const next = await gateway.instance(instanceId)
         // 迟到的轮询不许把面板翻回上一条：人可能已经改点另一张单。
         if (token !== viewToken || instance.value?.instance_id !== instanceId) return
-        instance.value = next
+        applyInstanceSnapshot(instanceId, next)
         if (wasMutable && isInstanceStatus(next.status) && isInstanceStateTerminal(next.status)) await loadInstances()
       } catch (caught) {
         editorStore.setError(describeFailure(caught))
@@ -270,7 +444,15 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
       const instanceId = instance.value?.instance_id
       if (instanceId === undefined) return false
       return editorStore.runAction(async () => {
-        await gateway.insertNode(instanceId, { after, node: toNodeInput(node) })
+        // 落点跟着锚点走：实例画布的坐标就在当前文档里，服务端不需要再猜一次。
+        const anchor = documentStore.document?.layout.positions[after]
+        const position = anchor === undefined ? undefined : { x: Math.round(anchor.x + 300), y: Math.round(anchor.y) }
+        const payload: InsertNodeInput = {
+          after,
+          node: toNodeInput(node),
+          ...(position === undefined ? {} : { position }),
+        }
+        await gateway.insertNode(instanceId, payload)
         applyInstanceSnapshot(instanceId, await gateway.instance(instanceId))
       }, '插入节点失败')
     }
@@ -297,9 +479,12 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
       instances,
       instancesUpdatedAt,
       instance,
+      preview,
       polling,
       capture,
       instanceStatus,
+      previewStatus,
+      canvasRuns,
       instanceMutable,
       awaitingNodes,
       nodeStateOf,
@@ -310,7 +495,10 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
       decisionOptions,
       loadInstances,
       startInstance,
+      startPreview,
+      clearPreview,
       focusInstance,
+      exitInstance,
       openFirstWaiting,
       refreshInstance,
       refreshAll,

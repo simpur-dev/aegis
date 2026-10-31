@@ -46,6 +46,7 @@ import {
   type DraftPutInput,
   type InsertNodeResult,
   type InstanceDetail,
+  type InstanceGraph,
   type InstanceNodeRun,
   type InstancesResponse,
   type LabelCapture,
@@ -528,21 +529,63 @@ function instanceNodeRunAt(value: unknown, path: string): InstanceNodeRun {
   }
 }
 
+function instanceGraphAt(value: unknown, path: string): InstanceGraph {
+  const record = objectAt(value, path)
+  const nodes = arrayAt(record.nodes, `${path}.nodes`, MAX_DOCUMENT_NODES).map((node, index) =>
+    decodeNodeDef(node, `${path}.nodes[${index}]`),
+  )
+  const edges = arrayAt(record.edges, `${path}.edges`, MAX_DOCUMENT_EDGES).map((edge, index) =>
+    decodeEdgeDef(edge, `${path}.edges[${index}]`),
+  )
+  const ids = new Set(nodes.map((node) => node.node_id))
+  const rawPositions = objectAt(record.positions, `${path}.positions`)
+  const positions: Record<string, Position> = {}
+  for (const [nodeId, raw] of Object.entries(rawPositions)) {
+    // 只收图里还在的节点：插入后又回滚之类的情况下，残留坐标会把画布带出一颗看不见的点。
+    if (!ids.has(nodeId)) continue
+    positions[nodeId] = positionAt(raw, `${path}.positions.${nodeId}`)
+  }
+  return { nodes, edges, positions }
+}
+
 export function decodeInstanceDetail(value: unknown, path = 'instance'): InstanceDetail {
   const record = objectAt(value, path)
   const status = stringAt(record.status, `${path}.status`, { min: 1, max: 32 })
   if (!isInstanceStatus(status)) fail(`${path}.status`, `未知实例状态: ${status}`)
+  const results: Record<string, Record<string, JsonValue>> = {}
+  for (const [nodeId, raw] of Object.entries(objectAt(record.results ?? {}, `${path}.results`))) {
+    results[nodeId] = jsonRecordAt(raw, `${path}.results.${nodeId}`)
+  }
+  const previewId = record.preview_id
   return {
     instance_id: stringAt(record.instance_id, `${path}.instance_id`, { min: 1, max: 64 }),
     workflow_id: stringAt(record.workflow_id, `${path}.workflow_id`, { min: 12, max: 32 }),
     workflow_version: integerAt(record.workflow_version, `${path}.workflow_version`, 1),
+    // 旧快照没有这一格：同一版本的 lineage 就是它自己，退回 workflow_id 不改变语义。
+    lineage_id:
+      record.lineage_id === undefined || record.lineage_id === ''
+        ? stringAt(record.workflow_id, `${path}.workflow_id`, { min: 12, max: 32 })
+        : stringAt(record.lineage_id, `${path}.lineage_id`, { min: 12, max: 32 }),
     trace_id: stringAt(record.trace_id, `${path}.trace_id`, { min: 1, max: 64 }),
     status,
     error: nullableStringAt(record.error, `${path}.error`),
+    preview: record.preview === undefined ? false : booleanAt(record.preview, `${path}.preview`),
+    preview_id:
+      previewId === null || previewId === undefined
+        ? null
+        : stringAt(previewId, `${path}.preview_id`, { min: 1, max: 64 }),
+    created_at: record.created_at === undefined ? '' : stringAt(record.created_at, `${path}.created_at`, { min: 1 }),
+    finished_at: record.finished_at === undefined ? null : nullableStringAt(record.finished_at, `${path}.finished_at`),
     payload: record.payload === undefined ? {} : jsonRecordAt(record.payload, `${path}.payload`),
+    results,
     nodes: arrayAt(record.nodes, `${path}.nodes`).map((run, index) =>
       instanceNodeRunAt(run, `${path}.nodes[${index}]`),
     ),
+    // 旧后端没有 graph：空图让画布保持原样，而不是整条实例详情解析失败。
+    graph:
+      record.graph === undefined
+        ? { nodes: [], edges: [], positions: {} }
+        : instanceGraphAt(record.graph, `${path}.graph`),
   }
 }
 

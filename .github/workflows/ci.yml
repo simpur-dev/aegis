@@ -105,7 +105,7 @@ jobs:
           if-no-files-found: error
 
   coverage:
-    name: 新增 workflow 模块覆盖率（6 个模块 ≥90%）
+    name: 新增 workflow 模块覆盖率（7 个模块 ≥90%）
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -118,10 +118,10 @@ jobs:
         with:
           enable-cache: true
       - name: 安装依赖
-        # 被计量的 13 个文件是内核与 API/契约用例，不触持久层/图谱等可选腿的驱动。
+        # 被计量的 14 个文件是内核与 API/契约用例，不触持久层/图谱等可选腿的驱动。
         run: uv sync --frozen --extra dev
       - name: 覆盖率（逐模块底线 90%）
-        # 把 `--cov` 挂到全量套件上会让每个测试的每一行都过一遍 tracer；这里只跑 291 条相关用例，
+        # 把 `--cov` 挂到全量套件上会让每个测试的每一行都过一遍 tracer；这里只跑 312 条相关用例，
         # 掉线时也能直接看到是哪个模块。`--cov-branch` 一起算，分支漏测不能靠行数蒙过去。
         # 单独成 job 而不是塞进 gate：同一个 job 里第二次 `uv run pytest` 如果不写 junit，
         # 就等于开了一条"没有计数证据的 pytest 步骤"，本地守卫用例会把 gate 判红。
@@ -132,11 +132,13 @@ jobs:
           tests/unit/test_workflow_node_dispatch_matrix.py tests/unit/test_workflow_engine.py
           tests/unit/test_workflow_model.py tests/unit/test_workflow_builtin_templates.py
           tests/unit/test_workflow_legacy_fixtures.py tests/unit/test_workflow_properties.py
+          tests/unit/test_workflow_preview.py
           tests/api/test_workflow_api.py tests/api/test_workflow_lineage_api.py
           tests/contract/test_workflow_lifecycle_contract.py
           --cov=aegis.workflow.documents --cov=aegis.workflow.drafts
           --cov=aegis.workflow.publishing --cov=aegis.workflow.errors
           --cov=aegis.workflow.ports --cov=aegis.workflow.store
+          --cov=aegis.workflow.preview
           --cov-branch --cov-fail-under=90
           --cov-report=term-missing --cov-report=xml:reports/coverage-workflow.xml
           --junitxml=reports/junit-coverage.xml

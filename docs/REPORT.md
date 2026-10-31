@@ -3524,6 +3524,84 @@ Start 变量名形状/重名/原型链名/超 32 项/默认值与类型不符、
   那条动线在性质测试里覆盖了模型层，真机侧只在 D3 的两类上走过；
 - 深色档只量了亮度差与不出屏，没有逐格算对比度比值（`ui-overlap` 的对比度判据没扩到表单）。
 
+## 工作流编辑器重构批次 E（E1–E3）：试运行与实例图（2026-10-25）
 
+**边界：一次演练不能被读成一次处置。** 试运行（`POST /api/v1/workflow/previews`）跑的是当前画布草稿，
+但不写版本、不写草稿、不进实例账本，也不产生外部副作用：`notify`、`api_call`、`device_control`、
+`warning_publish`、`chain_stage` 全部换成"本来会调用什么"的回执，人工核签按第一项模拟通过；
+识别/定级/推演/生成这些只读智能腿照常执行——它们给出的正是试运行要看的产出。结果放进独立的
+`_previews` 注册表（上限 8 份、TTL 30 分钟、入参 ≤256 KB），与正式实例账本完全分开；
+`GET /previews/{id}` 取回同一份 `InstanceDetail` 形状，`preview=true` 时没有对应的 `/instances/{id}`。
+实例侧补齐 `graph`（节点/边/版式坐标）、`results`、时间戳与 lineage，运行中插入节点会立刻写回坐标；
+前端的实例模式因此只凭一份 `instance_detail` 就能重建整张图，返回草稿时恢复本地收起的那份（不重新拉取）。
 
+**真机（合并后在 `7c2a8a4` 上复跑；真后端 8321：memory store/bus；Vite 5173 代理；28/28 条断言通过）**：
 
+| 判据 | 实测 |
+|---|---|
+| 未保存草稿直接试运行 | 改名后主动拦截 `PUT /lineages/*/draft` **2 次**，保存态停在"保存中…"，画布仍是 5 节点 |
+| 逐节点耗时来自真实执行 | 0.8s 延时节点显示 `耗时 806ms ｜ 排队 0ms` |
+| 逐节点产出 | 5 个产出块；notify 为 `{"notified":false,"dry_run":true,"would_call":"notify","level":"warning"}` |
+| 试运行不写账本 | 结果只挂 `preview_id=pvp_cb74a654dfa6`；实例列表 `count=0` |
+| 正式启动仍写账本 | `wfi_931edcfdc3e7`，状态 `waiting`，实例列表 `count=1` |
+| 运行中插入节点立即上图 | 画布 5→6；实例 graph 里出现 `notify_1` |
+| 核签留痕 | 签字人"扎西"、选项 approve、批注空；实例转 `succeeded`，台账记下同一决策 |
+| 返回草稿不丢未发布改动 | 未发布改名仍在；画布回到 5 节点；服务器草稿名仍是旧名（没有拿服务器覆盖本地） |
+| 全程 console | 无应用错误（仅排除主动拦截导致的资源加载失败） |
+
+截图与日志：`frontend/test-results/e3-postmerge/01-preview.png`、`02-inserted.png`、`03-signed.png`、
+`04-restored-draft.png`、`acceptance.log`。合并前在 `cfbb900` 上也跑过一轮 28/28；上表取自合并后的复跑。
+
+**变异检查（10 条，逐条从字节备份还原；每条都有牙，还原后对照绿）**：
+
+| 变异 | 聚焦用例结果 |
+|---|---|
+| B1 试运行改回真服务（去掉干跑包装） | 红 1 条，rc=1 |
+| B2 `notify` 删掉干跑短路（真发通知） | 红 1 条，rc=1 |
+| B3 删掉 `human_review` 试运行模拟分支 | 红 1 条，rc=1 |
+| B4 实例详情丢掉 layout 坐标 | 红 1 条，rc=1 |
+| B5 试运行实例也登记进正式账本 | 红 1 条，rc=1 |
+| B6 插入节点不落位置 | 红 1 条，rc=1 |
+| F1 草稿改了也不作废旧预览 | 红 1 条，rc=1 |
+| F2 进实例不收起当前草稿 | 红 1 条，rc=1 |
+| F3 插入节点不带落点坐标 | 红 1 条，rc=1 |
+| F4 只读版本文档也叠运行态 | 红 1 条，rc=1 |
+
+还原后对照：后端 preview 文件 **11 passed**，前端 `run.spec.ts` **7 passed / 44 skipped**，两者 rc=0；
+逐条输出在 `backend/.tmp-verify/e3-mutation.log`。
+
+这一轮记下两次工具错，因为两次都会让"变异有牙"这个结论失真：
+
+- B2 第一轮是**无效变异**（rc=0）：原测试图里没有 `notify` 节点，删掉干跑短路没有断言碰得到。
+  补上 notify 节点与产出断言后才红——"变异红了"之前得先证明"变异被走到"。
+- B5/B6 曾在同一文件上并行跑，属于自己制造的状态竞争；用锚点复核还原后重跑全部用例，
+  本表数据来自随后一次串行完整运行。
+
+**实测门禁（收口前先 `git merge --ff-only origin/main` 到 `7c2a8a4`，合并 4 个 UI/map 提交后复跑）**：
+
+| 门禁 | 结果 |
+|---|---|
+| 后端全量 `pytest --junitxml` | **3308 tests / 0 failures / 0 errors / 98 skipped**，rc=0（`backend/reports/junit-e3-gate.xml`；D4 3287，本批 +21） |
+| 后端 `ruff format --check` / `ruff check` | 348 files already formatted / All checks passed |
+| 后端 `mypy src` | Success: no issues found in 168 source files |
+| 覆盖率 job（CI 同款命令） | **312 tests / 0 fail**；7 模块全部 ≥90（preview **100**、errors 100、store 98、documents 97、drafts 97、ports 95、publishing 94），总 **97.21%**；`ci_junit_guard` tests=312 |
+| 前端 `typecheck` / `lint:workflow` / `format:check:workflow` | 全部 rc=0 |
+| 前端 `vitest run` | **82 files / 1245 passed**（D4 1210，本批 +35，含合并进来的 4 条） |
+| 前端 `test:coverage` | 语句 **99.27** / 分支 **93.08** / 函数 **99.6** / 行 **99.27** |
+| 前端 `build` | 成功，25.46s（仍有 chunk >900 kB 警告） |
+| 真机验收 | **28/28**，截图与日志见上 |
+
+`preview.py` 已纳入 CI 覆盖率 job（标题改为"7 个模块 ≥90%"，用例数 291 → 312）。
+
+**这一批仍然没有证明的事**：
+
+- 真机只走了 notify 的 dry-run 与 delay 的耗时；`api_call` / `device_control` 的干跑回执只有单测覆盖——
+  本机 dev 未配 `http_call`（outbound 关闭），正式实例跑到这两类节点会直接失败，这一点没有在真机上复现；
+- 预演里的 LLM 腿照常执行，但真机验收没有调用真模型：耗时读数来自 0.8s 延时节点，不是智能腿的端到端时长；
+- "正式运行写账本"仍是进程内 `_instances`，重启即失；实例账本落库（ADR-0003 后置项 / #53）未做；
+- 试运行结果只存在内存：进程重启或 30 分钟过期后 `GET /previews/{id}` 404，前端没有重跑历史；
+- 移动端 / 900px / 深色：E3 真机只在默认桌面尺寸与浅色下走过，没有给运行面板补响应式与对比度取证；
+- 全量 `ui-overlap`（127 项，需真后端 8321）本批仍未重跑。E 改了 `RuntimePanel` / `RuntimeActions`
+  与画布运行态，D4 的"没改外壳"推断已不成立，批次 F 开工前必须补基线；
+- 未保存草稿的验收是网络层拦截 `PUT`（证明浏览器没发出去），不是服务端 revision 拒绝的实测——
+  后者由 A1/A2 的契约用例覆盖。

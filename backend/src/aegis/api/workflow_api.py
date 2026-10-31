@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
@@ -102,11 +102,66 @@ class ConfigPatch(BaseModel):
     config: dict[str, Any]
 
 
+class PositionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    x: float
+    y: float
+
+
 class InsertNodeInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     after: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     node: NodeInput
+    #: 画布落点；缺省由引擎放在锚点右侧 300px（旧客户端不带这一格仍可用）。
+    position: PositionInput | None = None
+
+
+class PreviewInput(BaseModel):
+    """试运行输入：给一份当前文档（含未保存草稿），或给 lineage 让服务端取草稿。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    document: WorkflowDocument | None = None
+    lineage_id: str | None = Field(default=None, pattern=r"^wf_[0-9a-f]{12}$")
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _one_source(self) -> PreviewInput:
+        if (self.document is None) == (self.lineage_id is None):
+            raise ValueError("document 与 lineage_id 必须且只能提供一个")
+        return self
+
+
+class InstanceGraphOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    positions: dict[str, dict[str, float]]
+
+
+class InstanceDetailOut(BaseModel):
+    """实例详情：正式实例与试运行同构；`preview=true` 时没有对应的 `GET /instances/{id}`。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    instance_id: str
+    workflow_id: str
+    workflow_version: int
+    lineage_id: str
+    trace_id: str
+    status: str
+    error: str | None = None
+    preview: bool = False
+    preview_id: str | None = None
+    created_at: str
+    finished_at: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    results: dict[str, Any] = Field(default_factory=dict)
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    graph: InstanceGraphOut
 
 
 class DraftPutInput(BaseModel):
@@ -377,17 +432,38 @@ def build_router() -> APIRouter:
             draft=DraftOut.of(draft) if draft is not None else None,
         )
 
+    @router.post("/previews", response_model=InstanceDetailOut, status_code=201)
+    async def create_preview(payload: PreviewInput, container: PlatformContainer = Depends(get_container)) -> InstanceDetailOut:
+        """当前草稿的 dry-run：不写定义/草稿/实例，也不产生任何外部副作用。"""
+        document = payload.document
+        if document is None:
+            lineage_id = payload.lineage_id
+            assert lineage_id is not None  # PreviewInput 已保证 document 与 lineage_id 二选一
+            draft = await container.drafts.get(lineage_id)
+            if draft is None:
+                raise WorkflowAppError(WorkflowErrorCode.NOT_FOUND, f"草稿不存在: {lineage_id}")
+            document = draft.document
+        detail = await engine_of(container).preview(document=document, payload=payload.payload)
+        return InstanceDetailOut(**detail)
+
+    @router.get("/previews/{preview_id}", response_model=InstanceDetailOut, responses={404: {"description": "预览不存在或已过期"}})
+    async def get_preview(preview_id: str, container: PlatformContainer = Depends(get_container)) -> InstanceDetailOut:
+        detail = engine_of(container).preview_detail(preview_id)
+        if detail is None:
+            raise WorkflowAppError(WorkflowErrorCode.NOT_FOUND, f"试运行结果不存在或已过期: {preview_id}")
+        return InstanceDetailOut(**detail)
+
     @router.get("/instances")
     async def list_instances(container: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
         items = engine_of(container).instances()
         return {"count": len(items), "items": items}
 
-    @router.get("/instances/{instance_id}")
-    async def get_instance(instance_id: str, container: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
+    @router.get("/instances/{instance_id}", response_model=InstanceDetailOut, responses={404: {"description": "实例不存在"}})
+    async def get_instance(instance_id: str, container: PlatformContainer = Depends(get_container)) -> InstanceDetailOut:
         detail = engine_of(container).instance_detail(instance_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="工作流实例不存在")
-        return detail
+        return InstanceDetailOut(**detail)
 
     @router.post("/instances/{instance_id}/nodes/{node_id}/decision")
     async def submit_decision(
@@ -427,7 +503,12 @@ def build_router() -> APIRouter:
         container: PlatformContainer = Depends(get_container),
     ) -> dict[str, Any]:
         try:
-            return await engine_of(container).insert_node(instance_id, after=payload.after, node=payload.node.model_dump())
+            return await engine_of(container).insert_node(
+                instance_id,
+                after=payload.after,
+                node=payload.node.model_dump(),
+                position=None if payload.position is None else payload.position.model_dump(),
+            )
         except WorkflowValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

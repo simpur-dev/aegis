@@ -157,6 +157,8 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             path == "/api/v1/workflow/lineages"
             or path.startswith("/api/v1/workflow/lineages/")
             or path.startswith("/api/v1/workflow/versions/")
+            or path == "/api/v1/workflow/previews"
+            or path.startswith("/api/v1/workflow/previews/")
         ):
             code = (
                 "invalid_schema_version" if any(error.get("type") == "invalid_schema_version" for error in errors) else "validation_failed"

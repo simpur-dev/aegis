@@ -76,6 +76,8 @@ class NodeContext:
     services: WorkflowServices = field(default_factory=WorkflowServices)
     attempt: int = 1
     decision: dict[str, Any] | None = None
+    #: 试运行：外部动作只给回执、人工节点模拟第一个候选（见 preview.py 与 engine.preview）。
+    dry_run: bool = False
 
     def upstream(self, node_id: str) -> dict[str, Any]:
         return self.inputs.get(node_id, {})
@@ -393,8 +395,20 @@ async def _chain_stage(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
 
 
 async def _human_review(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
-    """会签/审批节点：首次执行挂起等待决策，恢复执行时读取 decision。"""
+    """会签/审批节点：首次执行挂起等待决策，恢复执行时读取 decision。
+
+    试运行不能真的挂起（那会让预览永远停在 waiting，也不符合"0 HumanRequired"的边界）：
+    模拟第一个候选并在产出里写明 simulated，让人知道这不是谁签的字。
+    """
     decision = ctx.decision or ctx.payload.get("decision")
+    if not decision and ctx.dry_run:
+        options = tuple(config.get("options", ("approve", "reject")))
+        choice = str(options[0]) if options else "approve"
+        return NodeOutcome(
+            output={"decision": {"choice": choice, "by": "preview", "simulated": True}, "choice": choice, "simulated": True},
+            branch=choice,
+            note=f"试运行：模拟选择 {choice}（未挂起等待人工）",
+        )
     if not decision:
         raise HumanRequired(str(config.get("prompt", "请值班指挥员确认")), tuple(config.get("options", ("approve", "reject"))))
     choice = str(decision.get("choice", "")).lower()
@@ -429,6 +443,15 @@ async def _warning_publish(ctx: NodeContext, config: dict[str, Any]) -> NodeOutc
         raise NodeError("warning_publish 缺少预警对象（上游未产出 warning）")
     result = await service({"warning": warning, "channels": _as_list(config.get("channels", []))})
     delivered = int(result.get("delivered", 0))
+    if ctx.dry_run:
+        # 试运行：没有真投递（delivered 必须是 0），但分支要按"本会投递到几个通道"走，
+        # 否则预览里 warning_publish 永远掉进 undelivered，看得出假象却看不出原图走向。
+        would = int(result.get("would_deliver_to", len(_as_list(config.get("channels", [])))))
+        return NodeOutcome(
+            output={"delivery": result, "delivered": delivered, "would_deliver_to": would},
+            branch="delivered" if would > 0 else "undelivered",
+            note=f"试运行：未投递（本会投递到 {would} 个通道）",
+        )
     return NodeOutcome(
         output={"delivery": result, "delivered": delivered},
         branch="delivered" if delivered > 0 else "undelivered",
@@ -471,6 +494,11 @@ async def _delay(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
 
 
 async def _notify(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome:
+    if ctx.dry_run:
+        return NodeOutcome(
+            output={"notified": False, "dry_run": True, "would_call": "notify", "level": config.get("level", "info")},
+            note="试运行：未发送通知",
+        )
     service = ctx.require_service("notify", "notify")
     await service({"level": config.get("level", "info"), "text": config.get("text", ""), "payload": ctx.payload})
     return NodeOutcome(output={"notified": True})

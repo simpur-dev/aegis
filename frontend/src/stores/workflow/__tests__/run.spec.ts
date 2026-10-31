@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 
 import { WorkflowError, type InstancesResponse, type WorkflowGateway } from '@/api/workflow/contract'
 
@@ -8,11 +9,13 @@ import { useEditorStore, type EditorStore } from '../editor'
 import { createRunStore, type RunStore } from '../run'
 import {
   INSTANCE,
+  LINEAGE,
   OTHER_INSTANCE,
   PUBLISHED,
   deferred,
   gatewayStub,
   instanceDetail,
+  instanceGraph,
   nodeDef,
   nodeRun,
   setVisibility,
@@ -27,8 +30,20 @@ function runtimeGateway(overrides: Partial<Record<keyof WorkflowGateway, unknown
     instance: vi.fn(async () =>
       instanceDetail({ nodes: [nodeRun('review_1', 'awaiting_human', { type: 'human_review' })] }),
     ),
-    getVersionDocument: vi.fn(async () => workflowDocument()),
     startInstance: vi.fn(async () => instanceDetail({ nodes: [nodeRun('fetch_1', 'running')] })),
+    createPreview: vi.fn(async () =>
+      instanceDetail({
+        instance_id: 'pvp_000000000001',
+        preview: true,
+        preview_id: 'pvp_000000000001',
+        status: 'succeeded',
+        nodes: [
+          nodeRun('fetch_1', 'succeeded', { duration_ms: 41 }),
+          nodeRun('review_1', 'succeeded', { type: 'human_review' }),
+        ],
+        results: { fetch_1: { level: 4 }, review_1: { decision: 'approve' } },
+      }),
+    ),
     submitDecision: vi.fn(async () => ({
       ...instanceDetail({ nodes: [nodeRun('review_1', 'succeeded')] }),
       标注沉淀: { status: '已沉淀', case_id: 'evt_9c1', 真值: '报=True 等级=5' },
@@ -111,15 +126,17 @@ describe('运行层：启动实例', () => {
 })
 
 describe('运行层：聚焦实例与画布', () => {
-  it('聚焦实例把绑定版本的文档铺进画布，并选中待核签节点', async () => {
+  it('聚焦实例把实例快照的图画进画布，并选中待核签节点', async () => {
     vi.useFakeTimers()
     bootstrap()
     documents.resetDocument('草稿')
 
     expect(await runtime().focusInstance(INSTANCE)).toBe(true)
     expect(gateway.instance).toHaveBeenCalledWith(INSTANCE)
-    expect(gateway.getVersionDocument).toHaveBeenCalledWith(PUBLISHED)
-    expect(documents.document?.name).toBe('已存链路')
+    // 图来自实例详情自身，不再额外拉一趟版本文档。
+    expect(gateway.getVersionDocument).not.toHaveBeenCalled()
+    expect(documents.document?.name).toBe('运行实例')
+    expect(documents.document?.nodes.map((node) => node.node_id)).toEqual(['fetch_1', 'review_1'])
     expect(documents.isDirty).toBe(false)
     expect(documents.autoSaveEnabled).toBe(false)
     expect(Object.keys(documents.document?.layout.positions ?? {}).sort()).toEqual(['fetch_1', 'review_1'])
@@ -154,17 +171,37 @@ describe('运行层：聚焦实例与画布', () => {
     expect(runtime().polling).toBe(false)
   })
 
-  it('取不回版本文档时报错，不留下只有面板没有画布的半张页', async () => {
+  it('旧后端没给图时保持原画布，不用一张空图换掉正在看的东西', async () => {
     bootstrap({
-      getVersionDocument: vi.fn<WorkflowGateway['getVersionDocument']>(async () => {
-        throw new WorkflowError('not_found', 404, '版本不存在')
-      }),
+      instance: vi.fn(async () =>
+        instanceDetail({ nodes: [nodeRun('review_1', 'awaiting_human')], graph: instanceGraph([], []) }),
+      ),
     })
     documents.resetDocument('草稿')
-    expect(await runtime().focusInstance(INSTANCE)).toBe(false)
-    expect(editor.error).toContain('版本不存在')
+    expect(await runtime().focusInstance(INSTANCE)).toBe(true)
     expect(documents.document?.name).toBe('草稿')
-    expect(runtime().polling).toBe(false)
+    expect(editor.mode).toEqual({ kind: 'instance', instanceId: INSTANCE, readOnly: true })
+    expect(runtime().polling).toBe(true)
+  })
+
+  it('实例图带着运行中插入的节点，画布不靠版本文档去猜', async () => {
+    bootstrap({
+      instance: vi.fn(async () =>
+        instanceDetail({
+          nodes: [nodeRun('fetch_1', 'succeeded'), nodeRun('notify_9', 'pending')],
+          graph: instanceGraph(
+            [nodeDef('fetch_1'), nodeDef('notify_9', 'notify')],
+            [{ source: 'fetch_1', target: 'notify_9', condition: '' }],
+            { fetch_1: { x: 0, y: 0 }, notify_9: { x: 300, y: 0 } },
+          ),
+        }),
+      ),
+    })
+    documents.resetDocument('草稿')
+    expect(await runtime().focusInstance(INSTANCE)).toBe(true)
+    expect(documents.document?.nodes.map((node) => node.node_id)).toEqual(['fetch_1', 'notify_9'])
+    expect(documents.document?.edges).toHaveLength(1)
+    expect(documents.document?.layout.positions.notify_9).toEqual({ x: 300, y: 0 })
   })
 
   it('连点两条实例：慢的那条后到，面板、画布与选中都留在最后点的那条', async () => {
@@ -182,11 +219,12 @@ describe('运行层：聚焦实例与画布', () => {
                 workflow_id: FAST,
                 status: 'waiting',
                 nodes: [nodeRun('review_1', 'awaiting_human')],
+                graph: instanceGraph([nodeDef('fetch_1'), nodeDef('review_1')], [], {
+                  fetch_1: { x: 10, y: 10 },
+                  review_1: { x: 290, y: 10 },
+                }),
               }),
             ),
-      ),
-      getVersionDocument: vi.fn(async (workflowId: string) =>
-        workflowDocument({ name: workflowId === FAST ? '快的那条' : '慢的那条', lineage_id: workflowId }),
       ),
     })
     documents.resetDocument('草稿')
@@ -200,11 +238,12 @@ describe('运行层：聚焦实例与画布', () => {
         workflow_id: SLOW,
         status: 'running',
         nodes: [nodeRun('a', 'awaiting_human')],
+        graph: instanceGraph([nodeDef('a')], [], { a: { x: 999, y: 999 } }),
       }),
     )
     expect(await opening).toBe(true)
     expect(runtime().instance?.instance_id).toBe(OTHER_INSTANCE)
-    expect(documents.document?.name).toBe('快的那条')
+    expect(documents.document?.nodes.map((node) => node.node_id)).toEqual(['fetch_1', 'review_1'])
     expect(editor.selectedNodeId).toBe('review_1')
   })
 
@@ -240,6 +279,178 @@ describe('运行层：聚焦实例与画布', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(runtime().instance?.instance_id).toBe(OTHER_INSTANCE)
     expect(runtime().polling).toBe(true)
+  })
+})
+
+describe('运行层：试运行', () => {
+  function draftWithLineage(): void {
+    documents.document = workflowDocument({ lineage_id: LINEAGE, name: '未保存草稿' })
+  }
+
+  it('送的是画布上的草稿本身，结果只进 preview，不碰实例账本', async () => {
+    bootstrap()
+    draftWithLineage()
+
+    expect(await runtime().startPreview({ alert: '沟道泥位抬升' })).toBe(true)
+    const sent = gateway.createPreview.mock.calls[0]?.[0]
+    expect(sent?.payload).toEqual({ alert: '沟道泥位抬升' })
+    expect(sent?.document?.nodes.map((node) => node.node_id)).toEqual(['fetch_1', 'review_1'])
+    expect(sent?.lineage_id).toBeUndefined()
+    expect(runtime().preview?.preview_id).toBe('pvp_000000000001')
+    expect(runtime().previewStatus).toBe('succeeded')
+    expect(runtime().instance).toBeNull()
+    expect(gateway.startInstance).not.toHaveBeenCalled()
+    expect(gateway.instances).not.toHaveBeenCalled()
+    expect(runtime().polling).toBe(false)
+    expect(runtime().canvasRuns.map((row) => row.node_id)).toEqual(['fetch_1', 'review_1'])
+    expect(editor.mode).toEqual({ kind: 'draft' })
+    expect(editor.selectedNodeId).toBe('fetch_1')
+  })
+
+  it('草稿一改，旧试运行结果就不再画在画布上', async () => {
+    bootstrap()
+    draftWithLineage()
+    await runtime().startPreview()
+    expect(runtime().preview).not.toBeNull()
+
+    documents.setMeta({ name: '改了名字' })
+    await nextTick()
+    expect(runtime().preview).toBeNull()
+    expect(runtime().canvasRuns).toEqual([])
+  })
+
+  it('清掉试运行后，晚到的响应不许再贴回画布', async () => {
+    const gate = deferred<ReturnType<typeof instanceDetail>>()
+    bootstrap({ createPreview: vi.fn(() => gate.promise) })
+    draftWithLineage()
+
+    const pending = runtime().startPreview()
+    runtime().clearPreview()
+    gate.resolve(instanceDetail({ instance_id: 'pvp_x', preview: true, preview_id: 'pvp_x', status: 'succeeded' }))
+
+    expect(await pending).toBe(true)
+    expect(runtime().preview).toBeNull()
+  })
+
+  it('空白画布没有 lineage 就不发试运行，先把缺什么说清', async () => {
+    bootstrap()
+    documents.resetDocument('空白')
+    expect(await runtime().startPreview()).toBe(false)
+    expect(editor.error).toContain('lineage')
+    expect(gateway.createPreview).not.toHaveBeenCalled()
+  })
+
+  it('只读版本视图不试运行：那一版不是画布上的草稿', async () => {
+    bootstrap()
+    documents.document = workflowDocument()
+    editor.setMode({ kind: 'version', workflowId: PUBLISHED })
+    expect(await runtime().startPreview()).toBe(false)
+    expect(editor.error).toContain('只读版本')
+    expect(gateway.createPreview).not.toHaveBeenCalled()
+    expect(editor.mode).toEqual({ kind: 'version', workflowId: PUBLISHED })
+  })
+
+  it('只读版本模式不叠任何运行态', async () => {
+    bootstrap()
+    draftWithLineage()
+    await runtime().startPreview()
+    expect(runtime().canvasRuns.length).toBe(2)
+
+    editor.setMode({ kind: 'version', workflowId: PUBLISHED })
+    expect(runtime().canvasRuns).toEqual([])
+  })
+})
+
+describe('运行层：实例模式与草稿', () => {
+  it('进实例收起草稿，返回时原样放回，不重新拉服务器草稿', async () => {
+    vi.useFakeTimers()
+    bootstrap()
+    // 草稿只画了一颗节点，实例图有两颗：换没换画布一眼就能看出来。
+    documents.document = workflowDocument({ name: '未保存草稿', nodes: [nodeDef('fetch_1')], edges: [] })
+    documents.setMeta({ name: '草稿改名' })
+    expect(documents.isDirty).toBe(true)
+
+    expect(await runtime().focusInstance(INSTANCE)).toBe(true)
+    expect(documents.document?.nodes.map((node) => node.node_id)).toEqual(['fetch_1', 'review_1'])
+    expect(gateway.getDraft).not.toHaveBeenCalled()
+
+    expect(await runtime().exitInstance()).toBe(true)
+    expect(documents.document?.nodes.map((node) => node.node_id)).toEqual(['fetch_1'])
+    expect(documents.document?.name).toBe('草稿改名')
+    expect(documents.isDirty).toBe(true)
+    expect(documents.autoSaveEnabled).toBe(true)
+    expect(editor.mode).toEqual({ kind: 'draft' })
+    expect(runtime().instance).toBeNull()
+    expect(runtime().polling).toBe(false)
+    expect(gateway.getDraft).not.toHaveBeenCalled()
+  })
+
+  it('正式启动也收起草稿；返回后未发布的改动还在', async () => {
+    vi.useFakeTimers()
+    bootstrap()
+    documents.versions = [versionSummary()]
+    documents.document = workflowDocument()
+    documents.setMeta({ name: '未发布改动' })
+
+    expect(await runtime().startInstance()).toBe(true)
+    expect(editor.mode.kind).toBe('instance')
+    expect(gateway.getDraft).not.toHaveBeenCalled()
+
+    expect(await runtime().exitInstance()).toBe(true)
+    expect(documents.document?.name).toBe('未发布改动')
+  })
+
+  it('正式启动清掉试运行结果，画布改认实例状态', async () => {
+    vi.useFakeTimers()
+    bootstrap()
+    documents.versions = [versionSummary()]
+    documents.document = workflowDocument({ lineage_id: LINEAGE })
+
+    await runtime().startPreview()
+    expect(runtime().canvasRuns.map((row) => row.node_id)).toEqual(['fetch_1', 'review_1'])
+    expect(await runtime().startInstance()).toBe(true)
+
+    expect(runtime().preview).toBeNull()
+    expect(editor.mode.kind).toBe('instance')
+    expect(runtime().canvasRuns.map((row) => row.node_id)).toEqual(['fetch_1'])
+  })
+
+  it('从只读版本进实例，返回仍回到那一档只读版本', async () => {
+    vi.useFakeTimers()
+    bootstrap({
+      getVersionDocument: vi.fn(async () => workflowDocument()),
+      listVersions: vi.fn(async () => []),
+    })
+    documents.resetDocument('草稿')
+    editor.setMode({ kind: 'version', workflowId: PUBLISHED })
+
+    expect(await runtime().focusInstance(INSTANCE)).toBe(true)
+    expect(await runtime().exitInstance()).toBe(true)
+    expect(editor.mode).toEqual({ kind: 'version', workflowId: PUBLISHED })
+    expect(gateway.getVersionDocument).toHaveBeenCalledWith(PUBLISHED)
+  })
+
+  it('轮询带回的新图（别的会话插入的节点）也长到实例画布上', async () => {
+    vi.useFakeTimers()
+    bootstrap({
+      instance: vi.fn(async () => instanceDetail({ status: 'running', nodes: [nodeRun('fetch_1', 'running')] })),
+    })
+    documents.resetDocument('草稿')
+    await runtime().focusInstance(INSTANCE)
+
+    gateway.instance.mockResolvedValue(
+      instanceDetail({
+        status: 'running',
+        nodes: [nodeRun('fetch_1', 'succeeded'), nodeRun('notify_9', 'pending')],
+        graph: instanceGraph(
+          [nodeDef('fetch_1'), nodeDef('notify_9', 'notify')],
+          [{ source: 'fetch_1', target: 'notify_9', condition: '' }],
+          { fetch_1: { x: 0, y: 0 }, notify_9: { x: 300, y: 0 } },
+        ),
+      }),
+    )
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(documents.document?.nodes.map((node) => node.node_id)).toEqual(['fetch_1', 'notify_9'])
   })
 })
 
@@ -399,13 +610,26 @@ describe('运行层：运行中改参与插节点', () => {
     expect(runtime().canBypassNode('fetch_1')).toBe(false)
   })
 
-  it('插入节点走 insert 接口，载荷带完整可写字段，再重拉快照', async () => {
+  it('插入节点走 insert 接口，落点在锚点右侧，画布跟着长出新节点', async () => {
     vi.useFakeTimers()
-    bootstrap({
-      instance: vi.fn(async () => instanceDetail({ status: 'running', nodes: [nodeRun('fetch_1', 'succeeded')] })),
-    })
+    const instance = vi.fn<WorkflowGateway['instance']>()
+    instance
+      .mockResolvedValueOnce(instanceDetail({ status: 'running', nodes: [nodeRun('fetch_1', 'succeeded')] }))
+      .mockResolvedValueOnce(
+        instanceDetail({
+          status: 'running',
+          nodes: [nodeRun('fetch_1', 'succeeded'), nodeRun('notify_9', 'pending')],
+          graph: instanceGraph(
+            [nodeDef('fetch_1'), nodeDef('notify_9', 'notify')],
+            [{ source: 'fetch_1', target: 'notify_9', condition: '' }],
+            { fetch_1: { x: 0, y: 0 }, notify_9: { x: 300, y: 0 } },
+          ),
+        }),
+      )
+    bootstrap({ instance })
     documents.resetDocument('草稿')
     await runtime().focusInstance(INSTANCE)
+    const epoch = documents.documentEpoch
 
     expect(await runtime().insertRuntimeNode('fetch_1', nodeDef('notify_9', 'notify', { text: '注意' }))).toBe(true)
     const call = gateway.insertNode.mock.calls[0]
@@ -413,7 +637,13 @@ describe('运行层：运行中改参与插节点', () => {
     expect(call?.[1].after).toBe('fetch_1')
     expect(call?.[1].node.node_id).toBe('notify_9')
     expect(call?.[1].node.retry).toEqual({ max_attempts: 1, backoff_ms: 200 })
+    expect(call?.[1].position).toEqual({ x: 300, y: 0 })
     expect(gateway.instance).toHaveBeenCalledTimes(2)
+
+    // 插入只该多出一颗节点，不该把视口重收到别处。
+    expect(documents.document?.nodes.map((node) => node.node_id)).toEqual(['fetch_1', 'notify_9'])
+    expect(documents.document?.layout.positions.notify_9).toEqual({ x: 300, y: 0 })
+    expect(documents.documentEpoch).toBe(epoch)
   })
 })
 
@@ -680,31 +910,36 @@ describe('运行层：空态、候选与迟到回执', () => {
     expect(runtime().instance?.instance_id).toBe(OTHER_INSTANCE)
   })
 
-  it('聚焦时版本文档晚到、人已切到另一条：旧文档不铺回画布', async () => {
-    const SLOW = 'wf_aaaaaaaaaaaa'
-    const versionGate = deferred<ReturnType<typeof workflowDocument>>()
+  it('聚焦时实例详情晚到、人已切到另一条：旧图不铺回画布', async () => {
+    const gate = deferred<ReturnType<typeof instanceDetail>>()
     bootstrap({
-      instance: vi.fn(async (instanceId: string) =>
-        instanceDetail({
-          instance_id: instanceId,
-          workflow_id: instanceId === 'slow' ? SLOW : PUBLISHED,
-          status: 'waiting',
-          nodes: [nodeRun('review_1', 'awaiting_human')],
-        }),
-      ),
-      getVersionDocument: vi.fn((workflowId: string) =>
-        workflowId === SLOW ? versionGate.promise : Promise.resolve(workflowDocument({ name: '快的那条' })),
+      instance: vi.fn((instanceId: string) =>
+        instanceId === 'slow'
+          ? gate.promise
+          : Promise.resolve(
+              instanceDetail({
+                instance_id: 'fast',
+                status: 'waiting',
+                nodes: [nodeRun('review_1', 'awaiting_human')],
+              }),
+            ),
       ),
     })
     documents.resetDocument('草稿')
     const opening = runtime().focusInstance('slow')
     await Promise.resolve()
-    await Promise.resolve()
     expect(await runtime().focusInstance('fast')).toBe(true)
-    versionGate.resolve(workflowDocument({ name: '慢的那条' }))
+    gate.resolve(
+      instanceDetail({
+        instance_id: 'slow',
+        status: 'running',
+        nodes: [nodeRun('a', 'running')],
+        graph: instanceGraph([nodeDef('a')], [], { a: { x: 0, y: 0 } }),
+      }),
+    )
 
     expect(await opening).toBe(true)
-    expect(documents.document?.name).toBe('快的那条')
+    expect(documents.document?.nodes.map((node) => node.node_id)).toEqual(['fetch_1', 'review_1'])
     expect(editor.selectedNodeId).toBe('review_1')
   })
 

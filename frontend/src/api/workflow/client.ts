@@ -14,6 +14,7 @@ import {
   type DefinitionInput,
   type DraftPutInput,
   type InsertNodeInput,
+  type PreviewInput,
   type ReviseInput,
   type StartInput,
 } from './contract'
@@ -124,6 +125,12 @@ export function createWorkflowClient(instance: AxiosInstance): WorkflowGateway {
     startInstance: (payload: StartInput, signal) =>
       request({ url: `${BASE}/instances`, method: 'POST', data: payload }, decodeInstanceDetail, signal),
 
+    createPreview: (payload: PreviewInput, signal) =>
+      request({ url: `${BASE}/previews`, method: 'POST', data: payload }, decodeInstanceDetail, signal),
+
+    getPreview: (previewId, signal) =>
+      request({ url: `${BASE}/previews/${encodeURIComponent(previewId)}` }, decodeInstanceDetail, signal),
+
     instances: (signal) => request({ url: `${BASE}/instances` }, decodeInstancesResponse, signal),
 
     instance: (instanceId, signal) =>
@@ -156,7 +163,11 @@ export function createWorkflowClient(instance: AxiosInstance): WorkflowGateway {
         {
           url: `${BASE}/instances/${encodeURIComponent(instanceId)}/nodes`,
           method: 'POST',
-          data: { after: payload.after, node: payload.node },
+          data: {
+            after: payload.after,
+            node: payload.node,
+            ...(payload.position === undefined ? {} : { position: payload.position }),
+          },
         },
         decodeInsertNodeResult,
         signal,

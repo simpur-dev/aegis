@@ -38,6 +38,7 @@ import {
   emptyLayout,
   ensureDocumentLayout,
   definitionFromDocument,
+  documentsEqual,
   MAX_STICKY_NOTES,
   prunePositions,
   validateDocument,
@@ -72,6 +73,24 @@ export type SaveState =
   | { kind: 'saving'; startedAt: string }
   | { kind: 'error'; code: WorkflowErrorCode; retryable: boolean }
   | { kind: 'conflict'; serverRevision: number; localRevision: number }
+
+/**
+ * 进实例视图前把草稿整份收起来。
+ *
+ * 实例画布要换成它自己绑定的那一版（含运行中插入的节点），而草稿可能还有没保存的改动；
+ * 不收起来就只能二选一：要么冲掉草稿，要么不给实例画布。返回草稿时从这里原样放回，
+ * 不再打一趟接口——草稿的真源如果比本地旧，人刚改的那几笔就凭空没了。
+ */
+interface DraftStash {
+  document: WorkflowDocument
+  baseline: string
+  revision: number
+  baseWorkflowId: string | null
+  versions: WorkflowVersionSummary[]
+  saveState: SaveState
+  error: string | null
+  history: WorkflowHistoryState | null
+}
 
 function saveStateLabel(state: SaveState): string {
   if (state.kind === 'clean') {
@@ -120,6 +139,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     const error = ref<string | null>(null)
     const loading = ref(false)
     const autoSaveEnabled = ref(true)
+    const draftStash = ref<DraftStash | null>(null)
 
     /**
      * 基线必须是响应式的：`isDirty` 是 computed，只改普通变量不会让它失效，
@@ -589,6 +609,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     function resetDocument(name = DEFAULT_NAME): void {
       cancelScheduledSave()
       abortInFlight()
+      clearDraftStash()
       loadToken += 1
       saveToken += 1
       revision.value = 0
@@ -631,6 +652,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
 
     async function openLineage(lineage: string): Promise<boolean> {
       return runLoad('打开定义失败', async () => {
+        clearDraftStash()
         const token = ++loadToken
         cancelScheduledSave()
         abortInFlight()
@@ -650,6 +672,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
 
     async function openVersion(workflowId: string): Promise<boolean> {
       return runLoad('打开版本失败', async () => {
+        clearDraftStash()
         const token = ++loadToken
         cancelScheduledSave()
         abortInFlight()
@@ -667,6 +690,8 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
 
     /** 实例详情已经带着它绑定的版本文档，直接放进画布，不再多打一趟接口。 */
     function bindInstanceDocument(doc: WorkflowDocument): void {
+      // 进实例前收起草稿：实例画布换的是另一张图，而草稿可能还有没保存的改动。
+      stashDraft()
       cancelScheduledSave()
       abortInFlight()
       loadToken += 1
@@ -676,6 +701,65 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       applyDocument(ensureDocumentLayout(doc))
       saveState.value = { kind: 'clean', savedAt: nowIso() }
       error.value = null
+    }
+
+    /** 收起当前草稿（只收一份；连续开多条实例时保留最早那份，才是人真正要回来的地方）。 */
+    function stashDraft(): boolean {
+      const current = document.value
+      if (current === null) return false
+      if (draftStash.value !== null) return true
+      if (!autoSaveEnabled.value) return false
+      draftStash.value = {
+        document: cloneWorkflowDocument(current),
+        baseline: baseline.value,
+        revision: revision.value,
+        baseWorkflowId: baseWorkflowId.value,
+        versions: [...versions.value],
+        saveState: saveState.value,
+        error: error.value,
+        history: historyState.value,
+      }
+      return true
+    }
+
+    /** 返回草稿：原样放回收起的那份，不重新拉取——服务器草稿可能比本地旧。 */
+    function restoreDraft(): boolean {
+      const stash = draftStash.value
+      if (stash === null) return false
+      draftStash.value = null
+      autoSaveEnabled.value = true
+      revision.value = stash.revision
+      baseWorkflowId.value = stash.baseWorkflowId
+      versions.value = stash.versions
+      applyDocument(stash.document)
+      // applyDocument 会把基线打在当前内容上；草稿原本是否"脏"要按收起时的基线算。
+      baseline.value = stash.baseline
+      historyState.value = stash.history
+      saveState.value = stash.saveState.kind === 'saving' ? { kind: 'dirty', since: nowIso() } : stash.saveState
+      error.value = stash.error
+      if (isDirty.value && canAutosave.value) void debouncedSave()
+      return true
+    }
+
+    function clearDraftStash(): void {
+      draftStash.value = null
+    }
+
+    /**
+     * 实例运行中插节点后把画布上的图换成新快照。
+     *
+     * 不换 epoch：插入只该多出一颗节点，不该顺手把视口收拢到别处。
+     * 只在只读实例视图里生效——草稿画布绝不能因为一条实例的图变了而被替换。
+     */
+    function syncInstanceDocument(next: WorkflowDocument): boolean {
+      const current = document.value
+      if (current === null || autoSaveEnabled.value) return false
+      const laidOut = ensureDocumentLayout(next)
+      if (documentsEqual(current, laidOut)) return false
+      suppressWatch = true
+      document.value = laidOut
+      suppressWatch = false
+      return true
     }
 
     async function createRemoteLineage(): Promise<string> {
@@ -938,6 +1022,10 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       openLineage,
       openVersion,
       bindInstanceDocument,
+      syncInstanceDocument,
+      stashDraft,
+      restoreDraft,
+      clearDraftStash,
       refreshVersions,
       saveNow,
       flush,

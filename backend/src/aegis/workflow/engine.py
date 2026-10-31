@@ -17,14 +17,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+import orjson
 from pydantic import ValidationError
 
 from aegis.config import Settings, get_settings
-from aegis.domain.messages import now_iso
+from aegis.domain.messages import new_trace_id, now_iso
 from aegis.errors import AegisError
 from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
-from aegis.workflow.documents import document_from_definition
+from aegis.workflow.documents import Position, WorkflowDocument, definition_from_document, document_from_definition
+from aegis.workflow.errors import WorkflowAppError, WorkflowErrorCode
 from aegis.workflow.model import (
     EdgeDef,
     InstanceStatus,
@@ -44,6 +46,13 @@ from aegis.workflow.nodes import (
     NodeRegistry,
     WorkflowServices,
     default_registry,
+)
+from aegis.workflow.preview import (
+    MAX_PREVIEW_PAYLOAD_BYTES,
+    InMemoryPreviewStore,
+    PreviewLimitReached,
+    dry_run_services,
+    new_preview_id,
 )
 from aegis.workflow.store import DuplicateWorkflowName, WorkflowRepository, new_instance_id
 
@@ -98,6 +107,16 @@ class _MutableInstance:
     pending_waits: dict[str, str] = field(default_factory=dict)
     # 等待人工决策节点可选的取值（来自节点抛出的 HumanRequired.options），供 resume 前置校验。
     pending_options: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: 这张图属于哪条 lineage（运行历史按 lineage 查，实例详情要自报家门）。
+    lineage_id: str = ""
+    created_at: str = field(default_factory=now_iso)
+    finished_at: str | None = None
+    #: 试运行实例：不进 `_instances`、不记指标账本、外部动作只给回执。
+    dry_run: bool = False
+    #: 试运行结果的取件号（`pvp_…`）；live 实例为 None。
+    preview_id: str | None = None
+    #: 画布位置快照（启动时取版本 layout，运行中插节点就地补一条）。
+    positions: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def incoming(self, node_id: str) -> list[EdgeDef]:
         return [edge for edge in self.edges if edge.target == node_id]
@@ -115,7 +134,8 @@ class _MutableInstance:
             nodes={node_id: run.model_copy(deep=True) for node_id, run in self.runs.items()},
             payload=dict(self.payload),
             results={node_id: run.output for node_id, run in self.runs.items() if run.state in (NodeState.SUCCEEDED, NodeState.DEGRADED)},
-            created_at=now_iso(),
+            created_at=self.created_at,
+            finished_at=self.finished_at,
             error=self.error,
         )
 
@@ -131,6 +151,7 @@ class WorkflowEngine:
         settings: Settings | None = None,
         max_parallel: int = 32,
         max_instances: int = 128,
+        preview_store: InMemoryPreviewStore | None = None,
     ) -> None:
         if max_parallel < 1:
             raise ValueError("max_parallel 必须 ≥ 1")
@@ -154,6 +175,9 @@ class WorkflowEngine:
         #: 无上界就是每报一次警漏一份节点状态在进程里，值班一个班次就吃掉几百 MB。
         self._max_instances = int(max_instances)
         self.evicted_instances = 0
+        #: 试运行与正式实例分两本账：预览不进 `_instances`，也不参与淘汰/计数。
+        self._previews = preview_store if preview_store is not None else InMemoryPreviewStore()
+        self._dry_services = dry_run_services(self._services)
 
     # ---------- 定义管理 ----------
 
@@ -177,6 +201,11 @@ class WorkflowEngine:
         这条腿此前只能从 `_services` 猜——审计就是靠它发现 `http_call` 从未被装配。
         """
         return self._services
+
+    @property
+    def preview_store(self) -> InMemoryPreviewStore:
+        """试运行结果表（只读用途：容量/在册数）。"""
+        return self._previews
 
     @property
     def instance_stats(self) -> dict[str, int]:
@@ -336,16 +365,33 @@ class WorkflowEngine:
         current = self._instances.get(instance_id)
         if current is None:
             return None
+        return self._detail(current)
+
+    def preview_detail(self, preview_id: str) -> dict[str, Any] | None:
+        """预览结果只会在这里取到：`GET /instances/{wfi_…}` 看不到它。"""
+        return self._previews.get(preview_id)
+
+    @staticmethod
+    def _detail(current: _MutableInstance) -> dict[str, Any]:
+        """实例与预览共用的详情形状：画布要能凭它重建整张图，而不只是节点状态。"""
         return {
             "instance_id": current.instance_id,
             "workflow_id": current.definition.workflow_id,
             "workflow_version": current.definition.version,
+            "lineage_id": current.lineage_id or current.definition.lineage_id,
             "trace_id": current.trace_id,
             "status": current.status.value,
             "error": current.error,
+            "preview": current.dry_run,
+            "preview_id": current.preview_id,
+            "created_at": current.created_at,
+            "finished_at": current.finished_at,
             # 核签工单要能让人看见"签的是什么"：上报文本、定级来源与转核签的原因都在 payload 里，
             # 不带上就等于把决策要依据的事实留在内存里不外显。
             "payload": current.payload,
+            "results": {
+                node_id: run.output for node_id, run in current.runs.items() if run.state in (NodeState.SUCCEEDED, NodeState.DEGRADED)
+            },
             "nodes": [
                 {
                     "node_id": node_id,
@@ -360,6 +406,11 @@ class WorkflowEngine:
                 }
                 for node_id, run in current.runs.items()
             ],
+            "graph": {
+                "nodes": [node.model_dump(mode="json") for node in current.nodes.values()],
+                "edges": [edge.model_dump(mode="json") for edge in current.edges],
+                "positions": {node_id: dict(position) for node_id, position in current.positions.items()},
+            },
         }
 
     async def start(
@@ -372,10 +423,96 @@ class WorkflowEngine:
         definition = self._repository.get(workflow_id)
         if definition is None:
             raise WorkflowValidationError(f"工作流定义不存在: {workflow_id}")
-        instance = self._instantiate(definition, trace_id=trace_id, payload=payload or {})
+        document = self._repository.document_of(workflow_id)
+        instance = self._instantiate(
+            definition,
+            trace_id=trace_id,
+            payload=payload or {},
+            lineage_id=definition.lineage_id,
+            positions=self._layout_positions(document),
+        )
         await self._drive(instance)
         self._retire_kept_instances(keep=instance.instance_id)
         return self.instance_detail(instance.instance_id) or {}
+
+    @staticmethod
+    def _layout_positions(document: WorkflowDocument | None) -> dict[str, dict[str, float]]:
+        if document is None:
+            return {}
+        return {node_id: {"x": position.x, "y": position.y} for node_id, position in document.layout.positions.items()}
+
+    async def preview(
+        self,
+        *,
+        document: WorkflowDocument,
+        payload: dict[str, Any] | None = None,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        """在当前文档上跑一遍 dry-run，结果与实例详情同构，但不进任何账本。
+
+        文档可能来自未保存的草稿，所以这里不碰仓储/草稿/实例字典；`_previews` 独立，
+        上限与 TTL 由 `InMemoryPreviewStore` 管。先占位再执行：等 LLM 跑完才说"满了"
+        是白花一次调用。
+        """
+        body = dict(payload or {})
+        encoded = orjson.dumps(body)
+        if len(encoded) > MAX_PREVIEW_PAYLOAD_BYTES:
+            raise WorkflowAppError(
+                WorkflowErrorCode.DOCUMENT_TOO_LARGE,
+                f"试运行入参超过 {MAX_PREVIEW_PAYLOAD_BYTES // 1024} KB（实际 {len(encoded)} 字节）",
+                details={"kind": "preview_payload", "bytes": len(encoded), "limit": MAX_PREVIEW_PAYLOAD_BYTES},
+            )
+        latest = self._repository.latest_by_lineage(document.lineage_id)
+        definition = definition_from_document(
+            document,
+            workflow_id=document.lineage_id,
+            version=latest.version if latest is not None else 1,
+        )
+        try:
+            self.validate_definition(definition)
+        except WorkflowValidationError as exc:
+            raise WorkflowAppError(WorkflowErrorCode.VALIDATION_FAILED, str(exc)) from exc
+        try:
+            self._previews.ensure_room()
+        except PreviewLimitReached as exc:
+            raise WorkflowAppError(
+                WorkflowErrorCode.PREVIEW_LIMIT,
+                str(exc),
+                details={"limit": self._previews.limit},
+            ) from exc
+
+        preview_id = new_preview_id()
+        instance = self._instantiate(
+            definition,
+            trace_id=trace_id or new_trace_id(),
+            payload=body,
+            lineage_id=document.lineage_id,
+            positions=self._layout_positions(document),
+            dry_run=True,
+            preview_id=preview_id,
+            register=False,
+        )
+        try:
+            await self._drive(instance)
+        except BaseException:
+            # 失败也留档：试运行的价值一半在"哪一步炸了"，结果表里没有就只剩一句错误。
+            self._store_preview(preview_id, instance, raise_on_limit=False)
+            raise
+        self._store_preview(preview_id, instance)
+        return self.preview_detail(preview_id) or {}
+
+    def _store_preview(self, preview_id: str, instance: _MutableInstance, *, raise_on_limit: bool = True) -> None:
+        try:
+            self._previews.put(preview_id, self._detail(instance))
+        except PreviewLimitReached as exc:
+            if not raise_on_limit:
+                log.warning("试运行结果未留存：结果表已满", extra={"preview_id": preview_id})
+                return
+            raise WorkflowAppError(
+                WorkflowErrorCode.PREVIEW_LIMIT,
+                str(exc),
+                details={"limit": self._previews.limit},
+            ) from exc
 
     def _retire_kept_instances(self, *, keep: str = "") -> int:
         """丢掉最老的**已终态**实例，把驻留数量压回上界内。
@@ -404,7 +541,18 @@ class WorkflowEngine:
         self.evicted_instances += dropped
         return dropped
 
-    def _instantiate(self, definition: WorkflowDef, *, trace_id: str, payload: dict[str, Any]) -> _MutableInstance:
+    def _instantiate(
+        self,
+        definition: WorkflowDef,
+        *,
+        trace_id: str,
+        payload: dict[str, Any],
+        lineage_id: str = "",
+        positions: dict[str, dict[str, float]] | None = None,
+        dry_run: bool = False,
+        preview_id: str | None = None,
+        register: bool = True,
+    ) -> _MutableInstance:
         instance = _MutableInstance(
             instance_id=new_instance_id(),
             definition=definition,
@@ -413,9 +561,14 @@ class WorkflowEngine:
             nodes={node.node_id: node.model_copy(deep=True) for node in definition.nodes},
             edges=[edge.model_copy(deep=True) for edge in definition.edges],
             runs={node.node_id: NodeRun(node_id=node.node_id, type=node.type) for node in definition.nodes},
+            lineage_id=lineage_id or definition.lineage_id,
+            positions=dict(positions or {}),
+            dry_run=dry_run,
+            preview_id=preview_id,
         )
-        self._instances[instance.instance_id] = instance
-        self._locks.setdefault(instance.instance_id, asyncio.Lock())
+        if register:
+            self._instances[instance.instance_id] = instance
+            self._locks.setdefault(instance.instance_id, asyncio.Lock())
         return instance
 
     async def _drive(self, instance: _MutableInstance) -> None:
@@ -428,7 +581,12 @@ class WorkflowEngine:
         链路结构：一次驱动 = 一条 `workflow_instance` 跨度，其 traceID 由实例的契约 trace_id
         确定性映射而来，本轮就绪执行的节点跨度自动成为它的子节点（见 observability/instrumentation.py）。
         人工决策后续跑会再产生一条同 traceID 的驱动跨度——这恰好是"等待人工"那一段的真实证据。
+
+        试运行不建跨度、不记账本：预览不该让 SLA 指标与链路图多出一些"从未正式发生"的样本。
         """
+        if instance.dry_run:
+            await self._run_loop(instance)
+            return
         async with instrumentation.span(
             "workflow_instance",
             trace_id=instance.trace_id,
@@ -440,19 +598,22 @@ class WorkflowEngine:
                 "aegis.workflow.node_count": len(instance.nodes),
             },
         ) as instance_span:
-            while True:
-                if instance.status in (InstanceStatus.FAILED, InstanceStatus.WAITING):
-                    break
-                ready = self._collect_ready(instance)
-                if not ready:
-                    break
-                await asyncio.gather(*(self._execute_node(instance, node_id) for node_id in ready))
-            self._finalise(instance)
+            await self._run_loop(instance)
             instrumentation.set_attributes(instance_span, span_attrs={"aegis.workflow.status": instance.status.value})
             if instance.status is InstanceStatus.FAILED:
                 instrumentation.mark_error(instance_span, instance.error or "实例失败", code="workflow_failed")
             elif instance.status is InstanceStatus.WAITING:
                 instrumentation.set_attributes(instance_span, span_attrs={"aegis.workflow.awaiting_human": True})
+
+    async def _run_loop(self, instance: _MutableInstance) -> None:
+        while True:
+            if instance.status in (InstanceStatus.FAILED, InstanceStatus.WAITING):
+                break
+            ready = self._collect_ready(instance)
+            if not ready:
+                break
+            await asyncio.gather(*(self._execute_node(instance, node_id) for node_id in ready))
+        self._finalise(instance)
 
     def _collect_ready(self, instance: _MutableInstance) -> list[str]:
         ready: list[str] = []
@@ -520,26 +681,32 @@ class WorkflowEngine:
         spec = self._registry.require(node.type)
 
         run.schedule_latency_ms = (time.perf_counter() - (run.ready_mono or time.perf_counter())) * 1000
-        self._tracer.record(
-            "workflow_schedule_ms",
-            max(run.schedule_latency_ms, 0.0),
-            trace_id=instance.trace_id,
-        )
+        if not instance.dry_run:
+            self._tracer.record(
+                "workflow_schedule_ms",
+                max(run.schedule_latency_ms, 0.0),
+                trace_id=instance.trace_id,
+            )
 
         # 节点跨度在"调度时延已落账"之后创建：建跨度的开销不会算进 ≤2s 的 workflow_schedule_ms 样本，
         # 跨度只承载结构证据（node_id / attempt / 终态），SLA 判定仍以时延账本为准。
-        node_span = instrumentation.start_span(
-            "workflow_node",
-            trace_id=instance.trace_id,
-            kind="internal",
-            span_attrs={
-                "aegis.workflow.instance_id": instance.instance_id,
-                "aegis.node.id": node_id,
-                "aegis.node.type": node.type,
-                "aegis.node.timeout_ms": node.timeout_ms,
-                "aegis.node.on_failure": node.on_failure,
-                "aegis.workflow.schedule_ms": round(max(run.schedule_latency_ms, 0.0), 3),
-            },
+        # 试运行拿无操作跨度占位：同一条 `_execute_node` 分支不必为"要不要记"分叉。
+        node_span = (
+            instrumentation.null_span()
+            if instance.dry_run
+            else instrumentation.start_span(
+                "workflow_node",
+                trace_id=instance.trace_id,
+                kind="internal",
+                span_attrs={
+                    "aegis.workflow.instance_id": instance.instance_id,
+                    "aegis.node.id": node_id,
+                    "aegis.node.type": node.type,
+                    "aegis.node.timeout_ms": node.timeout_ms,
+                    "aegis.node.on_failure": node.on_failure,
+                    "aegis.workflow.schedule_ms": round(max(run.schedule_latency_ms, 0.0), 3),
+                },
+            )
         )
 
         run.state = NodeState.RUNNING
@@ -561,9 +728,10 @@ class WorkflowEngine:
                     for other_id, other in instance.runs.items()
                     if other.state in ACTIVE_SOURCE_STATES and other.output
                 },
-                services=self._services,
+                services=self._dry_services if instance.dry_run else self._services,
                 attempt=run.attempts,
                 decision=instance.decisions.get(node_id),
+                dry_run=instance.dry_run,
             )
             try:
                 async with self._semaphore:
@@ -703,8 +871,9 @@ class WorkflowEngine:
         run.finished_mono = time.perf_counter()
         if run.started_mono is not None:
             run.duration_ms = (run.finished_mono - run.started_mono) * 1000
-            self._tracer.record("workflow_node_ms", run.duration_ms, trace_id=instance.trace_id)
-        if first_failure_mono is not None:
+            if not instance.dry_run:
+                self._tracer.record("workflow_node_ms", run.duration_ms, trace_id=instance.trace_id)
+        if first_failure_mono is not None and not instance.dry_run:
             reschedule_ms = (run.finished_mono - first_failure_mono) * 1000
             self._tracer.record("workflow_reschedule_ms", reschedule_ms, trace_id=instance.trace_id)
         log.debug(
@@ -713,7 +882,10 @@ class WorkflowEngine:
         )
 
     def _finalise(self, instance: _MutableInstance) -> None:
-        if instance.status in (InstanceStatus.WAITING, InstanceStatus.FAILED):
+        if instance.status is InstanceStatus.WAITING:
+            return
+        if instance.status is InstanceStatus.FAILED:
+            instance.finished_at = instance.finished_at or now_iso()
             return
         states = {run.state for run in instance.runs.values()}
         if states & {NodeState.PENDING, NodeState.READY, NodeState.RUNNING}:
@@ -724,11 +896,13 @@ class WorkflowEngine:
             instance.error = instance.error or "存在失败节点"
         else:
             instance.status = InstanceStatus.SUCCEEDED
-        self._tracer.record(
-            "workflow_instance_ms",
-            (time.perf_counter() - instance.created_mono) * 1000,
-            trace_id=instance.trace_id,
-        )
+        instance.finished_at = instance.finished_at or now_iso()
+        if not instance.dry_run:
+            self._tracer.record(
+                "workflow_instance_ms",
+                (time.perf_counter() - instance.created_mono) * 1000,
+                trace_id=instance.trace_id,
+            )
 
     # ---------- 运行中柔性操作 ----------
 
@@ -773,7 +947,14 @@ class WorkflowEngine:
         instance.runs[node_id].notes.append(f"运行中改参: {sorted(config)}")
         return {"node_id": node_id, "config": merged}
 
-    async def insert_node(self, instance_id: str, *, after: str, node: dict[str, Any]) -> dict[str, Any]:
+    async def insert_node(
+        self,
+        instance_id: str,
+        *,
+        after: str,
+        node: dict[str, Any],
+        position: dict[str, float] | None = None,
+    ) -> dict[str, Any]:
         """在途实例插入节点：把 after 的原出边重接到新节点，保证图仍无环。"""
         instance = self._require_instance(instance_id)
         if after not in instance.nodes:
@@ -783,6 +964,13 @@ class WorkflowEngine:
             raise WorkflowValidationError(f"节点 ID 已存在: {node_def.node_id}")
         spec = self._registry.require(node_def.type)
         spec.validate_config(node_def.config)
+
+        anchor = instance.positions.get(after) or {"x": 0.0, "y": 0.0}
+        raw = position if position is not None else {"x": anchor["x"] + 300, "y": anchor["y"]}
+        try:
+            placed = Position(**raw)
+        except ValidationError as exc:
+            raise WorkflowValidationError(f"插入节点位置不合法: {_as_workflow_error(exc)}") from exc
 
         moved = [edge for edge in instance.edges if edge.source == after]
         instance.edges = [edge for edge in instance.edges if edge.source != after]
@@ -795,6 +983,8 @@ class WorkflowEngine:
 
         if find_cycle(list(instance.nodes), instance.edges) is not None:
             raise WorkflowValidationError("插入节点后出现环，已拒绝")
+        # 只在图确认合法后落位置：否则被拒绝的插入会在画布上留下一枚无主坐标。
+        instance.positions[node_def.node_id] = {"x": placed.x, "y": placed.y}
         return {"instance_id": instance_id, "node_id": node_def.node_id, "after": after}
 
     async def bypass_node(self, instance_id: str, node_id: str, *, reason: str = "") -> dict[str, Any]:
@@ -831,9 +1021,11 @@ class WorkflowEngine:
                 run.state = NodeState.CANCELLED
         instance.status = InstanceStatus.ABORTED
         instance.error = reason or "人工中止"
+        instance.finished_at = instance.finished_at or now_iso()
         instance.pending_waits.clear()
         instance.pending_options.clear()
-        self._tracer.record("workflow_instance_ms", (time.perf_counter() - instance.created_mono) * 1000, trace_id=instance.trace_id)
+        if not instance.dry_run:
+            self._tracer.record("workflow_instance_ms", (time.perf_counter() - instance.created_mono) * 1000, trace_id=instance.trace_id)
         return self.instance_detail(instance_id) or {}
 
     def _require_instance(self, instance_id: str) -> _MutableInstance:

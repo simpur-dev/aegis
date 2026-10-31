@@ -13,9 +13,18 @@
 import { computed } from 'vue'
 
 import type { InstanceNodeRun } from '@/api/workflow'
-import { stateStyle } from '@/utils/graph'
+import { stateStyle, type JsonValue } from '@/utils/graph'
 
-const props = defineProps<{ runs: InstanceNodeRun[]; names?: Record<string, string> }>()
+const props = defineProps<{
+  runs: InstanceNodeRun[]
+  names?: Record<string, string>
+  /** 试运行时按节点展示产出；正式实例不传，避免把大段载荷塞进时间线。 */
+  outputs?: Record<string, Record<string, JsonValue>> | null
+}>()
+
+const emit = defineEmits<{ select: [nodeId: string] }>()
+
+const MAX_OUTPUT_CHARS = 1_200
 
 type Tone = 'todo' | 'active' | 'done' | 'bad'
 
@@ -51,24 +60,43 @@ function metaOf(run: InstanceNodeRun): string {
 }
 
 const rows = computed(() => props.runs.map((run, index) => ({ run, index, tone: toneOf(run.state) })))
+
+function outputOf(nodeId: string): string {
+  const output = props.outputs?.[nodeId]
+  if (output === undefined || Object.keys(output).length === 0) return ''
+  const text = JSON.stringify(output, null, 2)
+  return text.length > MAX_OUTPUT_CHARS ? `${text.slice(0, MAX_OUTPUT_CHARS)}\n…（已截断）` : text
+}
 </script>
 
 <template>
   <ol v-if="rows.length > 0" class="wf-tl" data-testid="run-timeline">
-    <li v-for="row in rows" :key="row.run.node_id" class="wf-tl__step" :class="`is-${row.tone}`">
-      <span class="wf-tl__axis" aria-hidden="true">
-        <span class="wf-tl__dot" :style="{ background: styleOf(row.run.state).color }"></span>
-        <span v-if="row.index < rows.length - 1" class="wf-tl__line"></span>
-      </span>
-      <div class="wf-tl__body">
-        <div class="wf-tl__head">
-          <span class="wf-tl__index">{{ row.index + 1 }}</span>
-          <span class="wf-tl__name" :title="row.run.node_id">{{ nameOf(row.run.node_id) }}</span>
-          <span class="wf-tl__state">{{ styleOf(row.run.state).label }}</span>
-        </div>
-        <p v-if="metaOf(row.run) !== ''" class="wf-tl__meta">{{ metaOf(row.run) }}</p>
-        <p v-if="row.run.error !== null" class="wf-tl__err" :title="row.run.error">{{ row.run.error }}</p>
-      </div>
+    <li v-for="row in rows" :key="row.run.node_id" class="wf-tl__item">
+      <button
+        type="button"
+        class="wf-tl__step"
+        :class="`is-${row.tone}`"
+        :title="`在画布上定位 ${row.run.node_id}`"
+        @click="emit('select', row.run.node_id)"
+      >
+        <span class="wf-tl__axis" aria-hidden="true">
+          <span class="wf-tl__dot" :style="{ background: styleOf(row.run.state).color }"></span>
+          <span v-if="row.index < rows.length - 1" class="wf-tl__line"></span>
+        </span>
+        <span class="wf-tl__body">
+          <span class="wf-tl__head">
+            <span class="wf-tl__index">{{ row.index + 1 }}</span>
+            <span class="wf-tl__name" :title="row.run.node_id">{{ nameOf(row.run.node_id) }}</span>
+            <span class="wf-tl__state">{{ styleOf(row.run.state).label }}</span>
+          </span>
+          <span v-if="metaOf(row.run) !== ''" class="wf-tl__meta">{{ metaOf(row.run) }}</span>
+          <span v-if="row.run.error !== null" class="wf-tl__err" :title="row.run.error">{{ row.run.error }}</span>
+          <span v-if="outputOf(row.run.node_id) !== ''" class="wf-tl__output" @click.stop>
+            <span class="wf-tl__output-label">产出</span>
+            <pre class="wf-tl__pre">{{ outputOf(row.run.node_id) }}</pre>
+          </span>
+        </span>
+      </button>
     </li>
   </ol>
   <p v-else class="wf-tl__empty">还没选中实例——在上方点一条实例，这里就列出它每一步走到哪了。</p>
@@ -83,14 +111,30 @@ const rows = computed(() => props.runs.map((run, index) => ({ run, index, tone: 
   padding: 0;
   list-style: none;
 }
+.wf-tl__item {
+  margin: 0;
+  padding: 0;
+}
 .wf-tl__step {
   display: grid;
   grid-template-columns: 24px 1fr;
   gap: 12px;
+  width: 100%;
   padding: 10px 12px;
   border: 1px solid #eef4f6;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.72);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wf-tl__step:hover {
+  border-color: var(--aeg-color-brand-line);
+}
+.wf-tl__step:focus-visible {
+  outline: 2px solid var(--aeg-color-brand);
+  outline-offset: 1px;
 }
 .wf-tl__step.is-active {
   border-color: rgba(37, 99, 235, 0.3);
@@ -132,6 +176,7 @@ const rows = computed(() => props.runs.map((run, index) => ({ run, index, tone: 
   background: #e6e8ef;
 }
 .wf-tl__body {
+  display: block;
   min-width: 0;
 }
 .wf-tl__head {
@@ -163,18 +208,46 @@ const rows = computed(() => props.runs.map((run, index) => ({ run, index, tone: 
   color: var(--aeg-color-text-secondary);
 }
 .wf-tl__meta {
+  display: block;
   margin: 4px 0 0;
   font-size: 11px;
   color: var(--aeg-color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 .wf-tl__err {
+  display: block;
   margin: 4px 0 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
   color: #b91c1c;
+}
+.wf-tl__output {
+  display: block;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--aeg-color-border-subtle);
+  cursor: default;
+}
+.wf-tl__output-label {
+  color: var(--aeg-color-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+.wf-tl__pre {
+  max-height: 220px;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--aeg-color-sunken);
+  color: var(--aeg-color-text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .wf-tl__empty {
   margin: 0;

@@ -259,6 +259,11 @@ def start_span(
         return cast("OtelSpan", telemetry._NULL_SPAN)
 
 
+def null_span() -> OtelSpan:
+    """无操作跨度：试运行这类"不该进链路"的路径用它占位，调用点无需分支。"""
+    return cast("OtelSpan", telemetry._NULL_SPAN)
+
+
 def end_span(span: OtelSpan) -> None:
     """结束显式跨度：重复调用或未记录跨度都安全。"""
     try:

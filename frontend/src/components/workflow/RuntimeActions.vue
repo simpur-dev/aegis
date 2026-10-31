@@ -79,10 +79,9 @@ function pushConfig(): void {
 async function insertAfter(): Promise<void> {
   const taken = (runtime.instance?.nodes ?? []).map((item) => item.node_id)
   const created = createNodeDef(insertType.value, nextAvailableId(taken, insertType.value))
-  // 插进去的节点只属于这条实例：画布画的是定义那一张图，点了之后画面一动不动。
-  // 不点名的成功提示是这里唯一能给的诚实——否则这一下看着像没发生。
+  // 插进去的节点只属于这条实例：画布会换成实例自己那张图，新节点立刻出现在锚点右侧。
   if (await runtime.insertRuntimeNode(props.node.node_id, created)) {
-    message.success(`已在实例里插入 ${created.node_id}（画布显示的是定义那一张，这个节点只属于这条实例）`)
+    message.success(`已在实例里插入 ${created.node_id}（只在这次运行的图上，草稿不变）`)
   }
 }
 </script>
@@ -200,7 +199,7 @@ async function insertAfter(): Promise<void> {
       </button>
     </div>
     <span class="wf-runtime__hint">
-      插入会重接本节点原出边；引擎不会在插入瞬间驱动新节点，故仅在实例未终态时开放。
+      插入会重接本节点原出边，并立刻出现在实例画布的锚点右侧；引擎不会在插入瞬间驱动新节点，故仅在实例未终态时开放。
     </span>
   </section>
 </template>

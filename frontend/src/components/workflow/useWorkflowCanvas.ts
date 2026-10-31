@@ -170,7 +170,7 @@ export function useWorkflowCanvas(
     const def = documentStore.definition
     if (def === null) return { nodes: [], edges: [] }
     const states: Record<string, { state: NodeState; attempts: number; note: string }> = {}
-    for (const nodeRun of run.instance?.nodes ?? []) {
+    for (const nodeRun of run.canvasRuns) {
       states[nodeRun.node_id] = {
         state: nodeRun.state,
         attempts: nodeRun.attempts,

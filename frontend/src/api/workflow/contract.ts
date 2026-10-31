@@ -11,6 +11,7 @@ import type {
   NodeDef,
   NodeState,
   OnFailure,
+  Position,
   RetryPolicy,
   WorkflowDef,
 } from '@/utils/graph'
@@ -121,6 +122,15 @@ export interface DecisionInput {
 export interface InsertNodeInput {
   after: string
   node: NodeInput
+  /** 画布落点；缺省由引擎放在锚点右侧 300px。 */
+  position?: Position
+}
+
+/** 试运行输入：给一份当前文档（含未保存草稿），或给 lineage 让服务端取草稿，二选一。 */
+export interface PreviewInput {
+  document?: WorkflowDocument
+  lineage_id?: string
+  payload?: Record<string, JsonValue>
 }
 
 export interface DraftPutInput {
@@ -189,15 +199,36 @@ export interface InstanceNodeRun {
   notes: string[]
 }
 
+/**
+ * 实例图：启动时的节点/连线快照 + 画布坐标。
+ *
+ * 它必须自己带图，而不是让前端再去拉一遍版本文档：运行中插入的节点只属于这条实例，
+ * 版本里根本没有；按版本重建画布会把插入的节点画丢。
+ */
+export interface InstanceGraph {
+  nodes: NodeDef[]
+  edges: EdgeDef[]
+  positions: Record<string, Position>
+}
+
 export interface InstanceDetail {
   instance_id: string
   workflow_id: string
   workflow_version: number
+  lineage_id: string
   trace_id: string
   status: string
   error: string | null
+  /** true = 试运行结果；它只能通过 `GET /previews/{id}` 取，不在实例列表里。 */
+  preview: boolean
+  preview_id: string | null
+  created_at: string
+  finished_at: string | null
   payload: Record<string, JsonValue>
+  /** 节点产出（仅 succeeded/degraded）：试运行时右侧面板按节点显示。 */
+  results: Record<string, Record<string, JsonValue>>
   nodes: InstanceNodeRun[]
+  graph: InstanceGraph
 }
 
 export interface InstancesResponse {
@@ -248,6 +279,8 @@ export interface WorkflowGateway {
   restoreDefinition(workflowId: string, signal?: AbortSignal): Promise<DefinitionStatusResult>
 
   startInstance(payload: StartInput, signal?: AbortSignal): Promise<StartResult>
+  createPreview(payload: PreviewInput, signal?: AbortSignal): Promise<InstanceDetail>
+  getPreview(previewId: string, signal?: AbortSignal): Promise<InstanceDetail>
   instances(signal?: AbortSignal): Promise<InstancesResponse>
   instance(instanceId: string, signal?: AbortSignal): Promise<InstanceDetail>
   submitDecision(

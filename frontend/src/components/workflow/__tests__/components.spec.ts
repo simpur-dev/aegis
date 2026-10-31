@@ -14,6 +14,7 @@ import NodeLogic from '@/components/workflow/NodeLogic.vue'
 import NodePalette from '@/components/workflow/NodePalette.vue'
 import NodeShell from '@/components/workflow/NodeShell.vue'
 import RuntimeActions from '@/components/workflow/RuntimeActions.vue'
+import RunInputDialog from '@/components/workflow/RunInputDialog.vue'
 import RuntimePanel from '@/components/workflow/RuntimePanel.vue'
 import {
   CATEGORY_LABELS,
@@ -25,9 +26,9 @@ import {
 import { WORKFLOW_NODE_TYPES } from '@/components/workflow/nodeComponents'
 import { useWorkflowCanvas } from '@/components/workflow/useWorkflowCanvas'
 import { createEditorContext, EDITOR_CONTEXT_KEY, type EditorContext } from '@/components/workflow/editor/context'
-import type { DefinitionSummary } from '@/api/workflow'
+import type { DefinitionSummary, InstanceDetail } from '@/api/workflow'
 import type { NodeProps } from '@vue-flow/core'
-import { MAX_ATTEMPTS, MAX_BACKOFF_MS, NODE_SPECS, findNode, type FlowNodeData, type NodeCategory, type NodeType } from '@/utils/graph'
+import { MAX_ATTEMPTS, MAX_BACKOFF_MS, NODE_SPECS, findNode, type FlowNodeData, type JsonValue, type NodeCategory, type NodeType } from '@/utils/graph'
 import { installUnsavedGuard } from '@/components/workflow/confirmDiscard'
 import { backendInternalNodeTypes, backendNodeTypes, backendPanelNodeTypes, readRepoFile } from '@/testing/repoSource'
 
@@ -49,6 +50,29 @@ function editorContext(): EditorContext {
 
 function withEditor(context: EditorContext): { provide: Record<string, unknown> } {
   return { provide: { [EDITOR_CONTEXT_KEY]: context } as Record<string, unknown> }
+}
+
+/** 组件用例只关心节点与状态；实例详情新增的图/时间戳字段用一份空壳补齐。 */
+function detail(part: Partial<InstanceDetail> = {}): InstanceDetail {
+  const workflowId = part.workflow_id ?? 'wf_0123456789ab'
+  return {
+    instance_id: 'wfi_0000000000ab',
+    workflow_id: workflowId,
+    workflow_version: 1,
+    trace_id: 't-1',
+    status: 'running',
+    error: null,
+    payload: {},
+    nodes: [],
+    lineage_id: workflowId,
+    preview: false,
+    preview_id: null,
+    created_at: '',
+    finished_at: null,
+    results: {},
+    graph: { nodes: [], edges: [], positions: {} },
+    ...part,
+  }
 }
 
 function selectedNode(context: EditorContext) {
@@ -418,7 +442,7 @@ describe('检查器与运行中操作', () => {
     const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust', 'reject'] } }
     context.document.addNode(review)
     context.editor.select('review_1')
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -427,7 +451,7 @@ describe('检查器与运行中操作', () => {
       error: null,
       payload: {},
       nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: ['等待人工决策: 请值班指挥员确认'] }],
-    }
+    })
     const wrapper = mount(RuntimeActions, { global: withEditor(context), props: { node: review } })
     const buttons = wrapper.findAll('button')
     const byText = (text: string) => buttons.find((button) => button.text() === text)
@@ -449,7 +473,7 @@ describe('检查器与运行中操作', () => {
     const fetch = createNodeDef('data_fetch', 'fetch_1')
     context.document.addNode(fetch)
     context.editor.select('fetch_1')
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -458,7 +482,7 @@ describe('检查器与运行中操作', () => {
       error: null,
       payload: {},
       nodes: [{ node_id: 'fetch_1', type: 'data_fetch', state: 'pending', attempts: 0, schedule_latency_ms: null, duration_ms: null, output: {}, error: null, notes: [] }],
-    }
+    })
     const wrapper = mount(RuntimeActions, { global: withEditor(context), props: { node: fetch } })
     const text = wrapper.text()
     expect(text).toContain('SLA、超时、重试不在这条接口上')
@@ -476,7 +500,7 @@ describe('检查器与运行中操作', () => {
     const fetch = createNodeDef('data_fetch', 'fetch_1')
     context.document.addNode(fetch)
     context.editor.select('fetch_1')
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -485,7 +509,7 @@ describe('检查器与运行中操作', () => {
       error: null,
       payload: {},
       nodes: [{ node_id: 'fetch_1', type: 'data_fetch', state: 'pending', attempts: 0, schedule_latency_ms: null, duration_ms: null, output: {}, error: null, notes: [] }],
-    }
+    })
     const wrapper = mount(RuntimeActions, { global: withEditor(context), props: { node: fetch } })
     const text = wrapper.text()
     expect(text).not.toContain('engine.py')
@@ -520,7 +544,7 @@ describe('检查器与运行中操作', () => {
     const anchor = createNodeDef('data_fetch', 'fetch_1')
     context.document.addNode(anchor)
     context.editor.select('fetch_1')
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -529,7 +553,7 @@ describe('检查器与运行中操作', () => {
       error: null,
       payload: {},
       nodes: [{ node_id: 'fetch_1', type: 'data_fetch', state: 'pending', attempts: 0, schedule_latency_ms: null, duration_ms: null, output: {}, error: null, notes: [] }],
-    }
+    })
     const inserted = vi.spyOn(context.run, 'insertRuntimeNode').mockResolvedValue(true)
     const say = vi.spyOn(message, 'success').mockImplementation(() => ({ key: 'k' }) as never)
     const wrapper = mount(RuntimeActions, { global: withEditor(context), props: { node: anchor } })
@@ -559,7 +583,7 @@ describe('检查器与运行中操作', () => {
     const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust', 'reject'] } }
     context.document.addNode(review)
     context.editor.select('review_1')
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -568,7 +592,7 @@ describe('检查器与运行中操作', () => {
       error: null,
       payload: {},
       nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
-    }
+    })
     const submit = vi.spyOn(context.run, 'submitDecision').mockResolvedValue(true)
     const wrapper = mount(RuntimeActions, { global: withEditor(context), props: { node: review } })
     const adjust = wrapper.findAll('button').find((button) => button.text() === '核签更正（adjust）')
@@ -593,7 +617,7 @@ describe('检查器与运行中操作', () => {
     const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust', 'reject'] } }
     context.document.addNode(review)
     context.editor.select('review_1')
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456ab',
       workflow_version: 1,
@@ -602,7 +626,7 @@ describe('检查器与运行中操作', () => {
       error: null,
       payload: {},
       nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
-    }
+    })
     const submit = vi.spyOn(context.run, 'submitDecision').mockResolvedValue(true)
     const wrapper = mount(RuntimeActions, { global: withEditor(context), props: { node: review } })
     const level = wrapper.find('[data-testid="decision-level"]')
@@ -623,7 +647,7 @@ describe('检查器与运行中操作', () => {
     const review = { ...createNodeDef('human_review', 'review_2'), config: { prompt: '失败接管', options: ['approve', 'reject'] } }
     context.document.addNode(review)
     context.editor.select('review_2')
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456ab',
       workflow_version: 1,
@@ -632,7 +656,7 @@ describe('检查器与运行中操作', () => {
       error: null,
       payload: {},
       nodes: [{ node_id: 'review_2', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
-    }
+    })
     expect(
       mount(RuntimeActions, { global: withEditor(context), props: { node: review } })
         .find('[data-testid="decision-level"]')
@@ -652,7 +676,7 @@ describe('检查器与运行中操作', () => {
     const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust'] } }
     context.document.addNode(review)
     context.editor.select('review_1')
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456ab',
       workflow_version: 1,
@@ -661,7 +685,7 @@ describe('检查器与运行中操作', () => {
       error: null,
       payload: {},
       nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
-    }
+    })
     /** 每次挂载前设好回执再挂：`captureFor` 是普通函数不是响应式源，同一个 wrapper 里改它不会自己重算。 */
     const shown = vi.spyOn(context.run, 'captureFor')
 
@@ -701,7 +725,7 @@ describe('检查器与运行中操作', () => {
     const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'adjust', 'reject'] } }
     context.document.addNode(review)
     context.editor.select('review_1')
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -722,7 +746,7 @@ describe('检查器与运行中操作', () => {
           notes: [],
         },
       ],
-    }
+    })
     const trace = mount(RuntimeActions, { global: withEditor(context), props: { node: review } }).find(
       '[data-testid="decision-trace"]',
     )
@@ -737,7 +761,7 @@ describe('检查器与运行中操作', () => {
     context.document.resetDocument('链路')
     const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve'] } }
     context.document.addNode(review)
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -758,7 +782,7 @@ describe('检查器与运行中操作', () => {
           notes: [],
         },
       ],
-    }
+    })
     const trace = mount(RuntimeActions, { global: withEditor(context), props: { node: review } })
       .find('[data-testid="decision-trace"]')
       .text()
@@ -773,7 +797,7 @@ describe('检查器与运行中操作', () => {
     const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '请核签', options: ['approve', 'reject'] } }
     context.document.addNode(review)
     context.editor.select('review_1')
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -782,7 +806,7 @@ describe('检查器与运行中操作', () => {
       error: null,
       payload: {},
       nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
-    }
+    })
     const submitted = vi.spyOn(context.run, 'submitDecision').mockResolvedValue(true)
     const wrapper = mount(RuntimeActions, { global: withEditor(context), props: { node: review } })
     expect(wrapper.find('[data-testid="decision-trace"]').exists(), '还没签，不该凭空冒出一行留痕').toBe(false)
@@ -798,7 +822,7 @@ describe('检查器与运行中操作', () => {
     context.document.resetDocument('链路')
     const review = { ...createNodeDef('human_review', 'review_1'), config: { prompt: '失败接管', options: [] } }
     context.document.addNode(review)
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -807,7 +831,7 @@ describe('检查器与运行中操作', () => {
       error: null,
       payload: {},
       nodes: [{ node_id: 'review_1', type: 'human_review', state: 'awaiting_human', attempts: 1, schedule_latency_ms: 1, duration_ms: 2, output: {}, error: null, notes: [] }],
-    }
+    })
     const wrapper = mount(RuntimeActions, { global: withEditor(context), props: { node: review } })
     expect(wrapper.text()).not.toContain('核签通过')
     expect(wrapper.find('input[placeholder="决策值"]').exists()).toBe(true)
@@ -1093,8 +1117,8 @@ describe('RuntimePanel 等人签的工单要数得出来、找得到', () => {
     setActivePinia(createPinia())
   })
 
-  function row(instanceId: string, status: string) {
-    return {
+  function row(instanceId: string, status: string): InstanceDetail {
+    return detail({
       instance_id: instanceId,
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -1103,7 +1127,7 @@ describe('RuntimePanel 等人签的工单要数得出来、找得到', () => {
       error: null,
       payload: {},
       nodes: [],
-    }
+    })
   }
 
   function picked(wrapper: ReturnType<typeof mount>): string[] {
@@ -1251,5 +1275,187 @@ describe('编排页画布上方的待办条', () => {
   it('store 真的导出了 openFirstWaiting：模板取用未导出的方法，运行时就是 undefined', () => {
     const store = readRepoFile('frontend', 'src', 'stores', 'workflow', 'run.ts')
     expect(store).toMatch(/^\s+openFirstWaiting,$/m)
+  })
+})
+
+/**
+ * 试运行与正式运行的界面分流：一次演练与一次真处置，按钮、弹窗文案和横幅
+ * 必须从第一眼就能区分，否则"跑了一遍"会被读成"处置过了"。
+ */
+describe('RuntimePanel 试运行与正式运行分流', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function draftWithLineage(): EditorContext {
+    const context = editorContext()
+    context.document.resetDocument('链路')
+    context.document.addNode({ ...createNodeDef('start', 'start_1'), config: { variables: [] } })
+    context.document.document = { ...context.document.document!, lineage_id: 'wf_0123456789ab' }
+    return context
+  }
+
+  it('空白画布没有 lineage 时试运行按钮不可用', () => {
+    const context = editorContext()
+    context.document.resetDocument('空白')
+    const wrapper = mount(RuntimePanel, { global: withEditor(context) })
+    expect(wrapper.find('[data-testid="preview-start"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="preview-start"]').attributes('title')).toContain('lineage')
+  })
+
+  it('实例模式两个启动口都关着，并给出返回草稿的出口', () => {
+    const context = draftWithLineage()
+    context.editor.setMode({ kind: 'instance', instanceId: 'wfi_1', readOnly: true })
+    const wrapper = mount(RuntimePanel, { global: withEditor(context) })
+    expect(wrapper.find('[data-testid="preview-start"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="instance-start"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="exit-instance"]').exists()).toBe(true)
+  })
+
+  it('点试运行先开输入弹窗，不直接发请求', async () => {
+    const context = draftWithLineage()
+    const preview = vi.spyOn(context.run, 'startPreview')
+    const wrapper = mount(RuntimePanel, {
+      global: { ...withEditor(context), stubs: { Teleport: true } },
+    })
+    await wrapper.find('[data-testid="preview-start"]').trigger('click')
+    expect(wrapper.find('[data-testid="run-input-dialog"]').exists(), '输入弹窗没有出现').toBe(true)
+    expect(wrapper.text()).toContain('试运行（不产生外部副作用）')
+    expect(preview).not.toHaveBeenCalled()
+  })
+
+  it('试运行结果旁边写明没有外部副作用，清除后画布不再叠状态', async () => {
+    const context = draftWithLineage()
+    const wrapper = mount(RuntimePanel, { global: withEditor(context) })
+    // 先让挂载时那趟 document 监听跑完，再摆结果；真实路径里结果由 startPreview 一并写入签名。
+    await wrapper.vm.$nextTick()
+    context.run.preview = detail({
+      instance_id: 'pvp_1',
+      preview: true,
+      preview_id: 'pvp_1',
+      status: 'succeeded',
+      nodes: [
+        {
+          node_id: 'start_1',
+          type: 'start',
+          state: 'succeeded',
+          attempts: 1,
+          schedule_latency_ms: 0,
+          duration_ms: 2,
+          output: {},
+          error: null,
+          notes: [],
+        },
+      ],
+    })
+    await wrapper.vm.$nextTick()
+    const banner = wrapper.find('[data-testid="preview-banner"]')
+    expect(banner.exists()).toBe(true)
+    expect(banner.text()).toContain('没有写入任何持久面')
+    expect(banner.text()).toContain('没有产生外部副作用')
+
+    await banner.find('button').trigger('click')
+    expect(context.run.preview).toBeNull()
+  })
+
+  it('正式启动入口说明跑的是已发布版本', () => {
+    const context = draftWithLineage()
+    context.document.versions = [
+      {
+        workflow_id: 'wf_0123456789cd',
+        lineage_id: 'wf_0123456789ab',
+        version: 3,
+        name: '链路',
+        description: '',
+        status: 'active',
+        node_count: 1,
+        edge_count: 0,
+        created_at: '2026-10-22T00:00:00Z',
+        content_hash: 'sha256:abc',
+        is_current: true,
+      },
+    ]
+    const wrapper = mount(RuntimePanel, { global: withEditor(context) })
+    expect(wrapper.text()).toContain('将执行已发布的 v3')
+    expect(wrapper.find('[data-testid="instance-start"]').attributes('disabled')).toBeUndefined()
+  })
+})
+
+describe('RunInputDialog：运行输入', () => {
+  function contextWithStart(variables: JsonValue[]): EditorContext {
+    const context = editorContext()
+    context.document.resetDocument('链路')
+    context.document.addNode({ ...createNodeDef('start', 'start_1'), config: { variables } })
+    return context
+  }
+
+  function mountDialog(context: EditorContext, mode: 'preview' | 'start' = 'preview') {
+    return mount(RunInputDialog, { global: withEditor(context), props: { mode, busy: false } })
+  }
+
+  const VARIABLES: JsonValue[] = [
+    { name: 'alert', label: '预警文本', type: 'string', required: true },
+    { name: 'level', type: 'number', default: 3 },
+    { name: 'urgent', type: 'boolean' },
+    { name: 'meta', type: 'json' },
+  ]
+
+  it('Start 变量生成表单：默认值、类型转换与空白可选键都按语义处理', async () => {
+    const wrapper = mountDialog(contextWithStart(VARIABLES))
+    expect(wrapper.text()).toContain('预警文本')
+    expect(wrapper.text()).toContain('alert')
+    expect((wrapper.find('[data-testid="run-input-level"]').element as HTMLInputElement).value).toBe('3')
+
+    await wrapper.find('[data-testid="run-input-alert"]').setValue('沟道泥位抬升')
+    await wrapper.find('[data-testid="run-input-urgent"]').setValue('true')
+    await wrapper.find('[data-testid="run-input-meta"]').setValue('{"station":"S-1"}')
+    await wrapper.find('[data-testid="run-input-submit"]').trigger('click')
+
+    expect(wrapper.emitted('submit')?.[0]?.[0]).toEqual({
+      alert: '沟道泥位抬升',
+      level: 3,
+      urgent: true,
+      meta: { station: 'S-1' },
+    })
+  })
+
+  it('必填为空时挡在弹窗里，不发载荷', async () => {
+    const wrapper = mountDialog(contextWithStart(VARIABLES))
+    await wrapper.find('[data-testid="run-input-submit"]').trigger('click')
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('[data-testid="run-input-error"]').text()).toContain('变量 alert 必填')
+  })
+
+  it('数字填错当场点名，不把 NaN 送进引擎', async () => {
+    const wrapper = mountDialog(contextWithStart(VARIABLES))
+    await wrapper.find('[data-testid="run-input-alert"]').setValue('有险情')
+    await wrapper.find('[data-testid="run-input-level"]').setValue('三级')
+    await wrapper.find('[data-testid="run-input-submit"]').trigger('click')
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.find('[data-testid="run-input-error"]').text()).toContain('变量 level 应为数字')
+  })
+
+  it('旧定义 JSON 一档仍可贴任意对象；数组与非对象被拒', async () => {
+    const wrapper = mountDialog(contextWithStart([]))
+    await wrapper.find('[data-testid="input-tab-json"]').trigger('click')
+    expect(wrapper.find('.wf-runinput__empty').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="run-input-json"]').setValue('[1, 2]')
+    await wrapper.find('[data-testid="run-input-submit"]').trigger('click')
+    expect(wrapper.find('[data-testid="run-input-error"]').text()).toContain('JSON 必须是对象')
+
+    await wrapper.find('[data-testid="run-input-json"]').setValue('{"alert":"有险情"}')
+    await wrapper.find('[data-testid="run-input-submit"]').trigger('click')
+    expect(wrapper.emitted('submit')?.[0]?.[0]).toEqual({ alert: '有险情' })
+  })
+
+  it('两档标题各自说清跑的是什么、会不会产生外部副作用', () => {
+    const preview = mountDialog(contextWithStart([]), 'preview')
+    expect(preview.text()).toContain('不产生外部副作用')
+    expect(preview.text()).toContain('当前画布草稿')
+    const formal = mountDialog(contextWithStart([]), 'start')
+    expect(formal.text()).toContain('真实副作用')
+    expect(formal.text()).toContain('已发布版本')
+    expect(formal.find('[data-testid="run-input-submit"]').text()).toBe('正式启动')
   })
 })

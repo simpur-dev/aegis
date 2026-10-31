@@ -480,3 +480,124 @@ async def test_没有结论裁决标记的会签不进标注池(container: Platf
         assert signed.status_code == 200, signed.text
         assert "标注沉淀" not in signed.json(), signed.json()
         assert container.labels is not None and sum(container.labels.stats.values()) == 0, "没标记就不该有任何一条账"
+
+
+# ---------- 试运行（dry-run） ----------
+
+
+async def _open_draft(client: httpx.AsyncClient, name: str) -> dict[str, Any]:
+    created = await client.post("/api/v1/workflow/lineages", json={"name": name})
+    assert created.status_code == 201, created.text
+    return created.json()
+
+
+@pytest.mark.asyncio
+async def test_试运行接口按lineage取草稿且不产生正式实例(container: PlatformContainer) -> None:
+    before = container.workflow.instance_stats["held"]
+    async with _client(container) as client:
+        draft = await _open_draft(client, "试运行接口-草稿")
+
+        created = await client.post("/api/v1/workflow/previews", json={"lineage_id": draft["lineage_id"]})
+        assert created.status_code == 201, created.text
+        detail = created.json()
+        assert detail["preview"] is True
+        assert detail["preview_id"].startswith("pvp_")
+        assert detail["lineage_id"] == draft["lineage_id"]
+        assert detail["status"] == "succeeded"
+        assert [node["node_id"] for node in detail["graph"]["nodes"]] == ["start"]
+        assert detail["created_at"] and detail["finished_at"]
+        assert container.workflow.instance_stats["held"] == before, "试运行不该占正式实例名额"
+
+        fetched = await client.get(f"/api/v1/workflow/previews/{detail['preview_id']}")
+        assert fetched.status_code == 200, fetched.text
+        assert fetched.json()["instance_id"] == detail["instance_id"]
+        assert fetched.json()["graph"] == detail["graph"]
+
+        missing = await client.get("/api/v1/workflow/previews/pvp_000000000000")
+        assert missing.status_code == 404
+        assert missing.json()["detail"]["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_试运行可以吃未保存的文档(container: PlatformContainer) -> None:
+    """画布上的改动还没保存时也要能试运行：请求体直接带文档，服务端不读仓储/草稿。"""
+    async with _client(container) as client:
+        draft = await _open_draft(client, "试运行接口-未保存")
+        document = draft["document"]
+        document["description"] = "只在请求里存在"
+        document["nodes"].append({"node_id": "wait", "type": "delay", "name": "等一下", "config": {"seconds": 0}})
+        document["edges"].append({"source": "start", "target": "wait", "condition": ""})
+        document["layout"]["positions"] = {"start": {"x": 0, "y": 0}, "wait": {"x": 300, "y": 0}}
+
+        created = await client.post("/api/v1/workflow/previews", json={"document": document})
+        assert created.status_code == 201, created.text
+        detail = created.json()
+        assert detail["graph"]["positions"]["wait"] == {"x": 300.0, "y": 0.0}
+        assert {node["node_id"] for node in detail["graph"]["nodes"]} == {"start", "wait"}
+
+        stored = await client.get(f"/api/v1/workflow/lineages/{draft['lineage_id']}/draft")
+        assert stored.json()["document"]["description"] == "", "试运行把手里的文档写回了草稿"
+
+
+@pytest.mark.asyncio
+async def test_试运行请求形状与入参边界(container: PlatformContainer) -> None:
+    async with _client(container) as client:
+        draft = await _open_draft(client, "试运行接口-边界")
+
+        both = await client.post(
+            "/api/v1/workflow/previews",
+            json={"document": draft["document"], "lineage_id": draft["lineage_id"]},
+        )
+        assert both.status_code == 422
+        assert both.json()["detail"]["code"] == "validation_failed"
+
+        oversized = await client.post(
+            "/api/v1/workflow/previews",
+            json={"lineage_id": draft["lineage_id"], "payload": {"blob": "x" * (256 * 1024 + 1)}},
+        )
+        assert oversized.status_code == 422
+        assert oversized.json()["detail"]["code"] == "document_too_large"
+        assert oversized.json()["detail"]["details"]["kind"] == "preview_payload"
+
+        unknown = await client.post("/api/v1/workflow/previews", json={"lineage_id": "wf_" + "0" * 12})
+        assert unknown.status_code == 404
+        assert unknown.json()["detail"]["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_实例详情带图与结果(container: PlatformContainer) -> None:
+    async with _client(container) as client:
+        started = await client.post("/api/v1/workflow/instances", json={"workflow_name": "人工上报核签流程", "payload": {}})
+        assert started.status_code == 200, started.text
+        detail = started.json()
+        assert detail["preview"] is False
+        assert detail["lineage_id"]
+        assert detail["graph"]["nodes"] and detail["graph"]["edges"]
+        expected = {node["node_id"] for node in detail["nodes"]}
+        assert {node["node_id"] for node in detail["graph"]["nodes"]} == expected
+        assert detail["results"] == {}, "核签之前没有任何节点产出，结果表就该是空的"
+        assert detail["finished_at"] is None, "等待会签的实例还没有终态时间"
+
+        signed = await client.post(
+            f"/api/v1/workflow/instances/{detail['instance_id']}/nodes/review/decision",
+            json={"choice": "approve", "by": "值班员普赤"},
+        )
+        assert signed.status_code == 200, signed.text
+        finished = (await client.get(f"/api/v1/workflow/instances/{detail['instance_id']}")).json()
+        assert finished["status"] == "succeeded"
+        assert finished["finished_at"] is not None
+        assert finished["results"]["review"]["choice"] == "approve"
+
+        inserted = await client.post(
+            f"/api/v1/workflow/instances/{detail['instance_id']}/nodes",
+            json={
+                "after": "review",
+                "node": {"node_id": "notify_api", "type": "notify", "config": {"text": "接口插播"}},
+                "position": {"x": 12.5, "y": -3},
+            },
+        )
+        assert inserted.status_code == 200, inserted.text
+        after = (await client.get(f"/api/v1/workflow/instances/{detail['instance_id']}")).json()
+        assert "notify_api" in {node["node_id"] for node in after["graph"]["nodes"]}
+        assert after["graph"]["positions"]["notify_api"] == {"x": 12.5, "y": -3.0}
+        assert any(edge["source"] == "notify_api" for edge in after["graph"]["edges"])

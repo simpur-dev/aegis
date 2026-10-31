@@ -118,3 +118,36 @@ class TestResponseContracts:
         schema = _operation("/api/v1/workflow/versions/{workflow_id}", "get")["responses"]["200"]["content"]["application/json"]["schema"]
         resolved = _resolve(schema)
         assert "layout" not in resolved.get("required", [])
+
+
+class TestPreviewContracts:
+    def test_试运行端点齐全(self) -> None:
+        _operation("/api/v1/workflow/previews", "post")
+        _operation("/api/v1/workflow/previews/{preview_id}", "get")
+
+    def test_试运行请求可带文档或_lineage(self) -> None:
+        body = _resolve(_operation("/api/v1/workflow/previews", "post")["requestBody"]["content"]["application/json"]["schema"])
+        assert {"document", "lineage_id", "payload"} <= set(body["properties"])
+        assert "required" not in body or body["required"] == [], "document/lineage_id 二选一由模型校验，不能写成两个都必填"
+
+    def test_试运行响应与实例详情同构(self) -> None:
+        for schema in (
+            _operation("/api/v1/workflow/previews", "post")["responses"]["201"]["content"]["application/json"]["schema"],
+            _operation("/api/v1/workflow/previews/{preview_id}", "get")["responses"]["200"]["content"]["application/json"]["schema"],
+            _operation("/api/v1/workflow/instances/{instance_id}", "get")["responses"]["200"]["content"]["application/json"]["schema"],
+        ):
+            properties = _resolve(schema)["properties"]
+            assert {
+                "instance_id",
+                "lineage_id",
+                "preview",
+                "preview_id",
+                "created_at",
+                "finished_at",
+                "results",
+                "nodes",
+                "graph",
+            } <= set(properties), f"实例/预览详情缺字段: {sorted(properties)}"
+
+    def test_预览不存在时声明_404(self) -> None:
+        assert "404" in _operation("/api/v1/workflow/previews/{preview_id}", "get")["responses"]

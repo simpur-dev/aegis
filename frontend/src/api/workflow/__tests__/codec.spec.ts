@@ -304,6 +304,60 @@ describe('codec：响应逐字段解析', () => {
     ).toThrowError(expect.objectContaining({ message: expect.stringContaining('instance.status') }))
   })
 
+  it('实例：图、结果、时间戳与试运行标记逐字段解析', () => {
+    const detail = decodeDecisionResult({
+      instance_id: 'pvp_1',
+      workflow_id: WF,
+      workflow_version: 1,
+      lineage_id: WF,
+      trace_id: 'trc_1',
+      status: 'succeeded',
+      error: null,
+      preview: true,
+      preview_id: 'pvp_1',
+      created_at: '2026-10-22T00:00:00Z',
+      finished_at: '2026-10-22T00:00:09Z',
+      payload: {},
+      results: { fetch_1: { rows: 3 }, review_1: { decision: 'approve' } },
+      nodes: [],
+      graph: {
+        nodes: [wireNode(), wireNode({ node_id: 'review_1', type: 'human_review' })],
+        edges: [{ source: 'fetch_1', target: 'review_1', condition: '' }],
+        // 已删除节点的陈旧坐标不该跟着回来
+        positions: { fetch_1: { x: 0, y: 0 }, review_1: { x: 280, y: 0 }, ghost: { x: 99, y: 99 } },
+      },
+    })
+    expect(detail.lineage_id).toBe(WF)
+    expect(detail.preview).toBe(true)
+    expect(detail.preview_id).toBe('pvp_1')
+    expect(detail.created_at).toBe('2026-10-22T00:00:00Z')
+    expect(detail.finished_at).toBe('2026-10-22T00:00:09Z')
+    expect(detail.results.fetch_1).toEqual({ rows: 3 })
+    expect(detail.graph.nodes.map((item) => item.node_id)).toEqual(['fetch_1', 'review_1'])
+    expect(detail.graph.edges).toEqual([{ source: 'fetch_1', target: 'review_1', condition: '' }])
+    expect(detail.graph.positions).toEqual({ fetch_1: { x: 0, y: 0 }, review_1: { x: 280, y: 0 } })
+  })
+
+  it('实例：旧响应没有图与试运行字段时给安全默认', () => {
+    const detail = decodeDecisionResult({
+      instance_id: 'wfi_1',
+      workflow_id: WF,
+      workflow_version: 1,
+      trace_id: 'trc_1',
+      status: 'running',
+      error: null,
+      payload: {},
+      nodes: [],
+    })
+    expect(detail.lineage_id).toBe(WF)
+    expect(detail.preview).toBe(false)
+    expect(detail.preview_id).toBeNull()
+    expect(detail.created_at).toBe('')
+    expect(detail.finished_at).toBeNull()
+    expect(detail.results).toEqual({})
+    expect(detail.graph).toEqual({ nodes: [], edges: [], positions: {} })
+  })
+
   it('请求体：节点名裁掉首尾空白', () => {
     expect(toNodeInput(node({ name: ' 数据接入 ' })).name).toBe('数据接入')
   })

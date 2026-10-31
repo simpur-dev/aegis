@@ -100,4 +100,45 @@ describe('RunTimeline', () => {
     expect(wrapper.find('ol').exists()).toBe(false)
     expect(wrapper.text()).toContain('点一条实例')
   })
+
+  it('每一行都能点：回传 node_id，画布据此把人带到那颗节点上', async () => {
+    const wrapper = mount(RunTimeline, {
+      props: { runs: [run({ node_id: 'n1' }), run({ node_id: 'n2' })], names },
+    })
+    await wrapper.findAll('.wf-tl__step')[1]!.trigger('click')
+    expect(wrapper.emitted('select')?.[0]).toEqual(['n2'])
+  })
+
+  it('试运行时逐节点展示产出；正式实例不传 outputs 就不占版面', () => {
+    const withOutputs = mount(RunTimeline, {
+      props: {
+        runs: [run({ node_id: 'n1', state: 'succeeded' })],
+        names,
+        outputs: { n1: { rows: 3, fresh: true } },
+      },
+    })
+    expect(withOutputs.find('pre').text()).toContain('"rows": 3')
+    expect(withOutputs.find('pre').text()).toContain('"fresh": true')
+
+    const withoutOutputs = mount(RunTimeline, {
+      props: { runs: [run({ node_id: 'n1', state: 'succeeded' })], names },
+    })
+    expect(withoutOutputs.find('pre').exists()).toBe(false)
+  })
+
+  it('超长产出截断并写明截断，不让一行把整条时间线撑爆', () => {
+    const wrapper = mount(RunTimeline, {
+      props: { runs: [run({ node_id: 'n1', state: 'succeeded' })], names, outputs: { n1: { text: 'x'.repeat(2_000) } } },
+    })
+    const output = wrapper.find('pre').text()
+    expect(output).toContain('…（已截断）')
+    expect(output.length).toBeLessThan(1_400)
+  })
+
+  it('空产出不画一块空白的 pre', () => {
+    const wrapper = mount(RunTimeline, {
+      props: { runs: [run({ node_id: 'n1', state: 'succeeded' })], names, outputs: { n1: {} } },
+    })
+    expect(wrapper.find('pre').exists()).toBe(false)
+  })
 })

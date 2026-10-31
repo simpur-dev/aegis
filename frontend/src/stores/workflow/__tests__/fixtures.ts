@@ -6,8 +6,8 @@
 import { vi } from 'vitest'
 import type { MockedFunction } from 'vitest'
 
-import type { InstanceDetail, InstanceNodeRun, WorkflowGateway } from '@/api/workflow/contract'
-import type { JsonValue, NodeDef, NodeType, NodeState } from '@/utils/graph'
+import type { InstanceDetail, InstanceGraph, InstanceNodeRun, WorkflowGateway } from '@/api/workflow/contract'
+import type { EdgeDef, JsonValue, NodeDef, NodeType, NodeState, Position } from '@/utils/graph'
 import type { WorkflowDocument, WorkflowDraft, WorkflowVersionSummary } from '@/utils/graph/document'
 
 export type StubGateway = { [K in keyof WorkflowGateway]: MockedFunction<WorkflowGateway[K]> }
@@ -129,16 +129,34 @@ export function nodeRun(nodeId: string, state: NodeState, overrides: Partial<Ins
   }
 }
 
+export function instanceGraph(
+  nodes: NodeDef[] = [nodeDef('fetch_1'), nodeDef('review_1', 'human_review', { options: ['approve', 'reject'] })],
+  edges: EdgeDef[] = [{ source: 'fetch_1', target: 'review_1', condition: '' }],
+  positions: Record<string, Position> = {
+    fetch_1: { x: 0, y: 0 },
+    review_1: { x: 280, y: 0 },
+  },
+): InstanceGraph {
+  return { nodes, edges, positions }
+}
+
 export function instanceDetail(overrides: Partial<InstanceDetail> = {}): InstanceDetail {
   return {
     instance_id: INSTANCE,
     workflow_id: PUBLISHED,
     workflow_version: 1,
+    lineage_id: LINEAGE,
     trace_id: 'trace-1',
     status: 'running',
     error: null,
+    preview: false,
+    preview_id: null,
+    created_at: UPDATED_AT,
+    finished_at: null,
     payload: {},
+    results: {},
     nodes: [],
+    graph: instanceGraph(),
     ...overrides,
   }
 }

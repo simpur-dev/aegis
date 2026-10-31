@@ -23,7 +23,7 @@ import {
 } from '@/components/workflow/configValidation'
 import { EDITOR_CONTEXT_KEY, createEditorContext, type EditorContext } from '@/components/workflow/editor/context'
 import type { UpstreamVariableGroup } from '@/composables/workflow/useUpstreamVariables'
-import type { NodeTypeEntry } from '@/api/workflow/contract'
+import type { InstanceDetail, NodeTypeEntry } from '@/api/workflow/contract'
 import { NODE_META, type FieldKind, type NodeRefCandidate } from '@/components/workflow/registry'
 import { NODE_SPECS, NODE_TYPES, edgeId, validateGraph, type JsonValue, type NodeDef, type NodeType } from '@/utils/graph'
 
@@ -48,6 +48,20 @@ const SUPPORTED: FieldKind[] = [
   'conditions',
   'start_variables',
 ]
+
+/** 组件用例只关心节点与状态；实例详情新增的图/时间戳字段用一份空壳补齐。 */
+function detail(part: Omit<InstanceDetail, 'lineage_id' | 'preview' | 'preview_id' | 'created_at' | 'finished_at' | 'results' | 'graph'> & Partial<InstanceDetail>): InstanceDetail {
+  return {
+    lineage_id: part.workflow_id,
+    preview: false,
+    preview_id: null,
+    created_at: '',
+    finished_at: null,
+    results: {},
+    graph: { nodes: [], edges: [], positions: {} },
+    ...part,
+  }
+}
 
 /** 多数用例要从"这一格是空的"开始，所以不套默认配置。 */
 function bareDef(type: NodeType, config: Record<string, JsonValue> = {}, nodeId = 'n_1'): NodeDef {
@@ -620,7 +634,7 @@ describe('检查器接线：参数体检与真实连线一起走', () => {
         outputs: ['rows', 'count', 'fresh_extra'],
       } satisfies NodeTypeEntry,
     ]
-    context.run.instance = {
+    context.run.instance = detail({
       instance_id: 'wfi_0123456789ab',
       workflow_id: 'wf_0123456789ab',
       workflow_version: 1,
@@ -641,7 +655,7 @@ describe('检查器接线：参数体检与真实连线一起走', () => {
           notes: [],
         },
       ],
-    }
+    })
     const wrapper = mountInspector()
     await wrapper.find('[data-testid="variable-toggle"]').trigger('click')
     const testids = wrapper.findAll('[data-testid^="var-fetch_1-"]').map((node) => node.attributes('data-testid'))

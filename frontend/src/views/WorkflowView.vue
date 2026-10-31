@@ -498,6 +498,13 @@ function handleNodeClick(event: NodeMouseEvent): void {
   if (event.node.type !== 'note') revealPanel('node')
 }
 
+/** 运行面板里点一行步骤：把画布带到那颗节点上，并打开它的参数面板。 */
+async function focusRuntimeNode(nodeId: string): Promise<void> {
+  selectNode(nodeId)
+  await focusNodeById(nodeId)
+  revealPanel('node')
+}
+
 /** 空白处双击：打开块选择器，新节点落在光标处（Dify 画布的同一条动作）。 */
 function onCanvasDoubleClick(event: MouseEvent): void {
   const target = event.target
@@ -738,6 +745,16 @@ onUnmounted(() => {
             <a-button size="small" danger @click="overwriteDraft">覆盖服务器</a-button>
           </p>
 
+          <!-- 试运行结果画在草稿画布上：横幅必须说明它不是一次真实处置，否则按色块会被读成"跑过了" -->
+          <p
+            v-if="run.preview !== null && editor.mode.kind === 'draft'"
+            class="ed-banner is-todo"
+            data-testid="canvas-preview-banner"
+          >
+            <span>试运行结果（未写入任何持久面、无外部副作用），只存在 30 分钟。</span>
+            <button type="button" class="ed-banner__retry" @click="run.clearPreview()">清除</button>
+          </p>
+
           <p v-if="surfaceErrors.length > 0" class="ed-banner is-bad">{{ surfaceErrors.join('；') }}</p>
           <p v-if="catalog.nodeTypesError !== null" class="ed-banner is-bad" data-testid="catalog-retry">
             <span>{{ catalog.nodeTypesError }}</span>
@@ -764,7 +781,7 @@ onUnmounted(() => {
       >
         <NodeInspector v-if="panelTab === 'node'" />
         <DefinitionInspector v-else-if="panelTab === 'def'" />
-        <RuntimePanel v-else />
+        <RuntimePanel v-else @focus-node="focusRuntimeNode" />
       </NodePanel>
 
       <BlockSelector v-if="request !== null" :request="request" @select="selectBlock" @close="request = null" />
