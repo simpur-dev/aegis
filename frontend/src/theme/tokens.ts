@@ -101,7 +101,9 @@ export const colorSlots = {
     'accent-ball-from': '#9B8CFF',
     'accent-ball-to': '#6D5AE0',
     'accent-ball-glow': 'rgba(139, 124, 246, 0.45)',
-    'accent-ball-text': '#FFFFFF',
+    /* 大数字压在球的亮心（#9B8CFF）上：白字实测 2.77，连大字号那档 3:1 都不过。
+       深墨同底 6.76:1；两主题同值，免得浅深各走一支把层级做歪。 */
+    'accent-ball-text': '#100C33',
     // 一张图「深空皮肤」的太空底：两主题同值——那是"宇宙"，不随页面主题翻面
     'space-globe': '#061326',
     'deep-space': '#05030E',
@@ -120,8 +122,11 @@ export const colorSlots = {
     // 2026-10-30 二次调整：透明度再降一档（更实），色相去饱和——压在白底高德地图上不再泛灰
     'map-panel-bg': 'rgba(24, 42, 70, 0.64)',
     'map-panel-border': 'rgba(150, 180, 220, 0.28)',
-    'map-panel-text': '#E6EDF7',
-    'map-panel-text-muted': '#B9C6DA',
+    /* 玻璃卡叠在地图影像上，实测合成底 rgb(102,115,134)：原 #E6EDF7 只有 4.09、
+       次要字 #B9C6DA 只有 2.79，12px 小字根本读不清。字色-only 的上限就是近白——
+       主/次两档因此几乎同色，层级退回字号撑。 */
+    'map-panel-text': '#FFFFFF',
+    'map-panel-text-muted': '#FAFCFF',
     'map-floatbar-bg': 'rgba(218, 236, 255, 0.82)',
     // 监测页「时序曲线」重点卡：蓝底白线（白字压两端渐变都要过 AA，见 tokens.spec）
     'chart-hero-from': '#2C56A8',
@@ -190,7 +195,9 @@ export const colorSlots = {
     'accent-ball-from': '#8B7CF6',
     'accent-ball-to': '#5B49C8',
     'accent-ball-glow': 'rgba(139, 124, 246, 0.5)',
-    'accent-ball-text': '#FFFFFF',
+    /* 与浅主题同一支深墨（口径只留一份）：白字在球的亮心上只有 3.30:1，大字号勉强过、
+       但两主题数字颜色不一致会被读成"状态变了"。 */
+    'accent-ball-text': '#100C33',
     'space-globe': '#061326',
     'deep-space': '#05030E',
     // 深色主题下"最强的动作"是提亮：浅底深字（若沿用黑底，必须换成亮字，见提示词 §4.1）
@@ -205,7 +212,9 @@ export const colorSlots = {
     'map-panel-bg': 'rgba(208, 224, 244, 0.72)',
     'map-panel-border': 'rgba(255, 255, 255, 0.6)',
     'map-panel-text': '#0B1220',
-    'map-panel-text-muted': '#33415A',
+    /* 深主题这张卡是浅玻璃（合成底 rgb(153,166,185)）：#33415A 实测 4.16，差 4.5 一点点；
+       再深一档到 #273349 拿到 5.14，主/次两档的色差仍然看得出。 */
+    'map-panel-text-muted': '#273349',
     'map-floatbar-bg': 'rgba(18, 28, 46, 0.72)',
     // 深色主题的重点卡换成靛蓝渐变；白线/近白字仍要过 3:1 / 4.5:1
     'chart-hero-from': '#16294D',

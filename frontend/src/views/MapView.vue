@@ -734,9 +734,11 @@ watch(visibility, (value) => {
   color: var(--aeg-color-text-secondary);
 }
 .scene-bar .hint {
-  /* 这行提示原来写死 #fa8c16——在白底卡上是 2.38:1，12px 小字根本读不清（真机体检按 4.5:1 拦下）。
-     警告档走令牌：浅主题 #B45309、深主题 #FBBF24，两档都在自己的卡面上过 4.5:1。 */
-  color: var(--aeg-color-status-warning);
+  /* 这条 hint 坐在**浅色**悬浮胶囊上（合成底实测 rgb(222,237,254)）：
+     `--aeg-color-status-warning` 的浅主题档 #B45309 实算只有 4.23:1，12px 小字差一点点。
+     改用同为主题里的"琥珀文字"那一档 #8A4005（同一支也被台账/工单用在亮底上），实算 6.27:1；
+     深主题里它翻成 #FBBF24，压在深胶囊上 6.78:1，两档都过。 */
+  color: var(--aeg-tag-orange-text);
 }
 .muted {
   font-size: 12px;

@@ -153,6 +153,11 @@ defineProps<{ items: KpiItem[] }>()
   font-weight: var(--aeg-weight-semibold);
   color: var(--aeg-color-text-muted);
 }
+/* 球里那颗"个/条"实测只有 2.87:1（深主题合成底 rgb(59,75,104) 上的 #8595AD，11px/600 要 4.5）。
+   球面是全站最亮的一块，页级 muted 搬进来必然读不清——回到球自己的主字色，层级靠字号（11 vs 28）。 */
+.kpi__ball .kpi__suffix {
+  color: var(--aeg-color-text);
+}
 .kpi.is-accent .kpi__suffix {
   color: var(--aeg-color-accent-ball-text);
 }
