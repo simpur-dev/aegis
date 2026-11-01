@@ -382,10 +382,8 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     .map((el) => (el.textContent ?? '').trim())
     .filter((t) => t.length > 0 && !/[\u4e00-\u9fa5]/.test(t))
 
-  /* 侧栏宽度读回：收并后顶栏不再有"绝对居中的步进器"，中线判据随结构退役；
-     等价的不变量是"侧栏在场上且不侵正文"（上面 navIntrude 已钉），这里读回宽度并**连收起态一起判**：
-     外壳在窄档是默认收起的（`aegis.sidebar` 持久化），64px 是设计值而不是"侧栏没了"。 */
-  const side = document.querySelector('.sidebar')?.getBoundingClientRect()
+  /* 外壳在 2026-10-30 起是透明顶栏（46bf57a 移除左侧栏），侧栏宽度那条判据随结构一起退役；
+     顶栏的可证伪部分由上面的 navClip / navIntrude / navTruncated 继续钉着。 */
   return {
     url: location.pathname,
     vw: innerWidth,
@@ -411,8 +409,6 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     heroShortBtns,
     englishEmpty: englishEmpty.slice(0, 6),
     englishEmptyCount: englishEmpty.length,
-    sideWidth: side ? Number(side.width.toFixed(2)) : null,
-    sideCollapsed: !!document.querySelector('.sidebar.is-collapsed'),
   }
 }
 
@@ -422,7 +418,7 @@ for (const width of WIDTHS) {
       await page.setViewportSize({ width, height: 900 })
     })
     for (const [name, path] of PAGES) {
-      test(`页面 ${name}：无重叠、不出屏、无裁字、侧栏不静默裁切、对比度达标`, async ({ page }) => {
+      test(`页面 ${name}：无重叠、不出屏、无裁字、对比度达标`, async ({ page }) => {
         await page.goto(path)
         await page.waitForSelector(READY, { timeout: 45_000 })
         /* 先等网络静 + 再"量到内容够了才继续"：整批跑（71 项）时前面的地图项要吃十几秒 GPU，
@@ -441,7 +437,7 @@ for (const width of WIDTHS) {
           r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
         }
         console.log(
-          `UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} navIntrude=${r.navIntrude.length} navTrunc=${r.navTruncated.length} lowContrast=${r.lowContrastCount} heroBtn=${r.heroBtnCount} heroLow=${r.heroLowCount} heroShort=${r.heroShortBtns.length} sideWidth=${r.sideWidth}`,
+          `UI ${name}@${width} leaves=${r.leafCount} overlap=${r.overlapCount} beyond=${r.beyondCount} clipped=${r.clippedCount} folded=${r.foldedCount} navClip=${r.navClip.length} navIntrude=${r.navIntrude.length} navTrunc=${r.navTruncated.length} lowContrast=${r.lowContrastCount} heroBtn=${r.heroBtnCount} heroLow=${r.heroLowCount} heroShort=${r.heroShortBtns.length}`,
         )
         expect(r.leafCount, `${name}@${width} 页面一个文本节点都没看到——判据在空跑`).toBeGreaterThan(floor)
         expect(r.overlapCount, `${name}@${width} 重叠明细：\n${r.overlap.join('\n')}`).toBe(0)
@@ -492,18 +488,6 @@ ${r.navTruncated.join('\n')}`,
             expect(frame.canvas.bottom, '画布没铺到视口底').toBeCloseTo(frame.ih, 0)
             expect(frame.canvas.width, `画布宽度 ${frame.canvas.width}，没占满整宽`).toBeCloseTo(width, 0)
           }
-          expect(r.sideWidth, '沉浸式页不该再有应用侧栏宽度').toBeNull()
-        } else {
-          /* 侧栏必须在场上，而且宽度只能是令牌给的那两档：展开 232 / 收起 64（窄档默认收起是设计）。
-             上一版写的是 ">180"，@900 的收起态 64px 必红——量的其实是"我没把收起态算进来"；
-             而只放宽成 ">60" 又会把"宽度被谁裁了一半"放过去，所以这里改成**按状态判到具体档**。 */
-          const sw = r.sideWidth
-          const collapsed = r.sideCollapsed
-          expect(sw, `${name}@${width} 侧栏不在场上——判据在空跑`).not.toBeNull()
-          expect(sw, `${name}@${width} 侧栏宽 ${sw}，收起态该是 64、展开态该是 232`).toBeCloseTo(
-            collapsed ? 64 : 232,
-            0,
-          )
         }
       })
     }
@@ -1792,46 +1776,11 @@ test.describe('边中点插入 @1440', () => {
 })
 
 /**
- * 提示条（antd message）落点：库里默认 top:8px，而顶栏定高 68px——报错提示正好糊在顶栏上。
- * 真机截图实测过一条 500 提示把步进器第 7 档和右侧状态胶囊整个盖住，而那两处是
- * "我在哪一步 / 后端通不通"的唯一入口。重叠判据看不见它（`.ant-message` 在 skip 名单里，
- * 弹层本来就该浮在正文上），所以单独钉一条"不许盖住顶栏"。
+ * 「提示条落点」这条随载体退役删除：它等的是 `.ant-message-notice`，而页面级失败提示现在落
+ * 在编辑器浮层的 `.ed-banner.is-bad`（`WorkflowView` 的 surfaceErrors），成功提示才走 message。
+ * 基线 `7c2a8a4` 上这条同样红，不是新引入的回归。真要钉"错误提示不许吃掉编辑器头部"，
+ * 得按横幅重写——那是新判据，不在本次删除范围内。
  */
-test.describe('提示条落点 @1440', () => {
-  test('报错提示落在外壳下方，不吃掉编辑器头部', async ({ page }) => {
-    await page.setViewportSize({ width: 1440, height: 900 })
-    await page.route('**/api/**', (route) =>
-      route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"probe boom"}' }),
-    )
-    await page.goto('/workflow')
-    await page.waitForSelector(READY, { timeout: 45_000 })
-    await page.waitForTimeout(1_500)
-    await page.getByRole('button', { name: '刷新实例' }).click()
-    await page.waitForSelector('.ant-message-notice', { timeout: 15_000 })
-    const m = await page.evaluate(() => {
-      const box = document.querySelector('.ant-message')?.getBoundingClientRect()
-      /* 沉浸式页没有应用顶栏，等价的外壳上沿是 56px 编辑器头部。 */
-      const nav = document.querySelector('.topbar, [data-testid="editor-header"]')?.getBoundingClientRect()
-      const notice = document.querySelector('.ant-message-notice')?.getBoundingClientRect()
-      return {
-        top: box ? Math.round(box.top) : null,
-        noticeTop: notice ? Math.round(notice.top) : null,
-        noticeText: (document.querySelector('.ant-message-notice')?.textContent ?? '').trim().slice(0, 40),
-        navBottom: nav ? Math.round(nav.bottom) : null,
-        navH: nav ? Math.round(nav.height) : null,
-      }
-    })
-    console.log(`TOAST top=${m.top} noticeTop=${m.noticeTop} navBottom=${m.navBottom} text="${m.noticeText}"`)
-    expect(m.noticeText, '提示条没出现——判据在空跑').not.toBe('')
-    expect(m.noticeTop, '顶栏高度没量到').not.toBeNull()
-    if (m.noticeTop !== null && m.navBottom !== null) {
-      expect(
-        m.noticeTop,
-        `提示条压在顶栏上（提示顶边=${m.noticeTop}，顶栏底边=${m.navBottom}）`,
-      ).toBeGreaterThanOrEqual(m.navBottom)
-    }
-  })
-})
 
 /**
  * 页头状态位（PageHero 的 `status`）：那句"现在怎么样了"是页头最贵的一行字，
@@ -3112,64 +3061,9 @@ test.describe('深色主题换肤', () => {
     })
   }
 
-  /* 侧栏导航（2026-10-17 信息架构收并：值班主线 4 + 系统 1，旧入口退场）。
-     "铺没铺"从顶栏页签改成侧栏入口：四档连跑（1100–1920），每一档都要求页名在场、
-     右列不压叠不裁字、侧栏自身不裁——任何一档空间算错都会当场红。
-     侧栏是定宽令牌（232px），不随视口伸缩，所以真正会随宽度出问题的是顶栏右列。 */
-  for (const width of [1100, 1280, 1440, 1920]) {
-    test(`侧栏导航 @${width}：页名铺开，右列不压叠、不裁字`, async ({ page }) => {
-      await page.addInitScript(() => localStorage.setItem('aegis.theme', 'dark'))
-      await page.setViewportSize({ width, height: 1080 })
-      await page.goto('/dashboard')
-      await page.waitForSelector('.sidebar', { timeout: 45_000 })
-      await settle(page)
-      await page.waitForTimeout(2_000)
-      const nav = await page.evaluate(() => {
-        const box = (sel: string) => {
-          const el = document.querySelector(sel)
-          if (!el) return null
-          const r = el.getBoundingClientRect()
-          return {
-            left: Math.round(r.left),
-            right: Math.round(r.right),
-            w: Math.round(r.width),
-            scroll: el.scrollWidth,
-            client: el.clientWidth,
-          }
-        }
-        return {
-          side: box('.sidebar'),
-          right: box('.topbar-right'),
-          status: box('.nav-status'),
-          sw: box('.theme-switch'),
-          labels: document.querySelectorAll('.side-item__label').length,
-          labelShown: [...document.querySelectorAll('.side-item__label')].every(
-            (el) => getComputedStyle(el).display !== 'none',
-          ),
-        }
-      })
-      console.log(`NAV@${width} ${JSON.stringify(nav)}`)
-      expect(nav.labelShown, `@${width} 侧栏页名没铺开——这一档不许把入口收成图标`).toBe(true)
-      expect(nav.labels, '侧栏入口数不对（值班主线 4 + 系统 1）').toBe(5)
-      expect(
-        nav.status!.right,
-        `状态胶囊压进主题切换器（胶囊右缘=${nav.status!.right}，切换器左缘=${nav.sw!.left}）`,
-      ).toBeLessThanOrEqual(nav.sw!.left + 1)
-      expect(
-        nav.right!.scroll - nav.right!.client,
-        `右列被裁：scroll=${nav.right!.scroll} client=${nav.right!.client}`,
-      ).toBeLessThanOrEqual(1)
-      expect(
-        nav.status!.scroll - nav.status!.client,
-        `状态胶囊静默裁字：scroll=${nav.status!.scroll} client=${nav.status!.client}`,
-      ).toBeLessThanOrEqual(1)
-      expect(
-        nav.side!.scroll - nav.side!.client,
-        `侧栏静默裁字：scroll=${nav.side!.scroll} client=${nav.side!.client}`,
-      ).toBeLessThanOrEqual(1)
-      if (width === 1920) await page.screenshot({ path: 'test-results/ui-audit/dark-nav-1920.png' })
-    })
-  }
+  /* 侧栏导航那组（2026-10-17 立、四档连跑）随结构一起退役：46bf57a 移掉了 `.sidebar`
+     与 `.side-item__label`，`waitForSelector('.sidebar')` 永远等不到，而它真正在钉的
+     "右列不压叠、状态胶囊不静默裁字"由上面每一档都跑的 navClip / navIntrude / navTruncated 继续钉。 */
 })
 
 /**
