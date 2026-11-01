@@ -6,6 +6,7 @@ import zhCN from 'ant-design-vue/es/locale/zh_CN'
 
 import api from '@/api/client'
 import ServiceTokenBar from '@/components/ServiceTokenBar.vue'
+import AssistantDock from '@/components/assistant/AssistantDock.vue'
 import { useEventStream } from '@/composables/useEventStream'
 import { antdTheme } from '@/theme/antd'
 import { NAV_GROUPS } from '@/router'
@@ -189,6 +190,8 @@ const statusTitle = computed<string>(() =>
           </footer>
         </main>
       </div>
+      <!-- 全站悬浮的智能助手：所有页面都有（含沉浸式编排页），位置/开合自己持久化 -->
+      <AssistantDock :immersive="immersive" />
     </div>
   </a-config-provider>
 </template>
@@ -432,6 +435,11 @@ const statusTitle = computed<string>(() =>
   min-height: 0;
   overflow-y: auto;
   padding: var(--aeg-space-s5) var(--aeg-space-s6);
+  transition: margin-right var(--aeg-motion-base) ease;
+}
+/* 助手抽屉打开时把主内容整体往左挤（抽屉本身固定贴右，不再盖在内容上） */
+html.assistant-drawer-open .main-content {
+  margin-right: clamp(320px, 25vw, 520px);
 }
 /* 一张图全屏：主内容不再留内边距，地图自己铺满顶栏以下 */
 .main-content.is-map {
