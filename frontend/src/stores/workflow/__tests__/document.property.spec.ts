@@ -24,7 +24,14 @@ import type { DraftPutInput, WorkflowGateway } from '@/api/workflow/contract'
  *  3. 画布：`defToGraph` → `graphToDef` 的往返（视图重建等于没动过）。
  */
 
-/** 递归 JSON 值（两层）：不用 `fc.jsonValue`，因为要把 `__proto__` 这类名字当普通值/键生成出来。 */
+/** 递归 JSON 值（两层）：不用 `fc.jsonValue`，因为要把 `__proto__` 这类名字当普通值/键生成出来。
+ *
+ * 键的一侧要排除字面量 `__proto__`：编解码层按安全设计**拒收**它（原型污染守卫，
+ * 由 `api/workflow/__tests__/codec.spec.ts` 用固定报文钉死）。属性档量的是
+ * "凡是编解码层接受的 config 都无损往返"，把守卫要拒的那一种混进生成域，
+ * 就成了每几轮撞一次的反例——撞上的那一轮报的是"编解码不相等"，其实两边都没错。
+ */
+const objectKey = fc.string().filter((key) => key !== '__proto__')
 const leaf: fc.Arbitrary<JsonValue> = fc.oneof(
   fc.constant(null),
   fc.boolean(),
@@ -33,7 +40,7 @@ const leaf: fc.Arbitrary<JsonValue> = fc.oneof(
   fc.constant('__proto__'),
 )
 const arrayValue = fc.array(leaf, { maxLength: 3 })
-const objectValue = fc.dictionary(fc.string(), fc.oneof(leaf, arrayValue), { maxKeys: 3 })
+const objectValue = fc.dictionary(objectKey, fc.oneof(leaf, arrayValue), { maxKeys: 3 })
 const jsonValue: fc.Arbitrary<JsonValue> = fc.oneof(leaf, arrayValue, objectValue)
 
 /**
