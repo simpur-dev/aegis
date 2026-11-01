@@ -13,7 +13,12 @@ import RunInputDialog from './RunInputDialog.vue'
 import RunTimeline from './RunTimeline.vue'
 import { useEditorContext } from './editor/context'
 
-const emit = defineEmits<{ 'focus-node': [nodeId: string] }>()
+const emit = defineEmits<{
+  /** 时间线某一行的点击：要看那颗节点的参数，所以连带打开节点面板。 */
+  'focus-node': [nodeId: string]
+  /** 点实例行：只把画布带到它卡住（或第一步）的节点上，右栏得留在运行态——否则刚展开的时间线会被换掉。 */
+  'locate-node': [nodeId: string]
+}>()
 
 const { document: documentStore, editor, run } = useEditorContext()
 
@@ -79,7 +84,7 @@ function abort(): void {
 async function pick(row: InstanceDetail): Promise<void> {
   if (!(await run.focusInstance(row.instance_id))) return
   const target = row.nodes.find((node) => node.state === 'awaiting_human') ?? row.nodes[0]
-  if (target !== undefined) emit('focus-node', target.node_id)
+  if (target !== undefined) emit('locate-node', target.node_id)
 }
 
 /**

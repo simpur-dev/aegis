@@ -505,6 +505,12 @@ async function focusRuntimeNode(nodeId: string): Promise<void> {
   revealPanel('node')
 }
 
+/** 点实例行只带画布，不换右栏：值班员正在读的就是这条时间线，把它换成参数面板等于把人赶走。 */
+async function locateCanvasNode(nodeId: string): Promise<void> {
+  selectNode(nodeId)
+  await focusNodeById(nodeId)
+}
+
 /** 空白处双击：打开块选择器，新节点落在光标处（Dify 画布的同一条动作）。 */
 function onCanvasDoubleClick(event: MouseEvent): void {
   const target = event.target
@@ -781,7 +787,7 @@ onUnmounted(() => {
       >
         <NodeInspector v-if="panelTab === 'node'" />
         <DefinitionInspector v-else-if="panelTab === 'def'" />
-        <RuntimePanel v-else @focus-node="focusRuntimeNode" />
+        <RuntimePanel v-else @focus-node="focusRuntimeNode" @locate-node="locateCanvasNode" />
       </NodePanel>
 
       <BlockSelector v-if="request !== null" :request="request" @select="selectBlock" @close="request = null" />

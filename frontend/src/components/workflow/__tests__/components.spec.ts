@@ -1194,6 +1194,70 @@ describe('RuntimePanel 等人签的工单要数得出来、找得到', () => {
     expect(stamp).toContain('尚未取到数据')
     expect(stamp, '没取到数却写"取数 …"，是凭空造出来的时间戳').not.toContain('取数')
   })
+
+  /**
+   * 点实例行与点时间线行是两件事：前者要留下的正是这条时间线（右栏得停在运行态），
+   * 后者才是要去看那颗节点的参数。E3 真机把两者接成了同一个事件，一点实例行右栏就换档，
+   * 刚展开的时间线当场消失（`ui-overlap` 的「时间线一行都没有」就是它）。
+   */
+  it('点实例行只把画布带到节点上，不抢右栏——时间线要留在运行态', async () => {
+    const context = editorContext()
+    context.document.resetDocument('链路')
+    context.run.focusInstance = async () => true
+    context.run.instances = [
+      detail({
+        instance_id: 'wfi_在签',
+        workflow_id: 'wf_0123456789ab',
+        status: 'waiting',
+        nodes: [
+          {
+            node_id: 'review_1',
+            type: 'human_review',
+            state: 'awaiting_human',
+            attempts: 1,
+            schedule_latency_ms: 1,
+            duration_ms: null,
+            output: {},
+            error: null,
+            notes: [],
+          },
+        ],
+      }),
+    ]
+    const wrapper = mount(RuntimePanel, { global: withEditor(context) })
+    await wrapper.find('.wf-run__pick').trigger('click')
+    expect(wrapper.emitted('locate-node')?.[0], '画布要带到卡住的那颗节点').toEqual(['review_1'])
+    expect(wrapper.emitted('focus-node'), '点实例行不该顺带打开节点面板：那会把时间线换掉').toBeUndefined()
+  })
+
+  it('点时间线某一行才是要看参数：这时才打开节点面板', async () => {
+    const context = editorContext()
+    context.document.resetDocument('链路')
+    context.run.focusInstance = async () => true
+    context.run.instance = detail({
+      instance_id: 'wfi_在签',
+      workflow_id: 'wf_0123456789ab',
+      status: 'waiting',
+      nodes: [
+        {
+          node_id: 'review_1',
+          type: 'human_review',
+          state: 'awaiting_human',
+          attempts: 1,
+          schedule_latency_ms: 1,
+          duration_ms: null,
+          output: {},
+          error: null,
+          notes: [],
+        },
+      ],
+    })
+    context.editor.setMode({ kind: 'instance', instanceId: 'wfi_在签', readOnly: true })
+    const wrapper = mount(RuntimePanel, { global: withEditor(context) })
+    expect(wrapper.findAll('.wf-tl__step')).toHaveLength(1)
+    await wrapper.find('.wf-tl__step').trigger('click')
+    expect(wrapper.emitted('focus-node')?.[0]).toEqual(['review_1'])
+  })
 })
 
 /**
