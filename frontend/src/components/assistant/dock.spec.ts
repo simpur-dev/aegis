@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { clampTop, isClick } from '@/components/assistant/dock'
+import { clampDrawerWidth, clampTop, defaultDrawerWidth, isClick } from '@/components/assistant/dock'
 
 describe('竖直位置夹紧', () => {
   it('往上拖不过顶栏：上界 = 顶栏高 + 8', () => {
@@ -39,5 +39,28 @@ describe('点击与拖拽的判定', () => {
   it('位移达到 4px 算拖拽（松手不许误触）', () => {
     expect(isClick(0, 4)).toBe(false)
     expect(isClick(10, 0)).toBe(false)
+  })
+})
+
+describe('抽屉宽度夹紧（左侧拖拽手柄）', () => {
+  it('最窄 320：再小就夹住', () => {
+    expect(clampDrawerWidth(200, 1440)).toBe(320)
+    expect(clampDrawerWidth(0, 1440)).toBe(320)
+  })
+
+  it('最宽 480：再宽主页面就被压垮（四球会换行）', () => {
+    expect(clampDrawerWidth(900, 1440)).toBe(480)
+    expect(clampDrawerWidth(480, 1440)).toBe(480)
+  })
+
+  it('窄视口按 60% 继续收紧上限（1024 → 480，700 → 420）', () => {
+    expect(clampDrawerWidth(900, 1024)).toBe(480)
+    expect(clampDrawerWidth(900, 700)).toBe(420)
+    expect(clampDrawerWidth(400, 700)).toBe(400)
+  })
+
+  it('默认宽度 = 视口 25%，再夹紧一次（1440→360，1024→320）', () => {
+    expect(defaultDrawerWidth(1440)).toBe(360)
+    expect(defaultDrawerWidth(1024)).toBe(320)
   })
 })

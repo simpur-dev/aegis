@@ -437,9 +437,14 @@ const statusTitle = computed<string>(() =>
   padding: var(--aeg-space-s5) var(--aeg-space-s6);
   transition: margin-right var(--aeg-motion-base) ease;
 }
-/* 助手抽屉打开时把主内容整体往左挤（抽屉本身固定贴右，不再盖在内容上） */
+/* 助手抽屉打开时把主内容整体往左挤（抽屉本身固定贴右，不再盖在内容上）；
+   宽度只读 --assistant-drawer-w 一个真源，抽屉左侧拖拽时同步跟随 */
 html.assistant-drawer-open .main-content {
-  margin-right: clamp(320px, 25vw, 520px);
+  margin-right: var(--assistant-drawer-w, clamp(320px, 25vw, 520px));
+}
+/* 拖宽度手柄时关掉过渡：否则主内容会滞后于指针 */
+html.assistant-resizing .main-content {
+  transition: none;
 }
 /* 一张图全屏：主内容不再留内边距，地图自己铺满顶栏以下 */
 .main-content.is-map {

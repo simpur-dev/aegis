@@ -54,12 +54,14 @@ defineProps<{ items: KpiItem[] }>()
 .kpi-strip {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-start;
-  /* 四颗球"挨着站"：间距压到 4px，像参考图里白球-紫球-白球那样成组，而不是四张卡摊满一行 */
-  gap: var(--aeg-space-s1);
+  /* 四颗球在卡片里均匀铺开：左右内缩相等，中间三处空隙由 space-between 均分 */
+  justify-content: space-between;
+  gap: 0;
+  /* 卡片被拉伸到与右侧等高时，标题仍贴顶（与右侧标题齐），多出的高度落在标题与球之间 */
   align-items: flex-start;
   margin-bottom: var(--aeg-space-s4);
-  padding: var(--aeg-space-s4) var(--aeg-space-s5);
+  /* 与右侧 .glass-panel 的 16px 内边距对齐：两边卡片内容从同一条竖线起 */
+  padding: var(--aeg-space-s4);
   border: 1px solid var(--aeg-color-glass-border);
   border-radius: var(--aeg-radius-xl);
   background: var(--aeg-color-glass-bg);
@@ -177,6 +179,34 @@ defineProps<{ items: KpiItem[] }>()
 @media (max-width: 900px) {
   .kpi-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 卡片自身被挤窄时（例如助手抽屉拖宽）球体自动缩一档，避免四颗球换行；
+   断点按卡片内容宽度算，不跟视口走——抽屉挤压不会触发 @media。 */
+.kpi-strip {
+  container-type: inline-size;
+}
+@container (max-width: 620px) {
+  .kpi__ball {
+    width: 112px;
+    height: 112px;
+  }
+  .kpi.is-accent .kpi__ball {
+    width: 132px;
+    height: 132px;
+  }
+}
+@container (max-width: 520px) {
+  .kpi__ball {
+    width: 96px;
+    height: 96px;
+    margin-top: var(--aeg-space-s4);
+  }
+  .kpi.is-accent .kpi__ball {
+    width: 112px;
+    height: 112px;
+    margin-top: 0;
   }
 }
 </style>

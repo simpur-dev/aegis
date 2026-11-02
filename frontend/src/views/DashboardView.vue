@@ -237,61 +237,60 @@ watch(
       - 全部面板共用 .glass-panel，不各写一份 backdrop-filter。
     -->
     <div class="dash-layout">
-      <div class="dash-main">
-        <KpiStrip :items="kpis">
-          <!-- 页头并进第一块玻璃卡：标题/徽标/说明/更新时间/刷新都与四颗球同属"值班员的第一屏"。
-               仍然用统一的 PageHero 组件（uiTheme 门禁要求常规页面必须接它），只是换个宿主。 -->
-          <template #header>
-            <div class="dash-hero">
-              <PageHero
-                title="态势总览"
-                badge="实时"
-                caption="值班员的第一屏：要人处理的待办、现场读数、风险瓦片、链路记录与实时事件流。"
-              >
-                <template #actions>
-                  <span data-testid="dashboard-updated">
-                    {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
-                  </span>
-                  <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
-                </template>
-              </PageHero>
-            </div>
-          </template>
-        </KpiStrip>
+      <KpiStrip class="dash-kpi" :items="kpis">
+        <!-- 页头并进第一块玻璃卡：标题/徽标/说明/更新时间/刷新都与四颗球同属"值班员的第一屏"。
+             仍然用统一的 PageHero 组件（uiTheme 门禁要求常规页面必须接它），只是换个宿主。 -->
+        <template #header>
+          <div class="dash-hero">
+            <PageHero
+              title="态势总览"
+              badge="实时"
+              caption="值班员的第一屏：要人处理的待办、现场读数、风险瓦片、链路记录与实时事件流。"
+            >
+              <template #actions>
+                <span data-testid="dashboard-updated">
+                  {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
+                </span>
+                <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
+              </template>
+            </PageHero>
+          </div>
+        </template>
+      </KpiStrip>
 
-        <div class="dash-split">
-          <section class="glass-panel">
-            <a-card :title="gridTitle" size="small" :loading="loading">
-              <RiskWall :cells="regionGrid" :window-size="CHAIN_WINDOW" />
-            </a-card>
-          </section>
-          <section class="glass-panel">
-            <a-card :title="chainsTitle" size="small" :loading="loading">
-              <ChainList :chains="recentChains" />
-            </a-card>
-          </section>
-        </div>
+      <!-- 第一行右：智能体在线状态（原来贴在右侧栏悬浮，现在与 KPI 同一行） -->
+      <section class="glass-panel dash-agent">
+        <a-card title="智能体在线状态（经总线契约注册）" size="small">
+          <AgentBoard :agents="agents" />
+        </a-card>
+      </section>
 
+      <!-- 第二行左：风险区域网格 + 链路执行记录（合起来与上方 KPI 同宽） -->
+      <div class="dash-split">
         <section class="glass-panel">
-          <a-card title="实时事件流（SSE）" size="small">
-            <EventFeed :events="events.slice(0, 8)" />
+          <a-card :title="gridTitle" size="small" :loading="loading">
+            <RiskWall :cells="regionGrid" :window-size="CHAIN_WINDOW" />
           </a-card>
         </section>
-
         <section class="glass-panel">
-          <!-- 垫在明细之后：KPI 与链路要先占住首屏，但这块必须和它们在同一页——
-               判"预案为什么变慢"时翻的是这个，不是日志。 -->
-          <LegStatusPanel />
+          <a-card :title="chainsTitle" size="small" :loading="loading">
+            <ChainList :chains="recentChains" />
+          </a-card>
         </section>
       </div>
 
-      <aside class="dash-rail">
-        <section class="glass-panel">
-          <a-card title="智能体在线状态（经总线契约注册）" size="small">
-            <AgentBoard :agents="agents" />
-          </a-card>
-        </section>
-      </aside>
+      <!-- 第二行右：实时事件流（与上方智能体卡同宽） -->
+      <section class="glass-panel dash-events">
+        <a-card title="实时事件流（SSE）" size="small">
+          <EventFeed :events="events.slice(0, 8)" />
+        </a-card>
+      </section>
+
+      <section class="glass-panel dash-legs">
+        <!-- 垫在明细之后：KPI 与链路要先占住首屏，但这块必须和它们在同一页——
+             判"预案为什么变慢"时翻的是这个，不是日志。 -->
+        <LegStatusPanel />
+      </section>
     </div>
   </div>
 </template>
@@ -307,59 +306,83 @@ watch(
 .dash-hero :deep(.page-head) {
   margin-bottom: 0;
 }
+/* KPI 卡里的页头标题与其它卡片标题同档：20px / 700（PageHero 默认 600） */
+.dash-hero :deep(.page-head__title) {
+  font-size: var(--aeg-font-lg);
+  font-weight: var(--aeg-weight-bold);
+}
 
-/* 三栏大屏骨架：主内容 + 右侧常驻智能体栏（≥1280px 才分栏，更窄时折到主内容下方，
-   与侧栏 1000px 的收起断点保持同一种"先收窄、再折行"的观感）。 */
+/* 两行两列大屏骨架：
+   第一行 63 / 37（态势总览 | 智能体在线状态）；
+   第二行 63 / 37（风险区域 + 链路执行 | 实时事件流）；
+   "可选子系统"跨两列垫在最后。
+   用 63fr / 37fr 而不是 63% / 37%：带 gap 的百分比会把一行撑破。 */
 .dash-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 63fr) minmax(0, 37fr);
+  grid-template-areas:
+    'kpi agent'
+    'split events'
+    'legs legs';
   gap: var(--aeg-space-s4);
   align-items: start;
-}
-.dash-main {
-  display: flex;
-  flex-direction: column;
-  gap: var(--aeg-space-s4);
   min-width: 0;
+}
+.dash-layout > .dash-kpi {
+  grid-area: kpi;
+  /* KpiStrip 自带 margin-bottom，网格 gap 已经负责间距，这里吃掉避免双倍 */
+  margin-bottom: 0;
+  /* 第一行两块卡等高：态势总览的底边与智能体在线状态齐平 */
+  align-self: stretch;
+}
+.dash-layout > .dash-agent {
+  grid-area: agent;
+  min-width: 0;
+  overflow: hidden;
+  align-self: stretch;
+}
+.dash-layout > .dash-split {
+  grid-area: split;
+  min-width: 0;
+}
+.dash-layout > .dash-events {
+  grid-area: events;
+  min-width: 0;
+}
+.dash-layout > .dash-legs {
+  grid-area: legs;
 }
 .dash-split {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   gap: var(--aeg-space-s4);
 }
-.dash-rail {
-  position: sticky;
-  top: var(--aeg-space-s4);
-  min-width: 0;
+/* 37% 列比原来的 340px 宽：agent id 放宽，能力标签仍让位（保留"一行读得完"） */
+.dash-agent :deep(.agent__id) {
+  max-width: 140px;
 }
-/* 窄栏里 agent id 收窄、能力标签让位：AgentBoard 的固定列（id/类型/负载条）在 340px 栏里
-   会顶破面板。id 本来就有省略号；能力标签（risk_assess 这类）在详情页里也看得到，
-   这里省掉换"一行读得完"更值。 */
-.dash-rail :deep(.agent__id) {
-  max-width: 110px;
-}
-.dash-rail :deep(.agent__caps) {
+.dash-agent :deep(.agent__caps) {
   display: none;
 }
-.dash-rail :deep(.agent__loadbar) {
+.dash-agent :deep(.agent__loadbar) {
   width: 32px;
 }
-.dash-rail :deep(.agent) {
+.dash-agent :deep(.agent) {
   flex-wrap: wrap;
   row-gap: 2px;
 }
-.dash-rail :deep(.agent__served) {
+.dash-agent :deep(.agent__served) {
   margin-left: auto;
-}
-.dash-rail .glass-panel {
-  overflow: hidden;
 }
 @media (max-width: 1279px) {
   .dash-layout {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .dash-rail {
-    position: static;
+    grid-template-areas:
+      'kpi'
+      'agent'
+      'split'
+      'events'
+      'legs';
   }
 }
 @media (max-width: 1100px) {
@@ -384,15 +407,25 @@ watch(
   box-shadow: none;
 }
 .glass-panel :deep(.ant-card-head) {
-  min-height: 0;
-  padding: 0 0 var(--aeg-space-s2);
+  /* 标题顶到卡头第一条线（不再被 antd 垂直居中）：与 KPI 卡页头标题同一水平 */
+  /* 卡头固定成"两行标题"的高度：单行标题的卡（事件流/智能体）也留出第二行，
+     这样同一行卡片的标题顶边与分隔线都齐平；4 + 56 + 8 + 1 = 69 */
+  min-height: 69px;
+  padding: 4px 0 var(--aeg-space-s2);
   border-bottom: 1px solid var(--aeg-color-glass-border);
   background: transparent;
+  align-items: flex-start;
+  /* antd 的卡头是 flex-column + 垂直居中；改成靠上，标题才和 KPI 卡页头同一水平 */
+  justify-content: flex-start;
+}
+.glass-panel :deep(.ant-card-head-wrapper) {
+  align-items: flex-start;
 }
 .glass-panel :deep(.ant-card-head-title) {
   padding: 0;
   color: var(--aeg-color-text);
-  font-size: var(--aeg-font-md);
+  /* 与 KPI 卡内的页头标题同档：同一行里的标题字号/字重不许一页两套 */
+  font-size: var(--aeg-font-lg);
   font-weight: var(--aeg-weight-bold);
   letter-spacing: 0.02em;
   /* 标题加重之后会更长：允许折行，别用 antd 默认的省略号把"感知→研判→决策"截掉 */

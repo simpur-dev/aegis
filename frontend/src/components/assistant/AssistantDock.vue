@@ -11,7 +11,15 @@
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { clampTop, DOCK_SIZE, isClick } from '@/components/assistant/dock'
+import {
+  clampDrawerWidth,
+  clampTop,
+  defaultDrawerWidth,
+  DOCK_SIZE,
+  DRAWER_MAX,
+  DRAWER_MIN,
+  isClick,
+} from '@/components/assistant/dock'
 
 const props = defineProps<{ immersive?: boolean }>()
 
@@ -20,7 +28,10 @@ const STORAGE_KEY = 'aegis.assistant.dock'
 const dockEl = ref<HTMLButtonElement | null>(null)
 const open = ref(false)
 const dragging = ref(false)
+const resizing = ref(false)
 const top = ref(0)
+const width = ref(0)
+const maxWidth = ref(DRAWER_MAX)
 const headerH = ref(68)
 
 const headerVar = computed(() => (props.immersive ? '--aeg-editor-header-height' : '--aeg-header-height'))
@@ -34,14 +45,15 @@ function readHeaderHeight(): number {
   return Number.isFinite(px) && px > 0 ? px : 68
 }
 
-function loadState(): { top?: number; open?: boolean } {
+function loadState(): { top?: number; open?: boolean; width?: number } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return {}
-    const parsed = JSON.parse(raw) as { top?: unknown; open?: unknown }
+    const parsed = JSON.parse(raw) as { top?: unknown; open?: unknown; width?: unknown }
     return {
       top: typeof parsed.top === 'number' ? parsed.top : undefined,
       open: parsed.open === true,
+      width: typeof parsed.width === 'number' ? parsed.width : undefined,
     }
   } catch {
     return {}
@@ -50,7 +62,10 @@ function loadState(): { top?: number; open?: boolean } {
 
 function saveState(): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ top: Math.round(top.value), open: open.value }))
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ top: Math.round(top.value), open: open.value, width: Math.round(width.value) }),
+    )
   } catch {
     /* 隐私模式下存不下也不影响本次使用 */
   }
@@ -58,6 +73,68 @@ function saveState(): void {
 
 function measure(): void {
   headerH.value = readHeaderHeight()
+  maxWidth.value = Math.max(DRAWER_MIN, Math.min(DRAWER_MAX, Math.round(window.innerWidth * 0.6)))
+}
+
+/**
+ * 抽屉宽度的唯一真源：写到根元素的 CSS 变量上。
+ * 抽屉自身、图标让位（AssistantDock 内）与主内容让位（App.vue）都读这一个变量，
+ * 拖拽时不需要任何 Vue 大范围重渲染。
+ */
+function applyWidth(): void {
+  document.documentElement.style.setProperty('--assistant-drawer-w', `${width.value}px`)
+}
+
+/* —— 抽屉左边缘的宽度拖拽手柄 —— */
+let resizePointer = -1
+
+function onResizeDown(event: PointerEvent): void {
+  if (event.button !== 0 && event.pointerType === 'mouse') return
+  resizing.value = true
+  resizePointer = event.pointerId
+  const el = event.currentTarget as HTMLElement | null
+  el?.setPointerCapture?.(event.pointerId)
+  document.documentElement.classList.add('assistant-resizing')
+  event.preventDefault()
+}
+
+function onResizeMove(event: PointerEvent): void {
+  if (!resizing.value || event.pointerId !== resizePointer) return
+  width.value = clampDrawerWidth(window.innerWidth - event.clientX, window.innerWidth)
+  applyWidth()
+}
+
+function onResizeUp(event: PointerEvent): void {
+  if (!resizing.value) return
+  resizing.value = false
+  const el = event.currentTarget as HTMLElement | null
+  el?.releasePointerCapture?.(event.pointerId)
+  document.documentElement.classList.remove('assistant-resizing')
+  saveState()
+}
+
+function onResizeKeydown(event: KeyboardEvent): void {
+  const step = 16
+  if (event.key === 'ArrowLeft') {
+    width.value = clampDrawerWidth(width.value + step, window.innerWidth)
+  } else if (event.key === 'ArrowRight') {
+    width.value = clampDrawerWidth(width.value - step, window.innerWidth)
+  } else if (event.key === 'Home') {
+    width.value = DRAWER_MIN
+  } else if (event.key === 'End') {
+    width.value = maxWidth.value
+  } else {
+    return
+  }
+  event.preventDefault()
+  applyWidth()
+  saveState()
+}
+
+function onResizeDoubleClick(): void {
+  width.value = defaultDrawerWidth(window.innerWidth)
+  applyWidth()
+  saveState()
 }
 
 function toggle(): void {
@@ -120,6 +197,9 @@ function onKeydown(event: KeyboardEvent): void {
 function onResize(): void {
   measure()
   top.value = clampTop(top.value, window.innerHeight, headerH.value)
+  /* 视口变窄后把抽屉夹回新的上限（1024 时上限是 614） */
+  width.value = clampDrawerWidth(width.value, window.innerWidth)
+  applyWidth()
 }
 
 function onEscape(event: KeyboardEvent): void {
@@ -129,6 +209,8 @@ function onEscape(event: KeyboardEvent): void {
 onMounted(() => {
   measure()
   const saved = loadState()
+  width.value = clampDrawerWidth(saved.width ?? defaultDrawerWidth(window.innerWidth), window.innerWidth)
+  applyWidth()
   top.value = clampTop(
     saved.top ?? window.innerHeight - DOCK_SIZE - 24,
     window.innerHeight,
@@ -152,7 +234,8 @@ watch(
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', onEscape)
-  document.documentElement.classList.remove('assistant-drawer-open')
+  document.documentElement.classList.remove('assistant-drawer-open', 'assistant-resizing')
+  document.documentElement.style.removeProperty('--assistant-drawer-w')
 })
 </script>
 
@@ -162,7 +245,7 @@ onBeforeUnmount(() => {
     ref="dockEl"
     type="button"
     class="assistant-dock"
-    :class="{ 'is-open': open, 'is-dragging': dragging }"
+    :class="{ 'is-open': open, 'is-dragging': dragging, 'is-resizing': resizing }"
     :style="{ top: `${top}px` }"
     :aria-expanded="open"
     aria-controls="assistant-panel"
@@ -181,12 +264,30 @@ onBeforeUnmount(() => {
   <aside
     id="assistant-panel"
     class="assistant-drawer"
-    :class="{ 'is-open': open }"
+    :class="{ 'is-open': open, 'is-resizing': resizing }"
     :style="drawerTopStyle"
     :aria-hidden="!open"
     aria-label="智能助手"
     data-testid="assistant-drawer"
   >
+    <!-- 左边缘的宽度手柄：只能水平拖，上下贴满抽屉；键盘 ←/→ 也能调 -->
+    <div
+      class="assistant-drawer__resize"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="调整助手侧栏宽度"
+      :aria-valuenow="width"
+      :aria-valuemin="DRAWER_MIN"
+      :aria-valuemax="maxWidth"
+      tabindex="0"
+      title="拖动调整宽度（双击复位）"
+      @pointerdown="onResizeDown"
+      @pointermove="onResizeMove"
+      @pointerup="onResizeUp"
+      @pointercancel="onResizeUp"
+      @keydown="onResizeKeydown"
+      @dblclick="onResizeDoubleClick"
+    />
     <header class="assistant-drawer__head">
       <span class="assistant-drawer__title">智能助手</span>
       <button type="button" class="assistant-drawer__close" aria-label="收起助手" @click="close">×</button>
@@ -220,11 +321,14 @@ onBeforeUnmount(() => {
     top var(--aeg-motion-base) ease;
 }
 .assistant-dock.is-open {
-  right: calc(clamp(320px, 25vw, 520px) + 12px);
+  right: calc(var(--assistant-drawer-w, clamp(320px, 25vw, 520px)) + 12px);
+}
+.assistant-dock.is-dragging,
+.assistant-dock.is-resizing {
+  transition: none;
 }
 .assistant-dock.is-dragging {
   cursor: grabbing;
-  transition: none;
 }
 .assistant-dock img {
   width: 100%;
@@ -242,7 +346,7 @@ onBeforeUnmount(() => {
   z-index: 39;
   display: flex;
   flex-direction: column;
-  width: clamp(320px, 25vw, 520px);
+  width: var(--assistant-drawer-w, clamp(320px, 25vw, 520px));
   border-left: 1px solid var(--aeg-color-glass-border);
   background: var(--aeg-color-glass-bg);
   backdrop-filter: blur(var(--aeg-glass-blur));
@@ -253,9 +357,40 @@ onBeforeUnmount(() => {
     transform var(--aeg-motion-base) ease,
     visibility var(--aeg-motion-base) ease;
 }
+.assistant-drawer.is-resizing {
+  transition: none;
+}
 .assistant-drawer.is-open {
   transform: translateX(0);
   visibility: visible;
+}
+/* 左边缘宽度手柄：8px 命中区，平时透明，hover/拖动/聚焦时亮一条 2px 主色线 */
+.assistant-drawer__resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+.assistant-drawer__resize::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: var(--aeg-radius-pill);
+  background: transparent;
+  transition: background-color var(--aeg-motion-base) ease;
+}
+.assistant-drawer__resize:hover::after,
+.assistant-drawer__resize:focus-visible::after,
+.assistant-drawer.is-resizing .assistant-drawer__resize::after {
+  background: var(--aeg-color-brand);
 }
 .assistant-drawer__head {
   display: flex;
