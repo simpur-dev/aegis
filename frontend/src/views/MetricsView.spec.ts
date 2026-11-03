@@ -38,6 +38,10 @@ const STUBS = {
   EChart: { name: 'EChart', props: ['option', 'height'], template: '<div class="chart" />' },
 }
 
+function barValue(item: number | { value?: number }): number {
+  return typeof item === 'number' ? item : Number((item as { value?: number }).value)
+}
+
 function report() {
   return {
     sla_thresholds: {},
@@ -124,14 +128,16 @@ describe('指标页读数', () => {
     mockedLatency.mockResolvedValue(report() as never)
     const wrapper = mount(MetricsView, { global: { stubs: STUBS } })
     await flushPromises()
-    const p95 = chartSeries(wrapper).find((item) => item.name === 'P95')?.data ?? []
+    const p95 = (chartSeries(wrapper).find((item) => item.name === 'P95')?.data ?? []) as Array<
+      number | { value?: number }
+    >
     const rows = rowsGivenToTable(wrapper)
     const secondsIndex = rows.findIndex((row) => row.name === 'ingest_end_to_end_seconds')
     const msIndex = rows.findIndex((row) => row.name === 'warning_generation_ms')
     expect(secondsIndex).toBeGreaterThanOrEqual(0)
-    expect(p95[secondsIndex], '0.015 秒要画成 15 毫秒，否则对数毫秒轴上它比真毫秒还小').toBeCloseTo(15, 6)
-    expect(p95[msIndex]).toBeCloseTo(5200, 6)
-    expect(p95).not.toContain(0.015)
+    expect(barValue(p95[secondsIndex]), '0.015 秒要画成 15 毫秒，否则对数毫秒轴上它比真毫秒还小').toBeCloseTo(15, 6)
+    expect(barValue(p95[msIndex])).toBeCloseTo(5200, 6)
+    expect(p95.map(barValue)).not.toContain(0.015)
   })
 
   it('刷新按钮会再取一次数', async () => {

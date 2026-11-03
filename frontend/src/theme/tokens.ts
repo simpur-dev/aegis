@@ -140,6 +140,11 @@ export const colorSlots = {
     // 重点卡换成"模糊底图"之后，还要压一层深蓝：底图有亮斑，白线会被吃掉
     'chart-hero-shade-from': 'rgba(15, 37, 82, 0.55)',
     'chart-hero-shade-to': 'rgba(28, 62, 122, 0.3)',
+    // 指标页柱状图：圆角柱的渐变两端（P50 蓝 / P95 橙），两主题各一套
+    'chart-bar-p50-from': '#4F8DF7',
+    'chart-bar-p50-to': '#9CC2FF',
+    'chart-bar-p95-from': '#E08A00',
+    'chart-bar-p95-to': '#F6C46B',
   },
   dark: {
     page: '#0B1220',
@@ -227,6 +232,10 @@ export const colorSlots = {
     'chart-hero-area-to': 'rgba(234, 242, 255, 0.01)',
     'chart-hero-shade-from': 'rgba(8, 16, 34, 0.7)',
     'chart-hero-shade-to': 'rgba(16, 34, 66, 0.48)',
+    'chart-bar-p50-from': '#5B8DF0',
+    'chart-bar-p50-to': '#A9C6FF',
+    'chart-bar-p95-from': '#F0A93A',
+    'chart-bar-p95-to': '#F8D79B',
   },
 } as const satisfies Record<'light' | 'dark', Record<string, string>>
 

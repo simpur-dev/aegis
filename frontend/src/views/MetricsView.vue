@@ -8,7 +8,9 @@ import EChart from '@/components/EChart.vue'
 import PageHero from '@/components/PageHero.vue'
 import FreshnessBar from '@/components/FreshnessBar.vue'
 import type { ChartOption } from '@/components/echarts'
-import { font } from '@/theme/tokens'
+import { echarts } from '@/components/echarts'
+import { colorSlots, font } from '@/theme/tokens'
+import { useTheme } from '@/theme/useTheme'
 import { latencyRows } from '@/views/metrics/rows'
 import { formatMetricValue, toMillis } from '@/utils/metricUnits'
 
@@ -71,18 +73,95 @@ const violationsTone = computed<'idle' | 'ok' | 'bad'>(() =>
 
 const rows = computed(() => latencyRows(report.value?.metrics ?? {}, INDICATOR_LABELS))
 
-const chartOption = computed<ChartOption>(() => ({
-  tooltip: { trigger: 'axis' },
-  legend: { data: ['P50', 'P95'] },
-  grid: { left: 70, right: 24, bottom: 90 },
-  xAxis: { type: 'category', data: rows.value.map((r) => r.label), axisLabel: { rotate: 35, fontSize: font.size.xs } },
-  yAxis: { type: 'log', logBase: 10, name: 'ms（对数轴）' },
-  // 共用一根毫秒轴：秒制那几条先按出口声明的单位换算，否则轴标签说的"ms"对它们不成立
-  series: [
-    { name: 'P50', type: 'bar', data: rows.value.map((r) => Math.max(toMillis(r.unit, r.p50), 0.1)) },
-    { name: 'P95', type: 'bar', data: rows.value.map((r) => Math.max(toMillis(r.unit, r.p95), 0.1)) },
-  ],
-}))
+const { resolved } = useTheme()
+
+const chartOption = computed<ChartOption>(() => {
+  const c = colorSlots[resolved.value]
+  const grad = (from: string, to: string) =>
+    new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+      { offset: 0, color: from },
+      { offset: 1, color: to },
+    ])
+  const p50Gradient = grad(c['chart-bar-p50-from'], c['chart-bar-p50-to'])
+  const p95Gradient = grad(c['chart-bar-p95-from'], c['chart-bar-p95-to'])
+
+  // 统一成毫秒轴：秒制那几条先按出口声明的单位换算，否则轴标签说的"ms"对它们不成立
+  const p50Values = rows.value.map((r) => Math.max(toMillis(r.unit, r.p50), 0.1))
+  const p95Values = rows.value.map((r) => Math.max(toMillis(r.unit, r.p95), 0.1))
+  // 图三的重点：只高亮 P95 最大的那一对柱，其余压暗
+  let peak = -1
+  p95Values.forEach((value, index) => {
+    if (peak < 0 || value > p95Values[peak]) peak = index
+  })
+  const bars = (gradient: unknown, values: number[]) =>
+    values.map((value, index) => ({
+      value,
+      itemStyle: {
+        color: gradient,
+        borderRadius: [8, 8, 4, 4],
+        opacity: index === peak ? 1 : 0.55,
+        shadowBlur: index === peak ? 12 : 0,
+        shadowColor: c['brand-soft'],
+      },
+    }))
+
+  return {
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: c.elevated,
+      borderColor: 'transparent',
+      borderRadius: 999,
+      padding: [8, 12],
+      textStyle: { color: c.text, fontSize: font.size.sm },
+      axisPointer: { type: 'shadow', shadowStyle: { color: 'transparent' } },
+    },
+    legend: {
+      data: ['P50', 'P95'],
+      top: 0,
+      icon: 'roundRect',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 16,
+      textStyle: { color: c['text-secondary'], fontSize: font.size.sm },
+    },
+    grid: { left: 56, right: 16, top: 28, bottom: 96 },
+    xAxis: {
+      type: 'category',
+      data: rows.value.map((r) => r.label),
+      axisLabel: { rotate: 40, fontSize: 10, color: c['text-muted'], margin: 12 },
+      axisLine: { show: false },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'log',
+      logBase: 10,
+      name: 'ms（对数轴）',
+      nameTextStyle: { color: c['text-muted'], fontSize: font.size.xs },
+      axisLabel: { color: c['text-muted'], fontSize: font.size.xs },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: c['border-subtle'], type: 'dashed' } },
+    },
+    series: [
+      {
+        name: 'P50',
+        type: 'bar',
+        barWidth: 14,
+        barGap: '35%',
+        barCategoryGap: '45%',
+        data: bars(p50Gradient, p50Values),
+      },
+      {
+        name: 'P95',
+        type: 'bar',
+        barWidth: 14,
+        barGap: '35%',
+        barCategoryGap: '45%',
+        data: bars(p95Gradient, p95Values),
+      },
+    ],
+  }
+})
 
 async function load(): Promise<void> {
   loading.value = true
@@ -123,7 +202,10 @@ onBeforeUnmount(() => {
       <template #actions>
         <a-button @click="load">重新读取</a-button>
       </template>
-      <template #stats>
+    </PageHero>
+
+    <div class="metrics-top-pair">
+      <section class="metrics-stats">
         <div class="stat-cell">
           <a-statistic title="协同事务总数" :value="report === null ? '—' : report.collaboration.transactions" />
         </div>
@@ -162,10 +244,9 @@ onBeforeUnmount(() => {
           <!-- 没读到账本就是「—」：0 项越限是一条会让人安心的假消息，只有量出来的 0 才能这么写 -->
           <a-statistic title="越限项数" :value="report === null ? '—' : Object.keys(report.violations).length" />
         </div>
-      </template>
-    </PageHero>
+      </section>
 
-    <a-card class="metrics-card" size="small" title="考核指标实测" :loading="loading">
+      <a-card class="metrics-card" size="small" title="考核指标实测" :loading="loading">
       <FreshnessBar
         :fetched-at="updatedAt"
         :label="`本页 ${Object.keys(report?.violations ?? {}).length} 项越限 ｜ 每 ${Math.round(REFRESH_MS / 1000)} 秒自动取一次`"
@@ -188,43 +269,47 @@ onBeforeUnmount(() => {
       <p v-if="loadError !== null" class="metrics__error" data-testid="metrics-error">
         本页当前读不到账本：{{ loadError }}{{ report === null ? '' : '（下面显示的是上一次成功取到的数字，不是现场实况）' }}
       </p>
-    </a-card>
+      </a-card>
+    </div>
 
-    <a-card class="metrics-card" size="small" title="时延分布">
-      <EChart :option="chartOption" height="360px" />
-    </a-card>
+    <div class="metrics-pair">
+      <a-card class="metrics-card" size="small" title="时延分布">
+        <EChart :option="chartOption" height="360px" />
+      </a-card>
 
-    <a-card class="metrics-card" size="small" title="指标明细">
-      <a-table
-        :data-source="rows"
-        row-key="name"
-        :pagination="false"
-        size="small"
-        :scroll="{ x: 'max-content' }"
-        :columns="[
-          { title: '指标', dataIndex: 'label', key: 'label' },
-          { title: '埋点名', dataIndex: 'name', key: 'name' },
-          { title: '样本', dataIndex: 'count', key: 'count' },
-          // 列头不写单位：单位跟着每个值一起显示（`0.019 s` / `4200 ms`），
-          // 因为这张表里既有毫秒埋点也有秒制埋点，一个列头盖不住两种单位
-          { title: 'P50', dataIndex: 'p50', key: 'p50' },
-          { title: 'P95', dataIndex: 'p95', key: 'p95' },
-          { title: '最大', dataIndex: 'max', key: 'max' },
-          { title: '阈值', dataIndex: 'budget', key: 'budget' },
-          { title: '判定', key: 'pass' },
-        ]"
-      >
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'pass'">
-            <a-tag v-if="record.pass === null" color="default">未设阈值</a-tag>
-            <a-tag v-else :color="record.pass ? 'green' : 'red'">{{ record.pass ? '达标' : '超标' }}</a-tag>
-          </template>
-          <template v-else-if="['p50', 'p95', 'max', 'budget'].includes(String(column.key))">
-            {{ formatMetricValue(record.unit, record[column.key as 'p50']) }}
-          </template>
-        </template>
-      </a-table>
-    </a-card>
+      <a-card class="metrics-card" size="small" title="指标明细">
+        <div class="metrics-table">
+          <a-table
+            :data-source="rows"
+            row-key="name"
+            :pagination="false"
+            size="small"
+            :columns="[
+              { title: '指标', dataIndex: 'label', key: 'label' },
+              { title: '埋点名', dataIndex: 'name', key: 'name' },
+              { title: '样本', dataIndex: 'count', key: 'count' },
+              // 列头不写单位：单位跟着每个值一起显示（`0.019 s` / `4200 ms`），
+              // 因为这张表里既有毫秒埋点也有秒制埋点，一个列头盖不住两种单位
+              { title: 'P50', dataIndex: 'p50', key: 'p50' },
+              { title: 'P95', dataIndex: 'p95', key: 'p95' },
+              { title: '最大', dataIndex: 'max', key: 'max' },
+              { title: '阈值', dataIndex: 'budget', key: 'budget' },
+              { title: '判定', key: 'pass' },
+            ]"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'pass'">
+                <a-tag v-if="record.pass === null" color="default">未设阈值</a-tag>
+                <a-tag v-else :color="record.pass ? 'green' : 'red'">{{ record.pass ? '达标' : '超标' }}</a-tag>
+              </template>
+              <template v-else-if="['p50', 'p95', 'max', 'budget'].includes(String(column.key))">
+                {{ formatMetricValue(record.unit, record[column.key as 'p50']) }}
+              </template>
+            </template>
+          </a-table>
+        </div>
+      </a-card>
+    </div>
   </div>
 </template>
 
@@ -281,14 +366,27 @@ onBeforeUnmount(() => {
 
 /* —— 与态势总览 / 监测预警同一套「玻璃板」：细边、22px 大圆角、粗标题、16px 内边距 ——
    页头数字托盘（PageHero 的 #stats）和下面三块 a-card 一起换，避免半套样式。 */
-.metrics-page :deep(.page-head__stats) {
+/* 上方两卡同一行、各占一半：三格数字托盘 ｜ 考核指标实测 */
+.metrics-top-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--aeg-space-s4);
+  align-items: start;
   margin-top: var(--aeg-space-s4);
+}
+.metrics-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--aeg-space-s2);
   padding: var(--aeg-space-s4);
   border: 1px solid var(--aeg-color-glass-border);
   border-radius: var(--aeg-radius-xl);
   background: var(--aeg-color-glass-bg);
   box-shadow: var(--aeg-shadow-md);
   backdrop-filter: blur(var(--aeg-glass-blur));
+}
+.metrics-top-pair .metrics-card {
+  margin-top: 0;
 }
 .metrics-card {
   margin-top: var(--aeg-space-s4);
@@ -315,5 +413,23 @@ onBeforeUnmount(() => {
 .metrics-card :deep(.ant-card-body) {
   padding: var(--aeg-space-s4);
   background: transparent;
+}
+
+/* 时延分布、指标明细各占一整行（上下堆叠）；<1280 同样单列 */
+.metrics-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--aeg-space-s4);
+  align-items: start;
+  margin-top: var(--aeg-space-s4);
+}
+.metrics-pair .metrics-card {
+  margin-top: 0;
+}
+@media (max-width: 1279px) {
+  .metrics-top-pair,
+  .metrics-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>
