@@ -282,7 +282,7 @@ watch(
       <!-- 第二行右：实时事件流（与上方智能体卡同宽） -->
       <section class="glass-panel dash-events">
         <a-card title="实时事件流（SSE）" size="small">
-          <EventFeed :events="events.slice(0, 8)" />
+          <EventFeed :events="events.slice(0, 20)" />
         </a-card>
       </section>
 

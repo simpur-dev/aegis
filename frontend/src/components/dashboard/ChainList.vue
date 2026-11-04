@@ -1,15 +1,13 @@
 <script setup lang="ts">
 /**
- * 链路执行记录（spike：dashboard 标杆页）。
+ * 链路执行记录：一行一条链，先给结论（成功/失败 + 走到哪一段），再给细节（trace、任务数、降级）。
  *
- * 与旧 a-table 的差别：五段不再是五个会换行的标签（真机里每行被撑成三行高，
- * 一屏只装得下四条链），而是**一行一段的分段条**——每段一颗色块，
- * 颜色说"这段是谁做的"（智能体/平台兜底/混合/跳过），红说"这段砸了"。
- * 扫一列色块就能看出"哪条链是兜底跑完的"，这正是值班员要的那一眼。
- *
- * 继承的诚实性规矩：最新在上（调用方排好序）、窗口口径写在卡标题、
- * 空表给中文说明与出口，不落 antd 的 "No data"。
+ * 密度取舍：默认只露出 5 条（卡内滚动 + 底部渐隐），其余等"查看全部"再展开——
+ * 20 条一次铺开会把这张卡撑成一屏多，把下面的智能体板与事件流顶出首屏。
+ * 段位不再用五个实心胶囊：改成"圆点 + 段名 + 连接线"的轻重轨，颜色只说这段是谁做的/有没有砸。
  */
+import { computed, ref } from 'vue'
+
 import type { ChainSummary } from '@/api/types'
 
 const STAGE_LABELS: Record<string, string> = {
@@ -20,7 +18,12 @@ const STAGE_LABELS: Record<string, string> = {
   feedback: '反馈',
 }
 
-defineProps<{ chains: ChainSummary[] }>()
+const props = defineProps<{ chains: ChainSummary[] }>()
+
+/** 默认露出 4 张卡，点"查看全部"后放开到卡内滚动 */
+const VISIBLE_ROWS = 4
+const expanded = ref(false)
+const canExpand = computed(() => props.chains.length > VISIBLE_ROWS)
 
 function stageClass(stage: ChainSummary['stages'][number]): string {
   if (!stage.ok) return 'is-fail'
@@ -46,36 +49,59 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
 <template>
   <div class="chain-list">
     <div class="chain-list__legend" aria-hidden="true">
-      <span class="seg seg--swatch is-agent"></span>智能体
-      <span class="seg seg--swatch is-local"></span>平台兜底
-      <span class="seg seg--swatch is-hybrid"></span>混合
-      <span class="seg seg--swatch is-skipped"></span>跳过
-      <span class="seg seg--swatch is-fail"></span>失败
+      <span class="legend-item"><i class="seg seg--swatch is-agent"></i>智能体</span>
+      <span class="legend-item"><i class="seg seg--swatch is-local"></i>平台兜底</span>
+      <span class="legend-item"><i class="seg seg--swatch is-hybrid"></i>混合</span>
+      <span class="legend-item"><i class="seg seg--swatch is-skipped"></i>跳过</span>
+      <span class="legend-item"><i class="seg seg--swatch is-fail"></i>失败</span>
     </div>
-    <!-- 图例钉住、行区自己滚：窗口是 20 条，全部铺开会把这张卡撑到一屏多，
-         把下面的智能体板与事件流顶出首屏——那是"这一页讲什么"的次序被行数劫持。 -->
-    <div class="chain-list__rows">
+
+    <div class="chain-list__rows" :class="{ 'is-expanded': expanded }">
       <div
         v-for="chain in chains"
         :key="chain.trace_id"
         class="chain"
+        :class="resultOf(chain).cls"
         data-testid="chain-row"
         :data-trace="chain.trace_id"
       >
-        <span class="chain__result" :class="resultOf(chain).cls">
-          <span class="chain__dot" aria-hidden="true"></span>{{ resultOf(chain).label }}
-        </span>
-        <span class="chain__trace" :title="chain.trace_id">{{ chain.trace_id }}</span>
+        <div class="chain__top">
+          <span class="chain__result" :class="resultOf(chain).cls">
+            <span class="chain__dot" aria-hidden="true"></span>{{ resultOf(chain).label }}
+          </span>
+          <span class="chain__trace" :title="chain.trace_id">{{ chain.trace_id }}</span>
+          <span class="chain__meta">
+            <span v-if="!chain.acted" class="chain__idle">未触发</span>
+            <span class="chain__tasks" :title="`拆解出的任务单元数`">{{ chain.task_units.length }} 个</span>
+            <span v-if="chain.degradations.length" class="chain__degraded" :title="chain.degradations.join('；')">降级</span>
+          </span>
+        </div>
+
         <span class="chain__stages">
-          <span v-for="stage in chain.stages" :key="stage.name" class="seg" :class="stageClass(stage)" :title="stageTitle(stage)">
-            {{ stageLabel(stage) }}
+          <span
+            v-for="stage in chain.stages"
+            :key="stage.name"
+            class="stage"
+            :class="stageClass(stage)"
+            :title="stageTitle(stage)"
+          >
+            <i class="stage__dot" aria-hidden="true"></i>
+            <span class="stage__label">{{ stageLabel(stage) }}</span>
           </span>
         </span>
-        <span class="chain__tasks" :title="`拆解出的任务单元数`">{{ chain.task_units.length }} 个</span>
-        <span v-if="!chain.acted" class="chain__idle pill-dashed">未触发</span>
-        <span v-if="chain.degradations.length" class="chain__degraded" :title="chain.degradations.join('；')">降级</span>
       </div>
     </div>
+
+    <button
+      v-if="canExpand"
+      type="button"
+      class="chain-list__more"
+      data-testid="chains-more"
+      @click="expanded = !expanded"
+    >
+      {{ expanded ? '收起' : `查看全部 ${chains.length} 条` }}<span aria-hidden="true"> →</span>
+    </button>
+
     <div v-if="!chains.length" class="empty-hero empty-hero--compact" data-testid="chains-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
       <div>
@@ -91,44 +117,88 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
 .chain-list {
   display: flex;
   flex-direction: column;
+  gap: var(--aeg-space-s2);
 }
+
+/* 图例压成一行小字，不再抢行 */
 .chain-list__legend {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--aeg-space-s1) var(--aeg-space-s2);
-  margin-bottom: var(--aeg-space-s2);
   font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-muted);
 }
-.chain-list__rows {
-  /* 20 条窗口 ≈ 820px 高；给到 380px 的可视区（约 9 条），其余在区内滚 */
-  max-height: 380px;
-  overflow-y: auto;
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
+
+/* 每张卡片 = 一条链；默认露 4 张（4×~72px），底部渐隐提示还有更多 */
+.chain-list__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--aeg-space-s2);
+  max-height: 296px;
+  overflow-y: auto;
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
+  mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
+}
+.chain-list__rows.is-expanded {
+  max-height: 420px;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+/* 滚动条细一点，别在卡片里长出一条粗灰带 */
+.chain-list__rows::-webkit-scrollbar {
+  width: 6px;
+}
+.chain-list__rows::-webkit-scrollbar-thumb {
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-border);
+}
+
+/* 一条链一张卡：底色比外层玻璃再淡一档，只用描边 + 悬停描边，不叠第二层模糊 */
 .chain {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--aeg-space-s2) var(--aeg-space-s3);
-  padding: var(--aeg-space-s2) var(--aeg-space-s1);
-  border-bottom: 1px solid var(--aeg-color-border-subtle);
+  flex-direction: column;
+  gap: var(--aeg-space-s2);
+  padding: 10px 12px;
+  border: 1px solid var(--aeg-color-glass-border);
+  border-left: 3px solid transparent;
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-sunken);
+  transition:
+    border-color var(--aeg-motion-base) ease,
+    box-shadow var(--aeg-motion-base) ease;
 }
-.chain:last-child {
-  border-bottom: none;
+.chain:hover {
+  border-color: var(--aeg-color-brand);
+  box-shadow: var(--aeg-shadow-sm);
+}
+/* 失败卡只多一条左侧红条，不再整卡染色 */
+.chain.is-bad {
+  border-left-color: var(--aeg-color-status-danger);
+}
+
+.chain__top {
+  display: flex;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  min-width: 0;
 }
 .chain__result {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: 0 0 46px;
   align-items: center;
-  gap: 6px;
-  min-width: 52px;
-  font-size: var(--aeg-font-sm);
+  gap: 5px;
+  font-size: var(--aeg-font-xs);
   font-weight: var(--aeg-weight-semibold);
 }
 .chain__dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: var(--aeg-radius-pill);
   background: var(--aeg-color-border-strong);
 }
@@ -150,68 +220,100 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
 .chain__result.is-bad .chain__dot {
   background: var(--aeg-color-status-danger);
 }
+
+/* 五段轨：圆点说状态、段名说阶段、连接线把它们串起来 */
+.chain__stages {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+}
+.stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--aeg-font-xs);
+  color: var(--aeg-color-text-muted);
+  white-space: nowrap;
+}
+.stage:not(:last-child)::after {
+  content: '';
+  width: 10px;
+  height: 1px;
+  margin: 0 4px;
+  background: var(--aeg-color-border);
+}
+.stage__dot {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-pill);
+  background: transparent;
+}
+.stage.is-agent .stage__dot {
+  border-color: var(--aeg-color-brand);
+  background: var(--aeg-color-brand);
+}
+.stage.is-local .stage__dot {
+  border-color: var(--aeg-color-text-muted);
+  background: var(--aeg-color-text-muted);
+}
+.stage.is-hybrid .stage__dot {
+  border-color: var(--aeg-color-status-warning);
+  background: var(--aeg-color-status-warning);
+}
+.stage.is-skipped .stage__dot {
+  border-style: dashed;
+}
+.stage.is-fail {
+  color: var(--aeg-color-status-danger);
+}
+.stage.is-fail .stage__dot {
+  border-color: var(--aeg-color-status-danger);
+  background: var(--aeg-color-status-danger);
+}
+
+.chain__meta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  margin-left: auto;
+  font-size: var(--aeg-font-xs);
+  color: var(--aeg-color-text-muted);
+}
+.chain__tasks {
+  font-variant-numeric: tabular-nums;
+}
+.chain__idle {
+  color: var(--aeg-color-text-muted);
+}
+.chain__degraded {
+  color: var(--aeg-color-status-warning);
+}
+
+/* trace id 退到第二行：等宽、可省略、悬停看全 */
 .chain__trace {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--aeg-font-mono);
   font-size: var(--aeg-font-xs);
-  color: var(--aeg-color-text-secondary);
-}
-.chain__stages {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 4px;
-}
-.seg {
-  padding: 1px 6px;
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-sm);
-  font-size: var(--aeg-font-xs);
-  font-weight: var(--aeg-weight-medium);
-  line-height: var(--aeg-lh-snug);
-  white-space: nowrap;
-}
-.seg--swatch {
-  display: inline-block;
-  width: 14px;
-  height: 10px;
-  padding: 0;
-}
-.seg.is-agent {
-  border-color: var(--aeg-color-brand);
-  background: var(--aeg-color-brand);
-  color: var(--aeg-color-text-inverse);
-}
-.seg.is-local {
-  background: var(--aeg-color-sunken);
-  color: var(--aeg-color-text-secondary);
-}
-.seg.is-hybrid {
-  border-color: var(--aeg-tag-orange-line);
-  background: var(--aeg-tag-orange-bg);
-  color: var(--aeg-tag-orange-text);
-}
-.seg.is-skipped {
-  border-style: dashed;
-  background: transparent;
   color: var(--aeg-color-text-muted);
 }
-.seg.is-fail {
-  border-color: var(--aeg-color-status-danger);
-  background: var(--aeg-color-status-danger);
-  color: var(--aeg-color-text-inverse);
-}
-.chain__tasks {
-  margin-left: auto;
-  font-size: var(--aeg-font-sm);
-  font-variant-numeric: tabular-nums;
-  color: var(--aeg-color-text-secondary);
-}
-.chain__degraded {
+
+.chain-list__more {
+  align-self: flex-end;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--aeg-color-brand);
   font-size: var(--aeg-font-xs);
-  color: var(--aeg-color-status-warning);
+  cursor: pointer;
+}
+.chain-list__more:hover {
+  text-decoration: underline;
 }
 </style>
