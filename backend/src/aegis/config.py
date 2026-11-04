@@ -123,6 +123,8 @@ class Settings(BaseSettings):
     # 语义交互（完善计划批次 B）：关掉就是"这个出口不存在"（路由一律 503），
     # 不是"看着能用其实不能用"——路由与配置面必须给外部同一个事实。
     assistant_enabled: bool = True
+    #: 启动回填读视图的条数：只回填最近 N 条，超出走库查询。默认值需在 P0 实测冷启动后定。
+    read_backfill_limit: int = 500
     assistant_session_ttl_seconds: float = 1_800.0
     # 人工上报与三路融合解析（批次 B4 + C1）：低于该置信度、或等级不是阈值命中所得 → 转人工核签
     report_review_confidence: float = 0.6

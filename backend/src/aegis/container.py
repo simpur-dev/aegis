@@ -64,13 +64,14 @@ from aegis.services.interpret.semantic_parser import DisasterTextParser
 from aegis.services.llm.llm_gateway import LlmGateway, build_gateway_if_configured
 from aegis.services.memory.label_flywheel import LabelFlywheel
 from aegis.services.memory.memory import MemoryService
+from aegis.services.operators import OperatorService
 from aegis.services.response.delivery import ChannelAdapter, DeliveryDispatcher
 from aegis.services.response.task_parser import TaskParser
 from aegis.services.response.warning_service import WarningService
 from aegis.services.rules.risk_engine import RiskEngine
 from aegis.services.rules.threshold_suggestions import ThresholdSuggestionService
 from aegis.services.rules.trigger_rules import RuleEngine, rulebook_from_rows
-from aegis.storage.store import StoreProtocol, rule_library_port
+from aegis.storage.store import StoreProtocol, operator_ledger_port, rule_library_port
 from aegis.workflow.drafts import DraftService, LineageLocks
 from aegis.workflow.engine import WorkflowEngine
 from aegis.workflow.outbound import OutboundCaller, OutboundPolicy
@@ -142,6 +143,8 @@ class PlatformContainer:
     simulator: HazardScenarioSimulator | None = None
     parser: DisasterTextParser | None = None
     assistant: AssistantService | None = None
+    #: 席位台账：写动作的前置。内存形态没有这张表，服务自己报 unavailable（端点 503），不假装能写。
+    operators: OperatorService | None = None
     #: 数据飞轮（D9）：人工核签 → `warning_truth_labels` 的投递面；存储没有标注面时如实"未沉淀"
     labels: LabelFlywheel | None = None
     #: 阈值建议闭环（§3.5 后半截）：入账 → 人工确认 → `trigger_rules` 新版本 → 引擎装载。
@@ -170,6 +173,18 @@ class PlatformContainer:
     _knowledge_close_error: str | None = None
     _mqtt_start_error: str | None = None
 
+    async def _backfill_read_model(self) -> None:
+        """把最近 N 条预警/任务灌进读视图；失败只记日志，读写路径仍可走库查询。"""
+        backfill = getattr(self.store, "backfill_read_model", None)
+        if backfill is None:
+            return
+        try:
+            report = await backfill(limit=self.settings.read_backfill_limit)
+        except Exception as exc:
+            log.warning("读视图回填失败，问答改走库查询", extra={"error": f"{type(exc).__name__}: {exc}"})
+            return
+        log.info("读视图回填完成", extra=report)
+
     async def start(
         self,
         *,
@@ -184,6 +199,7 @@ class PlatformContainer:
         # 可选子系统先接线再放行：持久层与分析旁路的可用性在 start 结束时就是已知事实，
         # 而不是第一次有人查指标时才暴露。二者都不阻断启动。
         self._store_state = await start_store(self.bundle, self.settings)
+        await self._backfill_read_model()
         # 阈值版本在启动期就位：第一条预警用的必须是"当前生效那一版"，而不是代码里的种子
         await self._load_rulebook()
         # 定义与实例先接回内存，再注册内置模板：模板注册按名字幂等，
@@ -729,6 +745,8 @@ def create_container(
 
     # 进程启动即登记考核预算：违约判定不能等到第一次有人查指标才开始生效
     register_sla_budgets(tracer.ledger, cfg, container.exporter)
+
+    container.operators = OperatorService(operator_ledger_port(store))
 
     if cfg.assistant_enabled:
         container.assistant = AssistantService(

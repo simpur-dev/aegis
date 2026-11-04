@@ -15,6 +15,7 @@ from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from aegis.domain.chain import ChainResult
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, parse_iso
+from aegis.domain.operator import Operator
 
 T = TypeVar("T")
 
@@ -414,6 +415,29 @@ class SupportsThresholdSuggestions(Protocol):
 
 def suggestion_ledger_port(store: object) -> SupportsThresholdSuggestions | None:
     return store if isinstance(store, SupportsThresholdSuggestions) else None
+
+
+@runtime_checkable
+class SupportsOperators(Protocol):
+    """席位台账的可选能力面：只有持久层实现。
+
+    内存读视图不实现这一面——席位是"谁在班上"的业务真源，重启即失的内存 dict
+    会让权限判定在重启后变成"所有人都不存在"。缺这条能力时端点如实 503。
+    """
+
+    async def upsert_operator(self, operator: Operator) -> Operator: ...
+
+    async def create_operator(self, operator: Operator) -> Operator | None:
+        """不存在才创建；已存在返回 None（并发下也只有一个成功）。"""
+        ...
+
+    async def get_operator(self, operator_id: str) -> Operator | None: ...
+
+    async def list_operators(self, *, active_only: bool = True, limit: int = 200) -> list[Operator]: ...
+
+
+def operator_ledger_port(store: object) -> SupportsOperators | None:
+    return store if isinstance(store, SupportsOperators) else None
 
 
 def _to_iso(moment: datetime | str | None) -> str | None:

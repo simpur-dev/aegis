@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse
 from aegis import __version__
 from aegis.api.assistant_api import build_router as build_assistant_router
 from aegis.api.deps import presented_token
-from aegis.api.routers import agents, data, drill, knowledge, memory, ops, rules, stream, warnings
+from aegis.api.routers import agents, data, drill, knowledge, memory, operators, ops, rules, stream, warnings
 from aegis.api.workflow_api import build_router as build_workflow_router
 from aegis.config import Settings, get_settings
 from aegis.container import PlatformContainer, create_container
@@ -125,6 +125,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
     app.include_router(warnings.build_router())
     app.include_router(agents.build_router())
     app.include_router(memory.build_router())
+    app.include_router(operators.build_router())
     app.include_router(stream.build_router())
     app.include_router(build_workflow_router())
     if cfg.assistant_enabled:

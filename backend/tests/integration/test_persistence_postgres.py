@@ -137,6 +137,8 @@ class TestMigrations:
         assert "warning_truth_labels" in tables
         # 共享记忆表也是：没有它，§4.3 的"跨事件、跨智能体"就只活到下一次重启
         assert "agent_memory" in tables
+        # 助手控制面：席位/动作/告警/处置/审计六张表必须同批到位，缺一张都会让对应端点 503
+        assert {"operators", "control_actions", "assistant_alerts", "handling_spaces", "handling_tasks", "audit_ops"} <= tables
 
     async def test_migrate_is_idempotent_and_checksummed(self, store: PostgresStore) -> None:
         # 夹具已应用过一轮：幂等的含义是"不重复应用"，故再跑两次都应返回空
@@ -152,7 +154,33 @@ class TestMigrations:
             "007_agent_memory.sql",
             "008_threshold_suggestions.sql",
             "009_workflow_runtime.sql",
+            "010_assistant_control.sql",
         ]
+
+
+class TestReadModelBackfill:
+    """重启后问答能不能答出"当前预警"，取决于这一步。"""
+
+    async def test_backfill_loads_recent_warnings_and_tasks(self, store: PostgresStore) -> None:
+        warning = _warning("evt_abcdef012345", "trc_abcdef012345")
+        task = _task("abcdef012345")
+        await store.warnings.put(warning)
+        await store.tasks.put_many([task])
+        await store.flush()
+
+        fresh = PostgresStore(dsn=DSN)
+        try:
+            await fresh.connect()
+            report = await fresh.backfill_read_model(limit=10)
+            assert report["warnings"] >= 1
+            assert report["tasks"] >= 1
+            assert fresh.warnings.get(warning.warning_id) is not None
+            assert fresh.tasks.get(task.task_unit_id) is not None
+        finally:
+            await fresh.close()
+
+    async def test_backfill_zero_limit_is_noop(self, store: PostgresStore) -> None:
+        assert await store.backfill_read_model(limit=0) == {"warnings": 0, "tasks": 0}
 
 
 class TestSpatialQueries:

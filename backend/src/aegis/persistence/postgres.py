@@ -28,7 +28,8 @@ import orjson
 
 from aegis.config import Settings, get_settings
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, utc_now
-from aegis.persistence import accuracy, geo, rows, vectors
+from aegis.domain.operator import Operator
+from aegis.persistence import accuracy, geo, operators, rows, vectors
 from aegis.persistence.dsn import dsn_label, normalize_dsn, redact_dsn
 from aegis.persistence.errors import (
     ConnectionFailedError,
@@ -292,6 +293,40 @@ class PostgresStore:
 
     def snapshot(self) -> dict[str, object]:
         return self._read.snapshot()
+
+    # ---------- 席位台账（可选能力面：SupportsOperators） ----------
+
+    async def upsert_operator(self, operator: Operator) -> Operator:
+        return await operators.upsert_operator(await self.connect(), operator)
+
+    async def create_operator(self, operator: Operator) -> Operator | None:
+        return await operators.create_operator(await self.connect(), operator)
+
+    async def get_operator(self, operator_id: str) -> Operator | None:
+        return await operators.get_operator(await self.connect(), operator_id)
+
+    async def list_operators(self, *, active_only: bool = True, limit: int = 200) -> list[Operator]:
+        return await operators.list_operators(await self.connect(), active_only=active_only, limit=limit)
+
+    # ---------- 启动回填（读视图） ----------
+
+    async def backfill_read_model(self, *, limit: int = 500) -> dict[str, int]:
+        """启动时把最近 N 条 warnings/tasks 灌进内存读视图。
+
+        只回填这两类：`ChainResult` 没有行反序列化函数（`rows.py` 明确"不回读重建"），
+        强转会复制一套重建逻辑；`chain.list` 改为按需查库。
+        回填不是启动硬依赖：失败由调用方兜住，读写路径仍可走库查询。
+        """
+        capped = max(0, min(int(limit), 5000))
+        if capped == 0:
+            return {"warnings": 0, "tasks": 0}
+        pool = await self.connect()
+        warning_rows = await pool.fetch("SELECT * FROM warnings ORDER BY generated_at DESC LIMIT $1", capped)
+        for row in warning_rows:
+            await self._read.warnings.put(rows.warning_from_row(row))
+        task_rows = await pool.fetch("SELECT * FROM standardized_task_units ORDER BY created_at DESC LIMIT $1", capped)
+        await self._read.tasks.put_many([rows.task_from_row(row) for row in task_rows])
+        return {"warnings": len(warning_rows), "tasks": len(task_rows)}
 
     @property
     def dsn_target(self) -> str:
