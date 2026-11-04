@@ -25,12 +25,14 @@ import {
 
 function rawAction(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    action: 'query.warnings',
-    title: '查询已发布预警',
-    requires_confirmation: false,
-    needs: ['list_warnings'],
-    available: true,
-    missing: [],
+    action: 'warning.list',
+    title: '查询预警',
+    domain: 'warning',
+    required_role: 'duty',
+    needs_confirm: false,
+    reversible: false,
+    allowed: true,
+    denied_reason: null,
     example: '最近发布了哪些预警',
     ...overrides,
   }
@@ -122,27 +124,6 @@ describe('非 2xx 的原因还原', () => {
     )
   })
 
-  it('会话 404 显示"会话不存在或已过期"，不是一句 Not Found', async () => {
-    const instance = axios.create({
-      baseURL: '/',
-      adapter: async (config) => {
-        throw new AxiosError('request failed', 'ERR_BAD_REQUEST', config, {}, {
-          status: 404,
-          statusText: 'error',
-          headers: {},
-          data: { detail: { code: 'E_SESSION_NOT_FOUND', message: '会话不存在或已过期', session_id: 'sess_0001' } },
-          config,
-        })
-      },
-    })
-    const error = await createAssistantApiClient(instance)
-      .session('sess_0001')
-      .then(() => null)
-      .catch((caught: unknown) => caught as AssistantApiError)
-    expect(error?.message).toBe('助手接口调用失败（HTTP 404）：会话不存在或已过期')
-    expect(error?.code).toBe('E_SESSION_NOT_FOUND')
-  })
-
   it('没有响应体时保留 axios 自己的话（超时/连不上不能被翻成空原因）', async () => {
     const instance = axios.create({
       baseURL: '/',
@@ -181,11 +162,10 @@ describe('非 2xx 的原因还原', () => {
 })
 
 describe('端点清单', () => {
-  it('四条路径与后端路由一致', () => {
+  it('三条路径与后端路由一致（会话回读已随端点退役）', () => {
     expect(ASSISTANT_ENDPOINTS.capabilities).toBe('/api/v1/assistant/capabilities')
     expect(ASSISTANT_ENDPOINTS.chat).toBe('/api/v1/assistant/chat')
     expect(ASSISTANT_ENDPOINTS.confirm).toBe('/api/v1/assistant/confirm')
-    expect(ASSISTANT_ENDPOINTS.session('sess_0001')).toBe('/api/v1/assistant/sessions/sess_0001')
   })
 })
 
@@ -239,10 +219,6 @@ describe('CHAT_LIMITS 与后端 ChatRequest 对账', () => {
 
   it('区划代码的正则与后端同一条', () => {
     expect(CHAT_LIMITS.region_code.pattern.source).toBe(patternOf(fieldLine('region_code')))
-  })
-
-  it('灾种提示上界与后端一致', () => {
-    expect(CHAT_LIMITS.hazard_hint.max).toBe(intOf(fieldLine('hazard_hint'), 'max_length'))
   })
 })
 

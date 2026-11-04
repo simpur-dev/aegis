@@ -2,6 +2,7 @@ import { onBeforeUnmount, ref } from 'vue'
 import type { Ref } from 'vue'
 
 import { tokenHeaders } from '@/api/serviceToken'
+import { splitSseData } from '@/utils/sse'
 
 export interface StreamEvent {
   subject: string
@@ -86,22 +87,6 @@ const browserFetch: StreamFetch = async (path, init) => {
   }
 }
 
-/** SSE 一帧的形状：`data: {...}\n\n`，注释帧（`: keep-alive`）不参与计数。 */
-function dataLines(buffer: string): { frames: string[]; rest: string } {
-  const parts = buffer.split('\n\n')
-  const rest = parts.pop() ?? ''
-  const frames: string[] = []
-  for (const part of parts) {
-    const data = part
-      .split('\n')
-      .filter((line) => line.startsWith('data:'))
-      .map((line) => line.slice(5).trim())
-      .join('')
-    if (data !== '') frames.push(data)
-  }
-  return { frames, rest }
-}
-
 function createStream(limit: number, fetchImpl: StreamFetch): StreamHandle {
   const events = ref<StreamEvent[]>([])
   const connected = ref(false)
@@ -121,7 +106,7 @@ function createStream(limit: number, fetchImpl: StreamFetch): StreamHandle {
       const chunk = await reader.read()
       if (chunk.done) break
       buffer += decoder.decode(chunk.value ?? new Uint8Array(), { stream: true })
-      const { frames, rest } = dataLines(buffer)
+      const { frames, rest } = splitSseData(buffer)
       buffer = rest
       for (const frame of frames) {
         lastBeatAt = Date.now()

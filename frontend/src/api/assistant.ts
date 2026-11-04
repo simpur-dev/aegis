@@ -26,6 +26,7 @@ import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from '
 
 import { describeValidationDetail } from '@/utils/validationDetail'
 import { installServiceToken, tokenHeaders } from '@/api/serviceToken'
+import { drainSseData, splitSseData } from '@/utils/sse'
 
 const http = axios.create({ baseURL: '/', timeout: 20_000 })
 installServiceToken(http)
@@ -36,12 +37,11 @@ installServiceToken(http)
  * 后端全是 `extra="forbid"` + 正则/长度约束（assistant_api.py:32-47），撞一次 422 的概率不低
  * （超长文本、会话号写错、区划代码不是 6 位以上大写字母数字），而机器名对值班员没有信息量。
  */
-export const ASSISTANT_FIELD_LABELS: Record<string, string> = {
+const ASSISTANT_FIELD_LABELS: Record<string, string> = {
   message: '对话内容',
   session_id: '会话号',
   reporter: '上报人名义',
   region_code: '区划代码',
-  hazard_hint: '灾种提示',
   action_id: '动作号',
   actor: '确认人名义',
 }
@@ -50,7 +50,6 @@ export const ASSISTANT_ENDPOINTS = {
   capabilities: '/api/v1/assistant/capabilities',
   chat: '/api/v1/assistant/chat',
   confirm: '/api/v1/assistant/confirm',
-  session: (sessionId: string) => `/api/v1/assistant/sessions/${sessionId}`,
 } as const
 
 export class AssistantApiError extends Error {
@@ -79,8 +78,7 @@ export function isAssistantUnavailable(error: unknown): boolean {
 
 /**
  * 出口整体不存在（配置关掉了助手，路由没挂）：和"未装配"是两件事，不许合并成一个文案。
- * 只用于能力面与对话这两条路由——`sessions/{id}` 的 404 是"会话不存在或已过期"
- * （assistant_api.py:115），那是业务事实而不是装配事实，上层按 `status === 404` 自己判。
+ * 只用于能力面与对话这两条路由——会话回读端点已退役，不存在"会话 404"这种业务事实了。
  */
 export function isAssistantDisabled(error: unknown): boolean {
   return error instanceof AssistantApiError && error.status === 404 && error.code === ''
@@ -125,18 +123,19 @@ async function dispatch<T>(instance: AxiosInstance, config: AxiosRequestConfig):
 export interface ActionSpecDto {
   action: string
   title: string
-  requires_confirmation: boolean
-  needs: string[]
-  available: boolean
-  missing: string[]
+  domain: string
+  required_role: string
+  needs_confirm: boolean
+  reversible: boolean
   /** 词表自己的示例句：页面上的建议条就预填它。缺字段时是空串，建议条据此不渲染成可点项。 */
   example: string
+  /** 当前席位是否够角色。匿名访问时全为 false——界面仍列出动作，只是点不动并说明缺什么。 */
+  allowed: boolean
+  denied_reason: string | null
 }
 
 export interface CapabilitiesDto {
   llm_configured: boolean
-  semantic_parser: boolean
-  wired_actions: Record<string, boolean>
   actions: ActionSpecDto[]
   session_ttl_seconds: number
   max_pending_actions: number
@@ -149,11 +148,8 @@ export interface CapabilitiesDto {
 export function capabilitiesShape(raw: unknown): CapabilitiesDto {
   const record = (raw ?? {}) as Record<string, unknown>
   const actions = Array.isArray(record.actions) ? record.actions : []
-  const wired = (record.wired_actions ?? {}) as Record<string, unknown>
   return {
     llm_configured: record.llm_configured === true,
-    semantic_parser: record.semantic_parser === true,
-    wired_actions: Object.fromEntries(Object.entries(wired).map(([key, value]) => [key, value === true])),
     actions: actions.map((item) => actionSpec(item)),
     session_ttl_seconds: Number(record.session_ttl_seconds ?? 0),
     max_pending_actions: Number(record.max_pending_actions ?? 0),
@@ -165,31 +161,17 @@ function actionSpec(raw: unknown): ActionSpecDto {
   return {
     action: String(record.action ?? ''),
     title: String(record.title ?? record.action ?? ''),
-    requires_confirmation: record.requires_confirmation === true,
-    needs: Array.isArray(record.needs) ? record.needs.map(String) : [],
-    available: record.available === true,
-    missing: Array.isArray(record.missing) ? record.missing.map(String) : [],
+    domain: String(record.domain ?? ''),
+    required_role: String(record.required_role ?? ''),
+    needs_confirm: record.needs_confirm === true,
+    reversible: record.reversible === true,
     example: typeof record.example === 'string' ? record.example : '',
+    allowed: record.allowed === true,
+    denied_reason: typeof record.denied_reason === 'string' ? record.denied_reason : null,
   }
 }
 
-// ---------- 会话与确认 ----------
-
-export interface SessionStateDto {
-  session_id: string
-  turns: number
-  pending_actions: PendingActionDto[]
-  history: Array<{ role: string; text: string }>
-}
-
-export interface PendingActionDto {
-  action_id: string
-  action: string
-  summary: string
-  args: Record<string, unknown>
-  status: string
-  expires_in_seconds: number
-}
+// ---------- 确认 ----------
 
 export interface ConfirmRequestDto {
   session_id: string
@@ -197,7 +179,7 @@ export interface ConfirmRequestDto {
   actor?: string
 }
 
-/** `status` 的四个取值就是后端 confirm() 的四条返回分支（services/assistant.py:332-362）。 */
+/** `status` 的四个取值就是后端 confirm() 的四条返回分支（services/assistant/service.py）。 */
 export type ConfirmStatus = 'executed' | 'rejected' | 'expired' | 'failed'
 
 export interface ConfirmResultDto {
@@ -217,24 +199,22 @@ export interface ChatRequestDto {
   session_id?: string
   reporter?: string
   region_code?: string
-  hazard_hint?: string
 }
 
 /**
- * 只发后端声明过的 5 个键：多一个键就是 422，空字符串也会被 pydantic 的
+ * 只发后端声明过的 4 个键：多一个键就是 422，空字符串也会被 pydantic 的
  * `min_length` 判死，所以可选键要么有值要么不带。
  */
-export function toChatBody(request: ChatRequestDto): ChatRequestDto {
+function toChatBody(request: ChatRequestDto): ChatRequestDto {
   const body: ChatRequestDto = { message: request.message }
   if (request.session_id) body.session_id = request.session_id
   if (request.reporter) body.reporter = request.reporter
   if (request.region_code) body.region_code = request.region_code
-  if (request.hazard_hint) body.hazard_hint = request.hazard_hint
   return body
 }
 
 /**
- * 对话请求体的口径，逐条抄自后端 `ChatRequest`（assistant_api.py:35-39）。
+ * 对话请求体的口径，逐条抄自后端 `ChatRequest`（assistant_api.py:33-40）。
  *
  * 抄来的东西会被校验：`api/assistant.spec.ts` 里的跨端门禁直接读
  * `assistant_api.py` 源码比对这里的数字与正则——后端改了上限而这里没跟上就是红灯，
@@ -243,7 +223,6 @@ export function toChatBody(request: ChatRequestDto): ChatRequestDto {
 export const CHAT_LIMITS = {
   message: { min: 1, max: 2_000 },
   reporter: { min: 2, max: 64 },
-  hazard_hint: { max: 64 },
   region_code: { pattern: /^[0-9A-Z]{6,24}$/ },
 } as const
 
@@ -275,10 +254,6 @@ export function preflightChat(request: ChatRequestDto): string {
   if (region !== undefined && region !== '' && !CHAT_LIMITS.region_code.pattern.test(region)) {
     return `区划代码「${region}」不合口径：后端要求 6..24 位大写字母或数字，这一条没有发出去。`
   }
-  const hint = request.hazard_hint
-  if (hint !== undefined && hint.length > CHAT_LIMITS.hazard_hint.max) {
-    return `灾种提示 ${hint.length} 字，超过后端的 ${CHAT_LIMITS.hazard_hint.max} 字上限。`
-  }
   return ''
 }
 
@@ -289,6 +264,8 @@ export interface MetaFrame {
   session_id: string
   llm_configured: boolean
   actions: string[]
+  /** 当前席位（没带 `X-Aegis-Operator` 时为 null）：读动作允许匿名，写动作会被后端拒绝。 */
+  operator_id?: string | null
 }
 
 export interface IntentFrame {
@@ -298,7 +275,8 @@ export interface IntentFrame {
   confidence: number
   decided_by: string
   note: string
-  requires_confirmation: boolean
+  /** 是否需要二次确认。后端在意图帧里可能不给（由注册表决定），缺省按"不需要"渲染。 */
+  requires_confirmation?: boolean
 }
 
 /** 越权指令帧：后端明确"被拒 + 留痕"，前端必须原样摊开，不许降级成一次查询结果。 */
@@ -307,6 +285,8 @@ export interface RejectedFrame {
   instruction: string
   reason: string
   session_id: string
+  /** 被拒的目标动作名（如 `warning.revoke`）：界面据此说明"哪个动作还没开放"。 */
+  action?: string
 }
 
 export interface StatusFrame {
@@ -380,7 +360,7 @@ function malformed(message: string): ErrorFrame {
  * 一帧 → 可渲染帧。解析失败与"后端加了前端不认识的帧型"都返回 error 帧而不是抛：
  * 对话半途抛错，用户读到的是"一直转圈"，而现场真正要的是那句"第 N 帧读不懂"。
  */
-export function decodeFrame(payload: string): AssistantFrame {
+function decodeFrame(payload: string): AssistantFrame {
   let parsed: unknown
   try {
     parsed = JSON.parse(payload)
@@ -398,33 +378,22 @@ export function decodeFrame(payload: string): AssistantFrame {
 }
 
 /**
- * 按空行切帧：`rest` 是尚未收完的尾巴，留给下一次 reader 读取拼接。
- * 一帧被 TCP 分片切成两半是常态而不是异常，这里切错的后果是整段对话少一帧。
- * 注释帧（`: keep-alive`）与没有 `data:` 行的块直接跳过——它们不是业务事件。
+ * 按空行切帧并把每段载荷解码成帧。切帧本身在 `utils/sse.ts`（与事件流共用一份实现），
+ * 这里只负责"载荷 → AssistantFrame"。
  */
-export function splitFrames(buffer: string): { frames: AssistantFrame[]; rest: string } {
-  const parts = buffer.split(/\r?\n\r?\n/)
-  const rest = parts.pop() ?? ''
-  const frames: AssistantFrame[] = []
-  for (const block of parts) {
-    const lines = block.split(/\r?\n/)
-    const data = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).replace(/^ /, ''))
-    if (data.length === 0) continue
-    frames.push(decodeFrame(data.join('\n')))
-  }
-  return { frames, rest }
+function splitFrames(buffer: string): { frames: AssistantFrame[]; rest: string } {
+  const split = splitSseData(buffer)
+  return { frames: split.frames.map(decodeFrame), rest: split.rest }
 }
 
 /** 流末收摊：后端正常会以空行结尾，但连接被掐时尾巴里可能还压着完整的一帧。 */
 function drainTrailing(buffer: string): AssistantFrame[] {
-  const trimmed = buffer.trim()
-  if (!trimmed) return []
-  return splitFrames(`${trimmed}\n\n`).frames
+  return drainSseData(buffer).map(decodeFrame)
 }
 
 // ---------- 流式对话（POST + SSE，不能用 EventSource） ----------
 
-export interface StreamBodyLike {
+interface StreamBodyLike {
   getReader(): {
     read(): Promise<{ done: boolean; value?: Uint8Array }>
     cancel?: (reason?: unknown) => Promise<void>
@@ -439,9 +408,9 @@ export interface ChatResponseLike {
   text(): Promise<string>
 }
 
-export type ChatFetch = (input: string, init?: RequestInit) => Promise<ChatResponseLike>
+type ChatFetch = (input: string, init?: RequestInit) => Promise<ChatResponseLike>
 
-export interface StreamChatOptions {
+interface StreamChatOptions {
   /** 测试注入口：桩 fetch 不必是真的 Response。 */
   fetchImpl?: ChatFetch
   signal?: AbortSignal
@@ -510,22 +479,17 @@ export function createAssistantApiClient(instance: AxiosInstance) {
   const request = <T>(config: AxiosRequestConfig) => dispatch<T>(instance, config)
 
   return {
-    /** 装配事实：LLM 是否配了、哪些动作缺依赖。页面据此显示"未配置"，而不是装可用。 */
+    /** 装配事实：LLM 是否配了、当前席位能执行哪些动作。页面据此显示"未配置/点不动"，而不是装可用。 */
     capabilities: async () =>
       capabilitiesShape(await request<unknown>({ url: ASSISTANT_ENDPOINTS.capabilities, method: 'get' })),
 
-    /** 人工确认执行：一次性、带期、限本会话（services/assistant.py:332）。 */
+    /** 人工确认执行：一次性、带期、限本会话（services/assistant/service.py）。 */
     confirm: (body: ConfirmRequestDto) =>
       request<ConfirmResultDto>({ url: ASSISTANT_ENDPOINTS.confirm, method: 'post', data: body }),
-
-    /** 会话回读：404 就是"会话不存在或已过期"（assistant_api.py:115）。 */
-    session: (sessionId: string) => request<SessionStateDto>({ url: ASSISTANT_ENDPOINTS.session(sessionId), method: 'get' }),
 
     chat: (body: ChatRequestDto, options: StreamChatOptions = {}) => streamChat(body, options),
   }
 }
-
-export type AssistantApiClient = ReturnType<typeof createAssistantApiClient>
 
 export const assistantApi = createAssistantApiClient(http)
 

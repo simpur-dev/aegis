@@ -250,11 +250,11 @@ describe('UI 基座', () => {
    * 图例就会和图上说的不是一回事——这种"两张皮"最难被看见，第十五批的标签三件套就是这么漂的。
    */
   it('芯片：形状统一 999 圆角，语义色一律取自数据那一份（不许就地写死）', () => {
-    const assistant = readRepoFile('frontend', 'src', 'views', 'AssistantView.vue').replace(/\/\*[\s\S]*?\*\//g, '')
-    expect(assistant, '助手页动作芯片不是芯片一族（圆角该是 999px）').toMatch(
+    const assistantPanel = readRepoFile('frontend', 'src', 'components', 'assistant', 'AssistantPanel.vue').replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(assistantPanel, '助手动作芯片不是芯片一族（圆角该是 999px）').toMatch(
       /\.caps__chip\s*\{[\s\S]{0,400}border-radius: 999px/,
     )
-    expect(assistant, '芯片矮于 26px，点起来是"文字链"不是"按钮"').toMatch(
+    expect(assistantPanel, '芯片矮于 26px，点起来是"文字链"不是"按钮"').toMatch(
       /\.caps__chip\s*\{[\s\S]{0,400}min-height: 26px/,
     )
 

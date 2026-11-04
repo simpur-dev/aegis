@@ -195,7 +195,8 @@ const statusTitle = computed<string>(() =>
         </main>
       </div>
       <!-- 全站悬浮的智能助手：所有页面都有（含沉浸式编排页），位置/开合自己持久化 -->
-      <AssistantDock :immersive="immersive" />
+      <!-- 助手页本身就是全屏会话：再叠一份抽屉会出现两份共享同一会话的时间线 -->
+      <AssistantDock v-if="route.name !== 'assistant'" :immersive="immersive" />
     </div>
   </a-config-provider>
 </template>

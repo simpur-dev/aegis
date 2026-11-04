@@ -11,6 +11,7 @@
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import {
   clampDrawerWidth,
   clampTop,
@@ -36,7 +37,7 @@ const headerH = ref(68)
 
 const headerVar = computed(() => (props.immersive ? '--aeg-editor-header-height' : '--aeg-header-height'))
 
-/** 抽屉宽度（与 CSS 的 clamp 保持一致，供图标让位时使用；实际位移由 CSS 算） */
+/** 抽屉顶部的落点（跟随顶栏/编辑器头部高度；水平位置与宽度由 CSS 变量算）。 */
 const drawerTopStyle = computed(() => ({ top: `${headerH.value}px` }))
 
 function readHeaderHeight(): number {
@@ -293,11 +294,7 @@ onBeforeUnmount(() => {
       <button type="button" class="assistant-drawer__close" aria-label="收起助手" @click="close">×</button>
     </header>
     <div class="assistant-drawer__body">
-      <div class="assistant-drawer__empty">
-        <img src="/mascot/assistant-avatar-navy.png" alt="" aria-hidden="true" />
-        <p>侧栏内容待接入</p>
-        <span>这里之后会放对话与快捷指令；现在只验证抽屉的开合与图标让位。</span>
-      </div>
+      <AssistantPanel mode="dock" />
     </div>
   </aside>
 </template>
@@ -424,34 +421,10 @@ onBeforeUnmount(() => {
 .assistant-drawer__body {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: var(--aeg-space-s4);
-}
-.assistant-drawer__empty {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--aeg-space-s2);
-  margin-top: 12vh;
-  text-align: center;
-  color: var(--aeg-color-text-secondary);
-}
-.assistant-drawer__empty img {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  opacity: 0.9;
-}
-.assistant-drawer__empty p {
-  margin: 0;
-  font-size: var(--aeg-font-md);
-  font-weight: var(--aeg-weight-semibold);
-  color: var(--aeg-color-text);
-}
-.assistant-drawer__empty span {
-  max-width: 30ch;
-  font-size: var(--aeg-font-sm);
-  line-height: var(--aeg-lh-normal);
+  /* 滚动交给 AssistantPanel 内部的会话区：抽屉本身不滚，输入区才不会被滚走 */
+  overflow: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {

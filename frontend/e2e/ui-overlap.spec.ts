@@ -2351,8 +2351,6 @@ const HOVER_TARGETS = [
   '.risk-chip',
   '.sys-term__chip',
   '.ant-card-hoverable',
-  '.side-assistant',
-  '.side-collapse',
 ]
 
 /**

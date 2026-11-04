@@ -8,9 +8,9 @@
 /** 图标直径（px）：与 AssistantDock.vue 的图标尺寸保持一致 */
 export const DOCK_SIZE = 56
 /** 位移小于这个值算点击，否则算拖拽（避免拖完松手误开抽屉） */
-export const CLICK_SLOP = 4
+const CLICK_SLOP = 4
 /** 图标与顶栏/视口边缘的最小留白 */
-export const DOCK_MARGIN = 8
+const DOCK_MARGIN = 8
 
 /**
  * 把图标竖直位置夹在「顶栏下方」与「视口底部」之间。

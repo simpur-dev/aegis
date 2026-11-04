@@ -1,17 +1,18 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AssistantFrame, CapabilitiesDto } from '@/api/assistant'
+import type { ActionSpecDto, AssistantFrame, CapabilitiesDto } from '@/api/assistant'
 import { AssistantApiError, assistantApi, CHAT_LIMITS } from '@/api/assistant'
 import { readRepoFile } from '@/testing/repoSource'
 import { reloadAssistantSession, resetAssistantSession } from '@/composables/useAssistantSession'
+import { resetAssistantCapabilities } from '@/composables/useAssistantCapabilities'
 import AssistantView from '@/views/AssistantView.vue'
 
 vi.mock('@/api/assistant', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/assistant')>()
   return {
     ...actual,
-    assistantApi: { capabilities: vi.fn(), chat: vi.fn(), confirm: vi.fn(), session: vi.fn() },
+    assistantApi: { capabilities: vi.fn(), chat: vi.fn(), confirm: vi.fn() },
   }
 })
 
@@ -66,14 +67,33 @@ const STUBS = {
   ReportForm: { name: 'ReportForm', props: ['initialRegionCode', 'initialReporter'], template: '<div class="report-form" />' },
 }
 
+function spec(overrides: Partial<ActionSpecDto> & { action: string; title: string }): ActionSpecDto {
+  return {
+    domain: 'query',
+    required_role: 'duty',
+    needs_confirm: false,
+    reversible: false,
+    example: '',
+    allowed: true,
+    denied_reason: null,
+    ...overrides,
+  }
+}
+
 function capabilities(overrides: Partial<CapabilitiesDto> = {}): CapabilitiesDto {
   return {
     llm_configured: true,
-    semantic_parser: true,
-    wired_actions: { list_warnings: true },
     actions: [
-      { action: 'query.warnings', title: '查询已发布预警', requires_confirmation: false, needs: ['list_warnings'], available: true, missing: [], example: '最近发布了哪些预警' },
-      { action: 'run.drill', title: '发起一次演练', requires_confirmation: true, needs: ['run_drill'], available: false, missing: ['run_drill'], example: '发起一次演练' },
+      spec({ action: 'warning.list', title: '查询预警', example: '最近发布了哪些预警' }),
+      spec({
+        action: 'drill.start',
+        title: '发起一次演练',
+        domain: 'drill',
+        needs_confirm: true,
+        allowed: false,
+        denied_reason: '需要 lead 及以上角色',
+        example: '发起一次演练',
+      }),
     ],
     session_ttl_seconds: 900,
     max_pending_actions: 8,
@@ -103,8 +123,9 @@ beforeEach(() => {
   mockedCapabilities.mockReset()
   mockedChat.mockReset()
   mockedConfirm.mockReset()
-  // 时间线与会话号现在是模块级状态（换页接得上），用例之间必须从头开始
+  // 时间线、会话号与能力面都是模块级状态（换页接得上），用例之间必须从头开始
   resetAssistantSession()
+  resetAssistantCapabilities()
 })
 
 /**
@@ -117,26 +138,24 @@ beforeEach(() => {
 describe('建议条：点一下填进输入框，不代发', () => {
   it('点芯片把该动作的示例句填入消息框，且不发请求', async () => {
     const wrapper = await renderView()
-    await wrapper.find('[data-testid="action-query.warnings"]').trigger('click')
+    await wrapper.find('[data-testid="action-warning.list"]').trigger('click')
     expect((wrapper.find('[data-testid="field-message"]').element as HTMLTextAreaElement).value).toBe('最近发布了哪些预警')
     expect(mockedChat).not.toHaveBeenCalled()
   })
 
   it('需确认的动作也照样填得出来，确认这一步留给后端提案', async () => {
     const wrapper = await renderView()
-    await wrapper.find('[data-testid="action-run.drill"]').trigger('click')
+    await wrapper.find('[data-testid="action-drill.start"]').trigger('click')
     expect((wrapper.find('[data-testid="field-message"]').element as HTMLTextAreaElement).value).toBe('发起一次演练')
     expect(wrapper.text()).toContain('需确认')
   })
 
   it('能力面没给示例句时这条禁用，点了不改输入框', async () => {
     const caps = capabilities({
-      actions: [
-        { action: 'query.tasks', title: '查询任务单元', requires_confirmation: false, needs: [], available: true, missing: [], example: '' },
-      ],
+      actions: [spec({ action: 'task.list', title: '查询任务单元', domain: 'task', example: '' })],
     })
     const wrapper = await renderView(caps)
-    const chip = wrapper.find('[data-testid="action-query.tasks"]')
+    const chip = wrapper.find('[data-testid="action-task.list"]')
     expect(chip.attributes('disabled')).toBeDefined()
     await chip.trigger('click')
     expect((wrapper.find('[data-testid="field-message"]').element as HTMLTextAreaElement).value).toBe('')
@@ -145,7 +164,7 @@ describe('建议条：点一下填进输入框，不代发', () => {
   it('填进去的句子随后能发出去（点芯片与发送是两步，不是一步）', async () => {
     const wrapper = await renderView()
     mockedChat.mockReturnValue(framesOf([{ type: 'meta', session_id: 'sess_0001', llm_configured: true, actions: [] }]))
-    await wrapper.find('[data-testid="action-query.warnings"]').trigger('click')
+    await wrapper.find('[data-testid="action-warning.list"]').trigger('click')
     await wrapper.find('[data-testid="send"]').trigger('click')
     await flushPromises()
     expect(mockedChat.mock.calls[0]?.[0]?.message).toBe('最近发布了哪些预警')
@@ -182,12 +201,12 @@ describe('能力面：读不到与没配置都不许显示成正常', () => {
     expect(byTestid(disabled, 'banner-caps-error').text()).not.toContain('E_ASSISTANT_UNAVAILABLE')
   })
 
-  it('缺依赖的动作点名缺了哪个，不显示成可用', async () => {
+  it('角色不够的动作照样列出，但标出缺什么并置灰', async () => {
     const wrapper = await renderView()
-    expect(byTestid(wrapper, 'action-run.drill').text()).toContain('缺 run_drill')
-    expect(byTestid(wrapper, 'action-run.drill').classes()).toContain('is-missing')
-    expect(byTestid(wrapper, 'action-query.warnings').classes()).toContain('is-available')
-    expect(byTestid(wrapper, 'action-query.warnings').text()).toContain('查询已发布预警')
+    expect(byTestid(wrapper, 'action-drill.start').text()).toContain('需要 lead')
+    expect(byTestid(wrapper, 'action-drill.start').classes()).toContain('is-denied')
+    expect(byTestid(wrapper, 'action-warning.list').classes()).toContain('is-available')
+    expect(byTestid(wrapper, 'action-warning.list').text()).toContain('查询预警')
   })
 })
 
@@ -195,10 +214,10 @@ describe('对话：每一帧都留在时间线上', () => {
   it('按后端帧序列渲染，会话号取后端给的', async () => {
     mockedChat.mockReturnValue(
       framesOf([
-        { type: 'meta', session_id: 'sess_0001', llm_configured: false, actions: ['query.agents'] },
-        { type: 'intent', action: 'query.agents', args: {}, confidence: 0.9, decided_by: 'rule', note: '', requires_confirmation: false },
-        { type: 'status', text: '执行 query.agents' },
-        { type: 'result', action: 'query.agents', online: 3 },
+        { type: 'meta', session_id: 'sess_0001', llm_configured: false, actions: ['agent.list'] },
+        { type: 'intent', action: 'agent.list', args: {}, confidence: 0.9, decided_by: 'rule', note: '', requires_confirmation: false },
+        { type: 'status', text: '执行 agent.list' },
+        { type: 'result', action: 'agent.list', online: 3 },
         { type: 'answer', text: '3 个在线智能体' },
         { type: 'done', session_id: 'sess_0001', latency_ms: 7.4, rejected_count: 0 },
       ]),
@@ -208,8 +227,8 @@ describe('对话：每一帧都留在时间线上', () => {
 
     expect(byTestid(wrapper, 'session-id').text()).toContain('sess_0001')
     expect(byTestid(wrapper, 'frame-answer').text()).toContain('3 个在线智能体')
-    expect(byTestid(wrapper, 'frame-status').text()).toContain('执行 query.agents')
-    expect(byTestid(wrapper, 'frame-intent').text()).toContain('query.agents')
+    expect(byTestid(wrapper, 'frame-status').text()).toContain('执行 agent.list')
+    expect(byTestid(wrapper, 'frame-intent').text()).toContain('agent.list')
     expect(byTestid(wrapper, 'frame-intent').text()).not.toContain('需人工确认')
     expect(byTestid(wrapper, 'frame-result').text()).toContain('"online":3')
     expect(byTestid(wrapper, 'frame-done').text()).toContain('累计被拒 0 次')
@@ -256,8 +275,8 @@ describe('对话：每一帧都留在时间线上', () => {
    * 断言挂在属性上就是在测替身，不是测组件。
    */
   it('消息框把后端那份上限交给输入框，并显示当前字数', async () => {
-    const view = readRepoFile('frontend', 'src', 'views', 'AssistantView.vue')
-    expect(view).toContain(':maxlength="CHAT_LIMITS.message.max"')
+    const panel = readRepoFile('frontend', 'src', 'components', 'assistant', 'AssistantPanel.vue')
+    expect(panel).toContain(':maxlength="CHAT_LIMITS.message.max"')
     const wrapper = await renderView()
     expect(byTestid(wrapper, 'char-count').text()).toContain(`0 / ${CHAT_LIMITS.message.max}`)
     await byTestid(wrapper, 'field-message').setValue('查预警')
@@ -328,7 +347,7 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
   const proposal: AssistantFrame = {
     type: 'proposal',
     action_id: 'act_abc123',
-    action: 'create.report',
+    action: 'report.submit',
     summary: '上报：540121 沟道泥位抬升',
     args: { note: '沟道泥位抬升' },
     status: 'pending',
@@ -347,7 +366,7 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
     const wrapper = await renderWithProposal()
     const card = byTestid(wrapper, 'proposal-act_abc123')
     expect(card.exists()).toBe(true)
-    expect(card.text()).toContain('create.report')
+    expect(card.text()).toContain('report.submit')
     expect(card.text()).toContain('上报：540121')
     expect(byTestid(wrapper, 'confirm-act_abc123').exists()).toBe(true)
     expect(byTestid(wrapper, 'dismiss-act_abc123').exists()).toBe(true)
@@ -355,24 +374,24 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
 
   it('确认按 session_id + action_id 打 /confirm，并把后端回执显示出来', async () => {
     const wrapper = await renderWithProposal()
-    mockedConfirm.mockResolvedValue({ status: 'executed', action_id: 'act_abc123', action: 'create.report' })
+    mockedConfirm.mockResolvedValue({ status: 'executed', action_id: 'act_abc123', action: 'report.submit' })
     await wrapper.find('[data-testid="confirm-act_abc123"]').trigger('click')
     await flushPromises()
     expect(mockedConfirm).toHaveBeenCalledWith({ session_id: 'sess_0001', action_id: 'act_abc123', actor: '值班员' })
     expect(byTestid(wrapper, 'decision').text()).toContain('已执行')
-    expect(byTestid(wrapper, 'decision').text()).toContain('create.report')
+    expect(byTestid(wrapper, 'decision').text()).toContain('report.submit')
   })
 
   /**
    * 后端 /confirm 把整份执行结果都带回来了（上报回执里有链路、可能还有预警与工单），
-   * 页面上此前只剩"已执行 create.report"——经助手报上去一条险情，手里一个号都没有。
+   * 页面上此前只剩"已执行 report.submit"——经助手报上去一条险情，手里一个号都没有。
    */
   it('执行成功要把能跟进的号带回来', async () => {
     const wrapper = await renderWithProposal()
     mockedConfirm.mockResolvedValue({
       status: 'executed',
       action_id: 'act_abc123',
-      action: 'create.report',
+      action: 'report.submit',
       result: {
         report: {
           trace_id: 'trc_0123456789abcdef',
@@ -391,7 +410,7 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
 
   it('后端没回号时明说没回，而不是只写"已执行"', async () => {
     const wrapper = await renderWithProposal()
-    mockedConfirm.mockResolvedValue({ status: 'executed', action_id: 'act_abc123', action: 'run.drill', result: {} })
+    mockedConfirm.mockResolvedValue({ status: 'executed', action_id: 'act_abc123', action: 'drill.start', result: {} })
     await wrapper.find('[data-testid="confirm-act_abc123"]').trigger('click')
     await flushPromises()
     expect(byTestid(wrapper, 'decision').text()).toContain('没回可跟进的号')
@@ -405,7 +424,7 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
     const wrapper = await renderWithProposal()
     mockedConfirm.mockResolvedValue(
       status === 'failed'
-        ? { status, action_id: 'act_abc123', action: 'create.report', error: reason }
+        ? { status, action_id: 'act_abc123', action: 'report.submit', error: reason }
         : { status, action_id: 'act_abc123', reason },
     )
     await wrapper.find('[data-testid="confirm-act_abc123"]').trigger('click')
@@ -443,7 +462,7 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
 
   it('处置后的卡片不给第二次点击：确认是一次性的', async () => {
     const wrapper = await renderWithProposal()
-    mockedConfirm.mockResolvedValue({ status: 'executed', action_id: 'act_abc123', action: 'create.report' })
+    mockedConfirm.mockResolvedValue({ status: 'executed', action_id: 'act_abc123', action: 'report.submit' })
     await wrapper.find('[data-testid="confirm-act_abc123"]').trigger('click')
     await flushPromises()
     expect(byTestid(wrapper, 'confirm-act_abc123').attributes('disabled')).toBeDefined()
@@ -542,8 +561,8 @@ describe('对话框的 Enter / Shift+Enter', () => {
  */
 describe('换页再回来：对话要接得上（后端会话还在时限内）', () => {
   const thread: AssistantFrame[] = [
-    { type: 'meta', session_id: 'as_live_1', llm_configured: false, actions: ['query.warnings'] },
-    { type: 'intent', action: 'query.warnings', args: {}, confidence: 0.8, decided_by: 'rule', note: '', requires_confirmation: false },
+    { type: 'meta', session_id: 'as_live_1', llm_configured: false, actions: ['warning.list'] },
+    { type: 'intent', action: 'warning.list', args: {}, confidence: 0.8, decided_by: 'rule', note: '', requires_confirmation: false },
     { type: 'answer', text: '沟口那条村当前有 1 条红色预警' },
     { type: 'done', session_id: 'as_live_1', latency_ms: 5.1, rejected_count: 0 },
   ]

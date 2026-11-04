@@ -2,8 +2,8 @@ import { reactive, ref, watch } from 'vue'
 
 import type { AssistantFrame, ConfirmResultDto } from '@/api/assistant'
 
-/** 待确认动作在这页只有三种下落：后端回执、本地收起、请求没发出去。 */
-export type Decision = { kind: 'busy' } | { kind: 'dismissed' } | { kind: 'error'; message: string } | { kind: 'result'; result: ConfirmResultDto }
+/** 待确认动作只有三种下落：后端回执、本地收起、请求没发出去。 */
+type Decision = { kind: 'busy' } | { kind: 'dismissed' } | { kind: 'error'; message: string } | { kind: 'result'; result: ConfirmResultDto }
 
 /**
  * 对话状态放在组件外面。
@@ -38,7 +38,7 @@ function storage(): Storage | null {
 }
 
 /** 页面装载（或测试里模拟"新开一页"）时把上一次的样子接回来。 */
-export function rehydrate(): void {
+function rehydrate(): void {
   const bucket = storage()
   if (bucket === null) return
   let raw: string | null = null
