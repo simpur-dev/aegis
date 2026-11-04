@@ -19,6 +19,7 @@ import { nextTick, onMounted, ref, watch } from 'vue'
 import type { ActionSpecDto, ConfirmResultDto, ProposalFrame } from '@/api/assistant'
 import { assistantApi, CHAT_LIMITS, isAssistantDisabled, isAssistantUnavailable, preflightChat } from '@/api/assistant'
 import ReportForm from '@/components/reports/ReportForm.vue'
+import AlertStack from '@/components/assistant/AlertStack.vue'
 import { useAssistantCapabilities } from '@/composables/useAssistantCapabilities'
 import { useAssistantSession } from '@/composables/useAssistantSession'
 import { useConversationModel } from '@/composables/useConversationModel'
@@ -203,6 +204,7 @@ onMounted(() => void loadCapabilities())
     />
 
     <div class="chat">
+      <AlertStack />
       <div ref="scrollHost" class="chat__scroll" data-testid="timeline">
         <!-- 空态：欢迎 + 建议（点芯片只填句子，发不发由人） -->
         <div v-if="!frames.length && !streaming" class="chat__empty" data-testid="timeline-empty">

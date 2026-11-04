@@ -16,6 +16,7 @@ pgvector 余弦检索是否真的排序、写缓冲在库不可达时是否保�
 from __future__ import annotations
 
 import os
+import secrets
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
@@ -113,7 +114,8 @@ async def store() -> AsyncIterator[PostgresStore]:
     pool = pg.require_pool()
     await pool.execute(
         "TRUNCATE telemetry_readings, warnings, warning_receipts, standardized_task_units, "
-        "monitoring_stations, chain_runs, workflow_definitions, workflow_instances, workflow_node_states RESTART IDENTITY CASCADE"
+        "monitoring_stations, chain_runs, workflow_definitions, workflow_instances, workflow_node_states, "
+        "audit_ops, handling_tasks, handling_spaces, assistant_alerts, control_actions, operators RESTART IDENTITY CASCADE"
     )
     try:
         yield pg
@@ -181,6 +183,70 @@ class TestReadModelBackfill:
 
     async def test_backfill_zero_limit_is_noop(self, store: PostgresStore) -> None:
         assert await store.backfill_read_model(limit=0) == {"warnings": 0, "tasks": 0}
+
+
+class TestAlertPersistence:
+    """告警台账只有真库才能证明的部分：UNIQUE 去重、UPDATE...RETURNING 的原子升级。"""
+
+    async def _seed_operator(self, store: PostgresStore, operator_id: str) -> None:
+        await store.require_pool().execute(
+            "INSERT INTO operators (operator_id, display_name, role) VALUES ($1, $2, 'duty') ON CONFLICT DO NOTHING",
+            operator_id,
+            "值班员",
+        )
+
+    async def _raise(self, store: PostgresStore, warning_id: str, *, drill: bool) -> tuple[dict[str, Any], bool]:
+        return await store.raise_alert(
+            alert_id=f"alt_{secrets.token_hex(8)}",
+            warning_id=warning_id,
+            level=1,
+            region_code="540121",
+            drill=drill,
+        )
+
+    async def test_dedup_by_warning_id_and_ack_needs_open_status(self, store: PostgresStore) -> None:
+        warning = _warning("evt_alert0000001", "trc_alert0000001")
+        await store.warnings.put(warning)
+        await store.flush()
+        first, created = await self._raise(store, warning.warning_id, drill=False)
+        again, recreated = await self._raise(store, warning.warning_id, drill=False)
+        assert created is True and recreated is False
+        assert first["alert_id"] == again["alert_id"]
+
+        await self._seed_operator(store, "op-duty")
+        acked = await store.ack_alert(first["alert_id"], "op-duty")
+        assert acked is not None and acked["status"] == "acked" and acked["ack_by"] == "op-duty"
+        # 已 acked 不在 _ACTIONABLE 里：第二次更新命中 0 行（service 层据此返回 already=true）
+        assert await store.ack_alert(first["alert_id"], "op-duty") is None
+
+        rows = await store.list_alerts(open_only=True, limit=10)
+        target = next(row for row in rows if row["alert_id"] == first["alert_id"])
+        # LEFT JOIN warnings 拿到的展示字段：告警卡上"灾种/标题"与预警同源
+        assert target["title"] == warning.title_zh
+        assert target["hazard_type"] == warning.hazard_type
+
+    async def test_escalate_due_is_atomic_and_skips_drills(self, store: PostgresStore) -> None:
+        real, _ = await self._raise(store, "wrn_" + "1" * 20, drill=False)
+        drill_row, _ = await self._raise(store, "wrn_" + "2" * 20, drill=True)
+        assert real is not None and drill_row is not None
+        # 只把真实告警拨过升级窗口：演练永不在升级队列里
+        await store.require_pool().execute("UPDATE assistant_alerts SET created_at = now() - interval '10 minutes' WHERE drill = false")
+        escalated = await store.escalate_due(after_minutes=5)
+        assert [row["alert_id"] for row in escalated] == [real["alert_id"]]
+        # 再扫一遍：状态已 escalated，不在 _ESCALATABLE 里，0 行命中
+        assert await store.escalate_due(after_minutes=5) == []
+
+    async def test_transfer_only_moves_assignee(self, store: PostgresStore) -> None:
+        record, _ = await self._raise(store, "wrn_" + "3" * 20, drill=False)
+        assert record is not None
+        await self._seed_operator(store, "op-a")
+        await self._seed_operator(store, "op-b")
+        acked = await store.ack_alert(record["alert_id"], "op-a")
+        assert acked is not None
+        moved = await store.transfer_alert(record["alert_id"], "op-b")
+        assert moved is not None
+        assert moved["assigned_to"] == "op-b"
+        assert moved["ack_by"] == "op-a"
 
 
 class TestSpatialQueries:

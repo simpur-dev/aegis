@@ -29,7 +29,7 @@ import orjson
 from aegis.config import Settings, get_settings
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, utc_now
 from aegis.domain.operator import Operator
-from aegis.persistence import accuracy, control_actions, geo, operators, rows, vectors
+from aegis.persistence import accuracy, alerts, control_actions, geo, operators, rows, vectors
 from aegis.persistence.dsn import dsn_label, normalize_dsn, redact_dsn
 from aegis.persistence.errors import (
     ConnectionFailedError,
@@ -362,6 +362,59 @@ class PostgresStore:
 
     async def recover_stuck_actions(self) -> int:
         return await control_actions.recover_stuck(await self.connect())
+
+    # ---------- 告警实例（可选能力面：SupportsAlerts） ----------
+
+    async def raise_alert(
+        self,
+        *,
+        alert_id: str,
+        warning_id: str,
+        level: int,
+        region_code: str,
+        drill: bool,
+    ) -> tuple[dict[str, Any], bool]:
+        return await alerts.raise_alert(
+            await self.connect(),
+            alert_id=alert_id,
+            warning_id=warning_id,
+            level=level,
+            region_code=region_code,
+            drill=drill,
+        )
+
+    async def get_alert(self, alert_id: str) -> dict[str, Any] | None:
+        return await alerts.get_alert(await self.connect(), alert_id)
+
+    async def list_alerts(
+        self,
+        *,
+        open_only: bool = True,
+        status: str | None = None,
+        level: int | None = None,
+        drill: bool | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        return await alerts.list_alerts(
+            await self.connect(),
+            open_only=open_only,
+            status=status,
+            level=level,
+            drill=drill,
+            limit=limit,
+        )
+
+    async def ack_alert(self, alert_id: str, operator_id: str) -> dict[str, Any] | None:
+        return await alerts.ack_alert(await self.connect(), alert_id, operator_id)
+
+    async def transfer_alert(self, alert_id: str, assignee: str) -> dict[str, Any] | None:
+        return await alerts.transfer_alert(await self.connect(), alert_id, assignee)
+
+    async def snooze_alert(self, alert_id: str, minutes: int) -> dict[str, Any] | None:
+        return await alerts.snooze_alert(await self.connect(), alert_id, minutes)
+
+    async def escalate_due(self, *, after_minutes: int) -> list[dict[str, Any]]:
+        return await alerts.escalate_due(await self.connect(), after_minutes=after_minutes)
 
     # ---------- 启动回填（读视图） ----------
     async def backfill_read_model(self, *, limit: int = 500) -> dict[str, int]:

@@ -13,6 +13,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
+from aegis.domain.alert import ACTIONABLE_STATUSES, OPEN_STATUSES
 from aegis.domain.chain import ChainResult
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, parse_iso
 from aegis.domain.operator import Operator
@@ -348,6 +349,147 @@ class ControlActionStore:
         return recovered
 
 
+class AlertStore:
+    """告警实例的内存实现。
+
+    与 `persistence/alerts.py` 同一套状态机与不变量，只是介质不同：
+    - 去重键是 `warning_id`：同一预警重复广播不会长出第二张卡；
+    - 接手不改 `ack_by` 之外的任何东西，转派只改 `assigned_to`；
+    - 升级只命中未确认、非演练、未被稍后提醒挡住的记录。
+
+    它**不提供跨重启存活**：内存形态用于开发与测试，生产用 SQL 那份，
+    能力面里如实标注 `alerts_persistent: false`，不假装。
+    """
+
+    def __init__(self, maxlen: int = 2_000) -> None:
+        self._rows: dict[str, dict[str, Any]] = {}
+        self._by_warning: dict[str, str] = {}
+        self._order: deque[str] = deque(maxlen=maxlen)
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(UTC)
+
+    @staticmethod
+    def _iso(value: datetime | None) -> str | None:
+        return None if value is None else value.isoformat()
+
+    def _public(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **row,
+            "ack_at": self._iso(row["ack_at"]),
+            "snooze_until": self._iso(row["snooze_until"]),
+            "escalated_at": self._iso(row["escalated_at"]),
+            "created_at": self._iso(row["created_at"]),
+        }
+
+    def _evict(self) -> None:
+        while len(self._rows) > (self._order.maxlen or 0):
+            oldest = self._order.popleft()
+            dropped = self._rows.pop(oldest, None)
+            if dropped is not None:
+                self._by_warning.pop(dropped["warning_id"], None)
+
+    async def raise_alert(
+        self,
+        *,
+        alert_id: str,
+        warning_id: str,
+        level: int,
+        region_code: str,
+        drill: bool,
+    ) -> tuple[dict[str, Any], bool]:
+        existing_id = self._by_warning.get(warning_id)
+        if existing_id is not None and existing_id in self._rows:
+            return self._public(self._rows[existing_id]), False
+        row: dict[str, Any] = {
+            "alert_id": alert_id,
+            "warning_id": warning_id,
+            "level": int(level),
+            "region_code": region_code,
+            "status": "raised",
+            "ack_by": None,
+            "ack_at": None,
+            "assigned_to": None,
+            "snooze_until": None,
+            "escalated_at": None,
+            "drill": bool(drill),
+            "created_at": self._now(),
+        }
+        self._rows[alert_id] = row
+        self._by_warning[warning_id] = alert_id
+        self._order.append(alert_id)
+        self._evict()
+        return self._public(row), True
+
+    async def get_alert(self, alert_id: str) -> dict[str, Any] | None:
+        row = self._rows.get(alert_id)
+        return None if row is None else self._public(row)
+
+    async def list_alerts(
+        self,
+        *,
+        open_only: bool = True,
+        status: str | None = None,
+        level: int | None = None,
+        drill: bool | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        capped = max(1, min(int(limit), 200))
+        rows = [self._rows[aid] for aid in self._order if aid in self._rows]
+        if status:
+            rows = [row for row in rows if row["status"] == status]
+        elif open_only:
+            rows = [row for row in rows if row["status"] in OPEN_STATUSES]
+        if level is not None:
+            rows = [row for row in rows if row["level"] == int(level)]
+        if drill is not None:
+            rows = [row for row in rows if row["drill"] is bool(drill)]
+        rows.sort(key=lambda row: (row["level"], row["created_at"]), reverse=False)
+        return [self._public(row) for row in rows[:capped]]
+
+    async def ack_alert(self, alert_id: str, operator_id: str) -> dict[str, Any] | None:
+        row = self._rows.get(alert_id)
+        if row is None or row["status"] not in ACTIONABLE_STATUSES:
+            return None
+        now = self._now()
+        row["status"] = "acked"
+        row["ack_by"] = operator_id
+        row["ack_at"] = now
+        row["assigned_to"] = row["assigned_to"] or operator_id
+        return self._public(row)
+
+    async def transfer_alert(self, alert_id: str, assignee: str) -> dict[str, Any] | None:
+        row = self._rows.get(alert_id)
+        if row is None or row["status"] not in OPEN_STATUSES:
+            return None
+        row["assigned_to"] = assignee
+        return self._public(row)
+
+    async def snooze_alert(self, alert_id: str, minutes: int) -> dict[str, Any] | None:
+        row = self._rows.get(alert_id)
+        if row is None or row["status"] not in OPEN_STATUSES:
+            return None
+        row["snooze_until"] = self._now() + timedelta(minutes=int(minutes))
+        return self._public(row)
+
+    async def escalate_due(self, *, after_minutes: int) -> list[dict[str, Any]]:
+        now = self._now()
+        cutoff = timedelta(minutes=int(after_minutes))
+        escalated: list[dict[str, Any]] = []
+        for row in self._rows.values():
+            if row["status"] not in {"raised", "delivered"} or row["drill"]:
+                continue
+            if now - row["created_at"] < cutoff:
+                continue
+            if row["snooze_until"] is not None and row["snooze_until"] > now:
+                continue
+            row["status"] = "escalated"
+            row["escalated_at"] = now
+            escalated.append(self._public(row))
+        return escalated
+
+
 class PlatformStore:
     """平台运行态聚合入口。"""
 
@@ -359,6 +501,9 @@ class PlatformStore:
         # 动作执行记录（内存态）：写动作的"待确认 → 执行"在这里落账，重启即失——
         # 能力面用 `control_actions_persistent: false` 如实标注，不假装跨重启。
         self.control_actions = ControlActionStore()
+        # 告警实例（内存态）：同一预警只留一条，重启即失——能力面用
+        # `alerts_persistent: false` 如实标注，不假装。
+        self.alerts = AlertStore()
         # 站点维表（内存态）：与 PostgreSQL 那份同构，由 `scripts/import_stations.py` 显式写入。
         # 内存视图没有持久层，导入只活到进程结束——这一条由导入命令在结果里说清楚。
         self._station_dim: dict[str, dict[str, object]] = {}
@@ -446,6 +591,29 @@ class PlatformStore:
 
     async def recover_stuck_actions(self) -> int:
         return await self.control_actions.recover_stuck_actions()
+
+    # ---------- 告警实例（可选能力面：SupportsAlerts） ----------
+
+    async def raise_alert(self, **kwargs: Any) -> tuple[dict[str, Any], bool]:
+        return await self.alerts.raise_alert(**kwargs)
+
+    async def get_alert(self, alert_id: str) -> dict[str, Any] | None:
+        return await self.alerts.get_alert(alert_id)
+
+    async def list_alerts(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return await self.alerts.list_alerts(**kwargs)
+
+    async def ack_alert(self, alert_id: str, operator_id: str) -> dict[str, Any] | None:
+        return await self.alerts.ack_alert(alert_id, operator_id)
+
+    async def transfer_alert(self, alert_id: str, assignee: str) -> dict[str, Any] | None:
+        return await self.alerts.transfer_alert(alert_id, assignee)
+
+    async def snooze_alert(self, alert_id: str, minutes: int) -> dict[str, Any] | None:
+        return await self.alerts.snooze_alert(alert_id, minutes)
+
+    async def escalate_due(self, *, after_minutes: int) -> list[dict[str, Any]]:
+        return await self.alerts.escalate_due(after_minutes=after_minutes)
 
     async def record_chain(self, result: ChainResult) -> None:
         await self.chains.add(result)
@@ -685,6 +853,49 @@ class SupportsControlActions(Protocol):
 
 def control_action_port(store: object) -> SupportsControlActions | None:
     return store if isinstance(store, SupportsControlActions) else None
+
+
+@runtime_checkable
+class SupportsAlerts(Protocol):
+    """告警台账的可选能力面：内存与持久两套都实现，语义逐条对齐。
+
+    与 `SupportsControlActions` 不同，这里**内存形态也实现**：告警是"看板 + 确认"的
+    交互态，开发与演示需要它能跑；代价是重启即失，由 `alerts_persistent` 如实标注。
+    """
+
+    async def raise_alert(
+        self,
+        *,
+        alert_id: str,
+        warning_id: str,
+        level: int,
+        region_code: str,
+        drill: bool,
+    ) -> tuple[dict[str, Any], bool]: ...
+
+    async def get_alert(self, alert_id: str) -> dict[str, Any] | None: ...
+
+    async def list_alerts(
+        self,
+        *,
+        open_only: bool = True,
+        status: str | None = None,
+        level: int | None = None,
+        drill: bool | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]: ...
+
+    async def ack_alert(self, alert_id: str, operator_id: str) -> dict[str, Any] | None: ...
+
+    async def transfer_alert(self, alert_id: str, assignee: str) -> dict[str, Any] | None: ...
+
+    async def snooze_alert(self, alert_id: str, minutes: int) -> dict[str, Any] | None: ...
+
+    async def escalate_due(self, *, after_minutes: int) -> list[dict[str, Any]]: ...
+
+
+def alert_ledger_port(store: object) -> SupportsAlerts | None:
+    return store if isinstance(store, SupportsAlerts) else None
 
 
 def _to_iso(moment: datetime | str | None) -> str | None:

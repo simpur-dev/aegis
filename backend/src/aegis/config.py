@@ -128,6 +128,14 @@ class Settings(BaseSettings):
     assistant_session_ttl_seconds: float = 1_800.0
     #: 待确认动作的有效期（秒）：写动作落 `control_actions.expires_at`，超时后确认无效。
     assistant_confirm_ttl_seconds: int = 300
+
+    # 告警（P2）：订阅 `platform.alert.>` 的去重落账与处置面。关掉时端点 503、订阅不注册。
+    alerts_enabled: bool = True
+    #: 超时未确认就升级：这是**默认值**，不是验收数字——要按现场误报率调，避免"狼来了"。
+    alert_escalation_minutes: int = 5
+    #: 升级扫描周期（秒）：多副本各自跑，靠原子 UPDATE 抢占，无主、无锁。
+    alert_escalation_interval_seconds: float = 30.0
+
     # 人工上报与三路融合解析（批次 B4 + C1）：低于该置信度、或等级不是阈值命中所得 → 转人工核签
     report_review_confidence: float = 0.6
     # 三条腿各自可单独摘除：标定实验要能回答"去掉 LLM 腿准确率掉多少"，

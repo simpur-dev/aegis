@@ -12,6 +12,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import { useAlerts } from '@/composables/useAlerts'
 import {
   clampDrawerWidth,
   clampTop,
@@ -39,6 +40,18 @@ const headerVar = computed(() => (props.immersive ? '--aeg-editor-header-height'
 
 /** 抽屉顶部的落点（跟随顶栏/编辑器头部高度；水平位置与宽度由 CSS 变量算）。 */
 const drawerTopStyle = computed(() => ({ top: `${headerH.value}px` }))
+
+const { urgentCards } = useAlerts()
+watch(
+  () => urgentCards.value.length,
+  (now, prev) => {
+    // Ⅰ/Ⅱ 级告警出现（0 → N）：抽屉自动展开，不等值班员去找图标（需求 D3 的强打断）
+    if (now > 0 && (prev ?? 0) === 0) {
+      open.value = true
+      saveState()
+    }
+  },
+)
 
 function readHeaderHeight(): number {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(headerVar.value).trim()

@@ -7,6 +7,7 @@ import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import api from '@/api/client'
 import ServiceTokenBar from '@/components/ServiceTokenBar.vue'
 import AssistantDock from '@/components/assistant/AssistantDock.vue'
+import { useAlerts } from '@/composables/useAlerts'
 import { useEventStream } from '@/composables/useEventStream'
 import { antdTheme } from '@/theme/antd'
 import { NAV_GROUPS } from '@/router'
@@ -34,6 +35,10 @@ const currentKey = computed(() => (route.name as string) ?? 'dashboard')
 
 const health = ref<{ status: string; version: string } | null>(null)
 const { events, connected, stalled } = useEventStream()
+// 告警卡片挂在全应用唯一的这条共享流上；顶部条与助手抽屉（AssistantDock 内）共用同一份卡片状态
+const { attachStream, urgentCards, badgeCount, refresh } = useAlerts()
+attachStream({ events, connected })
+void refresh()
 
 let timer: number | undefined
 
@@ -182,6 +187,15 @@ const statusTitle = computed<string>(() =>
             </div>
           </div>
         </header>
+
+        <!-- Ⅰ/Ⅱ 级告警的顶部常驻条：抽屉会被自动展开，这条是"关了抽屉也看得见"的兜底 -->
+        <div v-if="urgentCards.length > 0" class="alert-banner" data-testid="alert-banner">
+          <span class="alert-banner__dot" aria-hidden="true"></span>
+          <span class="alert-banner__text" data-testid="alert-banner-text">
+            {{ urgentCards.length }} 条红色/橙色告警未确认
+          </span>
+          <span class="alert-banner__meta">在案 {{ badgeCount }} 条 ｜ 处置入口在右侧助手抽屉</span>
+        </div>
 
         <main class="main-content" :class="{ 'is-immersive': immersive, 'is-map': route.name === 'map' }">
           <router-view />
@@ -441,6 +455,34 @@ const statusTitle = computed<string>(() =>
   overflow-y: auto;
   padding: var(--aeg-space-s5) var(--aeg-space-s6);
   transition: margin-right var(--aeg-motion-base) ease;
+}
+
+/* Ⅰ/Ⅱ 级告警顶部条：红色系语义槽（status-danger），只做"有事"的宣告，不做操作面 */
+.alert-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--aeg-space-s3);
+  margin: 0 var(--aeg-space-s6);
+  padding: var(--aeg-space-s2) var(--aeg-space-s4);
+  border: 1px solid var(--aeg-color-status-danger);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-brand-soft);
+}
+.alert-banner__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--aeg-color-status-danger);
+}
+.alert-banner__text {
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  color: var(--aeg-color-status-danger);
+}
+.alert-banner__meta {
+  margin-left: auto;
+  font-size: var(--aeg-font-xs);
+  color: var(--aeg-color-text-secondary);
 }
 /* 助手抽屉打开时把主内容整体往左挤（抽屉本身固定贴右，不再盖在内容上）；
    宽度只读 --assistant-drawer-w 一个真源，抽屉左侧拖拽时同步跟随 */

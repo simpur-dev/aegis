@@ -267,7 +267,7 @@ class HazardStages:
         elif name == "plan":
             stage = await self.plan(result, board.trace)
         elif name == "execute":
-            stage = await self.execute(result, board.trace, started_at=board.started_at)
+            stage = await self.execute(result, board.trace, started_at=board.started_at, readings=board.readings)
         elif name == "feedback":
             stage = await self.feedback(result, board.trace)
         else:
@@ -680,12 +680,19 @@ class HazardStages:
 
     # ---------- ④ 执行 ----------
 
-    async def execute(self, result: ChainResult, trace: str, *, started_at: float) -> StageResult:
+    async def execute(
+        self,
+        result: ChainResult,
+        trace: str,
+        *,
+        started_at: float,
+        readings: list[TelemetryReading] | None = None,
+    ) -> StageResult:
         """出文案、发预警、广播；产物写进 `result.warning`（None 表示发布失败）。
 
         `started_at` 必须是**链路起点**的 perf_counter 读数，由编排器传下来：
         `warning_generation_ms`（≤3min 那一项）量的就是"链路开始→预警就绪"，
-        在生成步里现取会恒为 0。
+        在生成步里现取会恒为 0。`readings` 用于判断本次链路是不是演练（见 `_broadcast`）。
         """
         verdict = result.verdict
         if verdict is None:
@@ -693,7 +700,7 @@ class HazardStages:
         before = len(result.degradations)
         async with instrumentation.span("stage_execute_ms", trace_id=trace) as span:
             with self._tracer.span("stage_execute_ms", trace_id=trace) as sp:
-                warning, used_agent = await self._execute(verdict, result, trace, started_at=started_at)
+                warning, used_agent = await self._execute(verdict, result, trace, started_at=started_at, readings=readings)
             if warning is None:
                 instrumentation.mark_error(span, "预警发布失败", code="execute_failed")
             elif len(result.degradations) > before:
@@ -718,6 +725,7 @@ class HazardStages:
         trace: str,
         *,
         started_at: float | None = None,
+        readings: list[TelemetryReading] | None = None,
     ) -> tuple[WarningRecord | None, bool]:
         """出文案与发预警是两件事：智能体只产文案，发送与回执永远属于平台交付腿。
 
@@ -764,7 +772,7 @@ class HazardStages:
         dispatched = await self._dispatch(record, result)
         if dispatched is None:
             return None, used_agent
-        await self._broadcast(dispatched, trace)
+        await self._broadcast(dispatched, trace, drill=self._is_drill(readings))
         self._warnings[dispatched.warning_id] = dispatched
         return dispatched, used_agent
 
@@ -837,7 +845,7 @@ class HazardStages:
             result.errors.append(f"全部通道失败: {exc.message}")
             return None
 
-    async def _broadcast(self, record: WarningRecord, trace: str) -> None:
+    async def _broadcast(self, record: WarningRecord, trace: str, *, drill: bool = False) -> None:
         event = make_event(
             source="platform.pipeline",
             action=Action.EXECUTE_ACK.value,
@@ -848,9 +856,21 @@ class HazardStages:
                 "risk_level": int(record.risk_level),
                 "regions": record.region_codes,
                 "title": record.title_zh,
+                # 演练标识随广播走：告警与前端据此隔离"演练"与真实（升级只对真实告警生效）。
+                "drill": bool(drill),
             },
         )
         await self._gateway.publish_to(subjects.alert(int(record.risk_level), record.region_codes[0]), event)
+
+    @staticmethod
+    def _is_drill(readings: list[TelemetryReading] | None) -> bool:
+        """本次链路是不是演练：读数**全部**来自模拟器才算。
+
+        一半真一半假的数据混进来的链路，按真实告警处置——宁可多提醒一次，
+        也不让演练标识吞掉一次真警（升级只对真实告警生效，漏标演练是反向危险）。
+        人工上报（没有读数）不算演练。
+        """
+        return bool(readings) and all(reading.source == "simulator" for reading in (readings or []))
 
     # ---------- ⑤ 反馈 ----------
 

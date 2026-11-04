@@ -26,7 +26,7 @@ from aegis.connectors.weather_api import WeatherApiSource
 from aegis.contracts import ContractRegistry
 from aegis.domain.chain import ChainResult
 from aegis.domain.enums import Channel
-from aegis.domain.messages import TelemetryReading
+from aegis.domain.messages import AgentMessage, TelemetryReading
 from aegis.integrations import (
     AnalyticsRecorder,
     AssembledEvidence,
@@ -59,6 +59,7 @@ from aegis.observability.tracer import Tracer
 from aegis.pipeline.report_intake import ReportIntake
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
+from aegis.services.alerting import AlertService
 from aegis.services.assistant import Action, ActionDomain, ActionRegistry, AssistantService
 from aegis.services.assistant.actions.control import DrillStart, ReportSubmit
 from aegis.services.assistant.actions.query import (
@@ -84,7 +85,14 @@ from aegis.services.response.warning_service import WarningService
 from aegis.services.rules.risk_engine import RiskEngine
 from aegis.services.rules.threshold_suggestions import ThresholdSuggestionService
 from aegis.services.rules.trigger_rules import RuleEngine, rulebook_from_rows
-from aegis.storage.store import PlatformStore, StoreProtocol, control_action_port, operator_ledger_port, rule_library_port
+from aegis.storage.store import (
+    PlatformStore,
+    StoreProtocol,
+    alert_ledger_port,
+    control_action_port,
+    operator_ledger_port,
+    rule_library_port,
+)
 from aegis.workflow.drafts import DraftService, LineageLocks
 from aegis.workflow.engine import WorkflowEngine
 from aegis.workflow.outbound import OutboundCaller, OutboundPolicy
@@ -158,6 +166,11 @@ class PlatformContainer:
     assistant: AssistantService | None = None
     #: 席位台账：写动作的前置。内存形态没有这张表，服务自己报 unavailable（端点 503），不假装能写。
     operators: OperatorService | None = None
+    #: 告警台账：订阅 `platform.alert.>` 的去重落账与处置面。内存/持久两套都实现，
+    #: `persistent` 如实外露——内存形态重启即失。
+    alerts: AlertService | None = None
+    #: 告警总线订阅句柄：停服时单独取消（不放进 `_tasks`，它不是循环任务）。
+    _alert_sub: Any | None = None
     #: 数据飞轮（D9）：人工核签 → `warning_truth_labels` 的投递面；存储没有标注面时如实"未沉淀"
     labels: LabelFlywheel | None = None
     #: 阈值建议闭环（§3.5 后半截）：入账 → 人工确认 → `trigger_rules` 新版本 → 引擎装载。
@@ -218,6 +231,69 @@ class PlatformContainer:
         if failed or expired:
             log.warning("动作台账启动收尾", extra={"failed": failed, "expired": expired})
 
+    async def _start_alerting(self) -> None:
+        """订阅既有预警广播，把"已发出的预警"变成"值班员桌上的卡"。
+
+        这是**第二个订阅者**，与 `api/routers/stream.py` 的推帧互不依赖：
+        推帧失败不影响落账，落账失败也不影响大屏。订阅不上只记一行事实、不阻断启动——
+        此时前端 `GET /alerts` 仍可对账，只是没有实时卡片。
+        """
+        if self.alerts is None or not self.alerts.available:
+            return
+        try:
+            self._alert_sub = await self.transport.subscribe("platform.alert.>", self._on_alert_message)
+        except Exception as exc:
+            log.warning(
+                "告警订阅失败，实时卡片不可用（/alerts 仍可对账）",
+                extra={"error": f"{type(exc).__name__}: {exc}"},
+            )
+            return
+        self._tasks.append(asyncio.create_task(self._escalate_forever(), name="alert-escalate"))
+
+    async def _on_alert_message(self, message: AgentMessage) -> None:
+        if self.alerts is None:
+            return
+        try:
+            record, created = await self.alerts.raise_from_broadcast(message.payload)
+        except Exception as exc:
+            log.warning(
+                "告警落账失败",
+                extra={"warning_id": message.payload.get("warning_id"), "error": f"{type(exc).__name__}: {exc}"},
+            )
+            return
+        if created and record is not None:
+            log.info(
+                "告警已生成",
+                extra={
+                    "alert_id": record["alert_id"],
+                    "warning_id": record["warning_id"],
+                    "level": record["level"],
+                    "drill": record["drill"],
+                },
+            )
+
+    async def _escalate_forever(self) -> None:
+        """超时未确认就升级。多副本靠 `UPDATE ... RETURNING` 天然幂等，不选主、不加锁。"""
+        interval = max(5.0, float(self.settings.alert_escalation_interval_seconds))
+        while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=interval)
+                return
+            except TimeoutError:
+                pass
+            if self.alerts is None:
+                return
+            try:
+                escalated = await self.alerts.escalate_due()
+            except Exception as exc:
+                log.warning("告警升级扫描失败", extra={"error": f"{type(exc).__name__}: {exc}"})
+                continue
+            if escalated:
+                log.warning(
+                    "告警超时未确认，已升级",
+                    extra={"count": len(escalated), "alert_ids": [row["alert_id"] for row in escalated]},
+                )
+
     async def start(
         self,
         *,
@@ -257,6 +333,7 @@ class PlatformContainer:
                 log.warning("MQTT 订阅腿启动失败，平台继续运行", extra={"error": self._mqtt_start_error})
         await self.transport.connect()
         await self.gateway.start()
+        await self._start_alerting()
         self.gateway.set_result_handler(self.chain.handle_agent_message)
         await self.registry.start_sweeper()
 
@@ -378,6 +455,10 @@ class PlatformContainer:
 
     async def shutdown(self) -> None:
         self._stop.set()
+        if self._alert_sub is not None:
+            # 先退订再关总线：反过来会在已关闭的连接上调 cancel（NATS 会抛 ConnectionClosed）
+            await self._alert_sub.cancel()
+            self._alert_sub = None
         for task in self._tasks:
             task.cancel()
         if self._tasks:
@@ -781,6 +862,14 @@ def create_container(
     register_sla_budgets(tracer.ledger, cfg, container.exporter)
 
     container.operators = OperatorService(operator_ledger_port(store))
+
+    if cfg.alerts_enabled:
+        container.alerts = AlertService(
+            alert_ledger_port(store),
+            # 内存与持久两套台账语义一致，差别只有一条：重启后还在不在。这一点必须外露。
+            persistent=not isinstance(store, PlatformStore),
+            escalation_minutes=cfg.alert_escalation_minutes,
+        )
 
     if cfg.assistant_enabled:
         container.assistant = AssistantService(

@@ -27,7 +27,11 @@ def _service(ctn: PlatformContainer) -> OperatorService:
     return ctn.operators
 
 
-async def _require(service: OperatorService, operator_id: str | None, *, role: OperatorRole) -> Operator:
+async def require_operator(service: OperatorService, operator_id: str | None, *, role: OperatorRole) -> Operator:
+    """席位校验的唯一实现：告警、协同等写动作都走这一处，避免每个路由各写一套口径。
+
+    401 = 没带席位头（前端要能提示"先在页脚选席位"）；403 = 席位不存在/停用/角色不够。
+    """
     if not operator_id:
         raise HTTPException(
             status_code=401,
@@ -74,7 +78,7 @@ def build_router() -> APIRouter:
         limit: int = Query(default=200, ge=1, le=500),
     ) -> dict[str, Any]:
         service = _service(ctn)
-        await _require(service, x_operator, role=OperatorRole.LEAD)
+        await require_operator(service, x_operator, role=OperatorRole.LEAD)
         rows = await service.list_operators(active_only=active_only, limit=limit)
         return {"count": len(rows), "items": [row.model_dump(mode="json") for row in rows]}
 
@@ -85,7 +89,7 @@ def build_router() -> APIRouter:
         x_operator: OperatorHeader = None,
     ) -> dict[str, Any]:
         service = _service(ctn)
-        await _require(service, x_operator, role=OperatorRole.ADMIN)
+        await require_operator(service, x_operator, role=OperatorRole.ADMIN)
         try:
             operator = await service.create(payload)
         except OperatorConflictError as exc:
