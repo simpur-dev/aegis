@@ -15,19 +15,22 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
-from aegis.services.interpret.assistant import AssistantService
+from aegis.domain.operator import Operator
+from aegis.services.assistant import AssistantService
 
 log = logging.getLogger("aegis.api.assistant")
 
 _DISCONNECT_POLL_SECONDS = 0.25
 _SSE_KEEPALIVE_SECONDS = 10.0
 _SESSION_PATTERN = r"^[A-Za-z0-9_-]{4,64}$"
+
+OperatorHeader = Annotated[str | None, Header(alias="X-Aegis-Operator")]
 
 
 class ChatRequest(BaseModel):
@@ -48,14 +51,6 @@ class ConfirmRequest(BaseModel):
     actor: str | None = Field(default=None, max_length=64)
 
 
-class PlanRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    message: str = Field(min_length=1, max_length=2_000)
-    region_code: str | None = Field(default=None, pattern=r"^[0-9A-Z]{6,24}$")
-    hazard_hint: str | None = Field(default=None, max_length=64)
-
-
 def _assistant(container: PlatformContainer) -> AssistantService:
     if container.assistant is None:
         # 装配事实而不是"500 才看得见"：语义腿没接上时前端要能读到"未配置"
@@ -66,24 +61,43 @@ def _assistant(container: PlatformContainer) -> AssistantService:
     return container.assistant
 
 
+async def _operator(container: PlatformContainer, operator_id: str | None) -> Operator | None:
+    """席位头 → 席位。缺席位或台账不可用时返回 None：读动作允许匿名，写动作由执行器拒绝。
+
+    这里不抛 401/403：`GET /capabilities` 必须能在"还没选席位"时返回完整动作清单，
+    否则前端连"该选哪个角色"都显示不出来。
+    """
+    if not operator_id or container.operators is None or not container.operators.available:
+        return None
+    operator = await container.operators.get(operator_id)
+    return operator if operator is not None and operator.active else None
+
+
 def build_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1/assistant", tags=["assistant"])
 
     @router.get("/capabilities")
-    async def capabilities(ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
+    async def capabilities(
+        ctn: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
+    ) -> dict[str, Any]:
         service = _assistant(ctn)
-        return service.capabilities()
+        operator = await _operator(ctn, x_operator)
+        return service.capabilities(None if operator is None else operator.role)
 
     @router.post("/chat")
     async def chat(
         payload: ChatRequest,
         request: Request,
         ctn: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
     ) -> Response:
         service = _assistant(ctn)
+        operator = await _operator(ctn, x_operator)
         stream = service.respond(
             payload.message,
             session_id=payload.session_id,
+            operator=operator,
             reporter=payload.reporter,
             region_code=payload.region_code,
             hazard_hint=payload.hazard_hint,
@@ -104,30 +118,19 @@ def build_router() -> APIRouter:
         return StreamingResponse(_keepalive(_gen(), stopping=ctn.stopping, request=request), media_type="text/event-stream")
 
     @router.post("/confirm")
-    async def confirm(payload: ConfirmRequest, ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
-        service = _assistant(ctn)
-        result = await service.confirm(session_id=payload.session_id, action_id=payload.action_id, actor=payload.actor)
-        return result
-
-    @router.post("/plan")
-    async def plan(payload: PlanRequest, ctn: PlatformContainer = Depends(get_container)) -> dict[str, Any]:
-        """意图解构引擎：把模糊指令分解为白名单动作链【提案】，不执行——执行仍逐步过人工确认闸。"""
-        service = _assistant(ctn)
-        return await service.propose_plan(payload.message, region_code=payload.region_code, hazard_hint=payload.hazard_hint)
-
-    @router.get("/sessions/{session_id}")
-    async def session(
-        session_id: Annotated[str, Path(min_length=4, max_length=64, pattern=_SESSION_PATTERN)],
+    async def confirm(
+        payload: ConfirmRequest,
         ctn: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
     ) -> dict[str, Any]:
         service = _assistant(ctn)
-        state = service.session(session_id)
-        if state is None:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "E_SESSION_NOT_FOUND", "message": "会话不存在或已过期", "session_id": session_id},
-            )
-        return state
+        operator = await _operator(ctn, x_operator)
+        return await service.confirm(
+            session_id=payload.session_id,
+            action_id=payload.action_id,
+            actor=payload.actor,
+            operator=operator,
+        )
 
     return router
 

@@ -29,7 +29,7 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "aegis"
 #: 所以这里跟的是"谁取时"，不是"哪个编排器"。
 #: P4 之后上报接入的取时点也不在 `container.py`（那里一行计时都没有了），跟着搬到 `pipeline/report_intake.py`。
 MEASURING_FILES = (
-    "services/interpret/assistant.py",
+    "services/assistant/service.py",
     "services/response/warning_service.py",
     "pipeline/board.py",
     "pipeline/report_intake.py",

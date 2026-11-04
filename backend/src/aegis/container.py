@@ -59,7 +59,20 @@ from aegis.observability.tracer import Tracer
 from aegis.pipeline.report_intake import ReportIntake
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
-from aegis.services.interpret.assistant import AssistantActions, AssistantService
+from aegis.services.assistant import Action, ActionDomain, ActionRegistry, AssistantService
+from aegis.services.assistant.actions.control import DrillStart, ReportSubmit
+from aegis.services.assistant.actions.query import (
+    AgentList,
+    ChainExplain,
+    ChainList,
+    MetricReport,
+    PlanAsk,
+    StationList,
+    TaskGet,
+    TaskList,
+    WarningExplain,
+    WarningList,
+)
 from aegis.services.interpret.semantic_parser import DisasterTextParser
 from aegis.services.llm.llm_gateway import LlmGateway, build_gateway_if_configured
 from aegis.services.memory.label_flywheel import LabelFlywheel
@@ -750,7 +763,7 @@ def create_container(
 
     if cfg.assistant_enabled:
         container.assistant = AssistantService(
-            actions=_assistant_actions(
+            registry=_build_assistant_registry(
                 container,
                 store=store,
                 registry=registry,
@@ -760,7 +773,6 @@ def create_container(
                 ingest=ingest,
                 settings=cfg,
             ),
-            parser=parser,
             llm=gateway_llm,
             settings=cfg,
             tracer=tracer,
@@ -768,7 +780,7 @@ def create_container(
     return container
 
 
-def _assistant_actions(
+def _build_assistant_registry(
     container: PlatformContainer,
     *,
     store: StoreProtocol,
@@ -778,65 +790,26 @@ def _assistant_actions(
     simulator: HazardScenarioSimulator | None,
     ingest: IngestService,
     settings: Settings,
-) -> AssistantActions:
-    """助手动作到平台既有服务的桥——全部是薄翻译，没有第二条实现。
+) -> ActionRegistry:
+    """把平台既有服务装配成助手动作：每个动作只拿到它需要的那一个依赖。
 
     读侧直接取内存读视图，演练复用 `IngestService`，上报复用 `ReportIntake.submit`。
     所以助手嘴上说的等级、数字与大屏上的必然同源（架构铁律 4）。
     """
 
-    async def list_warnings(*, limit: int = 10, region_code: str | None = None) -> list[dict[str, Any]]:
-        rows = store.warnings.list(limit=int(limit), region_code=region_code or None)
-        return [row.model_dump() for row in rows]
-
-    async def get_warning(warning_id: str) -> dict[str, Any] | None:
-        record = store.warnings.get(warning_id)
-        return None if record is None else record.model_dump()
-
-    async def list_chains(*, limit: int = 8) -> list[dict[str, Any]]:
-        return [row.as_dict() for row in store.chains.latest(int(limit))]
-
-    async def get_chain(trace_id: str) -> dict[str, Any] | None:
-        wanted = str(trace_id)
-        for row in store.chains.snapshot():
-            if wanted in (row.trace_id, row.event_id):
-                return row.as_dict()
-        return None
-
-    async def get_task(task_unit_id: str) -> dict[str, Any] | None:
-        unit = store.tasks.get(task_unit_id)
-        return None if unit is None else unit.model_dump()
-
-    async def list_stations(*, region_code: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
-        rows = await store.list_stations(region_code=region_code or None, limit=int(limit))
-        return [dict(row) for row in rows]
-
-    async def list_agents() -> dict[str, Any]:
-        return {"online": registry.online_count, "items": registry.snapshot(), "gateway_counters": dict(gateway.counters)}
-
-    def latency_report() -> dict[str, Any]:
-        return container.latency_report()
-
-    async def recall_plan(
-        *,
-        query: str = "",
-        hazard_type: str | None = None,
-        region_code: str | None = None,
-        limit: int = 3,
-    ) -> list[dict[str, Any]]:
+    async def recall_plan(query: str = "", hazard_type: str | None = None, limit: int = 3) -> list[dict[str, Any]]:
         if knowledge is None:
             return []
         matches = await knowledge.recall(
             query,
             hazard_type=hazard_type,
-            region_code=region_code,
             limit=int(limit),
             budget_ms=settings.knowledge_recall_budget_ms,
         )
         return [match.planning_brief() for match in matches]
 
     async def run_drill(*, scenario: str = "surge", ticks: int = 2, region_code: str | None = None) -> dict[str, Any]:
-        """对话里的演练入口：轮次上限压在 5，超出由 HTTP 层的 1..50 口径另行约束。"""
+        """对话里的演练入口：轮次上限压在 5；模拟器缺席由动作自己报不可用。"""
         if simulator is None:
             raise RuntimeError("模拟器未启用（AEGIS_SIMULATOR_ENABLED=false），演练腿不可用")
         simulator.scenario = "normal" if scenario == "normal" else "surge"
@@ -847,25 +820,23 @@ def _assistant_actions(
         results = await container.chain.process_many(grouped)
         return {"ingest": rounds, "regions": len(grouped), "chains": [row.as_dict() for row in results]}
 
-    async def submit_report(
-        *,
-        note: str,
-        region_code: str,
-        reporter: str = "web-assistant",
-        hazard_hint: str | None = None,
-    ) -> dict[str, Any]:
-        return await container.report_intake.submit(note=note, region_code=region_code, reporter=reporter, hazard_hint=hazard_hint)
-
-    return AssistantActions(
-        list_warnings=list_warnings,
-        get_warning=get_warning,
-        list_chains=list_chains,
-        get_chain=get_chain,
-        get_task=get_task,
-        list_stations=list_stations,
-        list_agents=list_agents,
-        latency_report=latency_report,
-        recall_plan=recall_plan,
-        run_drill=run_drill,
-        submit_report=submit_report,
+    actions: list[Action] = [
+        WarningList(store.warnings),
+        WarningExplain(store.warnings, store.chains),
+        ChainList(store.chains),
+        ChainExplain(store.chains),
+        TaskList(store.tasks),
+        TaskGet(store.tasks),
+        StationList(store),
+        AgentList(registry, gateway),
+        MetricReport(container.latency_report),
+        PlanAsk(recall_plan if knowledge is not None else None),
+        DrillStart(run_drill, available=simulator is not None),
+        ReportSubmit(container.report_intake),
+    ]
+    action_registry = ActionRegistry(
+        actions,
+        domains={ActionDomain.QUERY, ActionDomain.WARNING, ActionDomain.TASK, ActionDomain.DRILL},
     )
+    action_registry.assert_consistent()
+    return action_registry

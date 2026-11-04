@@ -1,11 +1,37 @@
-"""assistant 意图解构引擎测试（§4.7 / R6）：白名单动作链分解、越权剔除、无 LLM 不臆造。"""
+"""意图解构引擎测试：注册表内动作链分解、越权剔除、无 LLM 不臆造。
+
+多步解构挂在 `IntentClassifier` 上（不是独立端点）：`/assistant/plan` 已退役，
+将来由 `/chat` 的 `plan` 帧承载，判定逻辑不需要第二个入口。
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from aegis.config import Settings
-from aegis.services.interpret.assistant import AssistantService, PlanDecomposition, PlanStep
+from aegis.services.assistant import ActionDomain, ActionRegistry
+from aegis.services.assistant.actions.control import DrillStart
+from aegis.services.assistant.actions.query import WarningList
+from aegis.services.assistant.intent import IntentClassifier, PlanDecomposition, PlanStep
+
+
+class _Warnings:
+    def list(self, *, limit: int = 50, region_code: str | None = None, released: bool | None = None) -> list[Any]:
+        return []
+
+    def get(self, warning_id: str) -> Any | None:
+        return None
+
+
+def build_registry() -> ActionRegistry:
+    async def run_drill(*, scenario: str = "surge", ticks: int = 2, region_code: str | None = None) -> dict[str, Any]:
+        return {"chains": [], "regions": 0}
+
+    registry = ActionRegistry(
+        [WarningList(_Warnings()), DrillStart(run_drill, available=True)],
+        domains={ActionDomain.WARNING, ActionDomain.DRILL},
+    )
+    registry.assert_consistent()
+    return registry
 
 
 class StubLLM:
@@ -19,37 +45,34 @@ class StubLLM:
         return self._d
 
 
-def service(decomp: PlanDecomposition | None = None) -> tuple[AssistantService, StubLLM | None]:
+def classifier(decomp: PlanDecomposition | None = None) -> tuple[IntentClassifier, StubLLM | None]:
     if decomp is None:
-        return AssistantService(llm=None, settings=Settings(env="test")), None
+        return IntentClassifier(build_registry(), llm=None), None
     llm = StubLLM(decomp)
-    return AssistantService(llm=llm, settings=Settings(env="test")), llm
+    return IntentClassifier(build_registry(), llm=llm), llm
 
 
 class TestProposePlan:
-    async def test_decomposes_to_whitelisted_chain_and_drops_offlist(self) -> None:
+    async def test_decomposes_to_registered_chain_and_drops_unknown(self) -> None:
         decomp = PlanDecomposition(
             steps=[
-                PlanStep(action="query.warnings", reason="先看当前预警"),
+                PlanStep(action="warning.list", reason="先看当前预警"),
                 PlanStep(action="delete.everything", reason="越权动作"),
-                PlanStep(action="run.drill", reason="准备演练"),
+                PlanStep(action="drill.start", reason="准备演练"),
             ]
         )
-        svc, llm = service(decomp)
-        result = await svc.propose_plan("看看波密有没有风险，有的话准备演练", region_code="540121")
+        judge, llm = classifier(decomp)
+        result = await judge.propose_plan("看看波密有没有风险，有的话准备演练", region_code="540121")
         actions = [s["action"] for s in result["steps"]]
-        assert actions == ["query.warnings", "run.drill"], "越权动作被剔除，只留白名单链"
+        assert actions == ["warning.list", "drill.start"], "未注册动作被剔除，只留注册表内的链"
         assert result["rejected"] == ["delete.everything"]
         assert result["decided_by"] == "llm"
-        # 每步都带 requires_confirmation 字段（LLM 只有规划权，执行仍交人工确认闸）。
         assert all("requires_confirmation" in s for s in result["steps"])
-        drill = next(s for s in result["steps"] if s["action"] == "run.drill")
-        assert drill["requires_confirmation"] is True
         assert llm is not None and llm.calls[0]["prompt_key"] == "assistant"
 
     async def test_no_llm_returns_empty_plan_not_fabricated(self) -> None:
-        svc, _ = service(None)
-        result = await svc.propose_plan("随便说点什么")
+        judge, _ = classifier(None)
+        result = await judge.propose_plan("随便说点什么")
         assert result["steps"] == []
         assert result["decided_by"] == "none"
 
@@ -58,8 +81,7 @@ class TestProposePlan:
             async def chat_structured(self, *a, **k):
                 raise RuntimeError("网关挂了")
 
-        llm = Boom(PlanDecomposition())
-        svc = AssistantService(llm=llm, settings=Settings(env="test"))
-        result = await svc.propose_plan("x")
+        judge = IntentClassifier(build_registry(), llm=Boom(PlanDecomposition()))
+        result = await judge.propose_plan("x")
         assert result["steps"] == []
         assert "降级" in result["note"]

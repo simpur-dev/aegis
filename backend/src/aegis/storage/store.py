@@ -106,26 +106,37 @@ class TelemetryStore:
 
 
 class WarningStore:
+    """预警读视图。同 ID 覆盖而不是追加：发布/撤回/改级都写同一 `warning_id`，
+    追加会让列表里出现两条同 ID 记录（`revoke` 之后前端会看到"已撤回"和"已发布"并存）。
+    """
+
     def __init__(self, maxlen: int = 5_000) -> None:
-        self._collection: BoundedCollection[WarningRecord] = BoundedCollection(maxlen)
+        self._order: deque[str] = deque(maxlen=maxlen)
         self._index: dict[str, WarningRecord] = {}
 
     async def put(self, record: WarningRecord) -> None:
-        await self._collection.add(record)
+        if record.warning_id in self._index:
+            self._index[record.warning_id] = record
+            return
         self._index[record.warning_id] = record
+        self._order.append(record.warning_id)
 
     def get(self, warning_id: str) -> WarningRecord | None:
         return self._index.get(warning_id)
 
-    def list(self, *, limit: int = 50, region_code: str | None = None) -> list[WarningRecord]:
-        rows = self._collection.snapshot()
+    def list(self, *, limit: int = 50, region_code: str | None = None, released: bool | None = None) -> list[WarningRecord]:
+        """`released` 由 `released_at` 推导：`WarningRecord` 没有 status 字段，也不新增
+        （契约不动），"已发布/未发布"本来就只有一个真源。"""
+        rows = [self._index[wid] for wid in self._order if wid in self._index]
         if region_code:
             rows = [r for r in rows if region_code in r.region_codes]
+        if released is not None:
+            rows = [r for r in rows if bool(r.released_at) is released]
         return rows[-limit:]
 
     @property
     def size(self) -> int:
-        return len(self._collection)
+        return len(self._order)
 
 
 class TaskStore:
@@ -144,6 +155,17 @@ class TaskStore:
 
     def by_event(self, event_id: str) -> list[StandardizedTaskUnit]:
         return [u for u in self._collection.snapshot() if u.event_id == event_id]
+
+    def list(self, *, limit: int = 50, region_code: str | None = None) -> list[StandardizedTaskUnit]:
+        """按最近写入顺序列出任务单元。
+
+        只支持 STU 自身有的字段：STU v1 契约里没有 `status`/`assignee`（处置状态在
+        `handling_tasks`），所以这里不造这两个参数——要按它们过滤是 `task.list` 动作的事。
+        """
+        rows = self._collection.snapshot()
+        if region_code:
+            rows = [u for u in rows if u.region_code == region_code]
+        return rows[-limit:]
 
     @property
     def size(self) -> int:
@@ -289,7 +311,7 @@ class WarningPort(Protocol):
 
     def get(self, warning_id: str) -> WarningRecord | None: ...
 
-    def list(self, *, limit: int = 50, region_code: str | None = None) -> list[WarningRecord]: ...
+    def list(self, *, limit: int = 50, region_code: str | None = None, released: bool | None = None) -> list[WarningRecord]: ...
 
     @property
     def size(self) -> int: ...
@@ -301,6 +323,8 @@ class TaskPort(Protocol):
     def get(self, task_unit_id: str) -> StandardizedTaskUnit | None: ...
 
     def by_event(self, event_id: str) -> list[StandardizedTaskUnit]: ...
+
+    def list(self, *, limit: int = 50, region_code: str | None = None) -> list[StandardizedTaskUnit]: ...
 
     @property
     def size(self) -> int: ...

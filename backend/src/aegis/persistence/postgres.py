@@ -213,8 +213,8 @@ class _WarningFacade:
     def get(self, warning_id: str) -> WarningRecord | None:
         return self._inner.get(warning_id)
 
-    def list(self, *, limit: int = 50, region_code: str | None = None) -> list[WarningRecord]:
-        return self._inner.list(limit=limit, region_code=region_code)
+    def list(self, *, limit: int = 50, region_code: str | None = None, released: bool | None = None) -> list[WarningRecord]:
+        return self._inner.list(limit=limit, region_code=region_code, released=released)
 
     @property
     def size(self) -> int:
@@ -236,6 +236,9 @@ class _TaskFacade:
 
     def by_event(self, event_id: str) -> list[StandardizedTaskUnit]:
         return self._inner.by_event(event_id)
+
+    def list(self, *, limit: int = 50, region_code: str | None = None) -> list[StandardizedTaskUnit]:
+        return self._inner.list(limit=limit, region_code=region_code)
 
     @property
     def size(self) -> int:

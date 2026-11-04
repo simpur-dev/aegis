@@ -17,10 +17,14 @@ import pytest
 
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
-from aegis.services.interpret.assistant import AssistantEvent
+from aegis.domain.operator import Operator, OperatorRole
+from aegis.services.assistant import AssistantEvent
 
 HEAVY_RAIN = "24小时累计降雨95毫米，沟道泥位抬升1.2米，下游约300人受威胁"
 MILD_REPORT = "坡面有新鲜裂缝并掉下几块石头，暂无其它数据"
+
+#: 写动作（演练/上报）必须有有效席位。真装配用内存存储、没有台账，所以直接传席位对象。
+DUTY = Operator(operator_id="duty-01", display_name="值班员", role=OperatorRole.DUTY)
 
 
 def _settings() -> Settings:
@@ -49,6 +53,7 @@ async def platform() -> AsyncIterator[PlatformContainer]:
 async def _ask(container: PlatformContainer, text: str, **kwargs: Any) -> list[AssistantEvent]:
     assistant = container.assistant
     assert assistant is not None, "assistant_enabled 默认应为真，否则这条 e2e 测的是个空壳"
+    kwargs.setdefault("operator", DUTY)
     return [event async for event in assistant.respond(text, reporter="值班员", **kwargs)]
 
 
@@ -65,10 +70,12 @@ def _as_stage(chain: dict[str, Any], name: str) -> str:
 async def test_演练任务确认后才落地且链路走的是真实智能体(platform: PlatformContainer) -> None:
     events = await _ask(platform, "演练一次 surge 2 轮")
     proposal = _first(events, "proposal")
-    assert proposal is not None and proposal.data["action"] == "run.drill"
+    assert proposal is not None and proposal.data["action"] == "drill.start"
     assert platform.store.warnings.size == 0, "未确认就落地了"
 
-    outcome = await platform.assistant.confirm(session_id=proposal.data["session_id"], action_id=proposal.data["action_id"], actor="指挥员")
+    outcome = await platform.assistant.confirm(
+        session_id=proposal.data["session_id"], action_id=proposal.data["action_id"], actor="指挥员", operator=DUTY
+    )
     assert outcome["status"] == "executed", outcome
     chains = (outcome["result"]["drill"] or {}).get("chains") or []
     assert chains, "演练没跑出链路结果"
@@ -82,10 +89,10 @@ async def test_上报经确认后进同一条链路且智能体优先照样成�
     before = platform.store.warnings.size
     events = await _ask(platform, f"帮我上报：540121 {HEAVY_RAIN}", region_code="540121")
     proposal = _first(events, "proposal")
-    assert proposal is not None and proposal.data["action"] == "create.report"
+    assert proposal is not None and proposal.data["action"] == "report.submit"
     assert platform.report_stats["submitted"] == 0
 
-    outcome = await platform.assistant.confirm(session_id=proposal.data["session_id"], action_id=proposal.data["action_id"])
+    outcome = await platform.assistant.confirm(session_id=proposal.data["session_id"], action_id=proposal.data["action_id"], operator=DUTY)
     assert outcome["status"] == "executed", outcome
     report = outcome["result"]["report"]
     assert report["parse"]["decided_by"] == "rule"
