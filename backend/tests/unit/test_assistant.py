@@ -30,6 +30,7 @@ from aegis.services.assistant.actions.query import (
     WarningList,
 )
 from aegis.services.assistant.intent import IntentClassifier, out_of_scope_action
+from aegis.storage.store import PlatformStore
 
 WARNING_ROW: dict[str, Any] = {
     "warning_id": "wrn_0123456789abcdef0123",
@@ -225,7 +226,14 @@ DUTY = Operator(operator_id="duty-01", display_name="值班员", role=OperatorRo
 
 
 def build_service(rec: Recorder | None = None, *, llm: Any | None = None, **overrides: Any) -> AssistantService:
-    return AssistantService(registry=build_registry(rec or Recorder()), llm=llm, settings=settings(**overrides))
+    return AssistantService(
+        registry=build_registry(rec or Recorder()),
+        llm=llm,
+        settings=settings(**overrides),
+        # 写动作要落动作台账；内存实现与 SQL 版同一套状态机，只是重启即失
+        control_actions=PlatformStore(),
+        control_actions_persistent=False,
+    )
 
 
 # ---------- 越权闸 ----------
@@ -372,33 +380,33 @@ async def test_演练与上报先给待确认动作执行后才落地() -> None:
         assert proposals[0].data["action"] == action
         assert rec.calls == [], "未确认就执行了"
 
-        first = await service.confirm(session_id=proposals[0].data["session_id"], action_id=proposals[0].data["action_id"], operator=DUTY)
+        first = await service.confirm(action_id=proposals[0].data["action_id"], operator=DUTY)
         assert first["status"] == "executed", first
         assert any(call in entry for entry in rec.calls)
 
-        again = await service.confirm(session_id=proposals[0].data["session_id"], action_id=proposals[0].data["action_id"], operator=DUTY)
-        assert again["status"] == "rejected" and "不重复执行" in again["reason"]
+        again = await service.confirm(action_id=proposals[0].data["action_id"], operator=DUTY)
+        assert again["status"] == "rejected" and "已被处置" in again["reason"]
 
 
 @pytest.mark.asyncio
-async def test_确认跨会话不通用() -> None:
+async def test_未知动作号确认被拒() -> None:
+    """动作号不再绑定会话：拿一个不存在的号去确认，必须是"不存在"而不是"跨会话"。"""
     rec = Recorder()
     service = build_service(rec)
-    events = await collect(service, "演练一次", reporter="值班员", operator=DUTY)
-    proposal = next(event for event in events if event.type == "proposal")
-    result = await service.confirm(session_id="as_other_session", action_id=proposal.data["action_id"], operator=DUTY)
+    result = await service.confirm(action_id="act_deadbeef0000", operator=DUTY)
     assert result["status"] == "rejected"
+    assert "不存在" in result["reason"]
     assert rec.calls == []
 
 
 @pytest.mark.asyncio
 async def test_过期动作确认后不执行() -> None:
     rec = Recorder()
-    service = build_service(rec, assistant_session_ttl_seconds=0.001)
+    service = build_service(rec, assistant_confirm_ttl_seconds=1)
     events = await collect(service, "演练一次", reporter="值班员", operator=DUTY)
     proposal = next(event for event in events if event.type == "proposal")
-    await asyncio.sleep(0.05)
-    result = await service.confirm(session_id=proposal.data["session_id"], action_id=proposal.data["action_id"], operator=DUTY)
+    await asyncio.sleep(1.1)
+    result = await service.confirm(action_id=proposal.data["action_id"], operator=DUTY)
     assert result["status"] in ("expired", "rejected")
     assert rec.calls == []
 

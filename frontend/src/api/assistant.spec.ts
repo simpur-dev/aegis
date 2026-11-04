@@ -119,7 +119,7 @@ describe('非 2xx 的原因还原', () => {
         })
       },
     })
-    await expect(createAssistantApiClient(instance).confirm({ session_id: 'sess_0001', action_id: 'bad' })).rejects.toThrow(
+    await expect(createAssistantApiClient(instance).confirm('bad')).rejects.toThrow(
       '助手接口调用失败（HTTP 422）：动作号（action_id）：String does not match \'^act_[0-9a-f]{6,24}$\'',
     )
   })
@@ -162,10 +162,13 @@ describe('非 2xx 的原因还原', () => {
 })
 
 describe('端点清单', () => {
-  it('三条路径与后端路由一致（会话回读已随端点退役）', () => {
+  it('路径与后端路由一致（会话回读退役，确认改成动作资源）', () => {
     expect(ASSISTANT_ENDPOINTS.capabilities).toBe('/api/v1/assistant/capabilities')
     expect(ASSISTANT_ENDPOINTS.chat).toBe('/api/v1/assistant/chat')
-    expect(ASSISTANT_ENDPOINTS.confirm).toBe('/api/v1/assistant/confirm')
+    expect(ASSISTANT_ENDPOINTS.actions).toBe('/api/v1/assistant/actions')
+    expect(ASSISTANT_ENDPOINTS.action('act_abc123')).toBe('/api/v1/assistant/actions/act_abc123')
+    expect(ASSISTANT_ENDPOINTS.confirm('act_abc123')).toBe('/api/v1/assistant/actions/act_abc123/confirm')
+    expect(ASSISTANT_ENDPOINTS.revoke('act_abc123')).toBe('/api/v1/assistant/actions/act_abc123/revoke')
   })
 })
 

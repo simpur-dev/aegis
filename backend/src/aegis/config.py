@@ -126,6 +126,8 @@ class Settings(BaseSettings):
     #: 启动回填读视图的条数：只回填最近 N 条，超出走库查询。默认值需在 P0 实测冷启动后定。
     read_backfill_limit: int = 500
     assistant_session_ttl_seconds: float = 1_800.0
+    #: 待确认动作的有效期（秒）：写动作落 `control_actions.expires_at`，超时后确认无效。
+    assistant_confirm_ttl_seconds: int = 300
     # 人工上报与三路融合解析（批次 B4 + C1）：低于该置信度、或等级不是阈值命中所得 → 转人工核签
     report_review_confidence: float = 0.6
     # 三条腿各自可单独摘除：标定实验要能回答"去掉 LLM 腿准确率掉多少"，

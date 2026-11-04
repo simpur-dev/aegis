@@ -84,7 +84,7 @@ from aegis.services.response.warning_service import WarningService
 from aegis.services.rules.risk_engine import RiskEngine
 from aegis.services.rules.threshold_suggestions import ThresholdSuggestionService
 from aegis.services.rules.trigger_rules import RuleEngine, rulebook_from_rows
-from aegis.storage.store import StoreProtocol, operator_ledger_port, rule_library_port
+from aegis.storage.store import PlatformStore, StoreProtocol, control_action_port, operator_ledger_port, rule_library_port
 from aegis.workflow.drafts import DraftService, LineageLocks
 from aegis.workflow.engine import WorkflowEngine
 from aegis.workflow.outbound import OutboundCaller, OutboundPolicy
@@ -198,6 +198,26 @@ class PlatformContainer:
             return
         log.info("读视图回填完成", extra=report)
 
+    async def _recover_control_actions(self) -> None:
+        """启动时收尾上一次进程留下的中间态。
+
+        `executing` 超过 10 分钟没更新 = 执行它的进程没了，结果未知：标记失败而不是让它永远卡着；
+        `proposed` 过了有效期直接置 `expired`，否则用户点确认会得到一句语焉不详的冲突。
+        失败只记日志：台账坏了不该阻断启动（读动作与其余平台功能照常）。
+        """
+        recover = getattr(self.store, "recover_stuck_actions", None)
+        expire = getattr(self.store, "expire_actions", None)
+        if recover is None and expire is None:
+            return
+        try:
+            failed = 0 if recover is None else await recover()
+            expired = 0 if expire is None else await expire()
+        except Exception as exc:
+            log.warning("动作台账恢复失败", extra={"error": f"{type(exc).__name__}: {exc}"})
+            return
+        if failed or expired:
+            log.warning("动作台账启动收尾", extra={"failed": failed, "expired": expired})
+
     async def start(
         self,
         *,
@@ -212,6 +232,7 @@ class PlatformContainer:
         # 可选子系统先接线再放行：持久层与分析旁路的可用性在 start 结束时就是已知事实，
         # 而不是第一次有人查指标时才暴露。二者都不阻断启动。
         self._store_state = await start_store(self.bundle, self.settings)
+        await self._recover_control_actions()
         await self._backfill_read_model()
         # 阈值版本在启动期就位：第一条预警用的必须是"当前生效那一版"，而不是代码里的种子
         await self._load_rulebook()
@@ -776,6 +797,9 @@ def create_container(
             llm=gateway_llm,
             settings=cfg,
             tracer=tracer,
+            # 动作台账：写动作的"待确认 → 执行"落这里。内存形态也能跑，但重启即失（能力面如实标注）
+            control_actions=control_action_port(store),
+            control_actions_persistent=not isinstance(store, PlatformStore),
         )
     return container
 

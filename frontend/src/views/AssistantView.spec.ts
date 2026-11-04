@@ -96,7 +96,8 @@ function capabilities(overrides: Partial<CapabilitiesDto> = {}): CapabilitiesDto
       }),
     ],
     session_ttl_seconds: 900,
-    max_pending_actions: 8,
+    confirm_ttl_seconds: 300,
+    control_actions_persistent: true,
     ...overrides,
   }
 }
@@ -377,7 +378,7 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
     mockedConfirm.mockResolvedValue({ status: 'executed', action_id: 'act_abc123', action: 'report.submit' })
     await wrapper.find('[data-testid="confirm-act_abc123"]').trigger('click')
     await flushPromises()
-    expect(mockedConfirm).toHaveBeenCalledWith({ session_id: 'sess_0001', action_id: 'act_abc123', actor: '值班员' })
+    expect(mockedConfirm).toHaveBeenCalledWith('act_abc123', { actor: '值班员' })
     expect(byTestid(wrapper, 'decision').text()).toContain('已执行')
     expect(byTestid(wrapper, 'decision').text()).toContain('report.submit')
   })

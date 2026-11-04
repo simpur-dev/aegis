@@ -115,11 +115,7 @@ function onMessageKeydown(event: KeyboardEvent): void {
 async function confirmProposal(proposal: ProposalFrame): Promise<void> {
   decisions[proposal.action_id] = { kind: 'busy' }
   try {
-    const result = await assistantApi.confirm({
-      session_id: proposal.session_id,
-      action_id: proposal.action_id,
-      actor: reporter.value.trim() || undefined,
-    })
+    const result = await assistantApi.confirm(proposal.action_id, { actor: reporter.value.trim() || undefined })
     decisions[proposal.action_id] = { kind: 'result', result }
     if (result.status !== 'executed') {
       message.warning(`确认结果：${CONFIRM_STATUS_LABELS[result.status] ?? result.status}`)
@@ -232,7 +228,10 @@ onMounted(() => void loadCapabilities())
           </div>
           <div v-if="capabilities" class="chat__ttl" data-testid="caps-ttl">
             会话保留 {{ Math.round(capabilities.session_ttl_seconds / 60) }} 分钟
-            ｜ 单会话最多 {{ capabilities.max_pending_actions }} 个待确认动作
+            ｜ 待确认动作 {{ Math.round(capabilities.confirm_ttl_seconds / 60) }} 分钟内有效
+            ｜ 动作台账
+            <span v-if="capabilities.control_actions_persistent">已持久化</span>
+            <span v-else class="pill-dashed">内存形态，重启即失</span>
           </div>
         </div>
 

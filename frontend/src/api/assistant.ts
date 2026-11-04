@@ -49,7 +49,10 @@ const ASSISTANT_FIELD_LABELS: Record<string, string> = {
 export const ASSISTANT_ENDPOINTS = {
   capabilities: '/api/v1/assistant/capabilities',
   chat: '/api/v1/assistant/chat',
-  confirm: '/api/v1/assistant/confirm',
+  actions: '/api/v1/assistant/actions',
+  action: (actionId: string) => `/api/v1/assistant/actions/${actionId}`,
+  confirm: (actionId: string) => `/api/v1/assistant/actions/${actionId}/confirm`,
+  revoke: (actionId: string) => `/api/v1/assistant/actions/${actionId}/revoke`,
 } as const
 
 export class AssistantApiError extends Error {
@@ -138,7 +141,10 @@ export interface CapabilitiesDto {
   llm_configured: boolean
   actions: ActionSpecDto[]
   session_ttl_seconds: number
-  max_pending_actions: number
+  /** 待确认动作的有效期（秒）：超时后确认无效。 */
+  confirm_ttl_seconds: number
+  /** 动作台账是否持久：内存形态重启即失，界面据此提示"演示形态"。 */
+  control_actions_persistent: boolean
 }
 
 /**
@@ -152,7 +158,8 @@ export function capabilitiesShape(raw: unknown): CapabilitiesDto {
     llm_configured: record.llm_configured === true,
     actions: actions.map((item) => actionSpec(item)),
     session_ttl_seconds: Number(record.session_ttl_seconds ?? 0),
-    max_pending_actions: Number(record.max_pending_actions ?? 0),
+    confirm_ttl_seconds: Number(record.confirm_ttl_seconds ?? 0),
+    control_actions_persistent: record.control_actions_persistent === true,
   }
 }
 
@@ -171,11 +178,42 @@ function actionSpec(raw: unknown): ActionSpecDto {
   }
 }
 
-// ---------- 确认 ----------
+// ---------- 动作资源 ----------
 
-export interface ConfirmRequestDto {
-  session_id: string
+export interface CreateActionRequestDto {
+  action: string
+  params: Record<string, unknown>
+  space_id?: string
+  idempotency_key?: string
+  utterance?: string
+}
+
+/** 写动作创建后的三种回执：待确认（有 action_id）、直接执行（读动作）、幂等重放。 */
+export interface ActionCreatedDto {
+  status: 'proposed' | 'executed'
+  action_id: string | null
+  action: string
+  expires_in_seconds?: number
+  replayed?: boolean
+  preview?: Record<string, unknown> | null
+  result?: Record<string, unknown>
+}
+
+export interface ActionRecordDto {
   action_id: string
+  operator_id: string
+  action: string
+  status: 'proposed' | 'executing' | 'executed' | 'failed' | 'rejected' | 'expired' | 'revoked'
+  resolved_args: Record<string, unknown>
+  impact_scope: Record<string, unknown>
+  result: Record<string, unknown> | null
+  error: Record<string, unknown> | null
+  expires_at: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface ConfirmActionRequestDto {
   actor?: string
 }
 
@@ -483,9 +521,19 @@ export function createAssistantApiClient(instance: AxiosInstance) {
     capabilities: async () =>
       capabilitiesShape(await request<unknown>({ url: ASSISTANT_ENDPOINTS.capabilities, method: 'get' })),
 
-    /** 人工确认执行：一次性、带期、限本会话（services/assistant/service.py）。 */
-    confirm: (body: ConfirmRequestDto) =>
-      request<ConfirmResultDto>({ url: ASSISTANT_ENDPOINTS.confirm, method: 'post', data: body }),
+    /** 不经对话直接创建动作：读动作立即执行，写动作落 `proposed` 等确认。 */
+    createAction: (body: CreateActionRequestDto) =>
+      request<ActionCreatedDto>({ url: ASSISTANT_ENDPOINTS.actions, method: 'post', data: body }),
+
+    /** 动作状态：确认/撤销之后要能读到"现在是 proposed 还是 executed"。 */
+    actionStatus: (actionId: string) => request<ActionRecordDto>({ url: ASSISTANT_ENDPOINTS.action(actionId), method: 'get' }),
+
+    /** 人工确认执行：台账里 `proposed → executing`，并发下只能成功一次。 */
+    confirm: (actionId: string, body: ConfirmActionRequestDto = {}) =>
+      request<ConfirmResultDto>({ url: ASSISTANT_ENDPOINTS.confirm(actionId), method: 'post', data: body }),
+
+    /** 撤销：只有 60 秒窗口内的 proposed/executed 能撤，超出如实返回 rejected。 */
+    revoke: (actionId: string) => request<{ status: string; reason?: string }>({ url: ASSISTANT_ENDPOINTS.revoke(actionId), method: 'post' }),
 
     chat: (body: ChatRequestDto, options: StreamChatOptions = {}) => streamChat(body, options),
   }

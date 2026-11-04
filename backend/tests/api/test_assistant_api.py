@@ -123,8 +123,8 @@ async def test_执行类动作只在确认之后落地(container: PlatformContai
 
         ok = (
             await client.post(
-                "/api/v1/assistant/confirm",
-                json={"session_id": proposals[0]["session_id"], "action_id": proposals[0]["action_id"]},
+                f"/api/v1/assistant/actions/{proposals[0]['action_id']}/confirm",
+                json={"actor": "值班员"},
                 headers=DUTY_HEADERS,
             )
         ).json()
@@ -134,8 +134,8 @@ async def test_执行类动作只在确认之后落地(container: PlatformContai
 
         again = (
             await client.post(
-                "/api/v1/assistant/confirm",
-                json={"session_id": proposals[0]["session_id"], "action_id": proposals[0]["action_id"]},
+                f"/api/v1/assistant/actions/{proposals[0]['action_id']}/confirm",
+                json={"actor": "值班员"},
                 headers=DUTY_HEADERS,
             )
         ).json()
@@ -227,9 +227,31 @@ async def test_非法请求体被模式挡住(container: PlatformContainer, payl
 
 
 @pytest.mark.asyncio
-async def test_未知会话确认被拒而不是500(container: PlatformContainer) -> None:
+async def test_未知动作确认被拒而不是500(container: PlatformContainer) -> None:
     async with _client(container) as client:
-        response = await client.post(
-            "/api/v1/assistant/confirm", json={"session_id": "as_absent0000", "action_id": "act_abc123"}, headers=DUTY_HEADERS
-        )
+        response = await client.post("/api/v1/assistant/actions/act_abc123/confirm", json={}, headers=DUTY_HEADERS)
         assert response.json()["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_动作资源可查状态且撤销窗口外如实拒绝(container: PlatformContainer) -> None:
+    async with _client(container) as client:
+        created = (
+            await client.post(
+                "/api/v1/assistant/actions",
+                json={"action": "drill.start", "params": {"scenario": "surge", "ticks": 1}},
+                headers=DUTY_HEADERS,
+            )
+        ).json()
+        assert created["status"] == "proposed"
+        assert created["action_id"]
+
+        status = (await client.get(f"/api/v1/assistant/actions/{created['action_id']}")).json()
+        assert status["status"] == "proposed"
+        assert status["operator_id"] == "duty-01"
+
+        revoked = (await client.post(f"/api/v1/assistant/actions/{created['action_id']}/revoke", headers=DUTY_HEADERS)).json()
+        assert revoked["status"] == "revoked"
+
+        missing = await client.get("/api/v1/assistant/actions/act_deadbeef0000")
+        assert missing.status_code == 404

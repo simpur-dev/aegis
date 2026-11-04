@@ -73,9 +73,7 @@ async def test_演练任务确认后才落地且链路走的是真实智能体(p
     assert proposal is not None and proposal.data["action"] == "drill.start"
     assert platform.store.warnings.size == 0, "未确认就落地了"
 
-    outcome = await platform.assistant.confirm(
-        session_id=proposal.data["session_id"], action_id=proposal.data["action_id"], actor="指挥员", operator=DUTY
-    )
+    outcome = await platform.assistant.confirm(action_id=proposal.data["action_id"], actor="指挥员", operator=DUTY)
     assert outcome["status"] == "executed", outcome
     chains = (outcome["result"]["drill"] or {}).get("chains") or []
     assert chains, "演练没跑出链路结果"
@@ -92,7 +90,7 @@ async def test_上报经确认后进同一条链路且智能体优先照样成�
     assert proposal is not None and proposal.data["action"] == "report.submit"
     assert platform.report_stats["submitted"] == 0
 
-    outcome = await platform.assistant.confirm(session_id=proposal.data["session_id"], action_id=proposal.data["action_id"], operator=DUTY)
+    outcome = await platform.assistant.confirm(action_id=proposal.data["action_id"], operator=DUTY)
     assert outcome["status"] == "executed", outcome
     report = outcome["result"]["report"]
     assert report["parse"]["decided_by"] == "rule"

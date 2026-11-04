@@ -29,7 +29,7 @@ import orjson
 from aegis.config import Settings, get_settings
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, utc_now
 from aegis.domain.operator import Operator
-from aegis.persistence import accuracy, geo, operators, rows, vectors
+from aegis.persistence import accuracy, control_actions, geo, operators, rows, vectors
 from aegis.persistence.dsn import dsn_label, normalize_dsn, redact_dsn
 from aegis.persistence.errors import (
     ConnectionFailedError,
@@ -311,8 +311,59 @@ class PostgresStore:
     async def list_operators(self, *, active_only: bool = True, limit: int = 200) -> list[Operator]:
         return await operators.list_operators(await self.connect(), active_only=active_only, limit=limit)
 
-    # ---------- 启动回填（读视图） ----------
+    # ---------- 动作执行记录（可选能力面：SupportsControlActions） ----------
 
+    async def create_action(
+        self,
+        *,
+        action_id: str,
+        operator_id: str,
+        action: str,
+        space_id: str | None,
+        utterance: str,
+        resolved_args: dict[str, Any],
+        impact_scope: dict[str, Any],
+        expires_in_seconds: int,
+        idempotency_key: str | None,
+    ) -> tuple[dict[str, Any], bool]:
+        return await control_actions.create_proposed(
+            await self.connect(),
+            action_id=action_id,
+            operator_id=operator_id,
+            action=action,
+            space_id=space_id,
+            utterance=utterance,
+            resolved_args=resolved_args,
+            impact_scope=impact_scope,
+            expires_in_seconds=expires_in_seconds,
+            idempotency_key=idempotency_key,
+        )
+
+    async def confirm_action(self, action_id: str) -> dict[str, Any] | None:
+        return await control_actions.confirm_action(await self.connect(), action_id)
+
+    async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
+        return await control_actions.mark_executed(await self.connect(), action_id, result)
+
+    async def mark_action_failed(self, action_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
+        return await control_actions.mark_failed(await self.connect(), action_id, error)
+
+    async def revoke_action(self, action_id: str) -> dict[str, Any] | None:
+        return await control_actions.revoke_action(await self.connect(), action_id)
+
+    async def get_action(self, action_id: str) -> dict[str, Any] | None:
+        return await control_actions.get_action(await self.connect(), action_id)
+
+    async def list_actions(self, *, operator_id: str | None = None, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        return await control_actions.list_actions(await self.connect(), operator_id=operator_id, status=status, limit=limit)
+
+    async def expire_actions(self) -> int:
+        return await control_actions.expire_actions(await self.connect())
+
+    async def recover_stuck_actions(self) -> int:
+        return await control_actions.recover_stuck(await self.connect())
+
+    # ---------- 启动回填（读视图） ----------
     async def backfill_read_model(self, *, limit: int = 500) -> dict[str, int]:
         """启动时把最近 N 条 warnings/tasks 灌进内存读视图。
 

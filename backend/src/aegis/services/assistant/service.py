@@ -1,8 +1,8 @@
 """对话编排：把一句话组织成一串可解释的帧。
 
 这一层只做四件事：开会话、判意图、调执行器、把结果说成人话。它不实现任何动作，也不碰业务表
-（演练/上报由动作自己调既有服务）。写动作的确认仍在内存 pending 里，P2 接 `control_actions`
-时只改这一层的两个方法。
+（演练/上报由动作自己调既有服务）。写动作的"待确认 → 执行"落 `control_actions`：
+执行器负责状态迁移，这一层只负责把它翻译成帧与回执。
 """
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ from aegis.services.assistant.intent import Intent, IntentClassifier, out_of_sco
 from aegis.services.assistant.narrate import narrate_result
 from aegis.services.assistant.registry import ActionRegistry
 from aegis.services.interpret.text_guard import number_tokens
+from aegis.storage.store import SupportsControlActions
 
 _MAX_SESSIONS = 200
 _MAX_TURNS = 20
-_MAX_PENDING_PER_SESSION = 8
 _ANSWER_LIMIT = 4_000
 
 
@@ -42,32 +42,11 @@ class AssistantEvent:
 
 
 @dataclass(slots=True)
-class PendingAction:
-    action_id: str
-    action: str
-    args: dict[str, Any]
-    summary: str
-    expires_at: float
-    status: str = "pending"
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "action_id": self.action_id,
-            "action": self.action,
-            "summary": self.summary,
-            "args": {key: (value[:160] if isinstance(value, str) else value) for key, value in self.args.items()},
-            "status": self.status,
-            "expires_in_seconds": max(0.0, round(self.expires_at - time.monotonic(), 1)),
-        }
-
-
-@dataclass(slots=True)
 class AssistantSession:
     session_id: str
     trace_id: str
     updated_at: float
     history: deque[dict[str, str]] = field(default_factory=lambda: deque(maxlen=_MAX_TURNS * 2))
-    pending: dict[str, PendingAction] = field(default_factory=dict)
 
 
 class AssistantService:
@@ -80,13 +59,18 @@ class AssistantService:
         llm: Any | None = None,
         settings: Settings | None = None,
         tracer: Tracer | None = None,
+        control_actions: SupportsControlActions | None = None,
+        control_actions_persistent: bool = False,
     ) -> None:
         self._registry = registry
         self._classifier = IntentClassifier(registry, llm=llm)
-        self._executor = Executor()
         self._llm = llm
         self._settings = settings or get_settings()
         self._ttl = float(self._settings.assistant_session_ttl_seconds)
+        self._repo = control_actions
+        self._persistent = control_actions_persistent
+        # 动作台账缺席时只有读动作能跑：写动作必须跨重启存活，内存 pending 做不到
+        self._executor = Executor(repo=control_actions, confirm_ttl_seconds=int(self._settings.assistant_confirm_ttl_seconds))
         self._tracer = tracer or Tracer()
         self._sessions: dict[str, AssistantSession] = {}
         self._order: deque[str] = deque(maxlen=_MAX_SESSIONS)
@@ -104,7 +88,9 @@ class AssistantService:
             "llm_configured": self.llm_available,
             "actions": self._registry.capabilities(role),
             "session_ttl_seconds": self._ttl,
-            "max_pending_actions": _MAX_PENDING_PER_SESSION,
+            "confirm_ttl_seconds": int(self._settings.assistant_confirm_ttl_seconds),
+            # 内存形态也能跑写动作，但重启即失：如实标注，前端据此提示"演示形态"
+            "control_actions_persistent": self._persistent,
         }
 
     async def respond(
@@ -173,46 +159,92 @@ class AssistantService:
             },
         )
 
-    async def confirm(
-        self, *, session_id: str, action_id: str, actor: str | None = None, operator: Operator | None = None
-    ) -> dict[str, Any]:
-        """人工确认执行：一次性、带期、限本会话。"""
-        session = self._sessions.get(session_id)
-        if session is None:
-            return {"status": "rejected", "reason": "会话不存在或已过期", "action_id": action_id}
-        pending = session.pending.get(action_id)
-        if pending is None:
-            self._reject(session, action=action_id, reason="动作 ID 不在本会话待确认清单内")
-            return {"status": "rejected", "reason": "动作 ID 不在本会话待确认清单内", "action_id": action_id}
-        if pending.status != "pending":
-            return {"status": "rejected", "reason": f"动作已处置（{pending.status}），不重复执行", "action_id": action_id}
-        if time.monotonic() > pending.expires_at:
-            pending.status = "expired"
-            self._reject(session, action=pending.action, reason="确认超时，动作已过期")
-            return {"status": "expired", "reason": "确认超时，动作已过期", "action_id": action_id}
-        action = self._registry.get(pending.action)
-        if action is None or not action.spec.needs_confirm:
-            pending.status = "rejected"
-            self._reject(session, action=pending.action, reason="动作不在需确认目录内")
-            return {"status": "rejected", "reason": "动作不在需确认目录内", "action_id": action_id}
-
-        pending.status = "running"
+    async def confirm(self, *, action_id: str, actor: str | None = None, operator: Operator | None = None) -> dict[str, Any]:
+        """确认执行：台账里 `proposed → executing → executed/failed`，并发下只能成功一次。"""
+        if self._repo is None:
+            return {"status": "rejected", "reason": "当前形态没有动作台账（control_actions），写动作不可用", "action_id": action_id}
+        record = await self._repo.get_action(action_id)
+        if record is None:
+            self._reject(None, action=action_id, reason="动作不存在或已过期")
+            return {"status": "rejected", "reason": "动作不存在或已过期", "action_id": action_id}
+        action = self._registry.get(str(record["action"]))
+        if action is None:
+            return {"status": "rejected", "reason": f"动作 {record['action']} 不在注册表内", "action_id": action_id}
         ctx = ActionContext(
-            session_id=session.session_id,
-            utterance=pending.summary,
+            session_id="",
+            utterance=str(record.get("utterance") or ""),
             operator=operator,
+            space_id=record.get("space_id"),
             approved=True,
         )
         try:
-            outcome = await self._executor.run(action, dict(pending.args), ctx)
+            outcome = await self._executor.resume(action, ctx, action_id)
         except ActionError as exc:
-            pending.status = "failed"
-            self._reject(session, action=pending.action, reason=exc.message, detail={"code": exc.code})
-            return {"status": "failed", "action_id": action_id, "action": pending.action, "reason": exc.message, "result": None}
-        result = outcome.result
-        data = {} if result is None else dict(result.data)
-        pending.status = "executed"
-        return {"status": "executed", "action_id": action_id, "action": pending.action, "actor": actor, "result": data}
+            # `confirm_action` 命中 0 行时分不清"已处置"与"已过期"：读回当前态再说，
+            # 否则界面上会把"已经执行过"报成"过期"，两条回执的话术不一样。
+            status = await self._conflict_status(action_id)
+            self._reject(None, action=action.spec.name, reason=exc.message, detail={"code": exc.code})
+            return {"status": status, "action_id": action_id, "action": action.spec.name, "reason": exc.message, "result": None}
+        data = {} if outcome.result is None else dict(outcome.result.data)
+        return {"status": "executed", "action_id": action_id, "action": action.spec.name, "actor": actor, "result": data}
+
+    async def _conflict_status(self, action_id: str) -> str:
+        """确认失败时读回当前态：已过期与已处置是两句不同的话。"""
+        if self._repo is None:
+            return "rejected"
+        current = await self._repo.get_action(action_id)
+        if current is None:
+            return "rejected"
+        status = str(current["status"])
+        # 仍是 proposed 却没抢到原子 UPDATE：只可能是 expires_at 已过（那条 UPDATE 带了这个条件）
+        return "expired" if status in {"expired", "proposed"} else "rejected"
+
+    async def create_action(
+        self,
+        action_name: str,
+        params: dict[str, Any],
+        *,
+        operator: Operator | None,
+        space_id: str | None = None,
+        idempotency_key: str | None = None,
+        utterance: str = "",
+    ) -> dict[str, Any]:
+        """不经对话直接创建动作（供 UI 按钮与多步执行）。读动作会直接执行，写动作落 `proposed`。"""
+        action = self._registry.require(action_name)
+        ctx = ActionContext(
+            session_id="",
+            utterance=utterance,
+            operator=operator,
+            space_id=space_id,
+            idempotency_key=idempotency_key,
+        )
+        outcome = await self._executor.run(action, params, ctx)
+        if outcome.status == "needs_confirm":
+            return {
+                "status": "proposed",
+                "action_id": outcome.action_id,
+                "action": action_name,
+                "expires_in_seconds": outcome.expires_in_seconds,
+                "replayed": outcome.replayed,
+                "preview": None if outcome.preview is None else outcome.preview.as_dict(),
+            }
+        data = {} if outcome.result is None else dict(outcome.result.data)
+        return {"status": "executed", "action_id": None, "action": action_name, "result": data}
+
+    async def action_status(self, action_id: str) -> dict[str, Any] | None:
+        if self._repo is None:
+            return None
+        return await self._repo.get_action(action_id)
+
+    async def revoke_action(self, *, action_id: str, operator: Operator | None = None) -> dict[str, Any]:
+        """60 秒撤销窗口。超出窗口或已处置时如实返回 rejected，不假装撤销成功。"""
+        if self._repo is None:
+            return {"status": "rejected", "action_id": action_id, "reason": "当前形态没有动作台账（control_actions）"}
+        record = await self._repo.revoke_action(action_id)
+        if record is None:
+            return {"status": "rejected", "action_id": action_id, "reason": "超出撤销窗口，或动作已被处置"}
+        self._reject(None, action=str(record["action"]), reason="动作在撤销窗口内被撤销")
+        return {"status": "revoked", "action_id": action_id, "action": str(record["action"])}
 
     # ---------- 编排 ----------
 
@@ -247,15 +279,27 @@ class AssistantService:
             yield AssistantEvent("answer", {"text": exc.message})
             return
 
-        if outcome.needs_confirm:
-            pending = self._propose(session, intent.action, dict(intent.args), body)
+        if outcome.status == "needs_confirm":
             preview = {} if outcome.preview is None else outcome.preview.as_dict()
-            yield AssistantEvent("proposal", {**pending.as_dict(), "preview": preview, "session_id": session.session_id})
+            yield AssistantEvent(
+                "proposal",
+                {
+                    "action_id": outcome.action_id,
+                    "action": intent.action,
+                    "summary": f"{action.spec.title}：{body[:120]}" if body else action.spec.title,
+                    "args": dict(intent.args),
+                    "status": "proposed",
+                    "expires_in_seconds": outcome.expires_in_seconds,
+                    "replayed": outcome.replayed,
+                    "preview": preview,
+                    "session_id": session.session_id,
+                },
+            )
             yield AssistantEvent(
                 "answer",
                 {
-                    "text": f"已生成待确认动作「{action.spec.title}」（{pending.action_id}），确认后才会执行；"
-                    f"{int(self._ttl // 60)} 分钟内有效。"
+                    "text": f"已生成待确认动作「{action.spec.title}」（{outcome.action_id}），确认后才会执行；"
+                    f"{int(outcome.expires_in_seconds // 60)} 分钟内有效。"
                 },
             )
             return
@@ -307,7 +351,6 @@ class AssistantService:
         now = time.monotonic()
         if session_id and (existing := self._sessions.get(session_id)):
             existing.updated_at = now
-            self._expire_pending(existing, now)
             return existing
         self._evict_expired(now)
         sid = session_id or f"as_{secrets.token_hex(6)}"
@@ -319,26 +362,6 @@ class AssistantService:
             if oldest != sid:
                 self._sessions.pop(oldest, None)
         return session
-
-    def _propose(self, session: AssistantSession, action: str, args: dict[str, Any], body: str) -> PendingAction:
-        self._expire_pending(session, time.monotonic())
-        while len(session.pending) >= _MAX_PENDING_PER_SESSION:
-            session.pending.pop(next(iter(session.pending)), None)
-        spec = self._registry.require(action).spec
-        pending = PendingAction(
-            action_id=f"act_{secrets.token_hex(6)}",
-            action=action,
-            args=args,
-            summary=f"{spec.title}：{body[:120]}" if body else spec.title,
-            expires_at=time.monotonic() + self._ttl,
-        )
-        session.pending[pending.action_id] = pending
-        return pending
-
-    def _expire_pending(self, session: AssistantSession, now: float) -> None:
-        for pending in session.pending.values():
-            if pending.status == "pending" and now > pending.expires_at:
-                pending.status = "expired"
 
     def _evict_expired(self, now: float) -> None:
         stale = [sid for sid, session in self._sessions.items() if now - session.updated_at > self._ttl]

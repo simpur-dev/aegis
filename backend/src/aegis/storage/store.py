@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from aegis.domain.chain import ChainResult
@@ -200,6 +200,154 @@ def station_ledger_row(
     }
 
 
+class ControlActionStore:
+    """动作执行记录的内存实现。
+
+    与 `persistence/control_actions.py` 同一套状态机与不变量，只是持久介质不同：
+    生产用 SQL（跨重启），内存形态用于开发与测试。**它不提供跨重启存活**——
+    这一点在能力面里如实说（`control_actions_persistent: false`），不假装。
+    """
+
+    def __init__(self, maxlen: int = 2_000) -> None:
+        self._rows: dict[str, dict[str, Any]] = {}
+        self._order: deque[str] = deque(maxlen=maxlen)
+        self._idempotency: dict[str, str] = {}
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(UTC)
+
+    @staticmethod
+    def _iso(value: datetime | None) -> str | None:
+        return None if value is None else value.isoformat()
+
+    def _public(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **row,
+            "expires_at": self._iso(row["expires_at"]),
+            "created_at": self._iso(row["created_at"]),
+            "updated_at": self._iso(row["updated_at"]),
+        }
+
+    async def create_action(
+        self,
+        *,
+        action_id: str,
+        operator_id: str,
+        action: str,
+        space_id: str | None,
+        utterance: str,
+        resolved_args: dict[str, Any],
+        impact_scope: dict[str, Any],
+        expires_in_seconds: int,
+        idempotency_key: str | None,
+    ) -> tuple[dict[str, Any], bool]:
+        if idempotency_key and (existing_id := self._idempotency.get(idempotency_key)):
+            existing = self._rows.get(existing_id)
+            if existing is not None:
+                return self._public(existing), True
+        now = self._now()
+        row: dict[str, Any] = {
+            "action_id": action_id,
+            "operator_id": operator_id,
+            "action": action,
+            "space_id": space_id,
+            "utterance": utterance[:500],
+            "resolved_args": dict(resolved_args),
+            "status": "proposed",
+            "idempotency_key": idempotency_key,
+            "impact_scope": dict(impact_scope),
+            "result": None,
+            "error": None,
+            "expires_at": now + timedelta(seconds=int(expires_in_seconds)),
+            "created_at": now,
+            "updated_at": now,
+        }
+        self._rows[action_id] = row
+        self._order.append(action_id)
+        while len(self._rows) > (self._order.maxlen or 0):
+            oldest = self._order.popleft()
+            dropped = self._rows.pop(oldest, None)
+            if dropped is not None and dropped["idempotency_key"]:
+                self._idempotency.pop(dropped["idempotency_key"], None)
+        if idempotency_key:
+            self._idempotency[idempotency_key] = action_id
+        return self._public(row), False
+
+    async def confirm_action(self, action_id: str) -> dict[str, Any] | None:
+        row = self._rows.get(action_id)
+        if row is None or row["status"] != "proposed":
+            return None
+        if row["expires_at"] is not None and row["expires_at"] < self._now():
+            return None
+        row["status"] = "executing"
+        row["updated_at"] = self._now()
+        return self._public(row)
+
+    async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
+        row = self._rows.get(action_id)
+        if row is None or row["status"] != "executing":
+            return None
+        row["status"] = "executed"
+        row["result"] = dict(result)
+        row["error"] = None
+        row["updated_at"] = self._now()
+        return self._public(row)
+
+    async def mark_action_failed(self, action_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
+        row = self._rows.get(action_id)
+        if row is None or row["status"] != "executing":
+            return None
+        row["status"] = "failed"
+        row["error"] = dict(error)
+        row["updated_at"] = self._now()
+        return self._public(row)
+
+    async def revoke_action(self, action_id: str) -> dict[str, Any] | None:
+        row = self._rows.get(action_id)
+        if row is None or row["status"] not in {"proposed", "executed"}:
+            return None
+        if self._now() - row["updated_at"] > timedelta(seconds=60):
+            return None
+        row["status"] = "revoked"
+        row["updated_at"] = self._now()
+        return self._public(row)
+
+    async def get_action(self, action_id: str) -> dict[str, Any] | None:
+        row = self._rows.get(action_id)
+        return None if row is None else self._public(row)
+
+    async def list_actions(self, *, operator_id: str | None = None, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        capped = max(1, min(int(limit), 200))
+        rows = [self._rows[aid] for aid in self._order if aid in self._rows]
+        if operator_id:
+            rows = [row for row in rows if row["operator_id"] == operator_id]
+        if status:
+            rows = [row for row in rows if row["status"] == status]
+        return [self._public(row) for row in reversed(rows[-capped:])]
+
+    async def expire_actions(self) -> int:
+        now = self._now()
+        expired = 0
+        for row in self._rows.values():
+            if row["status"] == "proposed" and row["expires_at"] is not None and row["expires_at"] < now:
+                row["status"] = "expired"
+                row["updated_at"] = now
+                expired += 1
+        return expired
+
+    async def recover_stuck_actions(self) -> int:
+        now = self._now()
+        recovered = 0
+        for row in self._rows.values():
+            if row["status"] == "executing" and now - row["updated_at"] > timedelta(seconds=600):
+                row["status"] = "failed"
+                row["error"] = {"code": "process_restart", "message": "执行中进程重启，结果未知"}
+                row["updated_at"] = now
+                recovered += 1
+        return recovered
+
+
 class PlatformStore:
     """平台运行态聚合入口。"""
 
@@ -208,6 +356,9 @@ class PlatformStore:
         self.warnings = WarningStore()
         self.tasks = TaskStore()
         self.chains: BoundedCollection[ChainResult] = BoundedCollection(2_000)
+        # 动作执行记录（内存态）：写动作的"待确认 → 执行"在这里落账，重启即失——
+        # 能力面用 `control_actions_persistent: false` 如实标注，不假装跨重启。
+        self.control_actions = ControlActionStore()
         # 站点维表（内存态）：与 PostgreSQL 那份同构，由 `scripts/import_stations.py` 显式写入。
         # 内存视图没有持久层，导入只活到进程结束——这一条由导入命令在结果里说清楚。
         self._station_dim: dict[str, dict[str, object]] = {}
@@ -266,6 +417,35 @@ class PlatformStore:
                 continue
             rows.append(station_ledger_row(station_id, region))
         return rows[:limit]
+
+    # ---------- 动作执行记录（可选能力面：SupportsControlActions） ----------
+
+    async def create_action(self, **kwargs: Any) -> tuple[dict[str, Any], bool]:
+        return await self.control_actions.create_action(**kwargs)
+
+    async def confirm_action(self, action_id: str) -> dict[str, Any] | None:
+        return await self.control_actions.confirm_action(action_id)
+
+    async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
+        return await self.control_actions.mark_action_executed(action_id, result)
+
+    async def mark_action_failed(self, action_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
+        return await self.control_actions.mark_action_failed(action_id, error)
+
+    async def revoke_action(self, action_id: str) -> dict[str, Any] | None:
+        return await self.control_actions.revoke_action(action_id)
+
+    async def get_action(self, action_id: str) -> dict[str, Any] | None:
+        return await self.control_actions.get_action(action_id)
+
+    async def list_actions(self, *, operator_id: str | None = None, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        return await self.control_actions.list_actions(operator_id=operator_id, status=status, limit=limit)
+
+    async def expire_actions(self) -> int:
+        return await self.control_actions.expire_actions()
+
+    async def recover_stuck_actions(self) -> int:
+        return await self.control_actions.recover_stuck_actions()
 
     async def record_chain(self, result: ChainResult) -> None:
         await self.chains.add(result)
@@ -462,6 +642,49 @@ class SupportsOperators(Protocol):
 
 def operator_ledger_port(store: object) -> SupportsOperators | None:
     return store if isinstance(store, SupportsOperators) else None
+
+
+@runtime_checkable
+class SupportsControlActions(Protocol):
+    """动作执行记录的可选能力面：只有持久层实现。
+
+    内存形态没有这张表——写动作的"待确认 → 执行"必须跨重启存活，内存 dict 做不到，
+    所以缺这条能力时写动作如实拒绝，而不是退化成"重启就丢"的内存 pending。
+    """
+
+    async def create_action(
+        self,
+        *,
+        action_id: str,
+        operator_id: str,
+        action: str,
+        space_id: str | None,
+        utterance: str,
+        resolved_args: dict[str, Any],
+        impact_scope: dict[str, Any],
+        expires_in_seconds: int,
+        idempotency_key: str | None,
+    ) -> tuple[dict[str, Any], bool]: ...
+
+    async def confirm_action(self, action_id: str) -> dict[str, Any] | None: ...
+
+    async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None: ...
+
+    async def mark_action_failed(self, action_id: str, error: dict[str, Any]) -> dict[str, Any] | None: ...
+
+    async def revoke_action(self, action_id: str) -> dict[str, Any] | None: ...
+
+    async def get_action(self, action_id: str) -> dict[str, Any] | None: ...
+
+    async def list_actions(self, *, operator_id: str | None = None, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]: ...
+
+    async def expire_actions(self) -> int: ...
+
+    async def recover_stuck_actions(self) -> int: ...
+
+
+def control_action_port(store: object) -> SupportsControlActions | None:
+    return store if isinstance(store, SupportsControlActions) else None
 
 
 def _to_iso(moment: datetime | str | None) -> str | None:

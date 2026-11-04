@@ -15,20 +15,22 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
 from aegis.domain.operator import Operator
-from aegis.services.assistant import AssistantService
+from aegis.services.assistant import ERROR_STATUS, AssistantService
+from aegis.services.assistant.base import ActionError
 
 log = logging.getLogger("aegis.api.assistant")
 
 _DISCONNECT_POLL_SECONDS = 0.25
 _SSE_KEEPALIVE_SECONDS = 10.0
 _SESSION_PATTERN = r"^[A-Za-z0-9_-]{4,64}$"
+_ACTION_ID_PATTERN = r"^act_[0-9a-f]{6,24}$"
 
 OperatorHeader = Annotated[str | None, Header(alias="X-Aegis-Operator")]
 
@@ -43,11 +45,19 @@ class ChatRequest(BaseModel):
     hazard_hint: str | None = Field(default=None, max_length=64)
 
 
-class ConfirmRequest(BaseModel):
+class CreateActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    session_id: str = Field(pattern=_SESSION_PATTERN)
-    action_id: str = Field(pattern=r"^act_[0-9a-f]{6,24}$")
+    action: str = Field(min_length=3, max_length=64)
+    params: dict[str, Any] = Field(default_factory=dict)
+    space_id: str | None = Field(default=None, max_length=64)
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=64)
+    utterance: str = Field(default="", max_length=500)
+
+
+class ConfirmActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     actor: str | None = Field(default=None, max_length=64)
 
 
@@ -117,22 +127,76 @@ def build_router() -> APIRouter:
 
         return StreamingResponse(_keepalive(_gen(), stopping=ctn.stopping, request=request), media_type="text/event-stream")
 
-    @router.post("/confirm")
-    async def confirm(
-        payload: ConfirmRequest,
+    # ---------- 动作资源（`/confirm` 已退役：动作有自己的号，不再靠 session 定位） ----------
+
+    @router.post("/actions")
+    async def create_action(
+        payload: CreateActionRequest,
         ctn: PlatformContainer = Depends(get_container),
         x_operator: OperatorHeader = None,
     ) -> dict[str, Any]:
         service = _assistant(ctn)
         operator = await _operator(ctn, x_operator)
+        try:
+            return await service.create_action(
+                payload.action,
+                payload.params,
+                operator=operator,
+                space_id=payload.space_id,
+                idempotency_key=payload.idempotency_key,
+                utterance=payload.utterance,
+            )
+        except ActionError as exc:
+            raise _http_error(exc) from exc
+
+    @router.get("/actions/{action_id}")
+    async def action_status(
+        action_id: Annotated[str, Path(pattern=_ACTION_ID_PATTERN)],
+        ctn: PlatformContainer = Depends(get_container),
+    ) -> dict[str, Any]:
+        service = _assistant(ctn)
+        record = await service.action_status(action_id)
+        if record is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "E_ACTION_NOT_FOUND", "message": f"动作不存在：{action_id}"},
+            )
+        return record
+
+    @router.post("/actions/{action_id}/confirm")
+    async def confirm_action(
+        action_id: Annotated[str, Path(pattern=_ACTION_ID_PATTERN)],
+        ctn: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
+        payload: ConfirmActionRequest | None = None,
+    ) -> dict[str, Any]:
+        service = _assistant(ctn)
+        operator = await _operator(ctn, x_operator)
         return await service.confirm(
-            session_id=payload.session_id,
-            action_id=payload.action_id,
-            actor=payload.actor,
+            action_id=action_id,
+            actor=None if payload is None else payload.actor,
             operator=operator,
         )
 
+    @router.post("/actions/{action_id}/revoke")
+    async def revoke_action(
+        action_id: Annotated[str, Path(pattern=_ACTION_ID_PATTERN)],
+        ctn: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
+    ) -> dict[str, Any]:
+        service = _assistant(ctn)
+        operator = await _operator(ctn, x_operator)
+        return await service.revoke_action(action_id=action_id, operator=operator)
+
     return router
+
+
+def _http_error(exc: ActionError) -> HTTPException:
+    """动作错误码 → HTTP：映射只查 `ERROR_STATUS` 一张表，路由里不写 if/elif。"""
+    return HTTPException(
+        status_code=ERROR_STATUS.get(exc.code, 400),
+        detail={"code": exc.code, "message": exc.message, **exc.detail},
+    )
 
 
 async def _keepalive(
