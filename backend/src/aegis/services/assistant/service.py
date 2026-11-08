@@ -17,7 +17,8 @@ from typing import Any
 from aegis.config import Settings, get_settings
 from aegis.domain.operator import Operator
 from aegis.observability.tracer import Tracer
-from aegis.services.assistant.base import Action, ActionContext, ActionError
+from aegis.services.assistant.audit import AuditTrail
+from aegis.services.assistant.base import Action, ActionContext, ActionError, ResolvedTargets
 from aegis.services.assistant.executor import Executor
 from aegis.services.assistant.intent import Intent, IntentClassifier, bulk_scope_without_target, out_of_scope_action
 from aegis.services.assistant.narrate import narrate_result
@@ -74,6 +75,8 @@ class AssistantService:
         # 确认路由按同一份 policy 校验投票资格——两份清单不各写一遍。
         self._review_policy = ReviewPolicy(enabled=self._settings.assistant_dual_review_enabled)
         self._dual_review = DualReview(control_actions, self._review_policy) if control_actions is not None else None
+        # 审计（第 8 步）与动作台账同一个 repo；confirm/撤销的审计行也从这条出口走
+        self._audit = AuditTrail(control_actions)
         # 动作台账缺席时只有读动作能跑：写动作必须跨重启存活，内存 pending 做不到
         self._executor = Executor(
             repo=control_actions,
@@ -255,6 +258,19 @@ class AssistantService:
         try:
             outcome = await self._dual_review.vote(action_id, operator, action.spec)
         except ActionError as exc:
+            # 复核资格被拒（duty 点复核 / 同人二票）是 §9 的"越权"一行：intent 已随提案在库
+            if self._audit.available:
+                await self._audit.write(
+                    self._audit.rejected(
+                        action_id=action_id,
+                        action=action,
+                        operator=operator,
+                        error=exc,
+                        utterance=str(record.get("utterance") or ""),
+                        space_id=record.get("space_id"),
+                        resolved_args=dict(record.get("resolved_args") or {}),
+                    )
+                )
             self._reject(None, action=action.spec.name, reason=exc.message, detail={"code": exc.code})
             raise
         if outcome.ready:
@@ -331,6 +347,21 @@ class AssistantService:
         if record is None:
             return {"status": "rejected", "action_id": action_id, "reason": "超出撤销窗口，或动作已被处置"}
         self._reject(None, action=str(record["action"]), reason="动作在撤销窗口内被撤销")
+        # 撤销也是一次状态迁移（§931：control_actions(revoked) + audit_ops）：写一行 result
+        action = self._registry.get(str(record["action"]))
+        if self._audit.available and action is not None:
+            await self._audit.write(
+                self._audit.result(
+                    action_id=action_id,
+                    action=action,
+                    params=dict(record.get("resolved_args") or {}),
+                    targets=ResolvedTargets(),
+                    ctx=ActionContext(
+                        session_id="", operator=operator, utterance=str(record.get("utterance") or ""), space_id=record.get("space_id")
+                    ),
+                    after={"revoked": True},
+                )
+            )
         return {"status": "revoked", "action_id": action_id, "action": str(record["action"])}
 
     # ---------- 编排 ----------

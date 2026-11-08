@@ -32,6 +32,7 @@ from aegis.domain.operator import Operator
 from aegis.persistence import (
     accuracy,
     alerts,
+    audit_ops,
     control_actions,
     geo,
     handling_tasks,
@@ -61,6 +62,7 @@ from aegis.persistence.write_buffer import (
     WriteRequest,
 )
 from aegis.storage.store import (
+    AuditRecord,
     BoundedCollection,
     PlatformStore,
     StoreProtocol,
@@ -391,20 +393,45 @@ class PostgresStore:
         expires_in_seconds: int,
         idempotency_key: str | None,
         review_required: int = 0,
+        audit: AuditRecord | None = None,
     ) -> tuple[dict[str, Any], bool]:
-        return await control_actions.create_proposed(
-            await self.connect(),
-            action_id=action_id,
-            operator_id=operator_id,
-            action=action,
-            space_id=space_id,
-            utterance=utterance,
-            resolved_args=resolved_args,
-            impact_scope=impact_scope,
-            expires_in_seconds=expires_in_seconds,
-            idempotency_key=idempotency_key,
-            review_required=review_required,
-        )
+        """落一条 `proposed`。带 `audit` 时，intent 审计行与状态迁移在**同一事务**（设计 §4.5）。
+
+        幂等重放不写审计：重复提交不是新意图，首次那条已经记过。
+        """
+        if audit is None:
+            return await control_actions.create_proposed(
+                await self.connect(),
+                action_id=action_id,
+                operator_id=operator_id,
+                action=action,
+                space_id=space_id,
+                utterance=utterance,
+                resolved_args=resolved_args,
+                impact_scope=impact_scope,
+                expires_in_seconds=expires_in_seconds,
+                idempotency_key=idempotency_key,
+                review_required=review_required,
+            )
+        pool = await self.connect()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                record, replayed = await control_actions.create_proposed(
+                    conn,
+                    action_id=action_id,
+                    operator_id=operator_id,
+                    action=action,
+                    space_id=space_id,
+                    utterance=utterance,
+                    resolved_args=resolved_args,
+                    impact_scope=impact_scope,
+                    expires_in_seconds=expires_in_seconds,
+                    idempotency_key=idempotency_key,
+                    review_required=review_required,
+                )
+                if not replayed:
+                    await audit_ops.insert(conn, **audit.as_row())
+            return record, replayed
 
     async def confirm_action(self, action_id: str) -> dict[str, Any] | None:
         return await control_actions.confirm_action(await self.connect(), action_id)
@@ -412,11 +439,31 @@ class PostgresStore:
     async def review_action(self, action_id: str, reviewer: dict[str, Any]) -> tuple[dict[str, Any], bool] | None:
         return await control_actions.review_action(await self.connect(), action_id, reviewer)
 
-    async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
-        return await control_actions.mark_executed(await self.connect(), action_id, result)
+    async def mark_action_executed(
+        self, action_id: str, result: dict[str, Any], *, audit: AuditRecord | None = None
+    ) -> dict[str, Any] | None:
+        return await self._mark_with_audit(control_actions.mark_executed, action_id, result=result, audit=audit)
 
-    async def mark_action_failed(self, action_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
-        return await control_actions.mark_failed(await self.connect(), action_id, error)
+    async def mark_action_failed(self, action_id: str, error: dict[str, Any], *, audit: AuditRecord | None = None) -> dict[str, Any] | None:
+        return await self._mark_with_audit(control_actions.mark_failed, action_id, error=error, audit=audit)
+
+    async def _mark_with_audit(
+        self, transition: Any, action_id: str, *, audit: AuditRecord | None = None, **kwargs: Any
+    ) -> dict[str, Any] | None:
+        """状态迁移与 result 审计行同事务：迁移没命中（0 行）就不写审计，两条永远成对。"""
+        pool = await self.connect()
+        if audit is None:
+            return await transition(pool, action_id, **kwargs)
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                record = await transition(conn, action_id, **kwargs)
+                if record is not None:
+                    await audit_ops.insert(conn, **audit.as_row())
+            return record
+
+    async def record_audit(self, audit: AuditRecord) -> None:
+        """不带状态迁移的独立审计行（越权被拒、直接执行写动作的 intent/result）。"""
+        await audit_ops.insert(await self.connect(), **audit.as_row())
 
     async def revoke_action(self, action_id: str) -> dict[str, Any] | None:
         return await control_actions.revoke_action(await self.connect(), action_id)

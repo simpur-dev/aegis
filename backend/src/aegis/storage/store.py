@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
@@ -222,10 +223,12 @@ class ControlActionStore:
     这一点在能力面里如实说（`control_actions_persistent: false`），不假装。
     """
 
-    def __init__(self, maxlen: int = 2_000) -> None:
+    def __init__(self, maxlen: int = 2_000, *, audit_maxlen: int = 10_000) -> None:
         self._rows: dict[str, dict[str, Any]] = {}
         self._order: deque[str] = deque(maxlen=maxlen)
         self._idempotency: dict[str, str] = {}
+        # 审计流水与动作记录分开有界：审计一行比动作一行小，但写入频次更高（每次写动作两行）。
+        self._audit: deque[dict[str, Any]] = deque(maxlen=audit_maxlen)
 
     @staticmethod
     def _now() -> datetime:
@@ -256,6 +259,7 @@ class ControlActionStore:
         expires_in_seconds: int,
         idempotency_key: str | None,
         review_required: int = 0,
+        audit: AuditRecord | None = None,
     ) -> tuple[dict[str, Any], bool]:
         if idempotency_key and (existing_id := self._idempotency.get(idempotency_key)):
             existing = self._rows.get(existing_id)
@@ -289,6 +293,9 @@ class ControlActionStore:
                 self._idempotency.pop(dropped["idempotency_key"], None)
         if idempotency_key:
             self._idempotency[idempotency_key] = action_id
+        # 只有"新建成功"才补审计行：幂等重放路径在上面已提前返回，不会走到这里。
+        if audit is not None:
+            self._audit.append(audit.as_row())
         return self._public(row), False
 
     async def confirm_action(self, action_id: str) -> dict[str, Any] | None:
@@ -324,7 +331,9 @@ class ControlActionStore:
         row["updated_at"] = self._now()
         return self._public(row), ready
 
-    async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
+    async def mark_action_executed(
+        self, action_id: str, result: dict[str, Any], *, audit: AuditRecord | None = None
+    ) -> dict[str, Any] | None:
         row = self._rows.get(action_id)
         if row is None or row["status"] != "executing":
             return None
@@ -332,15 +341,19 @@ class ControlActionStore:
         row["result"] = dict(result)
         row["error"] = None
         row["updated_at"] = self._now()
+        if audit is not None:
+            self._audit.append(audit.as_row())
         return self._public(row)
 
-    async def mark_action_failed(self, action_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
+    async def mark_action_failed(self, action_id: str, error: dict[str, Any], *, audit: AuditRecord | None = None) -> dict[str, Any] | None:
         row = self._rows.get(action_id)
         if row is None or row["status"] != "executing":
             return None
         row["status"] = "failed"
         row["error"] = dict(error)
         row["updated_at"] = self._now()
+        if audit is not None:
+            self._audit.append(audit.as_row())
         return self._public(row)
 
     async def revoke_action(self, action_id: str) -> dict[str, Any] | None:
@@ -386,6 +399,14 @@ class ControlActionStore:
                 row["updated_at"] = now
                 recovered += 1
         return recovered
+
+    async def record_audit(self, audit: AuditRecord) -> None:
+        """独立审计行（不伴随状态迁移）：越权被拒、直接执行写动作的 intent/result 都走这里。"""
+        self._audit.append(audit.as_row())
+
+    def audit_snapshot(self) -> list[dict[str, Any]]:
+        """测试与对账读审计流水：内存形态没有 SQL 可查，给一个只读出口。"""
+        return list(self._audit)
 
 
 class AlertStore:
@@ -841,11 +862,17 @@ class PlatformStore:
     async def review_action(self, action_id: str, reviewer: dict[str, Any]) -> tuple[dict[str, Any], bool] | None:
         return await self.control_actions.review_action(action_id, reviewer)
 
-    async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
-        return await self.control_actions.mark_action_executed(action_id, result)
+    async def mark_action_executed(self, action_id: str, result: dict[str, Any], **kwargs: Any) -> dict[str, Any] | None:
+        return await self.control_actions.mark_action_executed(action_id, result, **kwargs)
 
-    async def mark_action_failed(self, action_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
-        return await self.control_actions.mark_action_failed(action_id, error)
+    async def mark_action_failed(self, action_id: str, error: dict[str, Any], **kwargs: Any) -> dict[str, Any] | None:
+        return await self.control_actions.mark_action_failed(action_id, error, **kwargs)
+
+    async def record_audit(self, audit: AuditRecord) -> None:
+        return await self.control_actions.record_audit(audit)
+
+    def audit_snapshot(self) -> list[dict[str, Any]]:
+        return self.control_actions.audit_snapshot()
 
     async def revoke_action(self, action_id: str) -> dict[str, Any] | None:
         return await self.control_actions.revoke_action(action_id)
@@ -1144,6 +1171,48 @@ def operator_ledger_port(store: object) -> SupportsOperators | None:
     return store if isinstance(store, SupportsOperators) else None
 
 
+@dataclass(frozen=True, slots=True)
+class AuditRecord:
+    """一行 `audit_ops` 审计流水（010 建表，012 起按月分区）。
+
+    这是**服务层与台账层共同认得的行形状**：`services/assistant` 负责填它（执行器第 8 步），
+    `storage/` 与 `persistence/` 只负责落库，谁都不许绕过它另拼一份 INSERT 字段清单。
+    `before/after` 的口径：`before` 暂空（动作级的前值快照留给以后按需补），`after` 记
+    结构化结果 / 错误 / 拒绝原因；`operator_id` 允许 `unknown`（越权匿名），列不加 FK。
+    """
+
+    phase: str  # 'intent'（执行前）| 'result'（执行后/被拒）
+    action_id: str
+    operator_id: str
+    role: str
+    action: str
+    space_id: str | None = None
+    target: str = ""
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+    utterance: str = ""
+    resolved_args: dict[str, Any] = field(default_factory=dict)
+    idempotency_key: str | None = None
+    identity_kind: str = "declared"
+
+    def as_row(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase,
+            "action_id": self.action_id,
+            "operator_id": self.operator_id,
+            "role": self.role,
+            "action": self.action,
+            "space_id": self.space_id,
+            "target": self.target,
+            "before": self.before,
+            "after": self.after,
+            "utterance": self.utterance,
+            "resolved_args": dict(self.resolved_args),
+            "idempotency_key": self.idempotency_key,
+            "identity_kind": self.identity_kind,
+        }
+
+
 @runtime_checkable
 class SupportsControlActions(Protocol):
     """动作执行记录的可选能力面：只有持久层实现。
@@ -1165,15 +1234,20 @@ class SupportsControlActions(Protocol):
         expires_in_seconds: int,
         idempotency_key: str | None,
         review_required: int = 0,
+        audit: AuditRecord | None = None,
     ) -> tuple[dict[str, Any], bool]: ...
 
     async def confirm_action(self, action_id: str) -> dict[str, Any] | None: ...
 
     async def review_action(self, action_id: str, reviewer: dict[str, Any]) -> tuple[dict[str, Any], bool] | None: ...
 
-    async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None: ...
+    async def mark_action_executed(
+        self, action_id: str, result: dict[str, Any], *, audit: AuditRecord | None = None
+    ) -> dict[str, Any] | None: ...
 
-    async def mark_action_failed(self, action_id: str, error: dict[str, Any]) -> dict[str, Any] | None: ...
+    async def mark_action_failed(
+        self, action_id: str, error: dict[str, Any], *, audit: AuditRecord | None = None
+    ) -> dict[str, Any] | None: ...
 
     async def revoke_action(self, action_id: str) -> dict[str, Any] | None: ...
 
@@ -1184,6 +1258,8 @@ class SupportsControlActions(Protocol):
     async def expire_actions(self) -> int: ...
 
     async def recover_stuck_actions(self) -> int: ...
+
+    async def record_audit(self, audit: AuditRecord) -> None: ...
 
 
 def control_action_port(store: object) -> SupportsControlActions | None:

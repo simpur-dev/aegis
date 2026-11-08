@@ -36,6 +36,7 @@ from aegis.domain.messages import (
 )
 from aegis.persistence.errors import ConnectionFailedError, QueryFailedError, VectorEmbeddingError
 from aegis.persistence.postgres import PostgresStore
+from aegis.storage.store import AuditRecord
 
 asyncpg = pytest.importorskip("asyncpg", reason="真库档需要 asyncpg 驱动")
 
@@ -377,6 +378,91 @@ class TestAssistantControlPersistence:
         assert await store.confirm_action("act_deadbeefdeadbeef") is None, "单票不能绕过双人复核"
         second = await store.review_action("act_deadbeefdeadbeef", {"operator_id": "op-b", "role": "lead", "at": now_iso()})
         assert second is not None and second[1] is True and second[0]["status"] == "executing"
+
+    async def test_audit_rows_pair_with_transitions_and_survive_jsonb_roundtrip(self, store: PostgresStore) -> None:
+        """第 8 步接线：intent 随 proposed 同事务、result 随 executed 同事务；越权独立行记 unknown。"""
+        await self._seed_operator(store, "op-lead")
+        pool = store.require_pool()
+        action_id = "act_abcdef0123456789"
+        intent = AuditRecord(
+            phase="intent",
+            action_id=action_id,
+            operator_id="op-lead",
+            role="lead",
+            action="warning.publish",
+            target="wrn_probe000001",
+            utterance="把这条发出去",
+            resolved_args={"target": "wrn_probe000001"},
+            idempotency_key="idem-audit-0001",
+        )
+        record, replayed = await store.create_action(
+            action_id=action_id,
+            operator_id="op-lead",
+            action="warning.publish",
+            space_id=None,
+            utterance="把这条发出去",
+            resolved_args={"target": "wrn_probe000001"},
+            impact_scope={},
+            expires_in_seconds=60,
+            idempotency_key="idem-audit-0001",
+            audit=intent,
+        )
+        assert replayed is False and record["status"] == "proposed"
+        # 幂等重放：同一 idempotency_key 再提交，审计不追加（重复提交不是新意图）
+        await store.create_action(
+            action_id=action_id,
+            operator_id="op-lead",
+            action="warning.publish",
+            space_id=None,
+            utterance="把这条发出去",
+            resolved_args={"target": "wrn_probe000001"},
+            impact_scope={},
+            expires_in_seconds=60,
+            idempotency_key="idem-audit-0001",
+            audit=intent,
+        )
+        assert await pool.fetchval("SELECT count(*) FROM audit_ops WHERE action_id = $1", action_id) == 1
+
+        assert await store.confirm_action(action_id) is not None
+        await store.mark_action_executed(
+            action_id,
+            {"summary": "已发布"},
+            audit=AuditRecord(
+                phase="result",
+                action_id=action_id,
+                operator_id="op-lead",
+                role="lead",
+                action="warning.publish",
+                target="wrn_probe000001",
+                resolved_args={"target": "wrn_probe000001"},
+                after={"summary": "已发布", "deliveries": 2},
+            ),
+        )
+        result_row = await pool.fetchrow(
+            "SELECT after->>'summary' AS summary, after->>'deliveries' AS deliveries "
+            "FROM audit_ops WHERE action_id = $1 AND phase = 'result'",
+            action_id,
+        )
+        assert result_row is not None
+        assert result_row["summary"] == "已发布" and result_row["deliveries"] == "2", "jsonb 往返不失真"
+
+        await store.record_audit(
+            AuditRecord(
+                phase="result",
+                action_id="act_0badc0de0001",
+                operator_id="unknown",
+                role="unknown",
+                action="warning.publish",
+                after={"rejected": "E_ACTION_NOT_ALLOWED", "message": "需要 lead 及以上角色"},
+            )
+        )
+        rejected = await pool.fetchrow(
+            "SELECT operator_id, identity_kind, after->>'rejected' AS code FROM audit_ops WHERE action_id = $1",
+            "act_0badc0de0001",
+        )
+        assert rejected is not None
+        assert rejected["operator_id"] == "unknown" and rejected["code"] == "E_ACTION_NOT_ALLOWED"
+        assert rejected["identity_kind"] == "declared", "席位是声明身份，审计如实标注"
 
 
 class TestSpatialQueries:

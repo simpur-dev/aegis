@@ -18,6 +18,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from aegis.domain.operator import role_at_least
+from aegis.services.assistant.audit import AuditTrail
 from aegis.services.assistant.base import (
     Action,
     ActionContext,
@@ -91,21 +92,79 @@ class Executor:
         # 下限压到 1 秒：生产默认 300，测试要能在秒级验证"过期确认不生效"
         self._ttl = max(1, int(confirm_ttl_seconds))
         self._reviews = review_policy or ReviewPolicy(enabled=False)
+        # 审计（第 8 步）：与动作台账同一个 repo——audit_ops 与 control_actions 同库同事务才有意义
+        self._audit = AuditTrail(repo)
 
     async def run(self, action: Action, raw: dict[str, Any], ctx: ActionContext) -> ExecutionOutcome:
         started = time.perf_counter()
         params = self._parse(action, raw)
         targets = await action.resolve(params, ctx)
-        self._authorize(action, ctx)
+        try:
+            self._authorize(action, ctx)
+        except ActionError as exc:
+            # 越权也留一行（§9：越权各一次）；匿名尝试记 operator_id=unknown。
+            if action.spec.writes:
+                await self._audit.write(
+                    self._audit.rejected(action_id=None, action=action, operator=ctx.operator, error=exc, utterance=ctx.utterance)
+                )
+            raise
         preview = await action.preview(targets, params, ctx) if action.spec.previewable else ImpactPreview(targets=targets.items)
         if action.spec.needs_confirm and not ctx.approved:
             return await self._gate(action, params, targets, preview, ctx, started)
+        if action.spec.writes:
+            # 无确认闸的写动作（认领/回执/关闭/单发通知）也要过审计闸：没有台账就不执行，
+            # 不存在"跑了但没记"的路径——这比 gated 动作的 require_repo 更进一步。
+            return await self._run_audited(action, params, targets, ctx, started)
         result = await self._execute(action, targets, params, ctx)
         return ExecutionOutcome(
             action=action.spec.name,
             status="executed",
             targets=targets,
             preview=preview,
+            result=result,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+        )
+
+    async def _run_audited(
+        self,
+        action: Action,
+        params: Any,
+        targets: ResolvedTargets,
+        ctx: ActionContext,
+        started: float,
+    ) -> ExecutionOutcome:
+        """直接执行的写动作：intent 在执行前、result 在执行后（含失败），两条共用审计关联键。"""
+        self._require_repo()
+        audit_id = self._audit.new_action_id()
+        await self._audit.write(self._audit.intent(action_id=audit_id, action=action, params=params, targets=targets, ctx=ctx))
+        try:
+            result = await self._execute(action, targets, params, ctx)
+        except ActionError as exc:
+            await self._audit.write(
+                self._audit.result(
+                    action_id=audit_id,
+                    action=action,
+                    params=params,
+                    targets=targets,
+                    ctx=ctx,
+                    after={"rejected": exc.code, "message": exc.message[:200]},
+                )
+            )
+            raise
+        await self._audit.write(
+            self._audit.result(
+                action_id=audit_id,
+                action=action,
+                params=params,
+                targets=targets,
+                ctx=ctx,
+                after={"summary": result.summary, **result.data},
+            )
+        )
+        return ExecutionOutcome(
+            action=action.spec.name,
+            status="executed",
+            targets=targets,
             result=result,
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
@@ -127,14 +186,51 @@ class Executor:
             if record is None:
                 raise ActionError("E_ACTION_CONFLICT", "动作已被处置、已过期或不存在，本次确认没有生效")
         params = self._parse(action, dict(record.get("resolved_args") or {}))
-        self._authorize(action, ctx)
+        try:
+            self._authorize(action, ctx)
+        except ActionError as exc:
+            # 确认人角色不够也是越权：intent 行已随提案落库，这里补一行 rejected 凑成对
+            await self._audit.write(
+                self._audit.rejected(
+                    action_id=action_id,
+                    action=action,
+                    operator=ctx.operator,
+                    error=exc,
+                    utterance=str(record.get("utterance") or ""),
+                    space_id=record.get("space_id"),
+                    resolved_args=dict(record.get("resolved_args") or {}),
+                )
+            )
+            raise
         targets = await action.resolve(params, ctx)
         try:
             result = await self._execute(action, targets, params, ctx)
         except ActionError as exc:
-            await repo.mark_action_failed(action_id, {"code": exc.code, "message": exc.message})
+            await repo.mark_action_failed(
+                action_id,
+                {"code": exc.code, "message": exc.message},
+                audit=self._audit.result(
+                    action_id=action_id,
+                    action=action,
+                    params=params,
+                    targets=targets,
+                    ctx=ctx,
+                    after={"rejected": exc.code, "message": exc.message[:200]},
+                ),
+            )
             raise
-        await repo.mark_action_executed(action_id, {"summary": result.summary, **result.data})
+        await repo.mark_action_executed(
+            action_id,
+            {"summary": result.summary, **result.data},
+            audit=self._audit.result(
+                action_id=action_id,
+                action=action,
+                params=params,
+                targets=targets,
+                ctx=ctx,
+                after={"summary": result.summary, **result.data},
+            ),
+        )
         return ExecutionOutcome(
             action=action.spec.name,
             status="executed",
@@ -157,8 +253,9 @@ class Executor:
         operator = ctx.operator
         if operator is None:
             raise ActionError("E_OPERATOR_REQUIRED", f"「{action.spec.title}」需要有效席位（X-Aegis-Operator）")
+        action_id = f"act_{secrets.token_hex(8)}"
         record, replayed = await repo.create_action(
-            action_id=f"act_{secrets.token_hex(8)}",
+            action_id=action_id,
             operator_id=operator.operator_id,
             action=action.spec.name,
             space_id=ctx.space_id,
@@ -168,6 +265,14 @@ class Executor:
             expires_in_seconds=self._ttl,
             idempotency_key=ctx.idempotency_key,
             review_required=self._reviews.votes_required(action.spec),
+            # intent 审计行与 proposed 落库同事务；幂等重放时台账会丢弃这一行（首次已记）
+            audit=self._audit.intent(
+                action_id=action_id,
+                action=action,
+                params=params,
+                targets=targets,
+                ctx=ctx,
+            ),
         )
         return ExecutionOutcome(
             action=action.spec.name,
