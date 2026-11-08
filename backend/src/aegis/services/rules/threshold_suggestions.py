@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
 from pydantic import ValidationError
@@ -129,6 +130,46 @@ class ThresholdSuggestionService:
         if ledger is None:
             raise LedgerUnavailableError(self.unavailable_reason)
         return await ledger.reject_threshold_suggestion(suggestion_id=suggestion_id, decided_by=decided_by, note=note)
+
+    async def apply(
+        self,
+        *,
+        rule_id: str,
+        metric: str,
+        threshold: float,
+        decided_by: str,
+        note: str = "",
+        expected_version: int,
+    ) -> dict[str, Any]:
+        """助手 `rule.update` 的唯一落点：写一条 pending 建议并立即确认，不新开直改路径。
+
+        先入账再确认，让"谁改的、依据是什么、规则长到哪一版"全部复用既有事务、409 版本
+        校验与审计列；数字由操作者显式给出，这里不从任何文本里解析阈值。`record` 返回的是
+        状态字符串而不是布尔，没拿到 `stored:<id>` 就明确失败，不拿空 id 去 confirm。
+        """
+        if self._ledger is None:
+            raise LedgerUnavailableError(self.unavailable_reason)
+        text = f"助手按席位 {decided_by} 的显式指令调整 {rule_id}.{metric} 为 {threshold:g}"[:500]
+        state = await self.record(
+            trace_id=f"trc_{secrets.token_hex(8)}",
+            attribution={
+                "threshold_suggestion": text,
+                "attribution": "assistant:rule.update",
+                "lag_stage": "operator_initiated",
+            },
+        )
+        if not state.startswith("stored:"):
+            raise LedgerUnavailableError(f"建议入账失败：{state}")
+        suggestion_id = state.split(":", 1)[1]
+        return await self.confirm(
+            suggestion_id,
+            rule_id=rule_id,
+            metric=metric,
+            threshold=threshold,
+            decided_by=decided_by,
+            note=note,
+            expected_version=expected_version,
+        )
 
     async def reload_engine(self) -> dict[str, Any]:
         """从库里重读 active 规则集并装载；结果说清"装上了没有、装的是哪一版"。"""

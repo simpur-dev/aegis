@@ -130,6 +130,24 @@ def narrate_result(action: str, result: dict[str, Any]) -> str:
         return f"已通知 {item.get('recipient', '')}：{item.get('message', '')}"
     if action == "action.status":
         return _brief(result.get("action") or {})
+    if action in {"workflow.start", "workflow.decide", "workflow.abort"}:
+        instance = result.get("instance") or {}
+        head = f"工作流实例 {instance.get('instance_id', '')}：状态 {instance.get('status', '')}"
+        if result.get("node_id"):
+            head += f"，节点 {result['node_id']} 决策 {result.get('choice', '')}"
+        if result.get("reason"):
+            head += f"，原因 {result['reason']}"
+        return head
+    if action in {"rule.confirm_suggestion", "rule.reject_suggestion", "rule.update"}:
+        suggestion = result.get("suggestion") or {}
+        head = f"阈值建议 {suggestion.get('suggestion_id', '')}：状态 {suggestion.get('status', '')}"
+        if result.get("new_version") is not None:
+            head += f"，规则新版本 v{result['new_version']}"
+        if result.get("engine_loaded") is not None:
+            head += f"，引擎已装载={result['engine_loaded']}"
+        return head
+    if action == "device.control":
+        return f"设备 {result.get('device', '')} 已下发「{result.get('action', '')}」：{_brief(result.get('response') or {})}"
     return _brief(result)
 
 

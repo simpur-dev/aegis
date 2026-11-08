@@ -66,6 +66,7 @@ from aegis.services.alerting.notifier import Notifier
 from aegis.services.assistant import Action, ActionDomain, ActionRegistry, AssistantService
 from aegis.services.assistant.actions.action_status import ActionStatus
 from aegis.services.assistant.actions.control import DrillStart, ReportSubmit
+from aegis.services.assistant.actions.device_control import DeviceControl
 from aegis.services.assistant.actions.notify import NotifyGroup, NotifyLead
 from aegis.services.assistant.actions.query import (
     AgentList,
@@ -78,6 +79,11 @@ from aegis.services.assistant.actions.query import (
     TaskList,
     WarningExplain,
     WarningList,
+)
+from aegis.services.assistant.actions.rule_control import (
+    RuleConfirmSuggestion,
+    RuleRejectSuggestion,
+    RuleUpdate,
 )
 from aegis.services.assistant.actions.task_control import (
     TaskAck,
@@ -92,6 +98,11 @@ from aegis.services.assistant.actions.warning_control import (
     WarningResend,
     WarningRevoke,
     WarningSilence,
+)
+from aegis.services.assistant.actions.workflow_control import (
+    WorkflowAbort,
+    WorkflowDecide,
+    WorkflowStart,
 )
 from aegis.services.collab.tasks import CollabService
 from aegis.services.interpret.semantic_parser import DisasterTextParser
@@ -1003,6 +1014,13 @@ def _build_assistant_registry(
         NotifyLead(notifier),
         NotifyGroup(notifier),
         ActionStatus(control_action_port(store)),
+        WorkflowStart(container.workflow),
+        WorkflowDecide(container.workflow),
+        WorkflowAbort(container.workflow),
+        RuleConfirmSuggestion(container.suggestions),
+        RuleRejectSuggestion(container.suggestions),
+        RuleUpdate(container.suggestions),
+        DeviceControl(container.outbound),
     ]
     action_registry = ActionRegistry(
         actions,
@@ -1012,6 +1030,9 @@ def _build_assistant_registry(
             ActionDomain.TASK,
             ActionDomain.DRILL,
             ActionDomain.NOTIFY,
+            ActionDomain.WORKFLOW,
+            ActionDomain.RULE,
+            ActionDomain.DEVICE,
         },
     )
     action_registry.assert_consistent()

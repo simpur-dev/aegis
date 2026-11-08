@@ -42,11 +42,44 @@ _WARNING_CONTROL_ACTIONS = frozenset(
 )
 #: "全网/全部/都"这类整体作用域词。写动作一旦带上它们，就不再是"对某一条做点什么"。
 _BULK_SCOPE_RE = re.compile(r"全网|全部|所有|每一条|每个|都")
-#: 一句里点名了具体对象（预警/任务/动作编号）——有编号才谈得上单条处置。
-_TARGET_ID_RE = re.compile(r"wrn_[0-9a-f]{6,24}|stu_[0-9a-f]{16}|act_[0-9a-f]{6,24}")
+#: 一句里点名了具体对象（预警/任务/动作/工作流实例/建议编号）——有编号才谈得上单条处置。
+_TARGET_ID_RE = re.compile(r"wrn_[0-9a-f]{6,24}|stu_[0-9a-f]{16}|act_[0-9a-f]{6,24}|wfi_[0-9a-f]{12}|sug_[0-9a-f]{6,24}")
+_INSTANCE_ID_RE = re.compile(r"wfi_[0-9a-f]{12}")
+_SUGGESTION_ID_RE = re.compile(r"sug_[0-9a-f]{6,24}")
+#: L4 动作的关键参数一律 `key=value` 显式给出：阈值、版本、设备地址不能由模型猜。
+_KV_RE = re.compile(r"([a-z_]+)\s*=\s*([^\s,，;；]+)")
+
+#: L4 动作的必填参数与缺参指路文案。判据集中在这里，动作层不需要再写第二份。
+_L4_REQUIRED: dict[str, tuple[str, ...]] = {
+    "workflow.start": ("name",),
+    "workflow.decide": ("instance_id", "node_id", "choice"),
+    "workflow.abort": ("instance_id",),
+    "rule.confirm_suggestion": ("suggestion_id", "rule_id", "metric", "threshold", "expected_version"),
+    "rule.reject_suggestion": ("suggestion_id",),
+    "rule.update": ("rule_id", "metric", "threshold", "expected_version"),
+    "device.control": ("device", "action", "command_url"),
+}
+_L4_ACTIONS = frozenset(_L4_REQUIRED)
+_L4_HINT = {
+    "workflow.start": "请写「启动工作流 name=模板名」",
+    "workflow.decide": "请写「工作流决策 instance_id=wfi_… node_id=… choice=approve」",
+    "workflow.abort": "请写「中止工作流 instance_id=wfi_…」",
+    "rule.confirm_suggestion": "请写「确认阈值建议 suggestion_id=sug_… rule_id=… metric=… threshold=… version=…」",
+    "rule.reject_suggestion": "请写「驳回阈值建议 suggestion_id=sug_…」",
+    "rule.update": "请写「改阈值 rule_id=… metric=… threshold=… version=…」（数字由你给，不由模型猜）",
+    "device.control": "请写「设备控制 device=… action=… command_url=https://…」（主机须在白名单）",
+}
 
 #: 意图词表：顺序即优先级（先具体后宽泛），"解释 wrn_xxx 为什么是红色"不能被查询意图抢走。
+#: L4 的关键词放在最前：它们带"工作流/建议/阈值/设备"等专名，不会与读动作混淆。
 _INTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("workflow.decide", ("工作流决策", "人工决策", "批准节点", "驳回节点", "继续工作流")),
+    ("workflow.abort", ("中止工作流", "终止工作流", "停掉工作流")),
+    ("workflow.start", ("启动工作流", "发起工作流", "跑工作流")),
+    ("rule.confirm_suggestion", ("确认阈值建议", "采纳阈值建议", "确认建议")),
+    ("rule.reject_suggestion", ("驳回阈值建议", "驳回建议", "拒绝建议")),
+    ("rule.update", ("改阈值", "修改阈值", "调整阈值")),
+    ("device.control", ("设备控制", "打开阀门", "关闭阀门", "下发设备指令")),
     ("warning.explain", ("为什么", "依据", "凭什么", "解释", "怎么定的")),
     ("chain.explain", ("链路追踪", "谁判的", "每段耗时", "段时延")),
     ("metric.report", ("指标", "时延", "成功率", "sla", "p95", "违约")),
@@ -230,6 +263,32 @@ class IntentClassifier:
         if self._registry.get(action) is None:
             return Intent(action=None, confidence=0.0, decided_by=decided_by, note=f"动作 {action} 未开放")
         args: dict[str, Any] = {}
+        if action in _L4_ACTIONS:
+            kv = dict(_KV_RE.findall(text))
+            if action == "workflow.start":
+                args["name"] = kv.get("name", "")
+            if action in {"workflow.decide", "workflow.abort"}:
+                instance = _INSTANCE_ID_RE.search(text)
+                args["instance_id"] = kv.get("instance_id") or (instance.group() if instance else "")
+            if action == "workflow.decide":
+                args["node_id"] = kv.get("node_id", "")
+                args["choice"] = kv.get("choice", "")
+                args["comment"] = kv.get("comment", "")
+            if action == "workflow.abort":
+                args["reason"] = kv.get("reason", "")
+            if action in {"rule.confirm_suggestion", "rule.reject_suggestion"}:
+                suggestion = _SUGGESTION_ID_RE.search(text)
+                args["suggestion_id"] = kv.get("suggestion_id") or (suggestion.group() if suggestion else "")
+                args["note"] = kv.get("note", "")
+            if action in {"rule.confirm_suggestion", "rule.update"}:
+                args["rule_id"] = kv.get("rule_id", "")
+                args["metric"] = kv.get("metric", "")
+                args["threshold"] = _as_float(kv.get("threshold"))
+                args["expected_version"] = _as_int(kv.get("version") or kv.get("expected_version"))
+            if action == "device.control":
+                args["device"] = kv.get("device", "")
+                args["action"] = kv.get("action", "")
+                args["command_url"] = kv.get("command_url", "")
         if action == "warning.explain" and (found := _WARNING_ID_RE.search(text)):
             args["warning_id"] = found.group()
         if action == "chain.explain":
@@ -363,6 +422,21 @@ class IntentClassifier:
         }
 
 
+def _as_float(raw: str | None) -> float | None:
+    """`key=value` 里取数字：拿不到就留空交给 `_missing_target` 指路，不替用户填 0。"""
+    try:
+        return float(raw) if raw is not None else None
+    except ValueError:
+        return None
+
+
+def _as_int(raw: str | None) -> int | None:
+    try:
+        return int(raw) if raw is not None else None
+    except ValueError:
+        return None
+
+
 def _missing_target(action: str, args: dict[str, Any]) -> str | None:
     """带标识符的动作缺 ID 时返回指路文案：告诉用户这个 ID 在哪个页面读得到。"""
     if action == "warning.explain" and not args.get("warning_id"):
@@ -383,4 +457,9 @@ def _missing_target(action: str, args: dict[str, Any]) -> str | None:
         return "缺少目标等级：请说「调整为 2 级」（1..4 级，1 级最高）"
     if action == "task.get" and not args.get("task_unit_id"):
         return "缺少任务单元 ID（stu_…）：ID 在「预警发布」页「详情」里的「关联任务单元」表，也可以先查最近链路"
+    required = _L4_REQUIRED.get(action)
+    if required:
+        missing = [key for key in required if args.get(key) in (None, "")]
+        if missing:
+            return f"缺少 {', '.join(missing)}：{_L4_HINT[action]}"
     return None
