@@ -7,10 +7,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Annotated
 
-from fastapi import HTTPException, Request
+from fastapi import Header, HTTPException, Request
 
 from aegis.container import PlatformContainer
+
+#: 按人令牌头（P4 强认证，设计 §14.1）：与声明身份的 `X-Aegis-Operator` 分开，
+#: 两者都由本模块统一声明，避免各路由各写一遍头名。
+OperatorKeyHeader = Annotated[str | None, Header(alias="X-Aegis-Operator-Key")]
 
 
 def get_container(request: Request) -> PlatformContainer:

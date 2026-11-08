@@ -37,6 +37,7 @@ from aegis.persistence import (
     geo,
     handling_tasks,
     notifications,
+    operator_keys,
     operators,
     rows,
     vectors,
@@ -364,6 +365,9 @@ class PostgresStore:
     async def mark_read(self, notification_id: int, recipient: str) -> dict[str, Any] | None:
         return await notifications.mark_read(await self.connect(), notification_id, recipient)
 
+    async def set_notification_delivery(self, notification_id: int, *, status: str, error: str | None = None) -> dict[str, Any]:
+        return await notifications.set_delivery(await self.connect(), notification_id, status=status, error=error)
+
     # ---------- 席位台账（可选能力面：SupportsOperators） ----------
 
     async def upsert_operator(self, operator: Operator) -> Operator:
@@ -377,6 +381,34 @@ class PostgresStore:
 
     async def list_operators(self, *, active_only: bool = True, limit: int = 200) -> list[Operator]:
         return await operators.list_operators(await self.connect(), active_only=active_only, limit=limit)
+
+    # ---------- 按人令牌台账（可选能力面：SupportsOperatorKeys） ----------
+
+    async def create_operator_key(self, *, key_id: str, operator_id: str, key_hash: str) -> dict[str, Any]:
+        return await operator_keys.create_operator_key(await self.connect(), key_id=key_id, operator_id=operator_id, key_hash=key_hash)
+
+    async def get_operator_key_by_hash(self, key_hash: str) -> dict[str, Any] | None:
+        return await operator_keys.get_operator_key_by_hash(await self.connect(), key_hash)
+
+    async def list_operator_keys(self, operator_id: str) -> list[dict[str, Any]]:
+        return await operator_keys.list_operator_keys(await self.connect(), operator_id)
+
+    async def revoke_operator_key(self, key_id: str) -> bool:
+        return await operator_keys.revoke_operator_key(await self.connect(), key_id)
+
+    async def touch_operator_key(self, key_id: str) -> None:
+        await operator_keys.touch_operator_key(await self.connect(), key_id)
+
+    async def get_key_attempts(self, operator_id: str) -> dict[str, Any] | None:
+        return await operator_keys.get_key_attempts(await self.connect(), operator_id)
+
+    async def record_key_failure(self, *, operator_id: str, max_attempts: int, lock_minutes: int) -> dict[str, Any]:
+        return await operator_keys.record_key_failure(
+            await self.connect(), operator_id=operator_id, max_attempts=max_attempts, lock_minutes=lock_minutes
+        )
+
+    async def clear_key_failures(self, operator_id: str) -> None:
+        await operator_keys.clear_key_failures(await self.connect(), operator_id)
 
     # ---------- 动作执行记录（可选能力面：SupportsControlActions） ----------
 
@@ -464,6 +496,33 @@ class PostgresStore:
     async def record_audit(self, audit: AuditRecord) -> None:
         """不带状态迁移的独立审计行（越权被拒、直接执行写动作的 intent/result）。"""
         await audit_ops.insert(await self.connect(), **audit.as_row())
+
+    async def read_audit(
+        self,
+        *,
+        operator_id: str | None = None,
+        action: str | None = None,
+        phase: str | None = None,
+        space_id: str | None = None,
+        action_id: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """审计读面（设计 §14.3）。只 SELECT——读面自己不产生审计行。"""
+        return await audit_ops.query(
+            await self.connect(),
+            operator_id=operator_id,
+            action=action,
+            phase=phase,
+            space_id=space_id,
+            action_id=action_id,
+            since=since,
+            until=until,
+            limit=limit,
+            offset=offset,
+        )
 
     async def revoke_action(self, action_id: str) -> dict[str, Any] | None:
         return await control_actions.revoke_action(await self.connect(), action_id)

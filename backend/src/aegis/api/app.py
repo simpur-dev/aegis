@@ -30,6 +30,7 @@ from aegis.api.deps import presented_token
 from aegis.api.routers import (
     agents,
     alerts,
+    audit,
     data,
     drill,
     knowledge,
@@ -140,6 +141,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
     app.include_router(agents.build_router())
     app.include_router(memory.build_router())
     app.include_router(operators.build_router())
+    app.include_router(audit.build_router())
     app.include_router(alerts.build_router())
     app.include_router(notifications.build_router())
     app.include_router(spaces.build_router())

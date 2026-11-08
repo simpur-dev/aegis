@@ -25,6 +25,7 @@ from aegis.services.assistant.narrate import narrate_result
 from aegis.services.assistant.registry import ActionRegistry
 from aegis.services.assistant.review import DualReview, ReviewPolicy
 from aegis.services.interpret.text_guard import number_tokens
+from aegis.services.operator_auth import OperatorKeyError
 from aegis.storage.store import SupportsControlActions
 
 _MAX_SESSIONS = 200
@@ -63,6 +64,7 @@ class AssistantService:
         tracer: Tracer | None = None,
         control_actions: SupportsControlActions | None = None,
         control_actions_persistent: bool = False,
+        operator_auth: Any | None = None,
     ) -> None:
         self._registry = registry
         self._classifier = IntentClassifier(registry, llm=llm)
@@ -75,6 +77,10 @@ class AssistantService:
         # 确认路由按同一份 policy 校验投票资格——两份清单不各写一遍。
         self._review_policy = ReviewPolicy(enabled=self._settings.assistant_dual_review_enabled)
         self._dual_review = DualReview(control_actions, self._review_policy) if control_actions is not None else None
+        # P4 二次认证（设计 §14.1.3）：与双人复核正交的另一道门——同一席位再出示一次令牌。
+        # 默认关（`assistant_step_up_auth_enabled`），关着时 D5「指令即执行」逐字不变。
+        self._step_up_enabled = bool(getattr(self._settings, "assistant_step_up_auth_enabled", False))
+        self._operator_auth = operator_auth
         # 审计（第 8 步）与动作台账同一个 repo；confirm/撤销的审计行也从这条出口走
         self._audit = AuditTrail(control_actions)
         # 动作台账缺席时只有读动作能跑：写动作必须跨重启存活，内存 pending 做不到
@@ -195,11 +201,23 @@ class AssistantService:
             },
         )
 
-    async def confirm(self, *, action_id: str, actor: str | None = None, operator: Operator | None = None) -> dict[str, Any]:
+    async def confirm(
+        self,
+        *,
+        action_id: str,
+        actor: str | None = None,
+        operator: Operator | None = None,
+        operator_key: str | None = None,
+    ) -> dict[str, Any]:
         """确认执行：台账里 `proposed → executing → executed/failed`，并发下只能成功一次。
 
         双人复核打开时多一条支路：第一票只记票、不执行；第二票把状态迁到 `executing`
         后才走同一份执行器。两条支路共用下面这唯一的 `resume`，不复制执行逻辑。
+
+        P4 二次认证（设计 §14.1.3）：高危动作（`spec.dual_review=True` 那 10 个）在
+        `step_up_auth_enabled` 打开时要**本人再出示一次令牌**。它与双人复核正交——
+        复核是"两个不同席位各投一票"（横向），二次认证是"本人再亮一次钥匙"（纵向）。
+        校验放在真正执行前（复核票收齐之后），失败**不消耗复核票**（票还没执行，只是没通过认证）。
         """
         if self._repo is None:
             return {"status": "rejected", "reason": "当前形态没有动作台账（control_actions），写动作不可用", "action_id": action_id}
@@ -220,6 +238,10 @@ class AssistantService:
         preconfirmed = await self._vote_if_required(action_id, action, record, operator)
         if isinstance(preconfirmed, dict):
             return preconfirmed
+        # 二次认证在执行前：复核票已收齐、动作准备执行，正是要"再证明一次你是你"的那一刻。
+        step_up = await self._step_up(action, operator, operator_key)
+        if step_up is not None:
+            return step_up
         try:
             outcome = await self._executor.resume(action, ctx, action_id, preconfirmed=preconfirmed)
         except ActionError as exc:
@@ -230,6 +252,50 @@ class AssistantService:
             return {"status": status, "action_id": action_id, "action": action.spec.name, "reason": exc.message, "result": None}
         data = {} if outcome.result is None else dict(outcome.result.data)
         return {"status": "executed", "action_id": action_id, "action": action.spec.name, "actor": actor, "result": data}
+
+    async def _step_up(
+        self,
+        action: Action,
+        operator: Operator | None,
+        operator_key: str | None,
+    ) -> dict[str, Any] | None:
+        """高危动作的二次认证。返回 `None` 表示通过（可以执行），返回 dict 表示就地回执。
+
+        只在"开关打开 + 该动作是高危"时才拦：默认关时 D5「指令即执行」逐字不变。
+        """
+        if self._operator_auth is None or not self._step_up_enabled:
+            return None
+        if not action.spec.dual_review:
+            return None
+        if operator is None:
+            return {
+                "status": "rejected",
+                "action_id": "",
+                "action": action.spec.name,
+                "reason": "高危动作需要二次认证：先选席位再带上 X-Aegis-Operator-Key",
+                "result": None,
+            }
+        try:
+            await self._operator_auth.step_up(raw_key=operator_key, operator_id=operator.operator_id)
+        except OperatorKeyError as exc:
+            # 认证失败也留一行审计（"想做但没通过"也要有账，与 §4.9 的三段结局一致）。
+            if self._audit.available:
+                await self._audit.write(
+                    self._audit.rejected(
+                        action_id=None,
+                        action=action,
+                        operator=operator,
+                        error=exc,
+                    )
+                )
+            return {
+                "status": "rejected",
+                "action_id": "",
+                "action": action.spec.name,
+                "reason": exc.message,
+                "result": None,
+            }
+        return None
 
     async def _vote_if_required(
         self,

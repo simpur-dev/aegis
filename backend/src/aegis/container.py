@@ -63,6 +63,7 @@ from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
 from aegis.services.alerting import AlertService
 from aegis.services.alerting.notifier import Notifier
+from aegis.services.alerting.webhook import NotificationWebhook, WebhookPolicy
 from aegis.services.assistant import Action, ActionDomain, ActionRegistry, AssistantService
 from aegis.services.assistant.actions.action_status import ActionStatus
 from aegis.services.assistant.actions.control import DrillStart, ReportSubmit
@@ -109,6 +110,7 @@ from aegis.services.interpret.semantic_parser import DisasterTextParser
 from aegis.services.llm.llm_gateway import LlmGateway, build_gateway_if_configured
 from aegis.services.memory.label_flywheel import LabelFlywheel
 from aegis.services.memory.memory import MemoryService
+from aegis.services.operator_auth import OperatorAuthService
 from aegis.services.operators import OperatorService
 from aegis.services.response.delivery import ChannelAdapter, DeliveryDispatcher
 from aegis.services.response.task_parser import TaskParser
@@ -123,6 +125,7 @@ from aegis.storage.store import (
     control_action_port,
     handling_task_port,
     notification_port,
+    operator_key_port,
     operator_ledger_port,
     rule_library_port,
 )
@@ -199,6 +202,11 @@ class PlatformContainer:
     assistant: AssistantService | None = None
     #: 席位台账：写动作的前置。内存形态没有这张表，服务自己报 unavailable（端点 503），不假装能写。
     operators: OperatorService | None = None
+    #: 按人令牌台账（P4 强认证，设计 §14.1）：签发/校验/锁定。内存形态没有这张表，
+    #: `available` 为假时端点如实 503——令牌重启即失等于"钥匙还有效但门锁忘了"，比没有钥匙更危险。
+    operator_auth: OperatorAuthService | None = None
+    #: 外部通知通道（P4，设计 §14.2）：白名单放行的 HTTP webhook。关着时通知只走站内。
+    notification_webhook: NotificationWebhook | None = None
     #: 告警台账：订阅 `platform.alert.>` 的去重落账与处置面。内存/持久两套都实现，
     #: `persistent` 如实外露——内存形态重启即失。
     alerts: AlertService | None = None
@@ -910,11 +918,22 @@ def create_container(
 
     container.operators = OperatorService(operator_ledger_port(store))
     container.collab = collab
+    # P4 强认证：令牌台账与席位台账同一套"只有持久层有"的口径（内存形态端点 503，不假装能签发）。
+    container.operator_auth = OperatorAuthService(
+        operator_key_port(store),
+        container.operators,
+        enabled=cfg.operator_key_auth_enabled,
+        max_failed_attempts=cfg.operator_key_max_failed_attempts,
+        lock_minutes=cfg.operator_key_lock_minutes,
+    )
+    # P4 外部通知：白名单为空即整条通道关闭，通知照旧只走站内。
+    container.notification_webhook = NotificationWebhook(WebhookPolicy.from_settings(cfg))
     notifier = Notifier(
         notification_port(store),
         publish=gateway.publish_to,
         subject=subjects.ops("assistant", "notify"),
         operators=container.operators,
+        webhook=container.notification_webhook,
     )
     container.notifier = notifier
 
@@ -947,6 +966,8 @@ def create_container(
             # 动作台账：写动作的"待确认 → 执行"落这里。内存形态也能跑，但重启即失（能力面如实标注）
             control_actions=control_action_port(store),
             control_actions_persistent=not isinstance(store, PlatformStore),
+            # P4 二次认证（设计 §14.1.3）：同一席位再出示一次令牌。与双人复核正交。
+            operator_auth=container.operator_auth,
         )
     return container
 

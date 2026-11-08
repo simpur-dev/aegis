@@ -19,11 +19,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Re
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from aegis.api.deps import get_container
+from aegis.api.deps import OperatorKeyHeader, get_container
 from aegis.container import PlatformContainer
 from aegis.domain.operator import Operator
 from aegis.services.assistant import ERROR_STATUS, AssistantService
 from aegis.services.assistant.base import ActionError
+from aegis.services.operator_auth import OperatorKeyError
 
 log = logging.getLogger("aegis.api.assistant")
 
@@ -83,6 +84,56 @@ async def _operator(container: PlatformContainer, operator_id: str | None) -> Op
     return operator if operator is not None and operator.active else None
 
 
+async def _identity(
+    container: PlatformContainer,
+    operator_id: str | None,
+    operator_key: str | None,
+) -> tuple[Operator | None, str]:
+    """身份解析的**唯一实现**（P4 强认证，设计 §14.1.1）。
+
+    口径：按人令牌优先，其次声明身份。
+    - 带了有效令牌 → 身份是**令牌绑定的那个人**（`identity_kind='key'`）；
+      令牌与席位头不一致 → 401（借别人席位的事不能当成没发生）。
+    - 没带令牌 → 声明身份（`identity_kind='declared'`，可伪造，这是 P0–P3 的既有口径）。
+    - 带了无效令牌 → 401（"带了凭据但不对"与"没带凭据"是两种事实，不能混成后者）。
+
+    令牌错误在这里就翻成 401：它是一个 HTTP 事实（凭据不对），
+    不是动作级的业务拒绝，交给执行器的 `ActionError` 通道会变成 422。
+    """
+    auth = container.operator_auth
+    if auth is not None and auth.enabled and operator_key:
+        try:
+            outcome = await auth.authenticate(raw_key=operator_key, claimed_operator_id=operator_id)
+        except OperatorKeyError as exc:
+            raise HTTPException(
+                status_code=401,
+                detail={"code": exc.reason, "message": exc.message},
+            ) from exc
+        return outcome.operator, outcome.identity_kind
+    return await _operator(container, operator_id), "declared"
+
+
+def _require_strong_identity(container: PlatformContainer, operator: Operator | None, identity_kind: str) -> None:
+    """写动作的强身份门禁（设计 §14.1.1）。
+
+    强认证打开时，写动作必须带**有效令牌**；只带席位头 → 401。
+    读动作不受影响——强认证不等于"什么都得登录"。
+    开关关着时这道门不存在（声明身份照旧），部署方没启用强认证就不该被拦。
+    """
+    auth = container.operator_auth
+    if auth is None or not auth.enabled:
+        return
+    if identity_kind == "key" and operator is not None:
+        return
+    raise HTTPException(
+        status_code=401,
+        detail={
+            "code": "E_OPERATOR_KEY_REQUIRED",
+            "message": "该操作需要按人令牌：请带上 X-Aegis-Operator-Key（写动作在强认证开启后不接受仅声明的席位）",
+        },
+    )
+
+
 def build_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1/assistant", tags=["assistant"])
 
@@ -134,9 +185,11 @@ def build_router() -> APIRouter:
         payload: CreateActionRequest,
         ctn: PlatformContainer = Depends(get_container),
         x_operator: OperatorHeader = None,
+        x_operator_key: OperatorKeyHeader = None,
     ) -> dict[str, Any]:
         service = _assistant(ctn)
-        operator = await _operator(ctn, x_operator)
+        operator, identity_kind = await _identity(ctn, x_operator, x_operator_key)
+        _require_strong_identity(ctn, operator, identity_kind)
         try:
             return await service.create_action(
                 payload.action,
@@ -168,15 +221,20 @@ def build_router() -> APIRouter:
         action_id: Annotated[str, Path(pattern=_ACTION_ID_PATTERN)],
         ctn: PlatformContainer = Depends(get_container),
         x_operator: OperatorHeader = None,
+        x_operator_key: OperatorKeyHeader = None,
         payload: ConfirmActionRequest | None = None,
     ) -> dict[str, Any]:
         service = _assistant(ctn)
-        operator = await _operator(ctn, x_operator)
+        operator, identity_kind = await _identity(ctn, x_operator, x_operator_key)
+        _require_strong_identity(ctn, operator, identity_kind)
         try:
             return await service.confirm(
                 action_id=action_id,
                 actor=None if payload is None else payload.actor,
                 operator=operator,
+                # 二次认证用**原始令牌**，不复用已认证后的身份：这一道要验的就是"再证明一次"，
+                # 拿已经通过的身份充数等于这道门形同虚设。
+                operator_key=x_operator_key,
             )
         except ActionError as exc:
             # 双人复核的资格/重复票是 HTTP 事实（401/403/409），不是"确认没成功"的回执。
@@ -187,9 +245,11 @@ def build_router() -> APIRouter:
         action_id: Annotated[str, Path(pattern=_ACTION_ID_PATTERN)],
         ctn: PlatformContainer = Depends(get_container),
         x_operator: OperatorHeader = None,
+        x_operator_key: OperatorKeyHeader = None,
     ) -> dict[str, Any]:
         service = _assistant(ctn)
-        operator = await _operator(ctn, x_operator)
+        operator, identity_kind = await _identity(ctn, x_operator, x_operator_key)
+        _require_strong_identity(ctn, operator, identity_kind)
         return await service.revoke_action(action_id=action_id, operator=operator)
 
     return router

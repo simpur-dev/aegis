@@ -138,6 +138,25 @@ class Settings(BaseSettings):
     #: DETACH 成独立归档表，行不删；0 与负数由 SQL 函数拒绝，不会静默把审计抹掉。
     audit_retention_months: int = 24
 
+    # ---------- P4：强认证 + 外部通知（设计 §14.4） ----------
+    #: 按人令牌（`X-Aegis-Operator-Key`）是否启用。默认**关**：D2 定的是声明身份，
+    #: 强认证是部署方的安全档位——平台不该替他们决定"人要不要先管起来"。
+    #: 打开后写动作必须有有效令牌（只带席位头 → 401），读动作仍允许匿名。
+    operator_key_auth_enabled: bool = False
+    #: 连续认证失败多少次锁定该席位。计数按人存（按哈希存等于换一把随机令牌就清零）。
+    operator_key_max_failed_attempts: int = 5
+    #: 锁定时长（分钟）。锁定期内一律拒，正确令牌也拒——锁定的目的是拖慢爆破。
+    operator_key_lock_minutes: int = 5
+    #: 高危动作的二次认证（同一席位再出示一次令牌）。默认**关**，与双人复核正交：
+    #: 复核是"两个不同席位各投一票"（横向），二次认证是"本人再亮一次钥匙"（纵向）。
+    assistant_step_up_auth_enabled: bool = False
+    #: 外部通知的接收端（HTTP webhook）。空 = 不发外发；配合下面的白名单才真正启用。
+    notification_webhook_url: str = ""
+    #: 外部通知的主机白名单（逗号分隔）。**空 = 整条通道关闭**——没有"默认放开"这种取值。
+    #: 刻意不复用工作流那条白名单：工作流外呼的目标由画布编辑者填，通知的目标由部署方定。
+    notification_webhook_hosts: str = ""
+    notification_webhook_timeout_ms: int = 4_000
+
     # 告警（P2）：订阅 `platform.alert.>` 的去重落账与处置面。关掉时端点 503、订阅不注册。
     alerts_enabled: bool = True
     #: 超时未确认就升级：这是**默认值**，不是验收数字——要按现场误报率调，避免"狼来了"。
