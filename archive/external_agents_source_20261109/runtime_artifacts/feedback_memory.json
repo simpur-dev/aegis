@@ -1,0 +1,5244 @@
+[
+  {
+    "feedback_id": "FB-e2ebb260da",
+    "event_id": "EVT-fca56a79",
+    "hazard_type": "火山泥流",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'火山泥流'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='火山泥流'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T12:55:58.082142+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a35bc3f926",
+    "event_id": "EVT-DEMO-3",
+    "hazard_type": "landslide",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 risk_level='high（被人为改动的示例）'与 Risk 当前risk_level='low'不一致（预警未基于最新风险结果或字段被改动）",
+    "affected_fields": [
+      "warning_result.alert.based_on.risk_level"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "人为改动预警依据的risk_level字段",
+        "Risk模块未更新风险等级"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [
+        "Risk模块的最新风险等级",
+        "预警系统与Risk模块的交互日志"
+      ],
+      "lessons": [
+        "需加强对预警依据字段变更的监控",
+        "确保Risk模块与预警系统的数据同步"
+      ],
+      "source": "llm+guardrail"
+    },
+    "suggested_action": "在预警管理流程中增加对预警依据字段变更的监控环节，确保预警依据的准确性和一致性",
+    "evidence": [
+      "based_on=high（被人为改动的示例）",
+      "risk_now=low"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T12:56:21.131394+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-333748be9c",
+    "event_id": "EVT-4cf28f2f",
+    "hazard_type": "earthquake",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'earthquake'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='earthquake'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.242735+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-ab05863ee2",
+    "event_id": "EVT-1b1c245e",
+    "hazard_type": "火山泥流",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'火山泥流'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='火山泥流'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.255225+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-cd44782b77",
+    "event_id": "EVT-ee7a805f",
+    "hazard_type": "",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种''不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type=''",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.265225+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a08df9f75e",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "Data Agent 输出缺少必要字段 'data_quality'",
+    "affected_fields": [
+      "data_result.data_quality"
+    ],
+    "severity": "minor",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：Data Agent 输出缺少必要字段 'data_quality'"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "data_result 键=['data_sufficiency', 'error_message', 'hazard_type', 'missing_data', 'processed_data', 'status']"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.325248+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-edaa1f3a74",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据",
+    "affected_fields": [
+      "risk_result.assessment.R"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "assessment_status=scored",
+      "R=None"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.325248+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-555f17baa8",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但因子得分为空，无法追溯计算过程",
+    "affected_fields": [
+      "risk_result.assessment.factor_scores"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-003",
+      "feedback_id": "FBI-003",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但因子得分为空，无法追溯计算过程"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "factor_scores 为空"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.325248+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-2d41de4ff1",
+    "event_id": "EVT-T05",
+    "hazard_type": "landslide",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "最新观测数据距今约 59893 小时，超过时效阈值 72 小时（数据过期）",
+    "affected_fields": [
+      "processed_data.events[*].time"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：最新观测数据距今约 59893 小时，超过时效阈值 72 小时（数据过期）"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "最新时间=2020-01-01T00:00:00+00:00",
+      "is_mock=False",
+      "阈值=72.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.338944+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0dffa86cc1",
+    "event_id": "EVT-T06A",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.350942+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-8bb224c2e1",
+    "event_id": "EVT-T06B",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）",
+    "affected_fields": [
+      "warning_result.explanation.text"
+    ],
+    "severity": "critical",
+    "confidence": 0.75,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "可疑句子：本预警基于真实观测数据生成，已正式发布，请照常执行"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T13:09:29.363460+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-e7f0081e8e",
+    "event_id": "EVT-T06D",
+    "hazard_type": "rockfall",
+    "problem_type": "workflow_error",
+    "target_agent": "simulation",
+    "problem_description": "Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MOCK，禁止描述为真实预测）",
+    "affected_fields": [
+      "simulation_result.model_info.is_real_prediction"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：状态级联约定被违反（上游失败下游仍继续）",
+        "候选原因（待验证，非结论）：某 Agent 输出 Schema 偏离系统约定"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "workflow_error：Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MO"
+      ]
+    },
+    "suggested_action": "核对管线状态级联约定：上游 failed/insufficient 时应阻断或显式降级，而不是由下游继续产出成功结果",
+    "evidence": [
+      "model_info.is_real_prediction=True"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.385395+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-01d370c6fb",
+    "event_id": "EVT-T07",
+    "hazard_type": "landslide",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=landslide",
+      "simulation 声明灾种=rockfall"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.397399+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-41746b30c1",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（预警未基于最新风险结果或字段被改动）",
+    "affected_fields": [
+      "warning_result.alert.based_on.risk_level"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on=high-不存在等级",
+      "risk_now=medium"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.411409+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-bdf6ca537c",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 R=287.0 与 Risk 当前 R=54.0 不一致",
+    "affected_fields": [
+      "warning_result.alert.based_on.R"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 R=287.0 与 Risk 当前 R=54.0 不一致"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on.R=287.0",
+      "assessment.R=54.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.411409+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-8c653605cd",
+    "event_id": "EVT-T09",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.424893+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-54a85988bd",
+    "event_id": "EVT-T10A",
+    "hazard_type": "rockfall",
+    "problem_type": "insufficient_evidence",
+    "target_agent": "risk",
+    "problem_description": "缺少 Risk Agent 结果，反馈证据不足（无法完成风险-推演-预警一致性链路检查）",
+    "affected_fields": [
+      "risk_result"
+    ],
+    "severity": "major",
+    "confidence": 0.95,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "risk_result 为空"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.436413+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0a12525476",
+    "event_id": "EVT-T11",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.449417+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a2dab495d7",
+    "event_id": "EVT-T11-REUSE",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.464729+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0c6707f367",
+    "event_id": "EVT-T12",
+    "hazard_type": "rockfall",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.478858+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-6bd17a898c",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.492855+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0ac2bcf9b0",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.492855+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-f4949e1c6a",
+    "event_id": "EVT-T14",
+    "hazard_type": "ice_rock_snow_avalanche",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avalanche'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avala"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=ice_rock_snow_avalanche",
+      "simulation 声明灾种=landslide"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:09:29.509858+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-788cd2c1d4",
+    "event_id": "EVT-c315d143",
+    "hazard_type": "earthquake",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'earthquake'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='earthquake'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.053328+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-02c9bd6b0f",
+    "event_id": "EVT-fd3b57ff",
+    "hazard_type": "火山泥流",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'火山泥流'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='火山泥流'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.065576+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-9e8e1d875c",
+    "event_id": "EVT-5c739114",
+    "hazard_type": "",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种''不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type=''",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.077580+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-85e9c9f963",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "Data Agent 输出缺少必要字段 'data_quality'",
+    "affected_fields": [
+      "data_result.data_quality"
+    ],
+    "severity": "minor",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：Data Agent 输出缺少必要字段 'data_quality'"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "data_result 键=['data_sufficiency', 'error_message', 'hazard_type', 'missing_data', 'processed_data', 'status']"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.142060+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-248cf479f6",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据",
+    "affected_fields": [
+      "risk_result.assessment.R"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "assessment_status=scored",
+      "R=None"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.142060+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-edb4c73bfc",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但因子得分为空，无法追溯计算过程",
+    "affected_fields": [
+      "risk_result.assessment.factor_scores"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-003",
+      "feedback_id": "FBI-003",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但因子得分为空，无法追溯计算过程"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "factor_scores 为空"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.142060+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-58257ed33f",
+    "event_id": "EVT-T05",
+    "hazard_type": "landslide",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "最新观测数据距今约 59893 小时，超过时效阈值 72 小时（数据过期）",
+    "affected_fields": [
+      "processed_data.events[*].time"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：最新观测数据距今约 59893 小时，超过时效阈值 72 小时（数据过期）"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "最新时间=2020-01-01T00:00:00+00:00",
+      "is_mock=False",
+      "阈值=72.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.156066+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-b9d1976103",
+    "event_id": "EVT-T06A",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.171577+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-18537cbdd1",
+    "event_id": "EVT-T06B",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）",
+    "affected_fields": [
+      "warning_result.explanation.text"
+    ],
+    "severity": "critical",
+    "confidence": 0.75,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "可疑句子：本预警基于真实观测数据生成，已正式发布，请照常执行"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T13:10:24.185575+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-78bfa5d2cf",
+    "event_id": "EVT-T06D",
+    "hazard_type": "rockfall",
+    "problem_type": "workflow_error",
+    "target_agent": "simulation",
+    "problem_description": "Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MOCK，禁止描述为真实预测）",
+    "affected_fields": [
+      "simulation_result.model_info.is_real_prediction"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：状态级联约定被违反（上游失败下游仍继续）",
+        "候选原因（待验证，非结论）：某 Agent 输出 Schema 偏离系统约定"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "workflow_error：Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MO"
+      ]
+    },
+    "suggested_action": "核对管线状态级联约定：上游 failed/insufficient 时应阻断或显式降级，而不是由下游继续产出成功结果",
+    "evidence": [
+      "model_info.is_real_prediction=True"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.210574+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-82d246b892",
+    "event_id": "EVT-T07",
+    "hazard_type": "landslide",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=landslide",
+      "simulation 声明灾种=rockfall"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.226577+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-9a0a40e059",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（预警未基于最新风险结果或字段被改动）",
+    "affected_fields": [
+      "warning_result.alert.based_on.risk_level"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on=high-不存在等级",
+      "risk_now=medium"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.240574+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-7e94235162",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 R=287.0 与 Risk 当前 R=54.0 不一致",
+    "affected_fields": [
+      "warning_result.alert.based_on.R"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 R=287.0 与 Risk 当前 R=54.0 不一致"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on.R=287.0",
+      "assessment.R=54.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.240574+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a3d9555118",
+    "event_id": "EVT-T09",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.254580+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-7b82857c4a",
+    "event_id": "EVT-T10A",
+    "hazard_type": "rockfall",
+    "problem_type": "insufficient_evidence",
+    "target_agent": "risk",
+    "problem_description": "缺少 Risk Agent 结果，反馈证据不足（无法完成风险-推演-预警一致性链路检查）",
+    "affected_fields": [
+      "risk_result"
+    ],
+    "severity": "major",
+    "confidence": 0.95,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "risk_result 为空"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.269015+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0c1d44c24d",
+    "event_id": "EVT-T11",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.284018+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-c9eabebde6",
+    "event_id": "EVT-T11-REUSE",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.299017+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-3e8eab49d6",
+    "event_id": "EVT-T12",
+    "hazard_type": "rockfall",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.315014+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-891a32c66a",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.332017+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-45e3a85cb1",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.332017+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-8723187cff",
+    "event_id": "EVT-T14",
+    "hazard_type": "ice_rock_snow_avalanche",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avalanche'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avala"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=ice_rock_snow_avalanche",
+      "simulation 声明灾种=landslide"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:10:24.348023+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-dd32a60270",
+    "event_id": "EVT-5461e7e8",
+    "hazard_type": "earthquake",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'earthquake'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='earthquake'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.483202+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0924943766",
+    "event_id": "EVT-dc1664bb",
+    "hazard_type": "火山泥流",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'火山泥流'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='火山泥流'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.495549+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-7095f5e93f",
+    "event_id": "EVT-917148b9",
+    "hazard_type": "",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种''不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type=''",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.507548+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a8b759f972",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "Data Agent 输出缺少必要字段 'data_quality'",
+    "affected_fields": [
+      "data_result.data_quality"
+    ],
+    "severity": "minor",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：Data Agent 输出缺少必要字段 'data_quality'"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "data_result 键=['data_sufficiency', 'error_message', 'hazard_type', 'missing_data', 'processed_data', 'status']"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.575549+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-c91bd6314b",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据",
+    "affected_fields": [
+      "risk_result.assessment.R"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "assessment_status=scored",
+      "R=None"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.575549+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a11d33cc41",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但因子得分为空，无法追溯计算过程",
+    "affected_fields": [
+      "risk_result.assessment.factor_scores"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-003",
+      "feedback_id": "FBI-003",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但因子得分为空，无法追溯计算过程"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "factor_scores 为空"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.575549+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-d9c498c19b",
+    "event_id": "EVT-T05",
+    "hazard_type": "landslide",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "最新观测数据距今约 59893 小时，超过时效阈值 72 小时（数据过期）",
+    "affected_fields": [
+      "processed_data.events[*].time"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：最新观测数据距今约 59893 小时，超过时效阈值 72 小时（数据过期）"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "最新时间=2020-01-01T00:00:00+00:00",
+      "is_mock=False",
+      "阈值=72.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.590061+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-2d5cd5b038",
+    "event_id": "EVT-T06A",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.604060+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-13a86c0b69",
+    "event_id": "EVT-T06B",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）",
+    "affected_fields": [
+      "warning_result.explanation.text"
+    ],
+    "severity": "critical",
+    "confidence": 0.75,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "可疑句子：本预警基于真实观测数据生成，已正式发布，请照常执行"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T13:24:54.620066+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-abfe092f37",
+    "event_id": "EVT-T06D",
+    "hazard_type": "rockfall",
+    "problem_type": "workflow_error",
+    "target_agent": "simulation",
+    "problem_description": "Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MOCK，禁止描述为真实预测）",
+    "affected_fields": [
+      "simulation_result.model_info.is_real_prediction"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：状态级联约定被违反（上游失败下游仍继续）",
+        "候选原因（待验证，非结论）：某 Agent 输出 Schema 偏离系统约定"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "workflow_error：Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MO"
+      ]
+    },
+    "suggested_action": "核对管线状态级联约定：上游 failed/insufficient 时应阻断或显式降级，而不是由下游继续产出成功结果",
+    "evidence": [
+      "model_info.is_real_prediction=True"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.645062+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-9c9c7fee8c",
+    "event_id": "EVT-T07",
+    "hazard_type": "landslide",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=landslide",
+      "simulation 声明灾种=rockfall"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.661068+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-08dbb93e83",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（预警未基于最新风险结果或字段被改动）",
+    "affected_fields": [
+      "warning_result.alert.based_on.risk_level"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on=high-不存在等级",
+      "risk_now=medium"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.677215+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-b60ff503a8",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 R=287.0 与 Risk 当前 R=54.0 不一致",
+    "affected_fields": [
+      "warning_result.alert.based_on.R"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 R=287.0 与 Risk 当前 R=54.0 不一致"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on.R=287.0",
+      "assessment.R=54.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.677215+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-b46787bbf5",
+    "event_id": "EVT-T09",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.692728+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-1c4837bcaa",
+    "event_id": "EVT-T10A",
+    "hazard_type": "rockfall",
+    "problem_type": "insufficient_evidence",
+    "target_agent": "risk",
+    "problem_description": "缺少 Risk Agent 结果，反馈证据不足（无法完成风险-推演-预警一致性链路检查）",
+    "affected_fields": [
+      "risk_result"
+    ],
+    "severity": "major",
+    "confidence": 0.95,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "risk_result 为空"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.705729+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-01f25ddb9a",
+    "event_id": "EVT-T11",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.721729+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-af039c88f8",
+    "event_id": "EVT-T11-REUSE",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.736730+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-98c0dd1d13",
+    "event_id": "EVT-T12",
+    "hazard_type": "rockfall",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.754729+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0b2d7fc737",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.769737+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-d98cf18ffe",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.769737+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-790708620a",
+    "event_id": "EVT-T14",
+    "hazard_type": "ice_rock_snow_avalanche",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avalanche'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avala"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=ice_rock_snow_avalanche",
+      "simulation 声明灾种=landslide"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:24:54.787249+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0dfbc91507",
+    "event_id": "EVT-e3629127",
+    "hazard_type": "earthquake",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'earthquake'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='earthquake'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:19.915219+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-c9370e1395",
+    "event_id": "EVT-b614182e",
+    "hazard_type": "火山泥流",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'火山泥流'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='火山泥流'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:19.928225+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-cc7aac8ea1",
+    "event_id": "EVT-e635f397",
+    "hazard_type": "",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种''不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type=''",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:19.942277+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-28d3bcf462",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "Data Agent 输出缺少必要字段 'data_quality'",
+    "affected_fields": [
+      "data_result.data_quality"
+    ],
+    "severity": "minor",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：Data Agent 输出缺少必要字段 'data_quality'"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "data_result 键=['data_sufficiency', 'error_message', 'hazard_type', 'missing_data', 'processed_data', 'status']"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.009296+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-f09ef515b0",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据",
+    "affected_fields": [
+      "risk_result.assessment.R"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "assessment_status=scored",
+      "R=None"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.009296+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-cbeec2683d",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但因子得分为空，无法追溯计算过程",
+    "affected_fields": [
+      "risk_result.assessment.factor_scores"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-003",
+      "feedback_id": "FBI-003",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但因子得分为空，无法追溯计算过程"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "factor_scores 为空"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.009296+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-b695c74137",
+    "event_id": "EVT-T05",
+    "hazard_type": "landslide",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "最新观测数据距今约 59893 小时，超过时效阈值 72 小时（数据过期）",
+    "affected_fields": [
+      "processed_data.events[*].time"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：最新观测数据距今约 59893 小时，超过时效阈值 72 小时（数据过期）"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "最新时间=2020-01-01T00:00:00+00:00",
+      "is_mock=False",
+      "阈值=72.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.025303+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-77deaa8ba8",
+    "event_id": "EVT-T06A",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.040810+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-30648069ca",
+    "event_id": "EVT-T06B",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）",
+    "affected_fields": [
+      "warning_result.explanation.text"
+    ],
+    "severity": "critical",
+    "confidence": 0.75,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "可疑句子：本预警基于真实观测数据生成，已正式发布，请照常执行"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T13:25:20.056811+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-66024e3f31",
+    "event_id": "EVT-T06D",
+    "hazard_type": "rockfall",
+    "problem_type": "workflow_error",
+    "target_agent": "simulation",
+    "problem_description": "Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MOCK，禁止描述为真实预测）",
+    "affected_fields": [
+      "simulation_result.model_info.is_real_prediction"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：状态级联约定被违反（上游失败下游仍继续）",
+        "候选原因（待验证，非结论）：某 Agent 输出 Schema 偏离系统约定"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "workflow_error：Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MO"
+      ]
+    },
+    "suggested_action": "核对管线状态级联约定：上游 failed/insufficient 时应阻断或显式降级，而不是由下游继续产出成功结果",
+    "evidence": [
+      "model_info.is_real_prediction=True"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.083820+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-443f602b9c",
+    "event_id": "EVT-T07",
+    "hazard_type": "landslide",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=landslide",
+      "simulation 声明灾种=rockfall"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.100398+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-18eafe1d83",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（预警未基于最新风险结果或字段被改动）",
+    "affected_fields": [
+      "warning_result.alert.based_on.risk_level"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on=high-不存在等级",
+      "risk_now=medium"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.117407+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-77991ed371",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 R=287.0 与 Risk 当前 R=54.0 不一致",
+    "affected_fields": [
+      "warning_result.alert.based_on.R"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 R=287.0 与 Risk 当前 R=54.0 不一致"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on.R=287.0",
+      "assessment.R=54.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.117407+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-13ea6f4e02",
+    "event_id": "EVT-T09",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.133563+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-6052a1b15d",
+    "event_id": "EVT-T10A",
+    "hazard_type": "rockfall",
+    "problem_type": "insufficient_evidence",
+    "target_agent": "risk",
+    "problem_description": "缺少 Risk Agent 结果，反馈证据不足（无法完成风险-推演-预警一致性链路检查）",
+    "affected_fields": [
+      "risk_result"
+    ],
+    "severity": "major",
+    "confidence": 0.95,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "risk_result 为空"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.148565+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a9da5e3561",
+    "event_id": "EVT-T10B",
+    "hazard_type": "landslide",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但证据链为空（是否确有其据需人工复核，不据此认定计算错误）",
+    "affected_fields": [
+      "risk_result.evidence"
+    ],
+    "severity": "minor",
+    "confidence": 0.5,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "evidence 为空列表"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T13:25:20.164565+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-577faed516",
+    "event_id": "EVT-T11",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.191561+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-58e75bbeef",
+    "event_id": "EVT-T11-REUSE",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.209560+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-5ba9b4a9d1",
+    "event_id": "EVT-T12",
+    "hazard_type": "rockfall",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.225569+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-c0bf20d756",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.243590+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-77466123f0",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.243590+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-81adae3fd8",
+    "event_id": "EVT-T14",
+    "hazard_type": "ice_rock_snow_avalanche",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avalanche'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avala"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=ice_rock_snow_avalanche",
+      "simulation 声明灾种=landslide"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:25:20.260597+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-659f5676c6",
+    "event_id": "EVT-REAL-1",
+    "hazard_type": "debris_flow",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "数据质量检查未通过：完整性: 66.7% (阈值 80%), 异常率: 0.0% (阈值 10%)（阈值为 Mock 约定，无规范来源）",
+    "affected_fields": [
+      "data_result.data_quality.is_valid"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：数据质量检查未通过：完整性: 66.7% (阈值 80%), 异常率: 0.0% (阈值 10%)（阈值为 Mock 约"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "is_valid=False",
+      "missing_fields_summary={'time': 1}"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:27:06.135882+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-b8a485a721",
+    "event_id": "EVT-82b84790",
+    "hazard_type": "earthquake",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'earthquake'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='earthquake'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:47.981231+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-c044bafa82",
+    "event_id": "EVT-7c536117",
+    "hazard_type": "火山泥流",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'火山泥流'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='火山泥流'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:47.996230+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-da35943fba",
+    "event_id": "EVT-70dae1d2",
+    "hazard_type": "",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种''不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type=''",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.011233+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-1df8ba8cc9",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "Data Agent 输出缺少必要字段 'data_quality'",
+    "affected_fields": [
+      "data_result.data_quality"
+    ],
+    "severity": "minor",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：Data Agent 输出缺少必要字段 'data_quality'"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "data_result 键=['data_sufficiency', 'error_message', 'hazard_type', 'missing_data', 'processed_data', 'status']"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.079751+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-05d1bb108c",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据",
+    "affected_fields": [
+      "risk_result.assessment.R"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "assessment_status=scored",
+      "R=None"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.079751+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-92627d99fa",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但因子得分为空，无法追溯计算过程",
+    "affected_fields": [
+      "risk_result.assessment.factor_scores"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-003",
+      "feedback_id": "FBI-003",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但因子得分为空，无法追溯计算过程"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "factor_scores 为空"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.079751+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-f168ebafac",
+    "event_id": "EVT-T05",
+    "hazard_type": "landslide",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "最新观测数据距今约 59894 小时，超过时效阈值 72 小时（数据过期）",
+    "affected_fields": [
+      "processed_data.events[*].time"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：最新观测数据距今约 59894 小时，超过时效阈值 72 小时（数据过期）"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "最新时间=2020-01-01T00:00:00+00:00",
+      "is_mock=False",
+      "阈值=72.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.097751+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-9c47b555ef",
+    "event_id": "EVT-T06A",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.115751+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a0fc664344",
+    "event_id": "EVT-T06B",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）",
+    "affected_fields": [
+      "warning_result.explanation.text"
+    ],
+    "severity": "critical",
+    "confidence": 0.75,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "可疑句子：本预警基于真实观测数据生成，已正式发布，请照常执行"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T13:35:48.134751+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0cb11ca616",
+    "event_id": "EVT-T06D",
+    "hazard_type": "rockfall",
+    "problem_type": "workflow_error",
+    "target_agent": "simulation",
+    "problem_description": "Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MOCK，禁止描述为真实预测）",
+    "affected_fields": [
+      "simulation_result.model_info.is_real_prediction"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：状态级联约定被违反（上游失败下游仍继续）",
+        "候选原因（待验证，非结论）：某 Agent 输出 Schema 偏离系统约定"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "workflow_error：Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MO"
+      ]
+    },
+    "suggested_action": "核对管线状态级联约定：上游 failed/insufficient 时应阻断或显式降级，而不是由下游继续产出成功结果",
+    "evidence": [
+      "model_info.is_real_prediction=True"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.162261+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-125f5b7d55",
+    "event_id": "EVT-T07",
+    "hazard_type": "landslide",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=landslide",
+      "simulation 声明灾种=rockfall"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.180273+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0e878a8d42",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（预警未基于最新风险结果或字段被改动）",
+    "affected_fields": [
+      "warning_result.alert.based_on.risk_level"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on=high-不存在等级",
+      "risk_now=medium"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.197785+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-e8671451ec",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 R=287.0 与 Risk 当前 R=54.0 不一致",
+    "affected_fields": [
+      "warning_result.alert.based_on.R"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 R=287.0 与 Risk 当前 R=54.0 不一致"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on.R=287.0",
+      "assessment.R=54.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.197785+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-3a4611a2bf",
+    "event_id": "EVT-T09",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.215786+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-932aa6b5b3",
+    "event_id": "EVT-T10A",
+    "hazard_type": "rockfall",
+    "problem_type": "insufficient_evidence",
+    "target_agent": "risk",
+    "problem_description": "缺少 Risk Agent 结果，反馈证据不足（无法完成风险-推演-预警一致性链路检查）",
+    "affected_fields": [
+      "risk_result"
+    ],
+    "severity": "major",
+    "confidence": 0.95,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "risk_result 为空"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.231786+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-34b3a52f74",
+    "event_id": "EVT-T10B",
+    "hazard_type": "landslide",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但证据链为空（是否确有其据需人工复核，不据此认定计算错误）",
+    "affected_fields": [
+      "risk_result.evidence"
+    ],
+    "severity": "minor",
+    "confidence": 0.5,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "evidence 为空列表"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T13:35:48.248792+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-e211cf0894",
+    "event_id": "EVT-T11",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.276913+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0db0dffc4d",
+    "event_id": "EVT-T11-REUSE",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.295541+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0ca08e434d",
+    "event_id": "EVT-T12",
+    "hazard_type": "rockfall",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.315541+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-f988c2b311",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.334545+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-cc0c87ffd0",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.334545+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-4441801586",
+    "event_id": "EVT-T14",
+    "hazard_type": "ice_rock_snow_avalanche",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avalanche'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avala"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=ice_rock_snow_avalanche",
+      "simulation 声明灾种=landslide"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T13:35:48.353549+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-ec46bbc323",
+    "event_id": "EVT-80ad3648",
+    "hazard_type": "earthquake",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'earthquake'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='earthquake'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.116010+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-89b44f4d60",
+    "event_id": "EVT-df2edd85",
+    "hazard_type": "火山泥流",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'火山泥流'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='火山泥流'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.144521+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-415a3c91c6",
+    "event_id": "EVT-9e63cf3f",
+    "hazard_type": "",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种''不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type=''",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.175580+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-67e948012e",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "Data Agent 输出缺少必要字段 'data_quality'",
+    "affected_fields": [
+      "data_result.data_quality"
+    ],
+    "severity": "minor",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：Data Agent 输出缺少必要字段 'data_quality'"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "data_result 键=['data_sufficiency', 'error_message', 'hazard_type', 'missing_data', 'processed_data', 'status']"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.301152+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-2afbfb6011",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据",
+    "affected_fields": [
+      "risk_result.assessment.R"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "assessment_status=scored",
+      "R=None"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.301152+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-cd0b715e43",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但因子得分为空，无法追溯计算过程",
+    "affected_fields": [
+      "risk_result.assessment.factor_scores"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-003",
+      "feedback_id": "FBI-003",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但因子得分为空，无法追溯计算过程"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "factor_scores 为空"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.301152+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-3ad2b49f12",
+    "event_id": "EVT-T05",
+    "hazard_type": "landslide",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "最新观测数据距今约 59896 小时，超过时效阈值 72 小时（数据过期）",
+    "affected_fields": [
+      "processed_data.events[*].time"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：最新观测数据距今约 59896 小时，超过时效阈值 72 小时（数据过期）"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "最新时间=2020-01-01T00:00:00+00:00",
+      "is_mock=False",
+      "阈值=72.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.334448+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-c59a047ab1",
+    "event_id": "EVT-T06A",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.369146+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-c6e1ccaa58",
+    "event_id": "EVT-T06B",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）",
+    "affected_fields": [
+      "warning_result.explanation.text"
+    ],
+    "severity": "critical",
+    "confidence": 0.75,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "可疑句子：本预警基于真实观测数据生成，已正式发布，请照常执行"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T15:45:10.408378+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-e116b9eb63",
+    "event_id": "EVT-T06D",
+    "hazard_type": "rockfall",
+    "problem_type": "workflow_error",
+    "target_agent": "simulation",
+    "problem_description": "Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MOCK，禁止描述为真实预测）",
+    "affected_fields": [
+      "simulation_result.model_info.is_real_prediction"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：状态级联约定被违反（上游失败下游仍继续）",
+        "候选原因（待验证，非结论）：某 Agent 输出 Schema 偏离系统约定"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "workflow_error：Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MO"
+      ]
+    },
+    "suggested_action": "核对管线状态级联约定：上游 failed/insufficient 时应阻断或显式降级，而不是由下游继续产出成功结果",
+    "evidence": [
+      "model_info.is_real_prediction=True"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.458956+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-052704e1ab",
+    "event_id": "EVT-T07",
+    "hazard_type": "landslide",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=landslide",
+      "simulation 声明灾种=rockfall"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.492227+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-39fbc5de5c",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（预警未基于最新风险结果或字段被改动）",
+    "affected_fields": [
+      "warning_result.alert.based_on.risk_level"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on=high-不存在等级",
+      "risk_now=medium"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.527455+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a08f1b105e",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 R=287.0 与 Risk 当前 R=54.0 不一致",
+    "affected_fields": [
+      "warning_result.alert.based_on.R"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 R=287.0 与 Risk 当前 R=54.0 不一致"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on.R=287.0",
+      "assessment.R=54.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.527455+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-ac9417ad82",
+    "event_id": "EVT-T09",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.561910+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-d33d9f0c83",
+    "event_id": "EVT-T10A",
+    "hazard_type": "rockfall",
+    "problem_type": "insufficient_evidence",
+    "target_agent": "risk",
+    "problem_description": "缺少 Risk Agent 结果，反馈证据不足（无法完成风险-推演-预警一致性链路检查）",
+    "affected_fields": [
+      "risk_result"
+    ],
+    "severity": "major",
+    "confidence": 0.95,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "risk_result 为空"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.593933+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-e1946527d8",
+    "event_id": "EVT-T10B",
+    "hazard_type": "landslide",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但证据链为空（是否确有其据需人工复核，不据此认定计算错误）",
+    "affected_fields": [
+      "risk_result.evidence"
+    ],
+    "severity": "minor",
+    "confidence": 0.5,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "evidence 为空列表"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T15:45:10.628487+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-2056965c25",
+    "event_id": "EVT-T11",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.681816+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-184cde1916",
+    "event_id": "EVT-T11-REUSE",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.719460+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-911e5727cb",
+    "event_id": "EVT-T12",
+    "hazard_type": "rockfall",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.756397+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-c77ac2ce90",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.791493+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-86c5d8a841",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.791493+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-5545a49440",
+    "event_id": "EVT-T14",
+    "hazard_type": "ice_rock_snow_avalanche",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avalanche'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avala"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=ice_rock_snow_avalanche",
+      "simulation 声明灾种=landslide"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:45:10.831769+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-254887be39",
+    "event_id": "EVT-87286387",
+    "hazard_type": "earthquake",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'earthquake'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='earthquake'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.066007+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-6fff975d24",
+    "event_id": "EVT-e2e7b700",
+    "hazard_type": "火山泥流",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种'火山泥流'不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type='火山泥流'",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.093660+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-e3e7d86aa6",
+    "event_id": "EVT-f24af0b9",
+    "hazard_type": "",
+    "problem_type": "workflow_error",
+    "target_agent": "manager",
+    "problem_description": "灾种''不在五类标准灾种内，Feedback Agent 拒绝检查（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/glacial_lake_outburst，不包含地震）",
+    "affected_fields": [
+      "hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.99,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "输入 hazard_type=''",
+      "支持清单=['landslide', 'rockfall', 'debris_flow', 'ice_rock_snow_avalanche', 'glacial_lake_outburst']"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.125442+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-9af4ed6ef8",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "Data Agent 输出缺少必要字段 'data_quality'",
+    "affected_fields": [
+      "data_result.data_quality"
+    ],
+    "severity": "minor",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：Data Agent 输出缺少必要字段 'data_quality'"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "data_result 键=['data_sufficiency', 'error_message', 'hazard_type', 'missing_data', 'processed_data', 'status']"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.252050+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-6c84afae17",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据",
+    "affected_fields": [
+      "risk_result.assessment.R"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但组合指数 R 缺失，风险结论缺少计算依据"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "assessment_status=scored",
+      "R=None"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.252050+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-4c60510442",
+    "event_id": "EVT-T04",
+    "hazard_type": "debris_flow",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但因子得分为空，无法追溯计算过程",
+    "affected_fields": [
+      "risk_result.assessment.factor_scores"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-003",
+      "feedback_id": "FBI-003",
+      "occurred_stage": "risk",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：因子注册表与观测字段口径不一致",
+        "候选原因（待验证，非结论）：评估工具入参未覆盖必需因子"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "risk_calculation_issue：Risk 状态为 success 但因子得分为空，无法追溯计算过程"
+      ]
+    },
+    "suggested_action": "核对 Risk Agent 因子引擎入参：确认所评灾种的必需因子在factor_scores 中齐备、证据链组装未被跳过",
+    "evidence": [
+      "factor_scores 为空"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.252050+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a06547f0f9",
+    "event_id": "EVT-T05",
+    "hazard_type": "landslide",
+    "problem_type": "data_quality_issue",
+    "target_agent": "data",
+    "problem_description": "最新观测数据距今约 59896 小时，超过时效阈值 72 小时（数据过期）",
+    "affected_fields": [
+      "processed_data.events[*].time"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "data",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：数据源覆盖不全或观测缺测",
+        "候选原因（待验证，非结论）：清洗/标准化环节字段丢失"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "data_quality_issue：最新观测数据距今约 59896 小时，超过时效阈值 72 小时（数据过期）"
+      ]
+    },
+    "suggested_action": "核对 Data Agent 数据获取与清洗环节：确认该字段在数据源声明、清洗/标准化与质量校验三处口径一致；如为真实数据源接入，检查观测时效与缺测处理策略",
+    "evidence": [
+      "最新时间=2020-01-01T00:00:00+00:00",
+      "is_mock=False",
+      "阈值=72.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.287049+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-121ba1665e",
+    "event_id": "EVT-T06A",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.319588+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-d456731777",
+    "event_id": "EVT-T06B",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）",
+    "affected_fields": [
+      "warning_result.explanation.text"
+    ],
+    "severity": "critical",
+    "confidence": 0.75,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警说明把模拟/草稿结果描述为真实观测或正式发布，与 Mock 标记矛盾（句级证据见 evidence）"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "可疑句子：本预警基于真实观测数据生成，已正式发布，请照常执行"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T15:54:55.355128+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-127b1e951d",
+    "event_id": "EVT-T06D",
+    "hazard_type": "rockfall",
+    "problem_type": "workflow_error",
+    "target_agent": "simulation",
+    "problem_description": "Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MOCK，禁止描述为真实预测）",
+    "affected_fields": [
+      "simulation_result.model_info.is_real_prediction"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：状态级联约定被违反（上游失败下游仍继续）",
+        "候选原因（待验证，非结论）：某 Agent 输出 Schema 偏离系统约定"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "workflow_error：Simulation 结果声称 is_real_prediction=True，违反系统红线（当前五灾种模型全部为 MO"
+      ]
+    },
+    "suggested_action": "核对管线状态级联约定：上游 failed/insufficient 时应阻断或显式降级，而不是由下游继续产出成功结果",
+    "evidence": [
+      "model_info.is_real_prediction=True"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.411136+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-f928ee769a",
+    "event_id": "EVT-T07",
+    "hazard_type": "landslide",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'rockfall'与事件灾种'landslide'不一致（疑似路由错误"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=landslide",
+      "simulation 声明灾种=rockfall"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.446394+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-10a96af755",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（预警未基于最新风险结果或字段被改动）",
+    "affected_fields": [
+      "warning_result.alert.based_on.risk_level"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 risk_level='high-不存在等级'与 Risk 当前risk_level='medium'不一致（"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on=high-不存在等级",
+      "risk_now=medium"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.484195+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-af8bff03a7",
+    "event_id": "EVT-T08",
+    "hazard_type": "glacial_lake_outburst",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "预警依据 R=287.0 与 Risk 当前 R=54.0 不一致",
+    "affected_fields": [
+      "warning_result.alert.based_on.R"
+    ],
+    "severity": "major",
+    "confidence": 0.85,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：预警依据 R=287.0 与 Risk 当前 R=54.0 不一致"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "based_on.R=287.0",
+      "assessment.R=54.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.484195+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-a06c270a44",
+    "event_id": "EVT-T09",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.518730+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-0c4458e436",
+    "event_id": "EVT-T10A",
+    "hazard_type": "rockfall",
+    "problem_type": "insufficient_evidence",
+    "target_agent": "risk",
+    "problem_description": "缺少 Risk Agent 结果，反馈证据不足（无法完成风险-推演-预警一致性链路检查）",
+    "affected_fields": [
+      "risk_result"
+    ],
+    "severity": "major",
+    "confidence": 0.95,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "risk_result 为空"
+    ],
+    "model_version": "",
+    "rule_version": "",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.553182+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-676026eee3",
+    "event_id": "EVT-T10B",
+    "hazard_type": "landslide",
+    "problem_type": "risk_calculation_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 状态为 success 但证据链为空（是否确有其据需人工复核，不据此认定计算错误）",
+    "affected_fields": [
+      "risk_result.evidence"
+    ],
+    "severity": "minor",
+    "confidence": 0.5,
+    "reflection": {},
+    "suggested_action": "",
+    "evidence": [
+      "evidence 为空列表"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "pending_review",
+    "created_at": "2026-10-31T15:54:55.593181+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-676bce1b64",
+    "event_id": "EVT-T11",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.647701+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-4992bb96c9",
+    "event_id": "EVT-T11-REUSE",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.687838+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-24f2987d7f",
+    "event_id": "EVT-T12",
+    "hazard_type": "rockfall",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.726470+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-1b07701484",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "model_version_issue",
+    "target_agent": "risk",
+    "problem_description": "Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配",
+    "affected_fields": [
+      "risk_result.model_info.rule_version"
+    ],
+    "severity": "major",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：上游 Agent 与注册表版本更新不同步",
+        "候选原因（待验证，非结论）：缓存了旧版本 Agent 结果"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "model_version_issue：Risk 结果 rule_version'OLD-v0.0'与灾种注册表'MOCK-v0.1'不匹配"
+      ]
+    },
+    "suggested_action": "核对注册表与 Agent 结果中的版本字段：重新运行相应 Agent 以使用当前注册表声明的模型/规则版本，或更新缓存结果",
+    "evidence": [
+      "registry=MOCK-v0.1",
+      "declared=OLD-v0.0"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.761382+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-08f43042cf",
+    "event_id": "EVT-T13",
+    "hazard_type": "debris_flow",
+    "problem_type": "warning_consistency_issue",
+    "target_agent": "warning",
+    "problem_description": "上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线",
+    "affected_fields": [
+      "warning_result.alert.mock_only"
+    ],
+    "severity": "critical",
+    "confidence": 0.9,
+    "reflection": {
+      "issue_id": "ISS-002",
+      "feedback_id": "FBI-002",
+      "occurred_stage": "warning",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：预警对象组装时引用了过期上游结果",
+        "候选原因（待验证，非结论）：解释文本生成环节声明与结构化字段不一致"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "warning_consistency_issue：上游数据为 Mock 但预警对象声称 mock_only=False（把模拟结果描述为真实预警），违反红线"
+      ]
+    },
+    "suggested_action": "核对 Warning Agent 预警对象组装：based_on 依据链须引用最新Risk/Simulation 交付物字段值，解释文本声明与 mock_only 标记一致",
+    "evidence": [
+      "data.is_mock=True",
+      "alert.mock_only=False"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "OLD-v0.0",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.761382+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  },
+  {
+    "feedback_id": "FB-f5d5ba707d",
+    "event_id": "EVT-T14",
+    "hazard_type": "ice_rock_snow_avalanche",
+    "problem_type": "hazard_type_mismatch",
+    "target_agent": "simulation",
+    "problem_description": "SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avalanche'不一致（疑似路由错误灾种的工具/模型）",
+    "affected_fields": [
+      "simulation_result.hazard_type"
+    ],
+    "severity": "critical",
+    "confidence": 0.95,
+    "reflection": {
+      "issue_id": "ISS-001",
+      "feedback_id": "FBI-001",
+      "occurred_stage": "manager",
+      "possible_causes": [
+        "候选原因（待验证，非结论）：多 Agent 串联时 hazard_type 传参不一致",
+        "候选原因（待验证，非结论）：某 Agent 归一化环节失败后未阻断流程"
+      ],
+      "evidence_sufficient": true,
+      "additional_data_needed": [],
+      "lessons": [
+        "hazard_type_mismatch：SIMULATION Agent 结果的灾种标识'landslide'与事件灾种'ice_rock_snow_avala"
+      ]
+    },
+    "suggested_action": "核对 Manager 串联各 Agent 时的 hazard_type 传参：五类标准键显式传入，任一 Agent 归一化失败应中断流程而非继续",
+    "evidence": [
+      "事件灾种=ice_rock_snow_avalanche",
+      "simulation 声明灾种=landslide"
+    ],
+    "model_version": "MOCK-v0.1",
+    "rule_version": "MOCK-v0.1",
+    "validation_status": "auto_validated",
+    "created_at": "2026-10-31T15:54:55.797407+00:00",
+    "source": "feedback_agent.deterministic_checks"
+  }
+]

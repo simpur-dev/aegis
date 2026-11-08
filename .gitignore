@@ -72,3 +72,6 @@ backend/.tmp-verify/
 
 # 本地部署/巡检留档（容器日志、页面截图、一次性 CDP 探针脚本）：只在本地当证据，不入库
 .deploy-logs/
+
+# 归档区：只作溯源，不进主线构建（不进 wheel/镜像/门禁扫描）
+/archive/external_agents_source_20261109/*.zip
