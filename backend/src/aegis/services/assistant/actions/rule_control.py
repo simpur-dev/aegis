@@ -158,6 +158,7 @@ class RuleConfirmSuggestion(_RuleAction):
         needs_confirm=True,
         writes=True,
         previewable=True,
+        dual_review=True,
         example="确认阈值建议 suggestion_id=sug_abcdef123456 rule_id=rain-01 metric=rainfall_1h threshold=75 version=2",
     )
 
@@ -193,6 +194,7 @@ class RuleRejectSuggestion(_RuleAction):
         needs_confirm=True,
         writes=True,
         previewable=True,
+        dual_review=True,
         example="驳回阈值建议 suggestion_id=sug_abcdef123456 note=样本不足",
     )
 
@@ -223,6 +225,7 @@ class RuleUpdate(_RuleAction):
         needs_confirm=True,
         writes=True,
         previewable=True,
+        dual_review=True,
         example="改阈值 rule_id=rain-01 metric=rainfall_1h threshold=80 version=2 note=汛期上调",
     )
 

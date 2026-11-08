@@ -255,6 +255,7 @@ class ControlActionStore:
         impact_scope: dict[str, Any],
         expires_in_seconds: int,
         idempotency_key: str | None,
+        review_required: int = 0,
     ) -> tuple[dict[str, Any], bool]:
         if idempotency_key and (existing_id := self._idempotency.get(idempotency_key)):
             existing = self._rows.get(existing_id)
@@ -276,6 +277,8 @@ class ControlActionStore:
             "expires_at": now + timedelta(seconds=int(expires_in_seconds)),
             "created_at": now,
             "updated_at": now,
+            "review_required": int(review_required),
+            "reviewers": [],
         }
         self._rows[action_id] = row
         self._order.append(action_id)
@@ -294,9 +297,32 @@ class ControlActionStore:
             return None
         if row["expires_at"] is not None and row["expires_at"] < self._now():
             return None
+        # 与 SQL 侧同一道闸：复核票不够时不让本人一次确认绕过双人复核。
+        if len(row["reviewers"]) < int(row["review_required"]):
+            return None
         row["status"] = "executing"
         row["updated_at"] = self._now()
         return self._public(row)
+
+    async def review_action(self, action_id: str, reviewer: dict[str, Any]) -> tuple[dict[str, Any], bool] | None:
+        """内存形态的双人复核：与 `persistence/control_actions.py::review_action` 同一套不变量。
+
+        纯 asyncio 单线程下没有真并发，但"两票不同人 + 第二票才迁移"的语义必须逐条对齐，
+        否则开发与生产会表现出两套确认规则。
+        """
+        row = self._rows.get(action_id)
+        if row is None or row["status"] != "proposed" or int(row["review_required"]) < 1:
+            return None
+        if row["expires_at"] is not None and row["expires_at"] < self._now():
+            return None
+        operator_id = str(reviewer["operator_id"])
+        if any(str(vote.get("operator_id")) == operator_id for vote in row["reviewers"]):
+            return None
+        row["reviewers"] = [*row["reviewers"], dict(reviewer)]
+        ready = len(row["reviewers"]) >= int(row["review_required"])
+        row["status"] = "executing" if ready else "proposed"
+        row["updated_at"] = self._now()
+        return self._public(row), ready
 
     async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
         row = self._rows.get(action_id)
@@ -522,6 +548,7 @@ class HandlingTaskStore:
     def __init__(self, maxlen: int = 5_000) -> None:
         self._rows: dict[str, dict[str, Any]] = {}
         self._spaces: dict[str, dict[str, Any]] = {}
+        self._space_order: deque[str] = deque(maxlen=maxlen)
         self._by_stu: dict[tuple[str, str], str] = {}
         self._order: deque[str] = deque(maxlen=maxlen)
 
@@ -536,8 +563,20 @@ class HandlingTaskStore:
     def _public(self, row: dict[str, Any]) -> dict[str, Any]:
         return {**row, "updated_at": self._iso(row["updated_at"])}
 
+    def _space_public(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {**row, "created_at": self._iso(row["created_at"]), "closed_at": self._iso(row["closed_at"])}
+
     async def ensure_space(self, *, space_id: str, warning_id: str) -> dict[str, Any]:
         if space_id not in self._spaces:
+            # 内存形态也要有界：空间满了就丢最旧那个，并连带清掉它的任务，
+            # 否则"任务有界、空间无界"会让长时间演练悄悄吃内存。
+            if self._space_order.maxlen and len(self._spaces) >= self._space_order.maxlen:
+                dropped = self._space_order.popleft()
+                self._spaces.pop(dropped, None)
+                for task_id, row in list(self._rows.items()):
+                    if row["space_id"] == dropped:
+                        self._rows.pop(task_id, None)
+                        self._by_stu.pop((dropped, row["stu_id"]), None)
             self._spaces[space_id] = {
                 "space_id": space_id,
                 "warning_id": warning_id,
@@ -545,7 +584,30 @@ class HandlingTaskStore:
                 "created_at": self._now(),
                 "closed_at": None,
             }
-        return {**self._spaces[space_id], "created_at": self._iso(self._spaces[space_id]["created_at"])}
+            self._space_order.append(space_id)
+        return self._space_public(self._spaces[space_id])
+
+    async def get_space(self, space_id: str) -> dict[str, Any] | None:
+        row = self._spaces.get(space_id)
+        return None if row is None else self._space_public(row)
+
+    async def list_spaces(self, *, open_only: bool = True, limit: int = 50) -> list[dict[str, Any]]:
+        rows = [row for row in self._spaces.values() if not open_only or row["status"] == "open"]
+        rows.sort(key=lambda row: row["created_at"], reverse=True)
+        capped = max(1, min(int(limit), 200))
+        summaries: list[dict[str, Any]] = []
+        for row in rows[:capped]:
+            tasks = [item for item in self._rows.values() if item["space_id"] == row["space_id"]]
+            open_count = sum(1 for item in tasks if item["status"] != "closed")
+            summaries.append(
+                {
+                    **self._space_public(row),
+                    "tasks_total": len(tasks),
+                    "tasks_open": open_count,
+                    "tasks_closed": len(tasks) - open_count,
+                }
+            )
+        return summaries
 
     async def ensure_task(self, *, space_id: str, stu_id: str) -> tuple[dict[str, Any], bool]:
         key = (space_id, stu_id)
@@ -776,6 +838,9 @@ class PlatformStore:
     async def confirm_action(self, action_id: str) -> dict[str, Any] | None:
         return await self.control_actions.confirm_action(action_id)
 
+    async def review_action(self, action_id: str, reviewer: dict[str, Any]) -> tuple[dict[str, Any], bool] | None:
+        return await self.control_actions.review_action(action_id, reviewer)
+
     async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
         return await self.control_actions.mark_action_executed(action_id, result)
 
@@ -827,6 +892,12 @@ class PlatformStore:
 
     async def ensure_space(self, *, space_id: str, warning_id: str) -> dict[str, Any]:
         return await self.handling_tasks.ensure_space(space_id=space_id, warning_id=warning_id)
+
+    async def get_space(self, space_id: str) -> dict[str, Any] | None:
+        return await self.handling_tasks.get_space(space_id)
+
+    async def list_spaces(self, *, open_only: bool = True, limit: int = 50) -> list[dict[str, Any]]:
+        return await self.handling_tasks.list_spaces(open_only=open_only, limit=limit)
 
     async def ensure_task(self, *, space_id: str, stu_id: str) -> tuple[dict[str, Any], bool]:
         return await self.handling_tasks.ensure_task(space_id=space_id, stu_id=stu_id)
@@ -1093,9 +1164,12 @@ class SupportsControlActions(Protocol):
         impact_scope: dict[str, Any],
         expires_in_seconds: int,
         idempotency_key: str | None,
+        review_required: int = 0,
     ) -> tuple[dict[str, Any], bool]: ...
 
     async def confirm_action(self, action_id: str) -> dict[str, Any] | None: ...
+
+    async def review_action(self, action_id: str, reviewer: dict[str, Any]) -> tuple[dict[str, Any], bool] | None: ...
 
     async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None: ...
 
@@ -1138,6 +1212,10 @@ class SupportsHandlingTasks(Protocol):
     """处置任务台账：内存与持久两套都实现，语义逐条对齐（含 version 乐观锁）。"""
 
     async def ensure_space(self, *, space_id: str, warning_id: str) -> dict[str, Any]: ...
+
+    async def get_space(self, space_id: str) -> dict[str, Any] | None: ...
+
+    async def list_spaces(self, *, open_only: bool = True, limit: int = 50) -> list[dict[str, Any]]: ...
 
     async def ensure_task(self, *, space_id: str, stu_id: str) -> tuple[dict[str, Any], bool]: ...
 

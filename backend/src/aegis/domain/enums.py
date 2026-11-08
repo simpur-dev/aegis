@@ -84,6 +84,9 @@ class Action(StrEnum):
     # 数据面（平台 → 总线，非智能体动作）
     TELEMETRY_READING = "telemetry.reading"
     NOTIFY_SENT = "notify.sent"
+    #: 协同处置任务的状态迁移广播（/spaces 与助手任务动作共用一条出口）。
+    #: SSE 的 `subject` 取的就是这个值，前端按 `handling.task.` 前缀分流（设计文档 §6.2）。
+    HANDLING_TASK_CHANGED = "handling.task.changed"
 
 
 REGISTERED_ACTIONS: frozenset[str] = frozenset(a.value for a in Action) - {

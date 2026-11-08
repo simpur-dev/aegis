@@ -20,6 +20,7 @@ import type { ActionSpecDto, ConfirmResultDto, ProposalFrame } from '@/api/assis
 import { assistantApi, CHAT_LIMITS, isAssistantDisabled, isAssistantUnavailable, preflightChat } from '@/api/assistant'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import AlertStack from '@/components/assistant/AlertStack.vue'
+import HandlingBar from '@/components/assistant/HandlingBar.vue'
 import { useAssistantCapabilities } from '@/composables/useAssistantCapabilities'
 import { useAssistantSession } from '@/composables/useAssistantSession'
 import { useConversationModel } from '@/composables/useConversationModel'
@@ -117,6 +118,12 @@ async function confirmProposal(proposal: ProposalFrame): Promise<void> {
   decisions[proposal.action_id] = { kind: 'busy' }
   try {
     const result = await assistantApi.confirm(proposal.action_id, { actor: reporter.value.trim() || undefined })
+    if (result.status === 'awaiting_review') {
+      // 第一票只记票、不执行：卡片不能锁上，另一名席位还要能点"确认"。
+      decisions[proposal.action_id] = { kind: 'review', result }
+      message.info(result.reason ?? '等待另一名席位复核')
+      return
+    }
     decisions[proposal.action_id] = { kind: 'result', result }
     if (result.status !== 'executed') {
       message.warning(`确认结果：${CONFIRM_STATUS_LABELS[result.status] ?? result.status}`)
@@ -140,6 +147,13 @@ const CONFIRM_STATUS_LABELS: Record<ConfirmResultDto['status'], string> = {
   rejected: '已拒绝',
   expired: '已过期',
   failed: '执行失败',
+  awaiting_review: '待第二人复核',
+}
+
+/** 复核第一票不是终态：确认/放弃两个按钮还要留着给另一名席位。 */
+function decisionFinal(actionId: string): boolean {
+  const decision = decisions[actionId]
+  return !!decision && decision.kind !== 'review'
 }
 
 /** 执行类动作的闭环：把能跟进的号带回来，别让值班员手里一个号都没有。 */
@@ -164,6 +178,7 @@ function decisionText(actionId: string): string {
   if (decision.kind === 'busy') return '确认请求进行中…'
   if (decision.kind === 'dismissed') return '仅本地放弃：后端没有取消接口，该动作仍在会话内，确认或过期才会失效。'
   if (decision.kind === 'error') return `确认请求失败：${decision.message}`
+  if (decision.kind === 'review') return `复核 ${decision.result.reviews?.length ?? 1}/${decision.result.review_required ?? 2}：还需另一名席位确认（不能是同一人）`
   const result = decision.result
   const label = CONFIRM_STATUS_LABELS[result.status] ?? result.status
   if (result.status === 'executed') return `${label} ${result.action ?? ''}（后端回执 ${result.status}）${executionHandles(result)}`.trim()
@@ -205,6 +220,7 @@ onMounted(() => void loadCapabilities())
 
     <div class="chat">
       <AlertStack />
+      <HandlingBar />
       <div ref="scrollHost" class="chat__scroll" data-testid="timeline">
         <!-- 空态：欢迎 + 建议（点芯片只填句子，发不发由人） -->
         <div v-if="!frames.length && !streaming" class="chat__empty" data-testid="timeline-empty">
@@ -248,12 +264,15 @@ onMounted(() => void loadCapabilities())
                   <div class="proposal__head">
                     <span class="proposal__badge">待确认</span>
                     <span class="proposal__text">{{ frame.action }} ｜ {{ proposalText(frame) }}</span>
+                    <span v-if="(frame.review_required ?? 0) >= 2" class="proposal__review" data-testid="review-progress">
+                      双人复核 {{ frame.reviews?.length ?? 0 }}/{{ frame.review_required }}
+                    </span>
                   </div>
                   <a-space size="small">
                     <a-button
                       type="primary"
                       size="small"
-                      :disabled="!!decisions[frame.action_id]"
+                      :disabled="decisionFinal(frame.action_id)"
                       :loading="decisions[frame.action_id]?.kind === 'busy'"
                       :data-testid="`confirm-${frame.action_id}`"
                       @click="confirmProposal(frame)"

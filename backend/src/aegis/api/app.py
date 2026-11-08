@@ -38,6 +38,7 @@ from aegis.api.routers import (
     operators,
     ops,
     rules,
+    spaces,
     stream,
     warnings,
 )
@@ -141,6 +142,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
     app.include_router(operators.build_router())
     app.include_router(alerts.build_router())
     app.include_router(notifications.build_router())
+    app.include_router(spaces.build_router())
     app.include_router(stream.build_router())
     app.include_router(build_workflow_router())
     if cfg.assistant_enabled:

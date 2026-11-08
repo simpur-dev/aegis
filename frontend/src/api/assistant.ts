@@ -130,6 +130,8 @@ export interface ActionSpecDto {
   required_role: string
   needs_confirm: boolean
   reversible: boolean
+  /** 高安全部署开启双人复核后，本动作是否需要两名不同席位各投一票（默认配置为关）。 */
+  dual_review?: boolean
   /** 词表自己的示例句：页面上的建议条就预填它。缺字段时是空串，建议条据此不渲染成可点项。 */
   example: string
   /** 当前席位是否够角色。匿名访问时全为 false——界面仍列出动作，只是点不动并说明缺什么。 */
@@ -145,6 +147,8 @@ export interface CapabilitiesDto {
   confirm_ttl_seconds: number
   /** 动作台账是否持久：内存形态重启即失，界面据此提示"演示形态"。 */
   control_actions_persistent: boolean
+  /** 服务端是否打开双人复核配置项；不报角色表，动作清单里每项自带 dual_review 标记。 */
+  dual_review_enabled?: boolean
 }
 
 /**
@@ -160,6 +164,7 @@ export function capabilitiesShape(raw: unknown): CapabilitiesDto {
     session_ttl_seconds: Number(record.session_ttl_seconds ?? 0),
     confirm_ttl_seconds: Number(record.confirm_ttl_seconds ?? 0),
     control_actions_persistent: record.control_actions_persistent === true,
+    dual_review_enabled: record.dual_review_enabled === true,
   }
 }
 
@@ -172,6 +177,7 @@ function actionSpec(raw: unknown): ActionSpecDto {
     required_role: String(record.required_role ?? ''),
     needs_confirm: record.needs_confirm === true,
     reversible: record.reversible === true,
+    dual_review: record.dual_review === true,
     example: typeof record.example === 'string' ? record.example : '',
     allowed: record.allowed === true,
     denied_reason: typeof record.denied_reason === 'string' ? record.denied_reason : null,
@@ -197,6 +203,15 @@ export interface ActionCreatedDto {
   replayed?: boolean
   preview?: Record<string, unknown> | null
   result?: Record<string, unknown>
+  /** 双人复核：0 = 本人一次确认；2 = 两名不同席位各一票。 */
+  review_required?: number
+  reviews?: ReviewVoteDto[]
+}
+
+export interface ReviewVoteDto {
+  operator_id: string
+  role: string
+  at: string
 }
 
 export interface ActionRecordDto {
@@ -211,14 +226,17 @@ export interface ActionRecordDto {
   expires_at: string | null
   created_at: string | null
   updated_at: string | null
+  review_required?: number
+  reviews?: ReviewVoteDto[]
 }
 
 export interface ConfirmActionRequestDto {
   actor?: string
 }
 
-/** `status` 的四个取值就是后端 confirm() 的四条返回分支（services/assistant/service.py）。 */
-export type ConfirmStatus = 'executed' | 'rejected' | 'expired' | 'failed'
+/** `status` 的五个取值就是后端 confirm() 的返回分支（services/assistant/service.py）。
+ *  `awaiting_review` 只在双人复核开启时出现：第一票已记、动作还没执行，卡片仍可再点一次。 */
+export type ConfirmStatus = 'executed' | 'rejected' | 'expired' | 'failed' | 'awaiting_review'
 
 export interface ConfirmResultDto {
   status: ConfirmStatus
@@ -228,6 +246,10 @@ export interface ConfirmResultDto {
   result?: Record<string, unknown>
   reason?: string
   error?: string
+  /** 复核支路：错误码由后端给出（401/403/409 的 HTTP 事实会以异常抛出，不进这个字段）。 */
+  code?: string
+  review_required?: number
+  reviews?: ReviewVoteDto[]
 }
 
 // ---------- 对话请求体（assistant_api.py:32-39，extra="forbid"） ----------
@@ -341,6 +363,9 @@ export interface ProposalFrame {
   status: string
   expires_in_seconds: number
   session_id: string
+  /** 双人复核档：需几票、已收哪几票。缺省 0 = 本人一次确认（默认配置）。 */
+  review_required?: number
+  reviews?: ReviewVoteDto[]
 }
 
 /** `result` 帧是 `{action, ...payload}` 平铺的（services/assistant.py:511），payload 形状随动作而变。 */

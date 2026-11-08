@@ -49,6 +49,10 @@ class ActionSpec:
     reversible: bool = False
     idempotent: bool = True
     previewable: bool = False
+    #: 高安全部署打开 `AEGIS_ASSISTANT_DUAL_REVIEW_ENABLED` 时，本动作是否需要两名不同席位复核。
+    #: 只标在四类不可逆动作上（发布预警/批量/改规则/设备控制）；默认关着时这个字段完全不生效，
+    #: 不会给日常处置平白加一道审批——升级方案 §3.1 规则 3 与 D5 都要求这一点。
+    dual_review: bool = False
     example: str = ""
 
 

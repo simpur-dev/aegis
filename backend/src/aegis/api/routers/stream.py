@@ -49,6 +49,8 @@ def build_router() -> APIRouter:
             await ctn.transport.subscribe("platform.alert.>", _on_message),
             await ctn.transport.subscribe(subjects.ops("feedback", "status"), _on_message),
             await ctn.transport.subscribe(subjects.ops("assistant", "notify"), _on_message),
+            # 协同处置任务的状态迁移：`HandlingBar` 靠它即时更新，断线后由 /spaces 对账。
+            await ctn.transport.subscribe(subjects.ops("handling", "task"), _on_message),
         ]
 
         async def _gen() -> AsyncIterator[str]:

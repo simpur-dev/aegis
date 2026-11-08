@@ -117,6 +117,7 @@ class NotifyGroup(Action):
         needs_confirm=True,
         writes=True,
         previewable=True,
+        dual_review=True,
         example="群发通知 @lead-01 @lead-02 立即会商",
     )
 

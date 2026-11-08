@@ -128,6 +128,15 @@ class Settings(BaseSettings):
     assistant_session_ttl_seconds: float = 1_800.0
     #: 待确认动作的有效期（秒）：写动作落 `control_actions.expires_at`，超时后确认无效。
     assistant_confirm_ttl_seconds: int = 300
+    #: 双人复核（升级方案 §3.1 规则 3）：默认**关**，关着就是 D5「指令即执行」——
+    #: 操作者本人的一次确认即执行，不额外设审批链。打开后仅四类高危动作（发布预警、批量、
+    #: 改规则、设备控制）要求两名不同且达到角色门槛的席位各投一票；这是部署方的安全档位，
+    #: 不是助手自己长出来的权限，也不是对操作者能力的削减（见 services/assistant/review.py）。
+    assistant_dual_review_enabled: bool = False
+
+    #: 审计流水 `audit_ops` 的热分区保留月数（012 起按月 RANGE 分区）。过期月分区只被
+    #: DETACH 成独立归档表，行不删；0 与负数由 SQL 函数拒绝，不会静默把审计抹掉。
+    audit_retention_months: int = 24
 
     # 告警（P2）：订阅 `platform.alert.>` 的去重落账与处置面。关掉时端点 503、订阅不注册。
     alerts_enabled: bool = True

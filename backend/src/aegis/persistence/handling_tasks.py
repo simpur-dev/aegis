@@ -44,6 +44,40 @@ def space_from_row(row: Any) -> dict[str, Any]:
     }
 
 
+def space_summary_from_row(row: Any) -> dict[str, Any]:
+    """空间列表的一行：空间本身 + 任务计数（GROUP BY 一次算完，不做 N+1）。"""
+    return {
+        **space_from_row(row),
+        "tasks_total": int(row["tasks_total"]),
+        "tasks_open": int(row["tasks_open"]),
+        "tasks_closed": int(row["tasks_total"]) - int(row["tasks_open"]),
+    }
+
+
+async def get_space(pool: Any, space_id: str) -> dict[str, Any] | None:
+    row = await pool.fetchrow(f"SELECT {_SPACE_COLUMNS} FROM handling_spaces WHERE space_id = $1", space_id)
+    return None if row is None else space_from_row(row)
+
+
+async def list_spaces(pool: Any, *, open_only: bool = True, limit: int = 50) -> list[dict[str, Any]]:
+    where = "WHERE s.status = 'open'" if open_only else ""
+    rows = await pool.fetch(
+        f"""
+        SELECT s.space_id, s.warning_id, s.status, s.created_at, s.closed_at,
+               count(t.task_id) AS tasks_total,
+               count(t.task_id) FILTER (WHERE t.status <> 'closed') AS tasks_open
+        FROM handling_spaces s
+        LEFT JOIN handling_tasks t ON t.space_id = s.space_id
+        {where}
+        GROUP BY s.space_id, s.warning_id, s.status, s.created_at, s.closed_at
+        ORDER BY s.created_at DESC
+        LIMIT $1
+        """,
+        max(1, min(int(limit), 200)),
+    )
+    return [space_summary_from_row(row) for row in rows]
+
+
 async def ensure_space(pool: Any, *, space_id: str, warning_id: str) -> dict[str, Any]:
     """一条预警一个空间。space_id 与 warning_id 同值是应用层约定，不是 DB 约束。"""
     row = await pool.fetchrow(

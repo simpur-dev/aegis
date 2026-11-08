@@ -9,6 +9,7 @@ import ServiceTokenBar from '@/components/ServiceTokenBar.vue'
 import AssistantDock from '@/components/assistant/AssistantDock.vue'
 import { useAlerts } from '@/composables/useAlerts'
 import { useEventStream } from '@/composables/useEventStream'
+import { useHandlingSpace } from '@/composables/useHandlingSpace'
 import { antdTheme } from '@/theme/antd'
 import { NAV_GROUPS } from '@/router'
 import { useTheme } from '@/theme/useTheme'
@@ -39,6 +40,10 @@ const { events, connected, stalled } = useEventStream()
 const { attachStream, urgentCards, badgeCount, refresh } = useAlerts()
 attachStream({ events, connected })
 void refresh()
+// 同一条共享流同时喂告警卡与处置空间：按 subject 分流，不开第二条 SSE 连接。
+const { attachStream: attachSpaceStream, refresh: refreshSpaces } = useHandlingSpace()
+attachSpaceStream({ events, connected })
+void refreshSpaces()
 
 let timer: number | undefined
 

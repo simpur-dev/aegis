@@ -284,6 +284,7 @@ class PostgresStore:
         self._pool: Any | None = None
         self._connect_errors = 0
         self._mapping_rejected = 0
+        self._audit_retention_months = cfg.audit_retention_months
 
         self._read = read_model or PlatformStore()
         self._buffer = WriteBuffer(
@@ -313,6 +314,12 @@ class PostgresStore:
 
     async def ensure_space(self, *, space_id: str, warning_id: str) -> dict[str, Any]:
         return await handling_tasks.ensure_space(await self.connect(), space_id=space_id, warning_id=warning_id)
+
+    async def get_space(self, space_id: str) -> dict[str, Any] | None:
+        return await handling_tasks.get_space(await self.connect(), space_id)
+
+    async def list_spaces(self, *, open_only: bool = True, limit: int = 50) -> list[dict[str, Any]]:
+        return await handling_tasks.list_spaces(await self.connect(), open_only=open_only, limit=limit)
 
     async def ensure_task(self, *, space_id: str, stu_id: str) -> tuple[dict[str, Any], bool]:
         return await handling_tasks.ensure_task(await self.connect(), space_id=space_id, stu_id=stu_id)
@@ -383,6 +390,7 @@ class PostgresStore:
         impact_scope: dict[str, Any],
         expires_in_seconds: int,
         idempotency_key: str | None,
+        review_required: int = 0,
     ) -> tuple[dict[str, Any], bool]:
         return await control_actions.create_proposed(
             await self.connect(),
@@ -395,10 +403,14 @@ class PostgresStore:
             impact_scope=impact_scope,
             expires_in_seconds=expires_in_seconds,
             idempotency_key=idempotency_key,
+            review_required=review_required,
         )
 
     async def confirm_action(self, action_id: str) -> dict[str, Any] | None:
         return await control_actions.confirm_action(await self.connect(), action_id)
+
+    async def review_action(self, action_id: str, reviewer: dict[str, Any]) -> tuple[dict[str, Any], bool] | None:
+        return await control_actions.review_action(await self.connect(), action_id, reviewer)
 
     async def mark_action_executed(self, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None:
         return await control_actions.mark_executed(await self.connect(), action_id, result)
@@ -530,6 +542,10 @@ class PostgresStore:
             bootstrap = await asyncpg.connect(self._dsn)
             try:
                 await apply_migrations(bootstrap)
+                # 012 把 audit_ops 换成按月分区：跨月要补未来的月分区，超过保留期的
+                # 月分区摘成冷归档表。两个函数都幂等，且只在连接池首次建立时跑一次。
+                await bootstrap.execute("SELECT aegis_audit_ensure_partitions(0, 2)")
+                await bootstrap.execute("SELECT aegis_audit_detach_expired($1)", self._audit_retention_months)
             finally:
                 await bootstrap.close()
         except Exception as exc:
@@ -571,6 +587,8 @@ class PostgresStore:
 
     async def migrate(self) -> list[str]:
         await self.connect()
+        # 分区维护挂在 connect() 的 bootstrap 上（每次建池一次），这里只报"本次实际应用了哪些
+        # 迁移文件"——运维台账与测试断言的口径不因维护动作改变。
         return await apply_migrations(self.require_pool(), directory=SQL_DIR)
 
     async def flush(self, *, timeout_ms: float | None = None) -> int:

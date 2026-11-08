@@ -172,11 +172,15 @@ def build_router() -> APIRouter:
     ) -> dict[str, Any]:
         service = _assistant(ctn)
         operator = await _operator(ctn, x_operator)
-        return await service.confirm(
-            action_id=action_id,
-            actor=None if payload is None else payload.actor,
-            operator=operator,
-        )
+        try:
+            return await service.confirm(
+                action_id=action_id,
+                actor=None if payload is None else payload.actor,
+                operator=operator,
+            )
+        except ActionError as exc:
+            # 双人复核的资格/重复票是 HTTP 事实（401/403/409），不是"确认没成功"的回执。
+            raise _http_error(exc) from exc
 
     @router.post("/actions/{action_id}/revoke")
     async def revoke_action(

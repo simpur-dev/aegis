@@ -766,7 +766,13 @@ def create_container(
         sla_reach_seconds=cfg.sla_reach_seconds,
     )
     # 协同处置台账：内存与持久两套同语义，跨重启差异如实外露。
-    collab = CollabService(handling_task_port(store), persistent=not isinstance(store, PlatformStore))
+    # 任务状态迁移广播走注入的回调（`services/` 不得 import aegis.bus），与站内通知同一取向。
+    collab = CollabService(
+        handling_task_port(store),
+        persistent=not isinstance(store, PlatformStore),
+        publish=gateway.publish_to,
+        subject=subjects.ops("handling", "task"),
+    )
     # 发布语义只有一份：主链路、工作流画布、助手动作共用同一个 Publisher。
     publisher = WarningPublisher(dispatcher=dispatcher, gateway=gateway)
     parser = DisasterTextParser(

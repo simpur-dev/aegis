@@ -17,11 +17,12 @@ from typing import Any
 from aegis.config import Settings, get_settings
 from aegis.domain.operator import Operator
 from aegis.observability.tracer import Tracer
-from aegis.services.assistant.base import ActionContext, ActionError
+from aegis.services.assistant.base import Action, ActionContext, ActionError
 from aegis.services.assistant.executor import Executor
 from aegis.services.assistant.intent import Intent, IntentClassifier, bulk_scope_without_target, out_of_scope_action
 from aegis.services.assistant.narrate import narrate_result
 from aegis.services.assistant.registry import ActionRegistry
+from aegis.services.assistant.review import DualReview, ReviewPolicy
 from aegis.services.interpret.text_guard import number_tokens
 from aegis.storage.store import SupportsControlActions
 
@@ -69,8 +70,16 @@ class AssistantService:
         self._ttl = float(self._settings.assistant_session_ttl_seconds)
         self._repo = control_actions
         self._persistent = control_actions_persistent
+        # 双人复核是配置档位：默认关。打开时执行器按 spec 决定提案要几票，
+        # 确认路由按同一份 policy 校验投票资格——两份清单不各写一遍。
+        self._review_policy = ReviewPolicy(enabled=self._settings.assistant_dual_review_enabled)
+        self._dual_review = DualReview(control_actions, self._review_policy) if control_actions is not None else None
         # 动作台账缺席时只有读动作能跑：写动作必须跨重启存活，内存 pending 做不到
-        self._executor = Executor(repo=control_actions, confirm_ttl_seconds=int(self._settings.assistant_confirm_ttl_seconds))
+        self._executor = Executor(
+            repo=control_actions,
+            confirm_ttl_seconds=int(self._settings.assistant_confirm_ttl_seconds),
+            review_policy=self._review_policy,
+        )
         self._tracer = tracer or Tracer()
         self._sessions: dict[str, AssistantSession] = {}
         self._order: deque[str] = deque(maxlen=_MAX_SESSIONS)
@@ -91,6 +100,9 @@ class AssistantService:
             "confirm_ttl_seconds": int(self._settings.assistant_confirm_ttl_seconds),
             # 内存形态也能跑写动作，但重启即失：如实标注，前端据此提示"演示形态"
             "control_actions_persistent": self._persistent,
+            # 配置面只报"开没开"，不报"谁能复核"：动作清单里每项自带 dual_review 标记，
+            # 两处合起来才是完整事实，前端不需要再抄一份角色表。
+            "dual_review_enabled": self._review_policy.enabled,
         }
 
     async def respond(
@@ -181,7 +193,11 @@ class AssistantService:
         )
 
     async def confirm(self, *, action_id: str, actor: str | None = None, operator: Operator | None = None) -> dict[str, Any]:
-        """确认执行：台账里 `proposed → executing → executed/failed`，并发下只能成功一次。"""
+        """确认执行：台账里 `proposed → executing → executed/failed`，并发下只能成功一次。
+
+        双人复核打开时多一条支路：第一票只记票、不执行；第二票把状态迁到 `executing`
+        后才走同一份执行器。两条支路共用下面这唯一的 `resume`，不复制执行逻辑。
+        """
         if self._repo is None:
             return {"status": "rejected", "reason": "当前形态没有动作台账（control_actions），写动作不可用", "action_id": action_id}
         record = await self._repo.get_action(action_id)
@@ -198,8 +214,11 @@ class AssistantService:
             space_id=record.get("space_id"),
             approved=True,
         )
+        preconfirmed = await self._vote_if_required(action_id, action, record, operator)
+        if isinstance(preconfirmed, dict):
+            return preconfirmed
         try:
-            outcome = await self._executor.resume(action, ctx, action_id)
+            outcome = await self._executor.resume(action, ctx, action_id, preconfirmed=preconfirmed)
         except ActionError as exc:
             # `confirm_action` 命中 0 行时分不清"已处置"与"已过期"：读回当前态再说，
             # 否则界面上会把"已经执行过"报成"过期"，两条回执的话术不一样。
@@ -208,6 +227,51 @@ class AssistantService:
             return {"status": status, "action_id": action_id, "action": action.spec.name, "reason": exc.message, "result": None}
         data = {} if outcome.result is None else dict(outcome.result.data)
         return {"status": "executed", "action_id": action_id, "action": action.spec.name, "actor": actor, "result": data}
+
+    async def _vote_if_required(
+        self,
+        action_id: str,
+        action: Action,
+        record: dict[str, Any],
+        operator: Operator | None,
+    ) -> bool | dict[str, Any]:
+        """复核支路。返回 `bool` 表示走执行器（是否第二票已预迁移），返回 dict 表示就地回执。
+
+        资格/重复票的失败刻意往上抛 `ActionError`：那不是"确认没成功"的业务回执，
+        而是 401/403/409 的 HTTP 事实，由 API 层的 `_http_error` 统一翻译。
+        """
+        required = int(record.get("review_required") or 0)
+        if required < 2 or str(record.get("status")) != "proposed":
+            return False
+        if self._dual_review is None or not self._dual_review.enabled:
+            # 台账是跨重启的：动作创建时开着双人复核，重启后配置关了，不能悄悄降成单票。
+            return {
+                "status": "rejected",
+                "action_id": action_id,
+                "action": action.spec.name,
+                "reason": "该提案要求双人复核，但当前实例未开启该配置项；不降级成单票执行",
+                "result": None,
+            }
+        try:
+            outcome = await self._dual_review.vote(action_id, operator, action.spec)
+        except ActionError as exc:
+            self._reject(None, action=action.spec.name, reason=exc.message, detail={"code": exc.code})
+            raise
+        if outcome.ready:
+            return True
+        reviews = list(outcome.record.get("reviewers") or [])
+        return {
+            "status": "awaiting_review",
+            "action_id": action_id,
+            "action": action.spec.name,
+            "review_required": required,
+            "reviews": reviews,
+            "reason": (
+                f"已收 {len(reviews)}/{required} 票，还需另一名"
+                f"{self._review_policy.minimum_role(action.spec).value} 及以上席位复核（不能是同一人）"
+            ),
+            "result": None,
+        }
 
     async def _conflict_status(self, action_id: str) -> str:
         """确认失败时读回当前态：已过期与已处置是两句不同的话。"""
@@ -248,6 +312,8 @@ class AssistantService:
                 "expires_in_seconds": outcome.expires_in_seconds,
                 "replayed": outcome.replayed,
                 "preview": None if outcome.preview is None else outcome.preview.as_dict(),
+                "review_required": outcome.review_required,
+                "reviews": list(outcome.reviews),
             }
         data = {} if outcome.result is None else dict(outcome.result.data)
         return {"status": "executed", "action_id": None, "action": action_name, "result": data}
@@ -313,13 +379,16 @@ class AssistantService:
                     "expires_in_seconds": outcome.expires_in_seconds,
                     "replayed": outcome.replayed,
                     "preview": preview,
+                    "review_required": outcome.review_required,
+                    "reviews": list(outcome.reviews),
                     "session_id": session.session_id,
                 },
             )
+            review_note = "需两名不同席位复核，" if outcome.review_required >= 2 else ""
             yield AssistantEvent(
                 "answer",
                 {
-                    "text": f"已生成待确认动作「{action.spec.title}」（{outcome.action_id}），确认后才会执行；"
+                    "text": f"已生成待确认动作「{action.spec.title}」（{outcome.action_id}），{review_note}确认后才会执行；"
                     f"{int(outcome.expires_in_seconds // 60)} 分钟内有效。"
                 },
             )

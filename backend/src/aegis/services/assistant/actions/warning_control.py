@@ -129,6 +129,7 @@ class WarningPublish(_WarningControlAction):
         needs_confirm=True,
         writes=True,
         previewable=True,
+        dual_review=True,
         example="把 wrn_abcdef123456 发出去",
     )
 
@@ -155,6 +156,7 @@ class WarningRevoke(_WarningControlAction):
         needs_confirm=True,
         writes=True,
         previewable=True,
+        dual_review=True,
         example="把 wrn_abcdef123456 撤销掉",
     )
 
@@ -181,6 +183,7 @@ class WarningChangeLevel(_WarningControlAction):
         needs_confirm=True,
         writes=True,
         previewable=True,
+        dual_review=True,
         example="把 wrn_abcdef123456 调整为 2 级",
     )
 
@@ -206,6 +209,7 @@ class WarningResend(_WarningControlAction):
         needs_confirm=True,
         writes=True,
         previewable=True,
+        dual_review=True,
         example="把 wrn_abcdef123456 再发一遍",
     )
 
@@ -232,6 +236,7 @@ class WarningSilence(_WarningControlAction):
         needs_confirm=True,
         writes=True,
         previewable=True,
+        dual_review=True,
         example="把 wrn_abcdef123456 静默 30 分钟",
     )
 

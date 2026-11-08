@@ -15,7 +15,8 @@ from typing import Any
 
 _COLUMNS = (
     "action_id, operator_id, action, space_id, utterance, resolved_args, status, "
-    "idempotency_key, impact_scope, result, error, expires_at, created_at, updated_at"
+    "idempotency_key, impact_scope, result, error, expires_at, created_at, updated_at, "
+    "review_required, reviewers"
 )
 REVOKE_WINDOW_SECONDS = 60
 STUCK_AFTER_SECONDS = 600
@@ -41,6 +42,10 @@ def action_from_row(row: Any) -> dict[str, Any]:
         "expires_at": _iso(row["expires_at"]),
         "created_at": _iso(row["created_at"]),
         "updated_at": _iso(row["updated_at"]),
+        # 012：双人复核票。jsonb 由建连时注册的 orjson 解码器还原成 Python 对象，
+        # 与内存台账返回的形状保持一致（见 storage/store.py::ControlActionStore）。
+        "review_required": int(row["review_required"]),
+        "reviewers": list(row["reviewers"] or []),
     }
 
 
@@ -56,17 +61,19 @@ async def create_proposed(
     impact_scope: dict[str, Any],
     expires_in_seconds: int,
     idempotency_key: str | None,
+    review_required: int = 0,
 ) -> tuple[dict[str, Any], bool]:
     """落一条 `proposed`。返回 (记录, 是否幂等重放)。
 
     幂等键冲突时不覆盖：直接返回首次那条，`replayed=True`——重复提交同一件事不该产生第二个提案。
+    `review_required=2` 时该动作要两名不同席位复核；默认 0 保持 D5「指令即执行」不变。
     """
     row = await pool.fetchrow(
         f"""
         INSERT INTO control_actions
             (action_id, operator_id, action, space_id, utterance, resolved_args, status,
-             idempotency_key, impact_scope, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, 'proposed', $7, $8, now() + make_interval(secs => $9))
+             idempotency_key, impact_scope, expires_at, review_required)
+        VALUES ($1, $2, $3, $4, $5, $6, 'proposed', $7, $8, now() + make_interval(secs => $9), $10)
         ON CONFLICT (idempotency_key) DO NOTHING
         RETURNING {_COLUMNS}
         """,
@@ -79,6 +86,7 @@ async def create_proposed(
         idempotency_key,
         impact_scope,
         int(expires_in_seconds),
+        int(review_required),
     )
     if row is not None:
         return action_from_row(row), False
@@ -89,16 +97,62 @@ async def create_proposed(
 
 
 async def confirm_action(pool: Any, action_id: str) -> dict[str, Any] | None:
-    """`proposed → executing`。命中 0 行 = 已被处置、已过期或不存在。"""
+    """`proposed → executing`。命中 0 行 = 已被处置、已过期或不存在。
+
+    复核票不够的动作**不能**从这条路绕过：数据库自己挡一次，不依赖调用方记得判。
+    第二票的迁移由 `review_action` 在同一条 UPDATE 里完成，那时状态已是 `executing`，
+    本函数自然也不会重复命中。
+    """
     row = await pool.fetchrow(
         f"""
         UPDATE control_actions SET status = 'executing', updated_at = now()
-        WHERE action_id = $1 AND status = 'proposed' AND (expires_at IS NULL OR expires_at > now())
+        WHERE action_id = $1 AND status = 'proposed'
+          AND (expires_at IS NULL OR expires_at > now())
+          AND (review_required = 0 OR jsonb_array_length(reviewers) >= review_required)
         RETURNING {_COLUMNS}
         """,
         action_id,
     )
     return None if row is None else action_from_row(row)
+
+
+async def review_action(pool: Any, action_id: str, reviewer: dict[str, Any]) -> tuple[dict[str, Any], bool] | None:
+    """记一票复核，返回 (记录, 是否已凑齐并执行)。
+
+    一条 UPDATE 同时做三件事：追加票、判是否到数、决定是否迁到 `executing`。
+    两个值班长同时点第二票时，行锁让后一个在 `status='proposed'` 的重检查里落空，
+    因此只会执行一次——这正是 FR-4.4「一人一票、不重复」要的语义。
+
+    `NOT EXISTS (... jsonb_array_elements ...)` 保证同一个席位不能投第二票；
+    过期动作也不收票，与 `confirm_action` 同一口径。
+    """
+    row = await pool.fetchrow(
+        f"""
+        UPDATE control_actions
+        SET reviewers = reviewers || $2::jsonb,
+            status = CASE
+                WHEN jsonb_array_length(reviewers) + 1 >= review_required THEN 'executing'
+                ELSE 'proposed'
+            END,
+            updated_at = now()
+        WHERE action_id = $1
+          AND status = 'proposed'
+          AND review_required > 0
+          AND (expires_at IS NULL OR expires_at > now())
+          AND NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(reviewers) AS vote
+              WHERE vote->>'operator_id' = $3::text
+          )
+        RETURNING {_COLUMNS}
+        """,
+        action_id,
+        [reviewer],
+        str(reviewer["operator_id"]),
+    )
+    if row is None:
+        return None
+    record = action_from_row(row)
+    return record, record["status"] == "executing"
 
 
 async def mark_executed(pool: Any, action_id: str, result: dict[str, Any]) -> dict[str, Any] | None:

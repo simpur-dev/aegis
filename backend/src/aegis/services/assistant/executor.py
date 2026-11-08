@@ -26,6 +26,7 @@ from aegis.services.assistant.base import (
     ImpactPreview,
     ResolvedTargets,
 )
+from aegis.services.assistant.review import ReviewPolicy
 from aegis.storage.store import SupportsControlActions
 
 #: 错误码 → HTTP 状态。只在这里映射一次，路由层不再各自 if/elif。
@@ -35,6 +36,8 @@ ERROR_STATUS: dict[str, int] = {
     "E_ACTION_PARAM_INVALID": 422,
     "E_ACTION_CONFLICT": 409,
     "E_ACTION_EXPIRED": 410,
+    "E_ACTION_REVIEW_FORBIDDEN": 403,
+    "E_ACTION_DUPLICATE_REVIEW": 409,
     "E_ACTION_RATE_LIMITED": 429,
     "E_TARGET_NOT_FOUND": 404,
     "E_TARGET_AMBIGUOUS": 409,
@@ -65,6 +68,9 @@ class ExecutionOutcome:
     expires_in_seconds: int = 0
     #: 幂等键命中：返回的是首次那条记录，副作用没有重复发生。
     replayed: bool = False
+    #: 高安全档位下这条提案要几票（0 = 本人一次确认）；前端据此显示复核进度。
+    review_required: int = 0
+    reviews: tuple[dict[str, Any], ...] = ()
 
 
 class Executor:
@@ -74,10 +80,17 @@ class Executor:
     内存 pending 做不到这一点，所以宁可明确拒绝，也不退回"重启就丢"的老路。
     """
 
-    def __init__(self, *, repo: SupportsControlActions | None = None, confirm_ttl_seconds: int = 300) -> None:
+    def __init__(
+        self,
+        *,
+        repo: SupportsControlActions | None = None,
+        confirm_ttl_seconds: int = 300,
+        review_policy: ReviewPolicy | None = None,
+    ) -> None:
         self._repo = repo
         # 下限压到 1 秒：生产默认 300，测试要能在秒级验证"过期确认不生效"
         self._ttl = max(1, int(confirm_ttl_seconds))
+        self._reviews = review_policy or ReviewPolicy(enabled=False)
 
     async def run(self, action: Action, raw: dict[str, Any], ctx: ActionContext) -> ExecutionOutcome:
         started = time.perf_counter()
@@ -97,13 +110,22 @@ class Executor:
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
 
-    async def resume(self, action: Action, ctx: ActionContext, action_id: str) -> ExecutionOutcome:
-        """确认后的执行：原子迁移 `proposed → executing`，再跑动作、落结果。"""
+    async def resume(self, action: Action, ctx: ActionContext, action_id: str, *, preconfirmed: bool = False) -> ExecutionOutcome:
+        """确认后的执行：原子迁移 `proposed → executing`，再跑动作、落结果。
+
+        `preconfirmed=True` 用于双人复核的第二票：那一票已经在台账里把状态迁到 `executing`，
+        这里不能再调一次 `confirm_action`（命中 0 行会被误报成"已过期"）。
+        """
         started = time.perf_counter()
         repo = self._require_repo()
-        record = await repo.confirm_action(action_id)
-        if record is None:
-            raise ActionError("E_ACTION_CONFLICT", "动作已被处置、已过期或不存在，本次确认没有生效")
+        if preconfirmed:
+            record = await repo.get_action(action_id)
+            if record is None or record.get("status") != "executing":
+                raise ActionError("E_ACTION_CONFLICT", "第二票已落库但动作不在 executing，结果未知")
+        else:
+            record = await repo.confirm_action(action_id)
+            if record is None:
+                raise ActionError("E_ACTION_CONFLICT", "动作已被处置、已过期或不存在，本次确认没有生效")
         params = self._parse(action, dict(record.get("resolved_args") or {}))
         self._authorize(action, ctx)
         targets = await action.resolve(params, ctx)
@@ -145,6 +167,7 @@ class Executor:
             impact_scope=preview.as_dict(),
             expires_in_seconds=self._ttl,
             idempotency_key=ctx.idempotency_key,
+            review_required=self._reviews.votes_required(action.spec),
         )
         return ExecutionOutcome(
             action=action.spec.name,
@@ -155,6 +178,8 @@ class Executor:
             action_id=str(record["action_id"]),
             expires_in_seconds=self._ttl,
             replayed=replayed,
+            review_required=int(record.get("review_required") or 0),
+            reviews=tuple(record.get("reviewers") or ()),
         )
 
     def _require_repo(self) -> SupportsControlActions:

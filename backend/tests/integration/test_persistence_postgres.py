@@ -37,6 +37,8 @@ from aegis.domain.messages import (
 from aegis.persistence.errors import ConnectionFailedError, QueryFailedError, VectorEmbeddingError
 from aegis.persistence.postgres import PostgresStore
 
+asyncpg = pytest.importorskip("asyncpg", reason="真库档需要 asyncpg 驱动")
+
 DSN = os.getenv("AEGIS_TEST_PG_DSN", "")
 pytestmark = pytest.mark.skipif(not DSN, reason="未设置 AEGIS_TEST_PG_DSN，跳过真实 Postgres 测试")
 
@@ -170,6 +172,7 @@ class TestMigrations:
             "009_workflow_runtime.sql",
             "010_assistant_control.sql",
             "011_warning_revocation.sql",
+            "012_audit_partitions.sql",
         ]
 
 
@@ -262,6 +265,42 @@ class TestAlertPersistence:
         assert moved["ack_by"] == "op-a"
 
 
+class TestAuditPartitioning:
+    """012：audit_ops 是按月 RANGE 分区表；写入路由按 ts 落月分区，维护函数幂等。"""
+
+    async def test_audit_ops_is_partitioned_with_default_catchall(self, store: PostgresStore) -> None:
+        pool = store.require_pool()
+        kind = await pool.fetchrow(
+            "SELECT relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relname = 'audit_ops'"
+        )
+        assert kind is not None and kind["relkind"] == b"p", "audit_ops 必须是分区父表（relkind='p'）"
+        names = {
+            row["relname"]
+            for row in await pool.fetch(
+                "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+                "JOIN pg_class p ON p.oid = i.inhparent WHERE p.relname = 'audit_ops'"
+            )
+        }
+        # 24 个月回溯 + 当前 + 2 个月前瞻 + DEFAULT 兜底；起服维护还会继续补未来的月分区
+        assert "audit_ops_default" in names
+        assert len([name for name in names if name.startswith("audit_ops_2")]) >= 25
+
+    async def test_audit_row_routes_by_ts_and_maintenance_is_idempotent(self, store: PostgresStore) -> None:
+        pool = store.require_pool()
+        await pool.execute(
+            "INSERT INTO audit_ops (action_id, phase, operator_id, role, action) "
+            "VALUES ('act_probe000001', 'intent', 'unknown', 'duty', 'warning.publish')"
+        )
+        routed = await pool.fetchrow("SELECT tableoid::regclass::text AS part FROM audit_ops WHERE action_id = 'act_probe000001'")
+        assert routed is not None and routed["part"].startswith("audit_ops_2"), "写入必须落到具体月分区"
+        # 两次维护调用都幂等：起服重复执行是常态，不得重复建分区/重复摘除
+        assert await pool.fetchval("SELECT aegis_audit_ensure_partitions(0, 2)") == []
+        assert await pool.fetchval("SELECT aegis_audit_detach_expired($1)", store._audit_retention_months) == []
+        with pytest.raises(asyncpg.RaiseError):
+            await pool.fetchval("SELECT aegis_audit_detach_expired(0)")  # 保留月数 0 由函数自身拒绝
+
+
 class TestAssistantControlPersistence:
     """真库才能证明的：version 乐观锁（UPDATE...RETURNING 命中 0 行）、通知已读隔离、撤销落库。"""
 
@@ -312,6 +351,32 @@ class TestAssistantControlPersistence:
         assert row is not None
         assert row["status"] == "revoked"
         assert row["released_at"] is not None and row["revoked_at"] is not None, "撤销不抹掉发布事实"
+
+    async def test_dual_review_votes_are_atomic_and_gate_confirmation(self, store: PostgresStore) -> None:
+        """012：两票状态机在 SQL 侧的原子性——同一席位不能投两次，第二票才迁 executing。"""
+        await self._seed_operator(store, "op-lead")
+        await self._seed_operator(store, "op-a")
+        await self._seed_operator(store, "op-b")
+        await store.create_action(
+            action_id="act_deadbeefdeadbeef",
+            operator_id="op-lead",
+            action="warning.publish",
+            space_id=None,
+            utterance="",
+            resolved_args={},
+            impact_scope={},
+            expires_in_seconds=60,
+            idempotency_key=None,
+            review_required=2,
+        )
+        first = await store.review_action("act_deadbeefdeadbeef", {"operator_id": "op-a", "role": "lead", "at": now_iso()})
+        assert first is not None and first[1] is False and len(first[0]["reviewers"]) == 1
+        assert await store.review_action("act_deadbeefdeadbeef", {"operator_id": "op-a", "role": "lead", "at": now_iso()}) is None, (
+            "同一席位不能投第二票"
+        )
+        assert await store.confirm_action("act_deadbeefdeadbeef") is None, "单票不能绕过双人复核"
+        second = await store.review_action("act_deadbeefdeadbeef", {"operator_id": "op-b", "role": "lead", "at": now_iso()})
+        assert second is not None and second[1] is True and second[0]["status"] == "executing"
 
 
 class TestSpatialQueries:

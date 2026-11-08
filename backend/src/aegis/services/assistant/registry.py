@@ -60,6 +60,7 @@ class ActionRegistry:
                     "required_role": spec.required_role.value,
                     "needs_confirm": spec.needs_confirm,
                     "reversible": spec.reversible,
+                    "dual_review": spec.dual_review,
                     "example": spec.example,
                     "allowed": allowed,
                     "denied_reason": None if allowed else f"需要 {spec.required_role.value} 及以上角色",
@@ -87,6 +88,10 @@ class ActionRegistry:
                 raise AssertionError(f"动作 {name} 的 params 必须 extra='forbid'")
             if spec.needs_confirm and not (spec.reversible or spec.previewable):
                 raise AssertionError(f"动作 {name} 需要确认，但既不可撤销也不生成预览：确认没有信息量")
+            # 复核票只能挂在"本来就有确认闸"的动作上：读动作与直接执行类动作没有可等待的状态，
+            # 标了就是配了不生效的空旋钮（assert_consistent 在装配期把它钉死）。
+            if spec.dual_review and not (spec.needs_confirm and spec.previewable):
+                raise AssertionError(f"动作 {name} 标了双人复核，但没有确认闸或影响预览：票无处可投")
             if spec.reversible and type(action).revoke is Action.revoke:
                 raise AssertionError(f"动作 {name} 声明可撤销，但没有实现 revoke")
             if not isinstance(spec.required_role, OperatorRole):

@@ -3,7 +3,13 @@ import { reactive, ref, watch } from 'vue'
 import type { AssistantFrame, ConfirmResultDto } from '@/api/assistant'
 
 /** 待确认动作只有三种下落：后端回执、本地收起、请求没发出去。 */
-type Decision = { kind: 'busy' } | { kind: 'dismissed' } | { kind: 'error'; message: string } | { kind: 'result'; result: ConfirmResultDto }
+type Decision =
+  | { kind: 'busy' }
+  | { kind: 'dismissed' }
+  | { kind: 'error'; message: string }
+  | { kind: 'result'; result: ConfirmResultDto }
+  /** 双人复核的第一票：动作还没执行，这张提案卡仍要让另一名席位再点一次确认。 */
+  | { kind: 'review'; result: ConfirmResultDto }
 
 /**
  * 对话状态放在组件外面。

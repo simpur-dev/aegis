@@ -55,6 +55,7 @@ class DeviceControl(Action):
         needs_confirm=True,
         writes=True,
         previewable=True,
+        dual_review=True,
         example="设备控制 device=valve-01 action=open command_url=https://device.internal/control",
     )
 
