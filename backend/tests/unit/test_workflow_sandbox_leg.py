@@ -29,7 +29,7 @@ BRIDGE_ARGS: dict[str, Any] = {
     "rule_engine": SimpleNamespace(),
     "risk_engine": SimpleNamespace(),
     "warning_service": SimpleNamespace(),
-    "dispatcher": SimpleNamespace(),
+    "publisher": SimpleNamespace(),
     "gateway": SimpleNamespace(),
 }
 #: 案例腿给一条真带 case_id 的案例：这样顶层 `degraded` 是 False，`sandbox` 的降级才是独立事实。

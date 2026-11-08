@@ -175,6 +175,23 @@ async def snooze_alert(pool: Any, alert_id: str, minutes: int) -> dict[str, Any]
     return None if row is None else alert_from_row(row)
 
 
+async def snooze_by_warning(pool: Any, warning_id: str, minutes: int) -> dict[str, Any] | None:
+    """按预警静默：一条预警只有一张告警卡（UNIQUE(warning_id)），故可直接按 warning_id 迁移。
+
+    只改 `snooze_until`，状态不变——静默是推迟升级，不是把告警关掉。
+    """
+    row = await pool.fetchrow(
+        f"""
+        UPDATE assistant_alerts SET snooze_until = now() + make_interval(mins => $2)
+        WHERE warning_id = $1 AND status IN {_OPEN}
+        RETURNING {_COLUMNS}
+        """,
+        warning_id,
+        int(minutes),
+    )
+    return None if row is None else alert_from_row(row)
+
+
 async def escalate_due(pool: Any, *, after_minutes: int) -> list[dict[str, Any]]:
     """把超时未确认的真实告警升级，返回**本实例抢到**的那些。
 

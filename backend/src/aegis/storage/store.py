@@ -17,6 +17,7 @@ from aegis.domain.alert import ACTIONABLE_STATUSES, OPEN_STATUSES
 from aegis.domain.chain import ChainResult
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, parse_iso
 from aegis.domain.operator import Operator
+from aegis.domain.task import ACKABLE_STATUSES, CLAIMABLE_STATUSES, OPEN_TASK_STATUSES
 
 T = TypeVar("T")
 
@@ -125,14 +126,26 @@ class WarningStore:
     def get(self, warning_id: str) -> WarningRecord | None:
         return self._index.get(warning_id)
 
-    def list(self, *, limit: int = 50, region_code: str | None = None, released: bool | None = None) -> list[WarningRecord]:
-        """`released` 由 `released_at` 推导：`WarningRecord` 没有 status 字段，也不新增
-        （契约不动），"已发布/未发布"本来就只有一个真源。"""
+    def list(
+        self,
+        *,
+        limit: int = 50,
+        region_code: str | None = None,
+        released: bool | None = None,
+        status: str | None = None,
+    ) -> list[WarningRecord]:
+        """`status` 读 `WarningRecord.status`（与落库派生列同源）；`released` 只看 `released_at`。
+
+        撤销不改写 `released_at`，所以"已发布"与"已撤销"可以同时成立：两个参数各有用途，
+        不能用其中一个代替另一个。
+        """
         rows = [self._index[wid] for wid in self._order if wid in self._index]
         if region_code:
             rows = [r for r in rows if region_code in r.region_codes]
         if released is not None:
             rows = [r for r in rows if bool(r.released_at) is released]
+        if status is not None:
+            rows = [r for r in rows if r.status == status]
         return rows[-limit:]
 
     @property
@@ -473,6 +486,15 @@ class AlertStore:
         row["snooze_until"] = self._now() + timedelta(minutes=int(minutes))
         return self._public(row)
 
+    async def snooze_by_warning(self, warning_id: str, minutes: int) -> dict[str, Any] | None:
+        """按预警静默，与 SQL 版同一不变量：只改 snooze_until，状态不变。"""
+        alert_id = self._by_warning.get(warning_id)
+        row = self._rows.get(alert_id) if alert_id else None
+        if row is None or row["status"] not in OPEN_STATUSES:
+            return None
+        row["snooze_until"] = self._now() + timedelta(minutes=int(minutes))
+        return self._public(row)
+
     async def escalate_due(self, *, after_minutes: int) -> list[dict[str, Any]]:
         now = self._now()
         cutoff = timedelta(minutes=int(after_minutes))
@@ -490,6 +512,187 @@ class AlertStore:
         return escalated
 
 
+class HandlingTaskStore:
+    """处置空间/任务的内存实现：与 `persistence/handling_tasks.py` 同一套不变量。
+
+    `version` 是乐观锁：每次迁移都带 expected_version，命中不上就是"被别人抢先改过"。
+    它不提供跨重启存活，能力面用 `collab_persistent: false` 如实标注。
+    """
+
+    def __init__(self, maxlen: int = 5_000) -> None:
+        self._rows: dict[str, dict[str, Any]] = {}
+        self._spaces: dict[str, dict[str, Any]] = {}
+        self._by_stu: dict[tuple[str, str], str] = {}
+        self._order: deque[str] = deque(maxlen=maxlen)
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(UTC)
+
+    @staticmethod
+    def _iso(value: Any) -> str | None:
+        return None if value is None else value.isoformat()
+
+    def _public(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {**row, "updated_at": self._iso(row["updated_at"])}
+
+    async def ensure_space(self, *, space_id: str, warning_id: str) -> dict[str, Any]:
+        if space_id not in self._spaces:
+            self._spaces[space_id] = {
+                "space_id": space_id,
+                "warning_id": warning_id,
+                "status": "open",
+                "created_at": self._now(),
+                "closed_at": None,
+            }
+        return {**self._spaces[space_id], "created_at": self._iso(self._spaces[space_id]["created_at"])}
+
+    async def ensure_task(self, *, space_id: str, stu_id: str) -> tuple[dict[str, Any], bool]:
+        key = (space_id, stu_id)
+        existing = self._by_stu.get(key)
+        if existing is not None and existing in self._rows:
+            return self._public(self._rows[existing]), False
+        row: dict[str, Any] = {
+            "task_id": stu_id,
+            "space_id": space_id,
+            "stu_id": stu_id,
+            "assignee": None,
+            "status": "pending",
+            "version": 1,
+            "updated_at": self._now(),
+        }
+        self._rows[stu_id] = row
+        self._by_stu[key] = stu_id
+        self._order.append(stu_id)
+        while len(self._rows) > (self._order.maxlen or 0):
+            dropped = self._rows.pop(self._order.popleft(), None)
+            if dropped is not None:
+                self._by_stu.pop((dropped["space_id"], dropped["stu_id"]), None)
+        return self._public(row), True
+
+    async def get_task(self, task_id: str) -> dict[str, Any] | None:
+        row = self._rows.get(task_id)
+        return None if row is None else self._public(row)
+
+    async def list_tasks(
+        self,
+        *,
+        space_id: str | None = None,
+        assignee: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        rows = [self._rows[tid] for tid in self._order if tid in self._rows]
+        if space_id:
+            rows = [row for row in rows if row["space_id"] == space_id]
+        if assignee:
+            rows = [row for row in rows if row["assignee"] == assignee]
+        if status:
+            rows = [row for row in rows if row["status"] == status]
+        rows.sort(key=lambda row: row["updated_at"], reverse=True)
+        return [self._public(row) for row in rows[: max(1, min(int(limit), 200))]]
+
+    async def _move(
+        self,
+        task_id: str,
+        *,
+        expected_version: int,
+        allowed: frozenset[str],
+        status: str | None = None,
+        assignee: str | None = None,
+    ) -> dict[str, Any] | None:
+        row = self._rows.get(task_id)
+        if row is None or row["status"] not in allowed or row["version"] != int(expected_version):
+            return None
+        row["version"] += 1
+        row["updated_at"] = self._now()
+        if status is not None:
+            row["status"] = status
+        if assignee is not None:
+            row["assignee"] = assignee
+        return self._public(row)
+
+    async def claim_task(self, task_id: str, operator_id: str, expected_version: int) -> dict[str, Any] | None:
+        return await self._move(
+            task_id,
+            expected_version=expected_version,
+            allowed=CLAIMABLE_STATUSES,
+            status="claimed",
+            assignee=operator_id,
+        )
+
+    async def ack_task(self, task_id: str, operator_id: str, expected_version: int) -> dict[str, Any] | None:
+        return await self._move(task_id, expected_version=expected_version, allowed=ACKABLE_STATUSES, status="acked")
+
+    async def assign_task(self, task_id: str, assignee: str, expected_version: int) -> dict[str, Any] | None:
+        return await self._move(task_id, expected_version=expected_version, allowed=OPEN_TASK_STATUSES, status="claimed", assignee=assignee)
+
+    async def transfer_task(self, task_id: str, assignee: str, expected_version: int) -> dict[str, Any] | None:
+        return await self._move(task_id, expected_version=expected_version, allowed=OPEN_TASK_STATUSES, assignee=assignee)
+
+    async def close_task(self, task_id: str, expected_version: int) -> dict[str, Any] | None:
+        return await self._move(task_id, expected_version=expected_version, allowed=OPEN_TASK_STATUSES, status="closed")
+
+
+class NotificationStore:
+    """站内通知的内存实现：与 `persistence/notifications.py` 同一套字段与已读语义。"""
+
+    def __init__(self, maxlen: int = 2_000) -> None:
+        self._rows: dict[int, dict[str, Any]] = {}
+        self._order: deque[int] = deque(maxlen=maxlen)
+        self._next_id = 1
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(UTC)
+
+    @staticmethod
+    def _iso(value: Any) -> str | None:
+        return None if value is None else value.isoformat()
+
+    def _public(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **row,
+            "created_at": self._iso(row["created_at"]),
+            "read_at": self._iso(row["read_at"]),
+        }
+
+    async def insert_notification(
+        self, *, recipient: str, message: str, kind: str, sender: str = "", space_id: str | None = None
+    ) -> dict[str, Any]:
+        row: dict[str, Any] = {
+            "id": self._next_id,
+            "recipient": recipient,
+            "message": message,
+            "kind": kind,
+            "sender": sender,
+            "space_id": space_id,
+            "created_at": self._now(),
+            "read_at": None,
+        }
+        self._next_id += 1
+        self._rows[row["id"]] = row
+        self._order.append(row["id"])
+        while len(self._rows) > (self._order.maxlen or 0):
+            self._rows.pop(self._order.popleft(), None)
+        return self._public(row)
+
+    async def list_notifications(self, *, recipient: str, unread_only: bool = False, limit: int = 50) -> list[dict[str, Any]]:
+        rows = [self._rows[nid] for nid in self._order if nid in self._rows]
+        rows = [row for row in rows if row["recipient"] == recipient]
+        if unread_only:
+            rows = [row for row in rows if row["read_at"] is None]
+        rows.sort(key=lambda row: row["created_at"], reverse=True)
+        return [self._public(row) for row in rows[: max(1, min(int(limit), 200))]]
+
+    async def mark_read(self, notification_id: int, recipient: str) -> dict[str, Any] | None:
+        row = self._rows.get(int(notification_id))
+        if row is None or row["recipient"] != recipient or row["read_at"] is not None:
+            return None
+        row["read_at"] = self._now()
+        return self._public(row)
+
+
 class PlatformStore:
     """平台运行态聚合入口。"""
 
@@ -504,6 +707,8 @@ class PlatformStore:
         # 告警实例（内存态）：同一预警只留一条，重启即失——能力面用
         # `alerts_persistent: false` 如实标注，不假装。
         self.alerts = AlertStore()
+        self.handling_tasks = HandlingTaskStore()
+        self.notifications = NotificationStore()
         # 站点维表（内存态）：与 PostgreSQL 那份同构，由 `scripts/import_stations.py` 显式写入。
         # 内存视图没有持久层，导入只活到进程结束——这一条由导入命令在结果里说清楚。
         self._station_dim: dict[str, dict[str, object]] = {}
@@ -612,8 +817,57 @@ class PlatformStore:
     async def snooze_alert(self, alert_id: str, minutes: int) -> dict[str, Any] | None:
         return await self.alerts.snooze_alert(alert_id, minutes)
 
+    async def snooze_by_warning(self, warning_id: str, minutes: int) -> dict[str, Any] | None:
+        return await self.alerts.snooze_by_warning(warning_id, minutes)
+
     async def escalate_due(self, *, after_minutes: int) -> list[dict[str, Any]]:
         return await self.alerts.escalate_due(after_minutes=after_minutes)
+
+    # ---------- 处置任务（可选能力面：SupportsHandlingTasks） ----------
+
+    async def ensure_space(self, *, space_id: str, warning_id: str) -> dict[str, Any]:
+        return await self.handling_tasks.ensure_space(space_id=space_id, warning_id=warning_id)
+
+    async def ensure_task(self, *, space_id: str, stu_id: str) -> tuple[dict[str, Any], bool]:
+        return await self.handling_tasks.ensure_task(space_id=space_id, stu_id=stu_id)
+
+    async def get_task(self, task_id: str) -> dict[str, Any] | None:
+        return await self.handling_tasks.get_task(task_id)
+
+    async def list_tasks(
+        self, *, space_id: str | None = None, assignee: str | None = None, status: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        return await self.handling_tasks.list_tasks(space_id=space_id, assignee=assignee, status=status, limit=limit)
+
+    async def claim_task(self, task_id: str, operator_id: str, expected_version: int) -> dict[str, Any] | None:
+        return await self.handling_tasks.claim_task(task_id, operator_id, expected_version)
+
+    async def ack_task(self, task_id: str, operator_id: str, expected_version: int) -> dict[str, Any] | None:
+        return await self.handling_tasks.ack_task(task_id, operator_id, expected_version)
+
+    async def assign_task(self, task_id: str, assignee: str, expected_version: int) -> dict[str, Any] | None:
+        return await self.handling_tasks.assign_task(task_id, assignee, expected_version)
+
+    async def transfer_task(self, task_id: str, assignee: str, expected_version: int) -> dict[str, Any] | None:
+        return await self.handling_tasks.transfer_task(task_id, assignee, expected_version)
+
+    async def close_task(self, task_id: str, expected_version: int) -> dict[str, Any] | None:
+        return await self.handling_tasks.close_task(task_id, expected_version)
+
+    # ---------- 站内通知（可选能力面：SupportsNotifications） ----------
+
+    async def insert_notification(
+        self, *, recipient: str, message: str, kind: str, sender: str = "", space_id: str | None = None
+    ) -> dict[str, Any]:
+        return await self.notifications.insert_notification(
+            recipient=recipient, message=message, kind=kind, sender=sender, space_id=space_id
+        )
+
+    async def list_notifications(self, *, recipient: str, unread_only: bool = False, limit: int = 50) -> list[dict[str, Any]]:
+        return await self.notifications.list_notifications(recipient=recipient, unread_only=unread_only, limit=limit)
+
+    async def mark_read(self, notification_id: int, recipient: str) -> dict[str, Any] | None:
+        return await self.notifications.mark_read(notification_id, recipient)
 
     async def record_chain(self, result: ChainResult) -> None:
         await self.chains.add(result)
@@ -659,7 +913,14 @@ class WarningPort(Protocol):
 
     def get(self, warning_id: str) -> WarningRecord | None: ...
 
-    def list(self, *, limit: int = 50, region_code: str | None = None, released: bool | None = None) -> list[WarningRecord]: ...
+    def list(
+        self,
+        *,
+        limit: int = 50,
+        region_code: str | None = None,
+        released: bool | None = None,
+        status: str | None = None,
+    ) -> list[WarningRecord]: ...
 
     @property
     def size(self) -> int: ...
@@ -856,6 +1117,52 @@ def control_action_port(store: object) -> SupportsControlActions | None:
 
 
 @runtime_checkable
+class SupportsNotifications(Protocol):
+    """站内通知台账：内存与持久两套都实现，语义逐条对齐。"""
+
+    async def insert_notification(
+        self, *, recipient: str, message: str, kind: str, sender: str = "", space_id: str | None = None
+    ) -> dict[str, Any]: ...
+
+    async def list_notifications(self, *, recipient: str, unread_only: bool = False, limit: int = 50) -> list[dict[str, Any]]: ...
+
+    async def mark_read(self, notification_id: int, recipient: str) -> dict[str, Any] | None: ...
+
+
+def notification_port(store: object) -> SupportsNotifications | None:
+    return store if isinstance(store, SupportsNotifications) else None
+
+
+@runtime_checkable
+class SupportsHandlingTasks(Protocol):
+    """处置任务台账：内存与持久两套都实现，语义逐条对齐（含 version 乐观锁）。"""
+
+    async def ensure_space(self, *, space_id: str, warning_id: str) -> dict[str, Any]: ...
+
+    async def ensure_task(self, *, space_id: str, stu_id: str) -> tuple[dict[str, Any], bool]: ...
+
+    async def get_task(self, task_id: str) -> dict[str, Any] | None: ...
+
+    async def list_tasks(
+        self, *, space_id: str | None = None, assignee: str | None = None, status: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]: ...
+
+    async def claim_task(self, task_id: str, operator_id: str, expected_version: int) -> dict[str, Any] | None: ...
+
+    async def ack_task(self, task_id: str, operator_id: str, expected_version: int) -> dict[str, Any] | None: ...
+
+    async def assign_task(self, task_id: str, assignee: str, expected_version: int) -> dict[str, Any] | None: ...
+
+    async def transfer_task(self, task_id: str, assignee: str, expected_version: int) -> dict[str, Any] | None: ...
+
+    async def close_task(self, task_id: str, expected_version: int) -> dict[str, Any] | None: ...
+
+
+def handling_task_port(store: object) -> SupportsHandlingTasks | None:
+    return store if isinstance(store, SupportsHandlingTasks) else None
+
+
+@runtime_checkable
 class SupportsAlerts(Protocol):
     """告警台账的可选能力面：内存与持久两套都实现，语义逐条对齐。
 
@@ -890,6 +1197,8 @@ class SupportsAlerts(Protocol):
     async def transfer_alert(self, alert_id: str, assignee: str) -> dict[str, Any] | None: ...
 
     async def snooze_alert(self, alert_id: str, minutes: int) -> dict[str, Any] | None: ...
+
+    async def snooze_by_warning(self, warning_id: str, minutes: int) -> dict[str, Any] | None: ...
 
     async def escalate_due(self, *, after_minutes: int) -> list[dict[str, Any]]: ...
 

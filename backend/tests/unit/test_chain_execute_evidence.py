@@ -18,6 +18,7 @@ from aegis.domain.chain import ChainResult
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit, WarningRecord, now_iso
 from aegis.domain.verdict import RiskVerdict
+from aegis.pipeline.publisher import WarningPublisher
 from aegis.pipeline.stages import HazardStages
 
 REGION = "540121"
@@ -172,7 +173,8 @@ def test_三分支都合规就都进记录() -> None:
 async def test_交付腿缺位时是released而不是造出来的delivered(container: Any) -> None:
     """dispatcher 不在场：`released_at` 可以有（平台已放行），但一条送达记录都不能有。"""
     agents = await start_mock_agents(container.transport, latency_ms=8.0, heartbeat_interval=0.05)
-    container.chain.stages._dispatcher = None
+    # 发布语义已收敛到 WarningPublisher：交付腿在不在场由它决定，不再挂在 stages 上。
+    container.chain.stages._publisher = WarningPublisher(dispatcher=None, gateway=container.gateway)
     try:
         await asyncio.sleep(0.05)
         await container.transport.idle()

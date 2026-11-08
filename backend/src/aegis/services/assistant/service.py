@@ -19,7 +19,7 @@ from aegis.domain.operator import Operator
 from aegis.observability.tracer import Tracer
 from aegis.services.assistant.base import ActionContext, ActionError
 from aegis.services.assistant.executor import Executor
-from aegis.services.assistant.intent import Intent, IntentClassifier, out_of_scope_action
+from aegis.services.assistant.intent import Intent, IntentClassifier, bulk_scope_without_target, out_of_scope_action
 from aegis.services.assistant.narrate import narrate_result
 from aegis.services.assistant.registry import ActionRegistry
 from aegis.services.interpret.text_guard import number_tokens
@@ -119,22 +119,43 @@ class AssistantService:
             yield AssistantEvent("error", {"message": "消息为空"})
             return
 
-        # 越权闸：先看这句话是不是在要一个"还没开放"的写动作，再谈查询。
+        # 越权闸：两种指令都不能进入意图解析——① 动作还没开放；② 动作已开放，但这句话要的是
+        # 整体作用域的批量操作，而助手只做操作者本来能做的**单条**处置，不放大权限。
         violation = out_of_scope_action(body)
         if violation is not None:
             action_name, verb = violation
-            if self._registry.get(action_name) is None:
-                self._reject(session, action=action_name, reason=f"指令要求「{verb}」，该动作当前未开放")
+            unregistered = self._registry.get(action_name) is None
+            bulk = bulk_scope_without_target(body)
+            if unregistered or bulk:
+                reason = (
+                    f"指令要求「{verb}」，该动作当前未开放"
+                    if unregistered
+                    else f"指令要求「{verb}」作用于整体范围，超出单条处置能力；请点名具体编号"
+                )
+                self._reject(session, action=action_name, reason=reason)
                 yield AssistantEvent(
                     "rejected",
                     {
                         "instruction": verb,
                         "action": action_name,
-                        "reason": "该动作当前未开放；可以做的动作见 GET /assistant/capabilities",
+                        "reason": (
+                            "该动作当前未开放；可以做的动作见 GET /assistant/capabilities"
+                            if unregistered
+                            else "整体范围的批量指令不在助手能力内；请点名一条预警编号（wrn_…）"
+                        ),
                         "session_id": session.session_id,
                     },
                 )
-                yield AssistantEvent("answer", {"text": "该指令涉及的动作尚未开放，已留痕。"})
+                yield AssistantEvent(
+                    "answer",
+                    {
+                        "text": (
+                            "该指令涉及的动作尚未开放，已留痕。"
+                            if unregistered
+                            else "该指令要整体批量操作，助手只能按编号逐条处置，已留痕。"
+                        )
+                    },
+                )
                 return
 
         intent = await self._classifier.classify_async(body, region_code=region_code, hazard_hint=hazard_hint, reporter=reporter)

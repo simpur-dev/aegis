@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from aegis.agents.agentkit import AgentKit
 from aegis.agents.mock import MockAgent, start_mock_agents
 from aegis.agents.runtime import build_agent_runtime, resolve_context_face
+from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway
 from aegis.bus.registry import AgentRegistry
 from aegis.bus.transport import BusTransport
@@ -56,12 +57,16 @@ from aegis.observability.instrumentation import register_sla_budgets
 from aegis.observability.metrics import MetricsExporter
 from aegis.observability.telemetry import telemetry_status
 from aegis.observability.tracer import Tracer
+from aegis.pipeline.publisher import WarningPublisher
 from aegis.pipeline.report_intake import ReportIntake
 from aegis.pipeline.stages import HazardStages
 from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
 from aegis.services.alerting import AlertService
+from aegis.services.alerting.notifier import Notifier
 from aegis.services.assistant import Action, ActionDomain, ActionRegistry, AssistantService
+from aegis.services.assistant.actions.action_status import ActionStatus
 from aegis.services.assistant.actions.control import DrillStart, ReportSubmit
+from aegis.services.assistant.actions.notify import NotifyGroup, NotifyLead
 from aegis.services.assistant.actions.query import (
     AgentList,
     ChainExplain,
@@ -74,6 +79,21 @@ from aegis.services.assistant.actions.query import (
     WarningExplain,
     WarningList,
 )
+from aegis.services.assistant.actions.task_control import (
+    TaskAck,
+    TaskAssign,
+    TaskClaim,
+    TaskClose,
+    TaskTransfer,
+)
+from aegis.services.assistant.actions.warning_control import (
+    WarningChangeLevel,
+    WarningPublish,
+    WarningResend,
+    WarningRevoke,
+    WarningSilence,
+)
+from aegis.services.collab.tasks import CollabService
 from aegis.services.interpret.semantic_parser import DisasterTextParser
 from aegis.services.llm.llm_gateway import LlmGateway, build_gateway_if_configured
 from aegis.services.memory.label_flywheel import LabelFlywheel
@@ -90,6 +110,8 @@ from aegis.storage.store import (
     StoreProtocol,
     alert_ledger_port,
     control_action_port,
+    handling_task_port,
+    notification_port,
     operator_ledger_port,
     rule_library_port,
 )
@@ -169,6 +191,8 @@ class PlatformContainer:
     #: 告警台账：订阅 `platform.alert.>` 的去重落账与处置面。内存/持久两套都实现，
     #: `persistent` 如实外露——内存形态重启即失。
     alerts: AlertService | None = None
+    collab: CollabService | None = None
+    notifier: Notifier | None = None
     #: 告警总线订阅句柄：停服时单独取消（不放进 `_tasks`，它不是循环任务）。
     _alert_sub: Any | None = None
     #: 数据飞轮（D9）：人工核签 → `warning_truth_labels` 的投递面；存储没有标注面时如实"未沉淀"
@@ -717,6 +741,8 @@ def create_container(
     async def on_result(result: ChainResult) -> None:
         """单一落库点 + 分析旁路扇出：旁路未启用时这条链只有一步，语义与接入前完全一致。"""
         await store.record_chain(result)
+        # 处置空间/任务与读视图在同一落库点建，不靠定时任务补：链路一落地就能被认领。
+        await collab.ensure_from_chain(result)
         if analytics is not None:
             await analytics.record_chain(result)
 
@@ -728,6 +754,10 @@ def create_container(
         tracer,
         sla_reach_seconds=cfg.sla_reach_seconds,
     )
+    # 协同处置台账：内存与持久两套同语义，跨重启差异如实外露。
+    collab = CollabService(handling_task_port(store), persistent=not isinstance(store, PlatformStore))
+    # 发布语义只有一份：主链路、工作流画布、助手动作共用同一个 Publisher。
+    publisher = WarningPublisher(dispatcher=dispatcher, gateway=gateway)
     parser = DisasterTextParser(
         rule_engine=rule_engine,
         risk_engine=RiskEngine(rule_engine),
@@ -755,7 +785,7 @@ def create_container(
         risk_engine=RiskEngine(rule_engine),
         task_parser=TaskParser(contracts, settings=cfg),
         warning_service=warning_service,
-        dispatcher=dispatcher,
+        publisher=publisher,
         knowledge=knowledge,
         retrieval=retrieval,
         suggestions=suggestions,
@@ -789,7 +819,7 @@ def create_container(
             rule_engine=rule_engine,
             risk_engine=RiskEngine(rule_engine),
             warning_service=warning_service,
-            dispatcher=dispatcher,
+            publisher=publisher,
             gateway=gateway,
             outbound=outbound,
             # 案例驱动推演的注入位：知识腿没装配就留 None，节点侧显式降级而不是回退到 ±1 启发式
@@ -862,6 +892,14 @@ def create_container(
     register_sla_budgets(tracer.ledger, cfg, container.exporter)
 
     container.operators = OperatorService(operator_ledger_port(store))
+    container.collab = collab
+    notifier = Notifier(
+        notification_port(store),
+        publish=gateway.publish_to,
+        subject=subjects.ops("assistant", "notify"),
+        operators=container.operators,
+    )
+    container.notifier = notifier
 
     if cfg.alerts_enabled:
         container.alerts = AlertService(
@@ -882,6 +920,9 @@ def create_container(
                 simulator=simulator,
                 ingest=ingest,
                 settings=cfg,
+                publisher=publisher,
+                collab=collab,
+                notifier=notifier,
             ),
             llm=gateway_llm,
             settings=cfg,
@@ -903,6 +944,9 @@ def _build_assistant_registry(
     simulator: HazardScenarioSimulator | None,
     ingest: IngestService,
     settings: Settings,
+    publisher: WarningPublisher,
+    collab: CollabService,
+    notifier: Notifier,
 ) -> ActionRegistry:
     """把平台既有服务装配成助手动作：每个动作只拿到它需要的那一个依赖。
 
@@ -946,10 +990,29 @@ def _build_assistant_registry(
         PlanAsk(recall_plan if knowledge is not None else None),
         DrillStart(run_drill, available=simulator is not None),
         ReportSubmit(container.report_intake),
+        WarningPublish(store.warnings, publisher),
+        WarningRevoke(store.warnings, publisher),
+        WarningChangeLevel(store.warnings, publisher),
+        WarningSilence(store.warnings, publisher, container.alerts),
+        WarningResend(store.warnings, publisher),
+        TaskClaim(collab),
+        TaskAck(collab),
+        TaskAssign(collab),
+        TaskTransfer(collab),
+        TaskClose(collab),
+        NotifyLead(notifier),
+        NotifyGroup(notifier),
+        ActionStatus(control_action_port(store)),
     ]
     action_registry = ActionRegistry(
         actions,
-        domains={ActionDomain.QUERY, ActionDomain.WARNING, ActionDomain.TASK, ActionDomain.DRILL},
+        domains={
+            ActionDomain.QUERY,
+            ActionDomain.WARNING,
+            ActionDomain.TASK,
+            ActionDomain.DRILL,
+            ActionDomain.NOTIFY,
+        },
     )
     action_registry.assert_consistent()
     return action_registry

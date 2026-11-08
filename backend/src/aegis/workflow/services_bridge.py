@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from aegis.bus.gateway import AgentGateway
-    from aegis.services.response.delivery import DeliveryDispatcher
+    from aegis.pipeline.publisher import WarningPublisher
     from aegis.services.response.warning_service import WarningService
     from aegis.services.rules.risk_engine import RiskEngine
     from aegis.services.rules.trigger_rules import RuleEngine
@@ -163,7 +163,7 @@ def build_workflow_services(
     rule_engine: RuleEngine,
     risk_engine: RiskEngine,
     warning_service: WarningService,
-    dispatcher: DeliveryDispatcher,
+    publisher: WarningPublisher,
     gateway: AgentGateway,
     outbound: OutboundCaller | None = None,
     scenario_provider: ScenarioProvider | None = None,
@@ -362,7 +362,7 @@ def build_workflow_services(
         record = WarningRecord.model_validate(raw)
         channels = payload.get("channels") or record.channels
         record.channels = list(dict.fromkeys([*channels, *record.channels]))
-        published = await dispatcher.dispatch(record)
+        published = await publisher.release(record)
         await store.warnings.put(published)
         delivered = sum(1 for attempt in published.deliveries if attempt.status in ("delivered", "retried"))
         return {

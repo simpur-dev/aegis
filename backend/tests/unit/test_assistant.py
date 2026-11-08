@@ -81,7 +81,9 @@ class FakeWarnings:
     def __init__(self, rec: Recorder) -> None:
         self._rec = rec
 
-    def list(self, *, limit: int = 50, region_code: str | None = None, released: bool | None = None) -> list[_Row]:
+    def list(
+        self, *, limit: int = 50, region_code: str | None = None, released: bool | None = None, status: str | None = None
+    ) -> list[_Row]:
         self._rec.calls.append(f"warning.list:{limit}:{region_code}:{released}")
         return [_Row(WARNING_ROW)]
 

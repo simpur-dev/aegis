@@ -115,7 +115,8 @@ async def store() -> AsyncIterator[PostgresStore]:
     await pool.execute(
         "TRUNCATE telemetry_readings, warnings, warning_receipts, standardized_task_units, "
         "monitoring_stations, chain_runs, workflow_definitions, workflow_instances, workflow_node_states, "
-        "audit_ops, handling_tasks, handling_spaces, assistant_alerts, control_actions, operators RESTART IDENTITY CASCADE"
+        "audit_ops, handling_tasks, handling_spaces, assistant_alerts, assistant_notifications, "
+        "control_actions, operators RESTART IDENTITY CASCADE"
     )
     try:
         yield pg
@@ -141,6 +142,17 @@ class TestMigrations:
         assert "agent_memory" in tables
         # 助手控制面：席位/动作/告警/处置/审计六张表必须同批到位，缺一张都会让对应端点 503
         assert {"operators", "control_actions", "assistant_alerts", "handling_spaces", "handling_tasks", "audit_ops"} <= tables
+        # 011：撤销列与站内通知表。撤销放宽 CHECK 但不改写发布事实，通知与告警分表（去重口径不同）。
+        assert "assistant_notifications" in tables
+        columns = {
+            r["column_name"]
+            for r in await pool.fetch(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'warnings'"
+            )
+        }
+        assert "revoked_at" in columns
+        check = await pool.fetchrow("SELECT pg_get_constraintdef(oid) AS ddl FROM pg_constraint WHERE conname = 'warnings_status'")
+        assert check is not None and "revoked" in check["ddl"]
 
     async def test_migrate_is_idempotent_and_checksummed(self, store: PostgresStore) -> None:
         # 夹具已应用过一轮：幂等的含义是"不重复应用"，故再跑两次都应返回空
@@ -157,6 +169,7 @@ class TestMigrations:
             "008_threshold_suggestions.sql",
             "009_workflow_runtime.sql",
             "010_assistant_control.sql",
+            "011_warning_revocation.sql",
         ]
 
 
@@ -247,6 +260,58 @@ class TestAlertPersistence:
         assert moved is not None
         assert moved["assigned_to"] == "op-b"
         assert moved["ack_by"] == "op-a"
+
+
+class TestAssistantControlPersistence:
+    """真库才能证明的：version 乐观锁（UPDATE...RETURNING 命中 0 行）、通知已读隔离、撤销落库。"""
+
+    @staticmethod
+    async def _seed_operator(store: PostgresStore, operator_id: str) -> None:
+        await store.require_pool().execute(
+            "INSERT INTO operators (operator_id, display_name, role) VALUES ($1, $2, 'lead') ON CONFLICT DO NOTHING",
+            operator_id,
+            "值班长",
+        )
+
+    async def test_handling_task_version_is_optimistic_lock(self, store: PostgresStore) -> None:
+        await self._seed_operator(store, "op-lead")
+        space_id = "wrn_" + "a" * 20
+        stu_id = "stu_" + "a" * 16
+        await store.ensure_space(space_id=space_id, warning_id=space_id)
+        first, created = await store.ensure_task(space_id=space_id, stu_id=stu_id)
+        again, recreated = await store.ensure_task(space_id=space_id, stu_id=stu_id)
+        assert created is True and recreated is False
+        assert first["version"] == 1 and again["version"] == 1
+
+        claimed = await store.claim_task(stu_id, "op-lead", expected_version=1)
+        assert claimed is not None and claimed["status"] == "claimed" and claimed["version"] == 2
+        assert await store.claim_task(stu_id, "op-lead", expected_version=1) is None, "过期版本命中 0 行"
+        assert await store.claim_task(stu_id, "op-lead", expected_version=2) is None, "claimed 不能再认领"
+        assert await store.close_task(stu_id, expected_version=2) is not None
+        assert await store.transfer_task(stu_id, "op-lead", expected_version=3) is None, "结单后一切迁移拒绝"
+
+    async def test_notifications_are_scoped_to_recipient_and_read_once(self, store: PostgresStore) -> None:
+        row = await store.insert_notification(recipient="lead-01", message="复核预警", kind="lead", sender="duty-01")
+        assert row["read_at"] is None
+        assert len(await store.list_notifications(recipient="lead-01", unread_only=True)) == 1
+        assert await store.list_notifications(recipient="lead-02") == []
+        assert await store.mark_read(row["id"], "lead-02") is None, "不能替别人标已读"
+        marked = await store.mark_read(row["id"], "lead-01")
+        assert marked is not None and marked["read_at"] is not None
+        assert await store.mark_read(row["id"], "lead-01") is None, "重复标记不改时间"
+        assert await store.list_notifications(recipient="lead-01", unread_only=True) == []
+
+    async def test_revocation_persists_without_rewriting_release_facts(self, store: PostgresStore) -> None:
+        moment = now_iso()
+        record = _warning("evt_revoke00001", "trc_revoke00001").model_copy(update={"released_at": moment, "revoked_at": moment})
+        await store.warnings.put(record)
+        await store.flush()
+        row = await store.require_pool().fetchrow(
+            "SELECT status, released_at, revoked_at FROM warnings WHERE warning_id = $1", record.warning_id
+        )
+        assert row is not None
+        assert row["status"] == "revoked"
+        assert row["released_at"] is not None and row["revoked_at"] is not None, "撤销不抹掉发布事实"
 
 
 class TestSpatialQueries:

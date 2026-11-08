@@ -37,7 +37,6 @@ MAX_ID_LEN = 64
 MAX_TEXT_LEN = 8_192
 MAX_JSON_BYTES = 262_144
 EMBEDDING_DIM = 1024
-DELIVERED_STATUSES = frozenset({"delivered", "retried"})
 
 STATION_COLUMNS = ("station_id", "name_zh", "region_code", "hazard_focus", "geom", "elevation_m")
 TELEMETRY_COLUMNS = (
@@ -93,6 +92,7 @@ WARNING_COLUMNS = (
     "released_at",
     "delivered_at",
     "reach_seconds",
+    "revoked_at",
 )
 RECEIPT_COLUMNS = ("warning_id", "channel", "audience_count", "status", "attempted_at", "receipt_at", "provider_msg_id")
 CHAIN_COLUMNS = (
@@ -354,15 +354,8 @@ def task_embedding_params(task_unit_id: str, embedding: Sequence[float], *, mode
 
 
 def warning_status(record: WarningRecord) -> str:
-    """状态与 `WarningRecord.reach_seconds()` 同源，不从外部推断。"""
-    if not record.released_at:
-        return "draft"
-    if not record.deliveries:
-        return "released"
-    delivered = sum(1 for d in record.deliveries if d.status in DELIVERED_STATUSES)
-    if delivered == len(record.deliveries):
-        return "delivered"
-    return "partial" if delivered else "failed"
+    """派生状态的唯一真源在 `WarningRecord.status`；这里只转发，避免两处判据漂移。"""
+    return record.status
 
 
 def delivered_at(record: WarningRecord) -> datetime | None:
@@ -410,6 +403,7 @@ def warning_params(record: WarningRecord) -> tuple[Any, ...]:
         optional_moment(record.released_at),
         delivered_at(record),
         reach_seconds(record),
+        optional_moment(record.revoked_at),
     )
 
 
@@ -445,6 +439,7 @@ def warning_from_row(row: Mapping[str, Any], receipts: Sequence[Mapping[str, Any
         audience_copies=dict(row.get("audience_copies") or {}),
         generated_at=to_iso(row["generated_at"]),
         released_at=None if row["released_at"] is None else to_iso(row["released_at"]),
+        revoked_at=None if row.get("revoked_at") is None else to_iso(row["revoked_at"]),
         deliveries=[
             DeliveryAttempt(
                 channel=r["channel"],

@@ -108,6 +108,26 @@ def narrate_result(action: str, result: dict[str, Any]) -> str:
         return "演练已完成：" + _brief(result.get("drill") or {})
     if action == "report.submit":
         return "上报已受理：" + _brief(result.get("report") or {})
+    if action in {"task.claim", "task.ack", "task.assign", "task.transfer", "task.close"}:
+        task = result.get("task") or {}
+        return (
+            f"任务 {task.get('task_id', '')}：状态 {task.get('status', '')}，"
+            f"责任人 {task.get('assignee') or '未指派'}，版本 {task.get('version', '')}"
+        )
+    if action in {"warning.publish", "warning.revoke", "warning.change_level", "warning.resend", "warning.silence"}:
+        warning = result.get("warning") or {}
+        head = f"预警 {warning.get('warning_id', '')} 当前状态 {warning.get('status', '')}，等级 {warning.get('risk_level', '')} 级"
+        extras: list[str] = []
+        if result.get("before_level") is not None:
+            extras.append(f"等级 {result['before_level']} → {result['after_level']}")
+        if result.get("minutes"):
+            extras.append(f"提醒静默 {result['minutes']} 分钟")
+        return head + ("；" + "；".join(extras) if extras else "")
+    if action in {"notify.lead", "notify.group"}:
+        if action == "notify.group":
+            return f"已通知 {result.get('count', 0)} 个席位"
+        item = result.get("notification") or {}
+        return f"已通知 {item.get('recipient', '')}：{item.get('message', '')}"
     if action == "action.status":
         return _brief(result.get("action") or {})
     return _brief(result)

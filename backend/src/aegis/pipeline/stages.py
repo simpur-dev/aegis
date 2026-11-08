@@ -44,6 +44,7 @@ from aegis.knowledge.provider import CaseMatch, KnowledgeProvider
 from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.board import ChainBoard
+from aegis.pipeline.publisher import WarningPublisher
 from aegis.services.interpret.text_guard import invented_numbers
 from aegis.services.response.delivery import AllChannelsFailedError, DeliveryDispatcher
 from aegis.services.response.task_parser import TaskParser
@@ -143,6 +144,7 @@ class HazardStages:
         task_parser: TaskParser | None = None,
         warning_service: WarningService | None = None,
         dispatcher: DeliveryDispatcher | None = None,
+        publisher: WarningPublisher | None = None,
         agent_hit_window: int = 512,
         agent_hit_ttl_seconds: float | None = None,
         knowledge: KnowledgeProvider | None = None,
@@ -158,7 +160,8 @@ class HazardStages:
         self._risk_engine = risk_engine or RiskEngine(self._rule_engine)
         self._task_parser = task_parser or TaskParser(contracts, settings=self._settings)
         self._warning_service = warning_service or WarningService(self._tracer, settings=self._settings)
-        self._dispatcher = dispatcher
+        # 发布语义只有一份：装配点传入共享实例，单测不传时用同一类自建（不是第二套逻辑）。
+        self._publisher = publisher or WarningPublisher(dispatcher=dispatcher, gateway=gateway)
         # 命中存活期对齐接入 SLA：超过"读数观测→入库"窗口的命中已不属于任何在跑的链路。
         # 缺省不另立旋钮——多一个配置项就多一处"两个数互相打脸"的机会。
         self._agent_hit_ttl = float(agent_hit_ttl_seconds if agent_hit_ttl_seconds is not None else self._settings.sla_ingest_seconds)
@@ -769,10 +772,11 @@ class HazardStages:
                     result.stage_models["execute"] = receipt
             except AegisError as exc:
                 result.degradations.append(f"执行智能体失败，文案回落平台模板: {exc.message}")
-        dispatched = await self._dispatch(record, result)
-        if dispatched is None:
+        try:
+            dispatched = await self._publisher.release(record, trace=trace, drill=self._is_drill(readings))
+        except AllChannelsFailedError as exc:
+            result.errors.append(f"全部通道失败: {exc.message}")
             return None, used_agent
-        await self._broadcast(dispatched, trace, drill=self._is_drill(readings))
         self._warnings[dispatched.warning_id] = dispatched
         return dispatched, used_agent
 
@@ -834,33 +838,6 @@ class HazardStages:
         adopted = record.model_copy(update=update)
         result.degradations.append("预警文案取自执行智能体（送达记录仍由平台交付腿产生）")
         return adopted
-
-    async def _dispatch(self, record: WarningRecord, result: ChainResult) -> WarningRecord | None:
-        if self._dispatcher is None:
-            record.released_at = now_iso()
-            return record
-        try:
-            return await self._dispatcher.dispatch(record)
-        except AllChannelsFailedError as exc:
-            result.errors.append(f"全部通道失败: {exc.message}")
-            return None
-
-    async def _broadcast(self, record: WarningRecord, trace: str, *, drill: bool = False) -> None:
-        event = make_event(
-            source="platform.pipeline",
-            action=Action.EXECUTE_ACK.value,
-            trace_id=trace,
-            target=f"platform.broadcast_{int(record.risk_level)}",
-            payload={
-                "warning_id": record.warning_id,
-                "risk_level": int(record.risk_level),
-                "regions": record.region_codes,
-                "title": record.title_zh,
-                # 演练标识随广播走：告警与前端据此隔离"演练"与真实（升级只对真实告警生效）。
-                "drill": bool(drill),
-            },
-        )
-        await self._gateway.publish_to(subjects.alert(int(record.risk_level), record.region_codes[0]), event)
 
     @staticmethod
     def _is_drill(readings: list[TelemetryReading] | None) -> bool:

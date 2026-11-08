@@ -143,6 +143,16 @@ class AlertService:
         current = await self.get(alert_id)
         raise AlertStateConflictError(alert_id, str(current.get("status", "")))
 
+    async def silence(self, warning_id: str, minutes: int) -> dict[str, Any]:
+        """按预警静默提醒：一条预警对应一张卡，直接按 warning_id 迁移，不用先查再改。
+
+        与 `snooze` 同一不变量：状态不变、只推迟升级计时；找不到的预警如实报 404。
+        """
+        record = await self._require().snooze_by_warning(warning_id, max(1, min(int(minutes), 240)))
+        if record is not None:
+            return record
+        raise AlertNotFoundError(warning_id)
+
     async def escalate_due(self) -> list[dict[str, Any]]:
         """把超时未确认的真实告警升级。返回**本实例抢到**的那些（多副本幂等）。"""
         return await self._require().escalate_due(after_minutes=self._escalation_minutes)

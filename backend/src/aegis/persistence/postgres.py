@@ -29,7 +29,17 @@ import orjson
 from aegis.config import Settings, get_settings
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, utc_now
 from aegis.domain.operator import Operator
-from aegis.persistence import accuracy, alerts, control_actions, geo, operators, rows, vectors
+from aegis.persistence import (
+    accuracy,
+    alerts,
+    control_actions,
+    geo,
+    handling_tasks,
+    notifications,
+    operators,
+    rows,
+    vectors,
+)
 from aegis.persistence.dsn import dsn_label, normalize_dsn, redact_dsn
 from aegis.persistence.errors import (
     ConnectionFailedError,
@@ -213,8 +223,10 @@ class _WarningFacade:
     def get(self, warning_id: str) -> WarningRecord | None:
         return self._inner.get(warning_id)
 
-    def list(self, *, limit: int = 50, region_code: str | None = None, released: bool | None = None) -> list[WarningRecord]:
-        return self._inner.list(limit=limit, region_code=region_code, released=released)
+    def list(
+        self, *, limit: int = 50, region_code: str | None = None, released: bool | None = None, status: str | None = None
+    ) -> list[WarningRecord]:
+        return self._inner.list(limit=limit, region_code=region_code, released=released, status=status)
 
     @property
     def size(self) -> int:
@@ -296,6 +308,52 @@ class PostgresStore:
 
     def snapshot(self) -> dict[str, object]:
         return self._read.snapshot()
+
+    # ---------- 处置任务（可选能力面：SupportsHandlingTasks） ----------
+
+    async def ensure_space(self, *, space_id: str, warning_id: str) -> dict[str, Any]:
+        return await handling_tasks.ensure_space(await self.connect(), space_id=space_id, warning_id=warning_id)
+
+    async def ensure_task(self, *, space_id: str, stu_id: str) -> tuple[dict[str, Any], bool]:
+        return await handling_tasks.ensure_task(await self.connect(), space_id=space_id, stu_id=stu_id)
+
+    async def get_task(self, task_id: str) -> dict[str, Any] | None:
+        return await handling_tasks.get_task(await self.connect(), task_id)
+
+    async def list_tasks(
+        self, *, space_id: str | None = None, assignee: str | None = None, status: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        return await handling_tasks.list_tasks(await self.connect(), space_id=space_id, assignee=assignee, status=status, limit=limit)
+
+    async def claim_task(self, task_id: str, operator_id: str, expected_version: int) -> dict[str, Any] | None:
+        return await handling_tasks.claim_task(await self.connect(), task_id, operator_id, expected_version)
+
+    async def ack_task(self, task_id: str, operator_id: str, expected_version: int) -> dict[str, Any] | None:
+        return await handling_tasks.ack_task(await self.connect(), task_id, operator_id, expected_version)
+
+    async def assign_task(self, task_id: str, assignee: str, expected_version: int) -> dict[str, Any] | None:
+        return await handling_tasks.assign_task(await self.connect(), task_id, assignee, expected_version)
+
+    async def transfer_task(self, task_id: str, assignee: str, expected_version: int) -> dict[str, Any] | None:
+        return await handling_tasks.transfer_task(await self.connect(), task_id, assignee, expected_version)
+
+    async def close_task(self, task_id: str, expected_version: int) -> dict[str, Any] | None:
+        return await handling_tasks.close_task(await self.connect(), task_id, expected_version)
+
+    # ---------- 站内通知（可选能力面：SupportsNotifications） ----------
+
+    async def insert_notification(
+        self, *, recipient: str, message: str, kind: str, sender: str = "", space_id: str | None = None
+    ) -> dict[str, Any]:
+        return await notifications.insert_notification(
+            await self.connect(), recipient=recipient, message=message, kind=kind, sender=sender, space_id=space_id
+        )
+
+    async def list_notifications(self, *, recipient: str, unread_only: bool = False, limit: int = 50) -> list[dict[str, Any]]:
+        return await notifications.list_notifications(await self.connect(), recipient=recipient, unread_only=unread_only, limit=limit)
+
+    async def mark_read(self, notification_id: int, recipient: str) -> dict[str, Any] | None:
+        return await notifications.mark_read(await self.connect(), notification_id, recipient)
 
     # ---------- 席位台账（可选能力面：SupportsOperators） ----------
 
@@ -412,6 +470,9 @@ class PostgresStore:
 
     async def snooze_alert(self, alert_id: str, minutes: int) -> dict[str, Any] | None:
         return await alerts.snooze_alert(await self.connect(), alert_id, minutes)
+
+    async def snooze_by_warning(self, warning_id: str, minutes: int) -> dict[str, Any] | None:
+        return await alerts.snooze_by_warning(await self.connect(), warning_id, minutes)
 
     async def escalate_due(self, *, after_minutes: int) -> list[dict[str, Any]]:
         return await alerts.escalate_due(await self.connect(), after_minutes=after_minutes)

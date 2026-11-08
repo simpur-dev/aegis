@@ -48,6 +48,7 @@ def build_router() -> APIRouter:
             await ctn.transport.subscribe(subjects.alert(1, ">"), _on_message),
             await ctn.transport.subscribe("platform.alert.>", _on_message),
             await ctn.transport.subscribe(subjects.ops("feedback", "status"), _on_message),
+            await ctn.transport.subscribe(subjects.ops("assistant", "notify"), _on_message),
         ]
 
         async def _gen() -> AsyncIterator[str]:

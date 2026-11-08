@@ -40,7 +40,7 @@ BRIDGE_ARGS: dict[str, Any] = {
     "rule_engine": SimpleNamespace(),
     "risk_engine": SimpleNamespace(),
     "warning_service": SimpleNamespace(),
-    "dispatcher": SimpleNamespace(),
+    "publisher": SimpleNamespace(),
     "gateway": SimpleNamespace(),
 }
 

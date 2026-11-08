@@ -240,8 +240,15 @@ class DeliveryAttempt(BaseModel):
     provider_msg_id: str | None = None
 
 
+DELIVERED_STATUSES: frozenset[str] = frozenset({"delivered", "retried"})
+
+
 class WarningRecord(BaseModel):
-    """预警产物：生成时间（≤3min 指标）与触达时间（≤20min 指标）在此记录。"""
+    """预警产物：生成时间（≤3min 指标）与触达时间（≤20min 指标）在此记录。
+
+    `status` 是派生观测位（不是入库字段）：撤销/改级后列表过滤必须与它同源，
+    故判定只放这里，`persistence.rows.warning_status()` 与 `storage.WarningStore.list()` 都读它。
+    """
 
     warning_id: str = Field(default_factory=new_warning_id)
     event_id: str
@@ -260,7 +267,23 @@ class WarningRecord(BaseModel):
     audience_copies: dict[str, str] = Field(default_factory=dict)
     generated_at: str = Field(default_factory=now_iso)
     released_at: str | None = None
+    #: 人工撤销时刻。发布事实（released_at / deliveries）不改写——撤销是后续控制动作，不是抹掉历史。
+    revoked_at: str | None = None
     deliveries: list[DeliveryAttempt] = Field(default_factory=list)
+
+    @property
+    def status(self) -> str:
+        """派生状态只有一个真源。撤销优先于触达回执：已撤销的预警不该再显示成"送达成功"。"""
+        if self.revoked_at:
+            return "revoked"
+        if not self.released_at:
+            return "draft"
+        if not self.deliveries:
+            return "released"
+        delivered = sum(1 for attempt in self.deliveries if attempt.status in DELIVERED_STATUSES)
+        if delivered == len(self.deliveries):
+            return "delivered"
+        return "partial" if delivered else "failed"
 
     def reach_seconds(self) -> float | None:
         if not self.released_at:

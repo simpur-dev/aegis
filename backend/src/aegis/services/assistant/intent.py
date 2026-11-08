@@ -25,6 +25,25 @@ _TRACE_ID_RE = re.compile(r"trc_[0-9a-f]{16}")
 _EVENT_ID_RE = re.compile(r"evt_[0-9a-f]{12}")
 _TASK_ID_RE = re.compile(r"stu_[0-9a-f]{16}")
 _TICKS_RE = re.compile(r"(\d+)\s*轮")
+_LEVEL_RE = re.compile(r"([1-4])\s*级")
+_MINUTES_RE = re.compile(r"(\d+)\s*分钟")
+_TASK_CONTROL_ACTIONS = frozenset({"task.claim", "task.ack", "task.assign", "task.transfer", "task.close"})
+_ASSIGNEE_RE = re.compile(r"(?:派给|指派给|转给|移交给)\s*([A-Za-z0-9_-]{4,32})")
+_ACTION_ID_RE = re.compile(r"act_[0-9a-f]{6,24}")
+_MENTION_RE = re.compile(r"@([A-Za-z0-9_-]{4,32})")
+_WARNING_CONTROL_ACTIONS = frozenset(
+    {
+        "warning.publish",
+        "warning.revoke",
+        "warning.change_level",
+        "warning.silence",
+        "warning.resend",
+    }
+)
+#: "全网/全部/都"这类整体作用域词。写动作一旦带上它们，就不再是"对某一条做点什么"。
+_BULK_SCOPE_RE = re.compile(r"全网|全部|所有|每一条|每个|都")
+#: 一句里点名了具体对象（预警/任务/动作编号）——有编号才谈得上单条处置。
+_TARGET_ID_RE = re.compile(r"wrn_[0-9a-f]{6,24}|stu_[0-9a-f]{16}|act_[0-9a-f]{6,24}")
 
 #: 意图词表：顺序即优先级（先具体后宽泛），"解释 wrn_xxx 为什么是红色"不能被查询意图抢走。
 _INTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -36,6 +55,9 @@ _INTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("task.list", ("任务单元", "stu", "任务清单")),
     ("chain.list", ("链路", "事件列表", "最近事件")),
     ("warning.list", ("预警", "发布", "告警")),
+    ("notify.lead", ("通知值班长", "叫值班长")),
+    ("notify.group", ("群发通知", "同时通知")),
+    ("action.status", ("动作状态", "动作进度")),
     ("plan.ask", ("预案", "处置方案", "怎么办", "怎么处置", "要不要转移", "转移路线")),
     ("drill.start", ("演练", "模拟一次", "跑一次", "surge")),
     ("report.submit", ("上报", "报告险情", "我要报", "我发现", "我看到", "刚看到")),
@@ -44,17 +66,20 @@ _INTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 #: 祈使式前缀：只有"把/请/帮我…"或整体作用域才算"要执行"，否则"这条预警可以撤回吗"会被误杀。
 _IMPERATIVE_PREFIX = re.compile(r"^(把|请|帮我|我们|立即|马上|现在|快)")
 
-#: 写动作动词 → 目标动作名。P1 里这些动作**都还没注册**（P2/P3 才实现），所以命中即"动作未开放"。
-#: 为什么要有这张表：不给映射就只能靠"一律拒绝"，P2 开放后还要再改一遍判定逻辑。
+#: 写动作动词 → 目标动作名。命中的动作若已注册，就按正常意图继续解析参数；
+#: 未注册时才由 `AssistantService.respond` 明确回"该动作未开放"，而不是含糊地接一份清单。
 _VERB_ACTIONS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("删除", "删掉", "清空", "撤回", "撤销", "撤掉"), "warning.revoke"),
     (("直接发布", "立即发布", "发出去", "发布出去"), "warning.publish"),
-    (("改级", "调整等级", "降为", "升为"), "warning.change_level"),
+    (("改级", "调整等级", "调整为", "改成", "降为", "升为"), "warning.change_level"),
     (("静默", "免打扰"), "warning.silence"),
     (("重发", "再发一遍"), "warning.resend"),
     (("改阈值", "修改阈值", "调整阈值"), "rule.update"),
     (("派单", "派给", "指派给"), "task.assign"),
     (("移交", "转给"), "task.transfer"),
+    (("认领", "接手这个任务"), "task.claim"),
+    (("确认完成", "处置完成"), "task.ack"),
+    (("结单", "关闭任务"), "task.close"),
     (("打开阀门", "关闭阀门", "设备控制"), "device.control"),
 )
 
@@ -108,6 +133,17 @@ def out_of_scope_action(text: str) -> tuple[str, str] | None:
             if verb in body:
                 return action, verb
     return None
+
+
+def bulk_scope_without_target(text: str) -> bool:
+    """整体作用域的写指令，且一句里没点名任何具体编号 → 超出任何单条动作的能力边界。
+
+    助手只做操作者本来能做的事，不放大权限：`warning.revoke` 撤销的是**一条**预警，
+    "把全网预警都删掉"是抹掉整张表，没有哪个角色本来就有这个能力。动作注册与否都不改变
+    这一点，因此越权闸不能只看注册表里有没有这个名字。
+    """
+    body = str(text or "").strip()
+    return bool(_BULK_SCOPE_RE.search(body)) and not bool(_TARGET_ID_RE.search(body))
 
 
 class IntentClassifier:
@@ -164,10 +200,17 @@ class IntentClassifier:
     def _match(self, text: str) -> str | None:
         lowered = text.lower()
         if _WARNING_ID_RE.search(text):
+            # 带编号的祈使句是「对这条预警做点什么」，不能被解释意图抢走。
+            verb = out_of_scope_action(text)
+            if verb is not None and self._registry.get(verb[0]) is not None:
+                return verb[0]
             return "warning.explain"
         if _TRACE_ID_RE.search(text) or _EVENT_ID_RE.search(text):
             return "chain.explain"
         if _TASK_ID_RE.search(text):
+            verb = out_of_scope_action(text)
+            if verb is not None and verb[0].startswith("task.") and self._registry.get(verb[0]) is not None:
+                return verb[0]
             return "task.get"
         for action, keywords in _INTENT_RULES:
             if any(keyword in lowered for keyword in keywords):
@@ -198,6 +241,22 @@ class IntentClassifier:
                 args["event_id"] = event.group()
         if action == "task.get" and (task := _TASK_ID_RE.search(text)):
             args["task_unit_id"] = task.group()
+        if action == "action.status" and (found := _ACTION_ID_RE.search(text)):
+            args["action_id"] = found.group()
+        if action in {"notify.lead", "notify.group"}:
+            args["message"] = text[:500]
+        if action == "notify.group":
+            args["operator_ids"] = _MENTION_RE.findall(text)[:20]
+        if action in _TASK_CONTROL_ACTIONS and (found := _TASK_ID_RE.search(text)):
+            args["task_id"] = found.group()
+        if action in {"task.assign", "task.transfer"} and (who := _ASSIGNEE_RE.search(text)):
+            args["assignee"] = who.group(1)
+        if action in _WARNING_CONTROL_ACTIONS and (found := _WARNING_ID_RE.search(text)):
+            args["warning_id"] = found.group()
+        if action == "warning.change_level" and (level := _LEVEL_RE.search(text)):
+            args["level"] = int(level.group(1))
+        if action == "warning.silence" and (minutes := _MINUTES_RE.search(text)):
+            args["minutes"] = max(1, min(int(minutes.group(1)), 240))
         if action == "warning.list":
             args["limit"] = 10
             if region := extract_region(text, default=region_code):
@@ -310,6 +369,18 @@ def _missing_target(action: str, args: dict[str, Any]) -> str | None:
         return "缺少预警编号（wrn_…）：编号在「预警发布」页点「详情」后，抽屉顶部的「预警标识」"
     if action == "chain.explain" and not (args.get("trace_id") or args.get("event_id")):
         return "缺少链路标识（trc_/evt_…）：链路号在总览页「链路执行记录」的第一列"
+    if action == "action.status" and not args.get("action_id"):
+        return "缺少动作编号（act_…）：编号在待确认卡片的「动作标识」里"
+    if action == "notify.group" and not args.get("operator_ids"):
+        return "缺少收件人：请说「群发通知 @lead-01 @lead-02 …」"
+    if action in _TASK_CONTROL_ACTIONS and not args.get("task_id"):
+        return "缺少任务 ID（stu_…）：ID 在处置空间的任务清单里，也可以先查最近链路"
+    if action in {"task.assign", "task.transfer"} and not args.get("assignee"):
+        return "缺少受理人席位 ID：请说「派给 lead-01」或「转给 lead-02」"
+    if action in _WARNING_CONTROL_ACTIONS and not args.get("warning_id"):
+        return "缺少预警编号（wrn_…）：编号在「预警发布」页点「详情」后，抽屉顶部的「预警标识」"
+    if action == "warning.change_level" and not args.get("level"):
+        return "缺少目标等级：请说「调整为 2 级」（1..4 级，1 级最高）"
     if action == "task.get" and not args.get("task_unit_id"):
         return "缺少任务单元 ID（stu_…）：ID 在「预警发布」页「详情」里的「关联任务单元」表，也可以先查最近链路"
     return None

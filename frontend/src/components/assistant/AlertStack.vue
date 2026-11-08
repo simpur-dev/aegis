@@ -15,7 +15,8 @@ import { operatorSeat, setOperatorSeat } from '@/api/operatorSeat'
 import { RISK_LABELS, type RiskLevel } from '@/api/types'
 import { useAlerts } from '@/composables/useAlerts'
 
-const { cards, syncing, syncError, openCards, refresh, ack, transfer, snooze, snoozeActive: isSnoozed } = useAlerts()
+const { cards, syncing, syncError, openCards, refresh, ack, transfer, snooze, snoozeActive: isSnoozed, notices, noticeError, dismissNotice } =
+  useAlerts()
 
 const seatDraft = ref(operatorSeat.value)
 const busyId = ref('')
@@ -98,6 +99,15 @@ const shown = computed(() => openCards.value)
     </div>
 
     <p v-if="message" class="alerts__message" data-testid="alert-message">{{ message }}</p>
+    <p v-if="noticeError" class="alerts__message" data-testid="notice-error">{{ noticeError }}</p>
+
+    <ul v-if="notices.length" class="alerts__notices" data-testid="notice-list">
+      <li v-for="notice in notices" :key="notice.id" class="alerts__notice">
+        <span class="alerts__notice-kind">{{ notice.kind === 'group' ? '群发' : '值班长' }}</span>
+        <span class="alerts__notice-text">{{ notice.message }}</span>
+        <button type="button" class="alerts__notice-close" aria-label="关闭通知" @click="dismissNotice(notice.id)">×</button>
+      </li>
+    </ul>
 
     <ul class="alerts__list">
       <li
@@ -210,6 +220,49 @@ const shown = computed(() => openCards.value)
   color: var(--aeg-color-text);
   font-size: var(--aeg-font-xs);
   padding: 3px 8px;
+}
+
+.alerts__notices {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.alerts__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-card);
+  color: var(--aeg-color-text);
+  font-size: var(--aeg-font-xs);
+  line-height: 1.5;
+}
+
+.alerts__notice-kind {
+  flex: none;
+  font-weight: 600;
+}
+
+.alerts__notice-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.alerts__notice-close {
+  flex: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.65;
 }
 
 .alerts__message {

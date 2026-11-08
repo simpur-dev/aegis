@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -63,6 +63,9 @@ class WarningListParams(BaseModel):
     limit: int = Field(default=10, ge=1, le=50)
     region_code: str | None = Field(default=None, pattern=_REGION)
     released: bool | None = Field(default=None, description="true=只看已发布，false=只看未发布，null=全部")
+    status: Literal["draft", "released", "delivered", "partial", "failed", "revoked"] | None = Field(
+        default=None, description="按派生状态过滤；revoked=已人工撤销"
+    )
 
 
 class WarningExplainParams(BaseModel):
@@ -131,7 +134,9 @@ class WarningList(Action):
 
     async def execute(self, targets: ResolvedTargets, params: BaseModel, ctx: ActionContext) -> ActionResult:
         assert isinstance(params, WarningListParams)
-        rows: list[WarningRecord] = self._warnings.list(limit=params.limit, region_code=params.region_code, released=params.released)
+        rows: list[WarningRecord] = self._warnings.list(
+            limit=params.limit, region_code=params.region_code, released=params.released, status=params.status
+        )
         items = [row.model_dump(mode="json") for row in rows]
         return ActionResult(data={"items": items, "count": len(items)}, summary=f"共 {len(items)} 条预警")
 
