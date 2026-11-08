@@ -4,6 +4,13 @@
 总线只用来"快"（`ops.assistant.notify`），持久记录才是真源；两者都失败时如实抛错，
 助手不会把没送到的通知说成已送达。
 
+P4 外部通知（设计 §14.2）：**站内先行、外发失败不装送达**。
+顺序固定为"先落站内 → 再试外部通道"，理由是站内是真源（断线重连还能查回来）、
+外发只是加速器；站内写失败就不该再发外发——那会造出"外面收到了、平台里查不到"的幽灵通知。
+外发失败**不抛异常**（炸了会让"站内已落"看起来像失败，值班员于是重发一遍），
+而是把结果写进通知行的 `delivery_status`（`in_app` / `delivered` / `failed`），
+让"发没发出去"成为可查的事实而不是一句断言。
+
 为什么 `publish` 是注入的回调而不是直接 import `AgentGateway`：`services/` 不得依赖
 `aegis.bus`（架构铁律 3 的 AST 门禁）。subject 也由装配点传入，本层不认识 NATS 主题。
 """
@@ -17,6 +24,7 @@ from typing import Any
 from aegis.domain.enums import Action
 from aegis.domain.messages import make_event
 from aegis.domain.operator import OperatorRole
+from aegis.services.alerting.webhook import NotificationWebhook
 from aegis.services.operators import OperatorService
 from aegis.storage.store import SupportsNotifications
 
@@ -29,11 +37,13 @@ class Notifier:
         publish: Callable[[str, Any], Awaitable[None]] | None,
         subject: str,
         operators: OperatorService | None,
+        webhook: NotificationWebhook | None = None,
     ) -> None:
         self._ledger = ledger
         self._publish = publish
         self._subject = subject
         self._operators = operators
+        self._webhook = webhook
 
     @property
     def available(self) -> bool:
@@ -60,11 +70,32 @@ class Notifier:
         sender: str = "",
         space_id: str | None = None,
     ) -> dict[str, Any]:
+        """落站内 → 再试外部通道。
+
+        返回的通知行里 `delivery_status` 如实说明外发结果：
+        `in_app`（只在站内，默认）/ `delivered`（外发也成功）/ `failed`（外发失败）。
+        **站内那一条在任何情况下都成立**——外发失败不改 `created_at`、不清 `delivered_at`。
+        """
         record = await self._require().insert_notification(
             recipient=recipient, message=message, kind=kind, sender=sender, space_id=space_id
         )
+        record = await self._deliver(record)
         await self._broadcast(record)
         return record
+
+    async def _deliver(self, record: dict[str, Any]) -> dict[str, Any]:
+        """尝试外部通道并把结果写回通知行。失败**不抛**（见模块头）。"""
+        if self._webhook is None or not self._webhook.enabled:
+            return record
+        outcome = await self._webhook.deliver(record)
+        setter = getattr(self._ledger, "set_notification_delivery", None)
+        if setter is None:
+            return record
+        return await setter(
+            int(record["id"]),
+            status=str(outcome["status"]),
+            error=outcome.get("error"),
+        )
 
     async def notify_many(
         self,
@@ -100,6 +131,10 @@ class Notifier:
                 "sender": record["sender"],
                 "space_id": record["space_id"],
                 "created_at": record["created_at"],
+                # 外发结果随帧出去：前端据此说"站内已送达/外部通道失败"，
+                # 而不是笼统地说"已送达"（设计 §14.2 的口径在前端也成立）。
+                "delivery_status": record.get("delivery_status", "in_app"),
+                "delivery_error": record.get("delivery_error"),
             },
         )
         await self._publish(self._subject, event)

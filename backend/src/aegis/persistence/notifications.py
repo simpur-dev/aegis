@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
-_COLUMNS = "id, recipient, message, kind, sender, space_id, created_at, read_at"
+_COLUMNS = (
+    "id, recipient, message, kind, sender, space_id, created_at, read_at, delivery_channel, delivery_status, delivery_error, delivered_at"
+)
 
 
 def _iso(value: Any) -> str | None:
@@ -19,6 +21,8 @@ def _iso(value: Any) -> str | None:
 
 
 def notification_from_row(row: Any) -> dict[str, Any]:
+    # 投递三列用 `.get()` 而不是直接索引：迁移 013 之前的旧库里没有这几列，
+    # 直接索引会 KeyError 让"读通知"整体 500——旧库读旧数据应当照常工作。
     return {
         "id": int(row["id"]),
         "recipient": row["recipient"],
@@ -28,6 +32,10 @@ def notification_from_row(row: Any) -> dict[str, Any]:
         "space_id": row["space_id"],
         "created_at": _iso(row["created_at"]),
         "read_at": _iso(row["read_at"]),
+        "delivery_channel": row.get("delivery_channel", "in_app"),
+        "delivery_status": row.get("delivery_status", "in_app"),
+        "delivery_error": row.get("delivery_error"),
+        "delivered_at": _iso(row.get("delivered_at")),
     }
 
 
@@ -81,3 +89,25 @@ async def mark_read(pool: Any, notification_id: int, recipient: str) -> dict[str
         recipient,
     )
     return None if row is None else notification_from_row(row)
+
+
+async def set_delivery(pool: Any, notification_id: int, *, status: str, error: str | None = None) -> dict[str, Any]:
+    """写外部通道的投递结果（设计 §14.2）。
+
+    站内那一条**不回退**：外发失败只把 `delivery_status` 写成 `failed`，
+    `created_at`（站内送达时刻）与 `read_at` 都不动。
+    """
+    row = await pool.fetchrow(
+        f"""
+        UPDATE assistant_notifications
+        SET delivery_status = $2,
+            delivery_error = $3,
+            delivered_at = now()
+        WHERE id = $1
+        RETURNING {_COLUMNS}
+        """,
+        int(notification_id),
+        status,
+        error,
+    )
+    return notification_from_row(row)
