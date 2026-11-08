@@ -103,6 +103,8 @@
 
 - 2026-11-08｜**P1/P2 收尾：发布链单一真源 + 越权闸收紧**｜`WarningPublisher` 必须落在 `pipeline/`，因 AST 门禁禁止 `services/` import `aegis.bus`；主链路、工作流画布、助手动作三条入口统一为 `release()`，动作层以 `PublisherPort` Protocol 反向注入｜撤销只追加 `revoked_at`，绝不改写 `released_at`/`deliveries`（否则 ≤20min 触达指标被事后操作污染）；派生状态只由 `WarningRecord.status` 决定，`rows.warning_status()` 只转发｜动作注册后越权闸不能只看"表里有没有这个名字"，整体批量指令（全网/全部/都 + 无具体编号）仍须拒绝——这是 D5「助手不放大权限」的代码落点｜设计文档 §3.3/§7.6/§12 同步回写，含三个从未存在的 feature flag 的口径修正
 
+- 2026-11-08｜**真库集成补跑闭环：66 passed / 0 skipped**｜`42e3ed2` 提交时会话内 Docker Engine 未起、真库档按 `skipif` 跳过；本轮宿主手动启动 Docker Desktop（Engine 29.9.2）后，直接复用现成的 `aegis-postgres` 容器（PG 17.5 / PostGIS 3.5.2 / pgvector 0.8.6）与专用库 `aegis_test`，**未 build 镜像、未起新容器、未下载任何包**｜四个 PG live 档（`test_persistence_postgres` / `test_geo_endpoints_live` / `test_suggestions_live` / `test_accuracy_replay_live`）23.8s 全绿；011 迁移在真库落地（`assistant_notifications`、`warnings.revoked_at`、`handling_tasks.version`、CHECK 含 revoked、`schema_migrations` 11 行），演示库 `aegis` 仍为 16/16 未动｜取证校正：此前"沙箱内 `Start-Process` 拉起 Docker Desktop → 子进程 `wsl.exe` 被命令安全黑名单拒绝"只影响助手会话发起的进程树，不是宿主不可用；seekdb（2881）同时在运行，但它是可选混合检索索引引擎而非持久层，不能顶替 PG｜无实现问题需修，P3/P4 仍待做
+
 ## 工作日志
 
 - 2026-10-07 轮次1：接手时发现上一批（T07 顶栏页签）已改完未提交；跑 typecheck ✓、uiTheme.spec 12 ✓，全量单测+build 进行中；
