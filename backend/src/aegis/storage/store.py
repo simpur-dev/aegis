@@ -229,6 +229,9 @@ class ControlActionStore:
         self._idempotency: dict[str, str] = {}
         # 审计流水与动作记录分开有界：审计一行比动作一行小，但写入频次更高（每次写动作两行）。
         self._audit: deque[dict[str, Any]] = deque(maxlen=audit_maxlen)
+        # 审计行的自增序号与时间戳：SQL 侧由 bigserial 与 DEFAULT now() 给，
+        # 内存侧必须自己补——没有它们，读面（§14.3）连"最近在前"都排不出来。
+        self._next_audit_id = 1
 
     @staticmethod
     def _now() -> datetime:
@@ -401,8 +404,16 @@ class ControlActionStore:
         return recovered
 
     async def record_audit(self, audit: AuditRecord) -> None:
-        """独立审计行（不伴随状态迁移）：越权被拒、直接执行写动作的 intent/result 都走这里。"""
-        self._audit.append(audit.as_row())
+        """独立审计行（不伴随状态迁移）：越权被拒、直接执行写动作的 intent/result 都走这里。
+
+        `id` 与 `ts` 在这里补上——SQL 侧由 bigserial 与 `DEFAULT now()` 给，
+        内存侧自己补，否则读面（§14.3）排不出"最近在前"。
+        """
+        row = audit.as_row()
+        row["id"] = self._next_audit_id
+        self._next_audit_id += 1
+        row["ts"] = self._now().isoformat()
+        self._audit.append(row)
 
     def audit_snapshot(self) -> list[dict[str, Any]]:
         """测试与对账读审计流水：内存形态没有 SQL 可查，给一个只读出口。"""
@@ -738,6 +749,7 @@ class NotificationStore:
             **row,
             "created_at": self._iso(row["created_at"]),
             "read_at": self._iso(row["read_at"]),
+            "delivered_at": self._iso(row.get("delivered_at")),
         }
 
     async def insert_notification(
@@ -752,6 +764,11 @@ class NotificationStore:
             "space_id": space_id,
             "created_at": self._now(),
             "read_at": None,
+            # 投递状态（P4 外部通知，设计 §14.2）：默认"只在站内"。
+            "delivery_channel": "in_app",
+            "delivery_status": "in_app",
+            "delivery_error": None,
+            "delivered_at": None,
         }
         self._next_id += 1
         self._rows[row["id"]] = row
@@ -773,6 +790,16 @@ class NotificationStore:
         if row is None or row["recipient"] != recipient or row["read_at"] is not None:
             return None
         row["read_at"] = self._now()
+        return self._public(row)
+
+    async def set_notification_delivery(self, notification_id: int, *, status: str, error: str | None = None) -> dict[str, Any]:
+        """写外部通道的投递结果。站内那一条不因外发失败而回退（设计 §14.2）。"""
+        row = self._rows.get(int(notification_id))
+        if row is None:
+            raise KeyError(f"通知不存在：{notification_id}")
+        row["delivery_status"] = status
+        row["delivery_error"] = error
+        row["delivered_at"] = self._now()
         return self._public(row)
 
 
@@ -874,6 +901,43 @@ class PlatformStore:
     def audit_snapshot(self) -> list[dict[str, Any]]:
         return self.control_actions.audit_snapshot()
 
+    async def read_audit(
+        self,
+        *,
+        operator_id: str | None = None,
+        action: str | None = None,
+        phase: str | None = None,
+        space_id: str | None = None,
+        action_id: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """审计读面（设计 §14.3）：内存形态也读得到，只是重启即失。
+
+        过滤与排序口径与 SQL 侧一致（最近在前、同值按 id 兜底），免得两套实现给出两种顺序。
+        时间过滤用**字符串比较**：`audit_ops.as_row()` 存的时间是 ISO 串，
+        同格式的 ISO 串字典序即时间序（同一时区偏移下成立，跨时区不成立——
+        而本仓的时间戳统一是 UTC）。
+        """
+        rows = self.control_actions.audit_snapshot()
+        filtered = [
+            row
+            for row in rows
+            if (operator_id is None or row.get("operator_id") == operator_id)
+            and (action is None or row.get("action") == action)
+            and (phase is None or row.get("phase") == phase)
+            and (space_id is None or row.get("space_id") == space_id)
+            and (action_id is None or row.get("action_id") == action_id)
+            and (since is None or str(row.get("ts") or "") >= str(since))
+            and (until is None or str(row.get("ts") or "") <= str(until))
+        ]
+        filtered.sort(key=lambda row: (str(row.get("ts") or ""), int(row.get("id") or 0)), reverse=True)
+        capped = max(1, min(int(limit), 200))
+        skip = max(0, int(offset))
+        return filtered[skip : skip + capped]
+
     async def revoke_action(self, action_id: str) -> dict[str, Any] | None:
         return await self.control_actions.revoke_action(action_id)
 
@@ -966,6 +1030,9 @@ class PlatformStore:
 
     async def mark_read(self, notification_id: int, recipient: str) -> dict[str, Any] | None:
         return await self.notifications.mark_read(notification_id, recipient)
+
+    async def set_notification_delivery(self, notification_id: int, *, status: str, error: str | None = None) -> dict[str, Any]:
+        return await self.notifications.set_notification_delivery(notification_id, status=status, error=error)
 
     async def record_chain(self, result: ChainResult) -> None:
         await self.chains.add(result)
@@ -1167,6 +1234,70 @@ class SupportsOperators(Protocol):
     async def list_operators(self, *, active_only: bool = True, limit: int = 200) -> list[Operator]: ...
 
 
+@runtime_checkable
+class SupportsAuditOps(Protocol):
+    """审计读面（P4 读面需求，设计 §14.3）：按人/动作/阶段/空间/时间读流水。
+
+    内存与持久两套都实现——审计在内存形态下也在写（`ControlActionStore._audit`），
+    只是重启即失；读面不因为"内存形态数据会丢"就说 503，那会让离线演练查不到账。
+    """
+
+    async def read_audit(
+        self,
+        *,
+        operator_id: str | None = None,
+        action: str | None = None,
+        phase: str | None = None,
+        space_id: str | None = None,
+        action_id: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
+
+
+def audit_read_port(store: object) -> SupportsAuditOps | None:
+    return store if isinstance(store, SupportsAuditOps) else None
+
+
+@runtime_checkable
+class SupportsOperatorKeys(Protocol):
+    """按人令牌台账的可选能力面：与 `SupportsOperators` 一样**只有持久层实现**。
+
+    内存形态不实现这一面——令牌是"可验证凭据"，重启即失等于"这把钥匙还有效但门锁忘了"，
+    比"没有钥匙"更危险。缺这条能力时端点如实 503（与 `OperatorService` 同一口径）。
+    """
+
+    async def create_operator_key(self, *, key_id: str, operator_id: str, key_hash: str) -> dict[str, Any]: ...
+
+    async def get_operator_key_by_hash(self, key_hash: str) -> dict[str, Any] | None:
+        """按摘要找钥匙。认证路径要用 `active` 与 `key_id`，所以返回原始 dict（含摘要），
+        由调用方自己挑字段——读接口那条路不经这里，不会外泄摘要。
+        """
+        ...
+
+    async def list_operator_keys(self, operator_id: str) -> list[dict[str, Any]]:
+        """列某席位的令牌元数据。**不含摘要、不含明文**。"""
+        ...
+
+    async def revoke_operator_key(self, key_id: str) -> bool: ...
+
+    async def touch_operator_key(self, key_id: str) -> None: ...
+
+    async def get_key_attempts(self, operator_id: str) -> dict[str, Any] | None: ...
+
+    async def record_key_failure(self, *, operator_id: str, max_attempts: int, lock_minutes: int) -> dict[str, Any]:
+        """记一次失败并按阈值锁定：一条语句内完成读改写，且已锁定的窗口不被延长。"""
+        ...
+
+    async def clear_key_failures(self, operator_id: str) -> None: ...
+
+
+def operator_key_port(store: object) -> SupportsOperatorKeys | None:
+    return store if isinstance(store, SupportsOperatorKeys) else None
+
+
 def operator_ledger_port(store: object) -> SupportsOperators | None:
     return store if isinstance(store, SupportsOperators) else None
 
@@ -1277,6 +1408,14 @@ class SupportsNotifications(Protocol):
     async def list_notifications(self, *, recipient: str, unread_only: bool = False, limit: int = 50) -> list[dict[str, Any]]: ...
 
     async def mark_read(self, notification_id: int, recipient: str) -> dict[str, Any] | None: ...
+
+    async def set_notification_delivery(self, notification_id: int, *, status: str, error: str | None = None) -> dict[str, Any]:
+        """写外部通道的投递结果（设计 §14.2）。
+
+        `status` 三值：`in_app`（仅站内）/ `delivered`（外发成功）/ `failed`（外发失败）。
+        站内那一条**不因外发失败而回退**：真源是站内，外发只是加速器。
+        """
+        ...
 
 
 def notification_port(store: object) -> SupportsNotifications | None:
