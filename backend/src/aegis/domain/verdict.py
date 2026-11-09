@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit, now_iso
+from aegis.domain.provenance import DataProvenance
 
 
 @dataclass(slots=True)
@@ -27,6 +28,11 @@ class RiskVerdict:
     #: §3.5 的低置信护栏。此前它只在 `rationale` 那句"（建议人工核签：置信度 …）"里活着，
     #: 于是全仓只有生产者、没有读者——一个布尔变成一列事实，值班员才可能有一张待办清单。
     human_review_suggested: bool = False
+    #: 数据出处 / 置信度依据 / 引擎信封：随 `chain_runs.risk` 原样落库，API 与前端直接读。
+    #: 默认 unknown 而不是猜一个"observed"——没标出处就是没标，不是实测。
+    data_provenance: DataProvenance = field(default_factory=DataProvenance)
+    confidence_basis: str = ""
+    assessment: dict[str, object] = field(default_factory=dict)
 
     def as_payload(self) -> dict[str, object]:
         return {
@@ -39,4 +45,7 @@ class RiskVerdict:
             "assessed_at": self.assessed_at,
             "assessed_by": self.assessed_by,
             "human_review_suggested": self.human_review_suggested,
+            "data_provenance": self.data_provenance.model_dump(),
+            "confidence_basis": self.confidence_basis,
+            "assessment": self.assessment,
         }

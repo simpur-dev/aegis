@@ -256,7 +256,30 @@ export interface ParseResultDto {
   evidence: EvidenceNoteDto[]
 }
 
-/** `RiskVerdict.as_payload()`（services/risk_engine.py:30-40）。 */
+/** 数据出处（`domain/provenance.py` 的 `DataProvenance`）：结论建立在什么数据、什么方法上。 */
+export type DataKind = 'observed' | 'derived' | 'reported' | 'mock' | 'demo' | 'mixed' | 'unknown'
+export type MethodKind =
+  | 'telemetry_rule'
+  | 'factor_engine_mock'
+  | 'llm'
+  | 'report_parse'
+  | 'mock_agent'
+  | 'unknown'
+
+export interface DataProvenanceDto {
+  data_kind: DataKind
+  sources: string[]
+  method: MethodKind
+  method_version: string
+  is_mock: boolean
+  disclaimer: string
+}
+
+/**
+ * `RiskVerdict.as_payload()`（domain/verdict.py）。
+ * 溯源三键与 `human_review_suggested` 是可选：旧的 `chain_runs.risk` 行没有它们，
+ * 缺席就是"这条历史结论没记出处"，不是"没有出处"。
+ */
 export interface ReportRiskDto {
   hazard_type: HazardType
   region_code: string
@@ -266,6 +289,10 @@ export interface ReportRiskDto {
   evidence_refs: string[]
   assessed_at: string
   assessed_by: string
+  human_review_suggested?: boolean
+  data_provenance?: DataProvenanceDto
+  confidence_basis?: string
+  assessment?: Record<string, unknown>
 }
 
 /** `ChainResult.as_dict()`（backend `domain/chain.py`，字段清单以那里为准）。 */
