@@ -40,7 +40,10 @@ jobs:
         # 只装 dev 会让这些用例静默跳过，绿色 CI 等于什么都没测。
         # `iot`（aiomqtt）与 `deploy/Dockerfile` 的那串 extras 对齐：少它时 MQTT 的装配面用例只能跳过，
         # 而 `test_mqtt_wiring.py` 里有一条按部署面判定的守卫用例专门钉这一点（2026-10-13 CI 就是红在这条上）。
-        run: uv sync --frozen --extra dev --extra perf --extra postgres --extra iot --extra analytics --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp
+        # `agents_ext`：外部交付的智能体模块（`aegis.agents_ext`，并入自 hazard-landslide-agent）。
+        # 少它时那 109 条迁入用例 + 265 条边界守卫会因"依赖未安装"而收集失败——那是**该红的**：
+        # 模块已经并入主线，门禁就该对它有约束力，而不是"装不装随你"。
+        run: uv sync --frozen --extra dev --extra perf --extra postgres --extra iot --extra analytics --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp --extra agents_ext
 
       - name: 装前端源码依赖（两条上游读取器漂移守卫要用）
         # `test_offline_tile_format.py` 里有两条守卫是读 `frontend/node_modules` 里的
