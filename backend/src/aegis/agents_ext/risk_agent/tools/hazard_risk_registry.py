@@ -55,7 +55,7 @@ HAZARD_RISK_PROFILES = {
         "mechanism_desc": "降雨入渗 + 高陡松散斜坡失稳（DZ/T 0438—2023 6.4.1，转引）",
         "risk_factors": ["持续或短时强降雨", "高陡边坡", "土壤含水率升高", "地表位移加速", "地下水埋深变浅"],
         "assessment_tool": landslide_factor_assessment_tool,
-        "required_input_fields": list(_LS_CONFIG["required_factors"]),  # type: ignore[call-overload]
+        "required_input_fields": list(_LS_CONFIG["required_factors"]),  # type: ignore[call-overload]  # type: ignore[call-overload]
         "rule_version": _LS_CONFIG["rule_version"],
         "implementation_status": "mock",
         "current_limitations": [

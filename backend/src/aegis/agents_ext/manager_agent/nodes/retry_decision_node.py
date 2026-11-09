@@ -17,8 +17,6 @@ retry_decision_node：异常分类与有限重试决策（全确定性处置矩�
   Manager 不伪造/修补交付物；每次决策都保留错误记录，不静默覆盖。
 """
 
-from typing import Any
-
 from aegis.agents_ext.manager_agent.state import (
     AGENT_DATA,
     AGENT_FEEDBACK,
@@ -55,7 +53,7 @@ def _sim_optional(state: dict) -> bool:
     return bool(MANAGER_SIMULATION_OPTIONAL)
 
 
-def retry_decision_node(state: dict) -> dict[str, Any]:
+def retry_decision_node(state: dict) -> dict:
     check = state.get("check_result") or {}
     agent = check.get("agent", state.get("current_agent", ""))
     error_type = check.get("error_type", "")

@@ -15,7 +15,6 @@ result_check_node：对刚完成的专业 Agent 交付物做结构化核验（�
 """
 
 from datetime import UTC, datetime
-from typing import Any
 
 from aegis.agents_ext.manager_agent.state import (
     AGENT_DATA,
@@ -115,7 +114,7 @@ def _mock_redline(agent: str, state: dict, output: dict) -> tuple:
     return (False, "")
 
 
-def result_check_node(state: dict) -> dict[str, Any]:
+def result_check_node(state: dict) -> dict:
     """核验 current_agent 刚返回的交付物，产出 check_result（供确定性路由）。"""
     agent = state.get("current_agent", "")
     if not agent:

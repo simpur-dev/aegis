@@ -1,11 +1,14 @@
 # ruff: noqa: E501
-# 【本文件整体豁免 E501（行宽 140）】：下面那张 LangGraph 流程图必须保持整行不折——
-# 折了就不是图了；行级 noqa 指令对 E501 无效（它自己会把行撑得更长），
-# 所以只能用文件级指令。文件里除流程图外没有超宽行。
+# 【本文件整体豁免 E501（行宽 140）】：模块 docstring 里那张 LangGraph 流程图必须保持
+# 整行不折（折了就不是图了）；docstring 内部的行挂不了 noqa 指令（行级 noqa 对 E501
+# 无效——它自己会把行撑得更长），所以只能用文件级指令。文件里除流程图外没有超宽行。
 """
 Simulation Agent 的 LangGraph 图构建
 
 【图结构】（对齐任务 §五 建议流程，6 节点 + 5 条件边）
+    scenario_design ──┬─→ scenario_validate ──┬─→ hazard_model_router ──┬─→ simulation_execute ──┬─→ results_analysis ──→ simulation_output → END
+                      │（数据缺失/灾种不支持）  │（参数不合法）            │（灾种不支持/上下文缺失） │（异常→限次重试→超限终止） │（不完整→限次修复）
+                      └──────────── sim puts everything early-exit into simulation_output ────────────┘
 
   精确拓扑：
     set_entry_point("scenario_design")
@@ -30,18 +33,6 @@ Simulation Agent 的 LangGraph 图构建
 【对外契约】
   build_simulation_agent_graph() / create_simulation_agent()
     # 提供给全局 workflow / Manager 调用（风格对齐 create_risk_agent）
-
-
-# --------------------------------------------------------------------------------
-# 【图结构】（对齐任务 §五 建议流程，6 节点 + 5 条件边）
-#
-# 这张图从模块 docstring 里挪到了这里：docstring 内部的行不能挂 `# noqa`，
-# 而这张流程图**必须**保持整行不折（折了就不是图了），所以放在注释块里由 ruff 放行。
-#
-#   scenario_design ──┬─→ scenario_validate ──┬─→ hazard_model_router ──┬─→ simulation_execute ──┬─→ results_analysis ──→ simulation_output → END
-#                     │（数据缺失/灾种不支持）  │（参数不合法）            │（灾种不支持/上下文缺失） │（异常→限次重试→超限终止） │（不完整→限次修复）
-#                     └──────────── sim puts everything early-exit into simulation_output ────────────┘
-# --------------------------------------------------------------------------------
 """
 
 from langgraph.graph import END, StateGraph

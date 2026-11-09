@@ -30,8 +30,6 @@ from aegis.agents_ext.manager_agent.state import ManagerState
 
 
 def build_manager_graph() -> StateGraph:
-    # 【并入主线时的改动】返回的是**未编译**的图（`create_manager_graph` 才 compile），
-    # 所以标注是 StateGraph 而不是 CompiledStateGraph —— 原文件没标，靠 mypy 猜会猜错。
     g = StateGraph(ManagerState)
     g.add_node("task_analyze", task_analyze_node)
     g.add_node("task_plan", task_plan_node)

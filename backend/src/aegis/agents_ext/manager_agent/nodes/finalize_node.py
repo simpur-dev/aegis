@@ -14,7 +14,6 @@ finalize_node：汇总已有结果，输出最终任务报告（全确定性；�
 """
 
 from datetime import UTC, datetime
-from typing import Any
 
 from aegis.agents_ext.manager_agent.state import (
     AGENT_CN_NAME,
@@ -74,7 +73,7 @@ def _mock_disclosure(state: dict) -> dict:
     }
 
 
-def finalize_node(state: dict) -> dict[str, Any]:
+def finalize_node(state: dict) -> dict:
     task_status = _decide_task_status(state)
     retry_counts = state.get("retry_counts") or {}
 

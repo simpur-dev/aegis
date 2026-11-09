@@ -91,6 +91,7 @@ class ExternalAgentAdapter(AgentKit):
         agent_id: str,
         capabilities: list[str],
         action: str,
+        wired: bool = False,
         version: str = "agents-ext-1.0.0",
     ) -> None:
         super().__init__(
@@ -101,6 +102,10 @@ class ExternalAgentAdapter(AgentKit):
             version=version,
         )
         self._action = action
+        # **这个实例接没接线**：平台往不同段发同一个动作名，但要的形状不同——
+        # 研判段要定级结论，感知段要 trigger_hits。外部实现给不了后者，
+        # 那就明确不接线（回类型化错误），而不是接了之后回一个形状不对的载荷。
+        self._wired = wired
         self._runners = _load()
 
     async def handle(self, request: AgentMessage) -> Reply:
@@ -112,7 +117,7 @@ class ExternalAgentAdapter(AgentKit):
             )
         payload = dict(request.payload or {})
 
-        if self._action == "assess.hazard":
+        if self._action == "assess.hazard" and self._wired:
             result = await self._run_assess(payload)
             return Reply(payload=result, model_info=self._provenance())
 
@@ -136,7 +141,7 @@ class ExternalAgentAdapter(AgentKit):
         """
         import asyncio
 
-        return await asyncio.to_thread(assess_face, payload, self._runners["risk"])
+        return await asyncio.to_thread(assess_face, payload, self._runners["risk"], agent_id=self.agent_id)
 
     @staticmethod
     def _provenance() -> ModelInfo:
@@ -161,15 +166,19 @@ def build_ext_agents(
     与 `aegis.agents.factory.build_real_agents` 同一形状：调用方负责 `start()`。
     依赖没装 → 抛 `ExternalAgentsUnavailableError`，由装配点如实退回自建内环。
     """
+    # (AgentType, 平台动作, capability, 是否接线)
+    # 平台往 PERCEIVE 段也发 `assess.hazard`（探测灾种），但那一段要的形状是
+    # `trigger_hits`（自建 PerceiveAgent 给的 anomaly_count/trigger_hits/semantic），
+    # 外部实现的研判翻译给不了 → **明确不接线**（回类型化错误），而不是接了之后
+    # 回一个形状不对的载荷，让平台侧"判不合契约再回落"，看着像降级、其实是接线失败。
     specs = (
-        # 平台往 PERCEIVE 段也发 `assess.hazard`（探测灾种），不是 perceive.anomaly
-        (AgentType.PERCEIVE, "assess.hazard", ["anomaly_detect", "trigger_recognize"]),
-        (AgentType.ASSESS, "assess.hazard", ["risk_assess"]),
-        (AgentType.PLAN, "plan.stu", ["task_decompose"]),
-        (AgentType.EXECUTE, "execute.warn", ["warn_publish"]),
+        (AgentType.PERCEIVE, "assess.hazard", ["anomaly_detect", "trigger_recognize"], False),
+        (AgentType.ASSESS, "assess.hazard", ["risk_assess"], True),
+        (AgentType.PLAN, "plan.stu", ["task_decompose"], False),
+        (AgentType.EXECUTE, "execute.warn", ["warn_publish"], False),
         # 平台发给 FEEDBACK 段的是 `feedback.attribute`；`feedback.status` 是平台自己往 ops
         # 流广播的事件（stages.py），不会发给智能体——注册成它就永远接不到单。
-        (AgentType.FEEDBACK, "feedback.attribute", ["reach_track"]),
+        (AgentType.FEEDBACK, "feedback.attribute", ["reach_track"], False),
     )
     return [
         ExternalAgentAdapter(
@@ -178,8 +187,9 @@ def build_ext_agents(
             agent_id=f"{agent_type.value}.{id_suffix}",
             capabilities=capabilities,
             action=action,
+            wired=wired,
         )
-        for agent_type, action, capabilities in specs
+        for agent_type, action, capabilities, wired in specs
     ]
 
 

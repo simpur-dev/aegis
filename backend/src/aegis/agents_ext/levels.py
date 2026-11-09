@@ -64,6 +64,17 @@ _STATUS_CODES: dict[str, str] = {
 #: 动作不支持的错误码（同样要 ≤21 字符）。
 CODE_ACTION_UNSUPPORTED = "E_EXT_ACTION_UNSUP"
 
+#: 灾种外部不支持。这个码曾被硬写成 24 字符（`E_EXTERNAL_HAZARD_UNSUPPORTED`），
+#: 会被网关当 schema 错误拒收（`E_SCHEMA_INVALID`），平台就看不到"不支持该灾种"的原因——
+#: 所以所有外部错误码都从这张表取，不写字面量。
+CODE_HAZARD_UNSUPPORTED = "E_EXT_HAZARD_UNSUP"
+
+#: 外部档位译不成平台等级（"算不出来"）——不产定级。
+CODE_LEVEL_UNKNOWN = "E_EXT_LEVEL_UNKNOWN"
+
+#: 外部没给置信度（契约要求 confidence）——不产结论。
+CODE_NO_CONFIDENCE = "E_EXT_NO_CONFIDENCE"
+
 
 def hazard_from_platform(platform_key: str) -> str | None:
     """平台灾种 → 外部灾种键。平台独有的（quake_triggered/unknown）返回 None。"""
@@ -109,6 +120,9 @@ def degraded_code(status: str, result: dict[str, Any]) -> tuple[str, str]:
 
 __all__ = [
     "CODE_ACTION_UNSUPPORTED",
+    "CODE_HAZARD_UNSUPPORTED",
+    "CODE_LEVEL_UNKNOWN",
+    "CODE_NO_CONFIDENCE",
     "PLATFORM_TO_EXT_HAZARD",
     "SOURCE_MARK",
     "degraded_code",

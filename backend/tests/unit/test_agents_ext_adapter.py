@@ -30,6 +30,7 @@ from aegis.agents_ext.contract_face import (
 )
 from aegis.agents_ext.levels import (
     CODE_ACTION_UNSUPPORTED,
+    CODE_HAZARD_UNSUPPORTED,
     PLATFORM_TO_EXT_HAZARD,
     SOURCE_MARK,
     degraded_code,
@@ -199,7 +200,7 @@ class Test研判翻译:
     def test_灾种不支持时明确拒绝(self) -> None:
         with pytest.raises(ExternalAgentError) as exc:
             assess_face({"candidate_hazards": ["quake_triggered"]}, _runner({"status": "success"}))
-        assert exc.value.error_code == "E_EXT_HAZARD_UNSUPPORTED"
+        assert exc.value.error_code == CODE_HAZARD_UNSUPPORTED
 
     def test_内部异常收敛成错误并保留异常链(self) -> None:
         def _boom(**kwargs: Any) -> dict[str, Any]:

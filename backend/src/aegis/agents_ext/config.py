@@ -37,9 +37,7 @@ ZHIPUAI_API_KEY = os.environ.get("AEGIS_EXT_LLM_API_KEY", "").strip()
 ZHIPU_MODEL = os.environ.get("AEGIS_EXT_LLM_MODEL", "glm-4-flash").strip()
 
 #: 智谱 OpenAI 兼容接口地址（ChatOpenAI 用 base_url 直连，无需换 SDK）
-ZHIPU_BASE_URL = os.environ.get(
-    "AEGIS_EXT_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"
-).strip()
+ZHIPU_BASE_URL = os.environ.get("AEGIS_EXT_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/").strip()
 
 # ============================================================
 # Manager Agent 配置（全局调度中心）

@@ -8,8 +8,6 @@ task_plan_node：根据任务目标与依赖关系生成结构化执行计划（
   - 外部直供的交付物只登记为 "provided"，Manager 不修改其内容。
 """
 
-from typing import Any
-
 from aegis.agents_ext.manager_agent import planner
 from aegis.agents_ext.manager_agent.state import (
     AGENT_ORDER,
@@ -19,7 +17,7 @@ from aegis.agents_ext.manager_agent.state import (
 )
 
 
-def task_plan_node(state: dict) -> dict[str, Any]:
+def task_plan_node(state: dict) -> dict:
     """生成执行计划并做计划期依赖校验。"""
     updates: dict = {"error_history": list(state.get("error_history") or [])}
 

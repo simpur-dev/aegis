@@ -29,8 +29,6 @@ feedback_review_node：解读 Feedback Agent 结构化反馈，制定最小返�
   Manager 不修改、不修补任何交付物内容，也不替 Feedback 判断业务对错。
 """
 
-from typing import Any
-
 from aegis.agents_ext.manager_agent import planner
 from aegis.agents_ext.manager_agent.state import (
     AGENT_DATA,
@@ -81,7 +79,7 @@ def _decision(state: dict, action: str, reason: str, **extra) -> dict:
     return rec
 
 
-def feedback_review_node(state: dict) -> dict[str, Any]:
+def feedback_review_node(state: dict) -> dict:
     fb = state.get("feedback_result") or {}
     status = str(fb.get("status", ""))
     loop = int(state.get("feedback_loop_count", 0))

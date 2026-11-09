@@ -42,6 +42,9 @@ import logging
 from typing import Any
 
 from aegis.agents_ext.levels import (
+    CODE_HAZARD_UNSUPPORTED,
+    CODE_LEVEL_UNKNOWN,
+    CODE_NO_CONFIDENCE,
     SOURCE_MARK,
     degraded_code,
     hazard_from_platform,
@@ -162,7 +165,7 @@ def task_of(payload: dict[str, Any], region: str) -> str:
     return f"研判 {region or '全域'} 的风险" if region else "研判全域风险"
 
 
-def assess_face(request_payload: dict[str, Any], runner: Any) -> dict[str, Any]:
+def assess_face(request_payload: dict[str, Any], runner: Any, *, agent_id: str = "assess.agents_ext") -> dict[str, Any]:
     """`assess.hazard` → 她的风险研判 → 平台契约响应载荷。
 
     **给不出可用结论就抛 `ExternalAgentError`**（而不是返回一个带 `error` 字段的响应）：
@@ -171,7 +174,7 @@ def assess_face(request_payload: dict[str, Any], runner: Any) -> dict[str, Any]:
     hazard = pick_hazard(request_payload)
     if not hazard:
         raise ExternalAgentError(
-            "E_EXT_HAZARD_UNSUPPORTED",
+            CODE_HAZARD_UNSUPPORTED,
             f"外部实现不支持该灾种：{hazard_candidates(request_payload) or '（未给灾种）'}",
         )
     region = region_of(request_payload)
@@ -199,7 +202,7 @@ def assess_face(request_payload: dict[str, Any], runner: Any) -> dict[str, Any]:
     if level is None:
         # 档位认不出 = "算不出来"：**不产定级**（平台的 5 是"无风险"，不是这里的意思）
         raise ExternalAgentError(
-            "E_EXT_LEVEL_UNKNOWN",
+            CODE_LEVEL_UNKNOWN,
             f"外部研判档位无法映射到平台等级：{result.get('risk_level')!r}",
             detail={"hazard_type": hazard},
         )
@@ -209,7 +212,7 @@ def assess_face(request_payload: dict[str, Any], runner: Any) -> dict[str, Any]:
     raw_confidence = result.get("confidence")
     if raw_confidence is None:
         raise ExternalAgentError(
-            "E_EXT_NO_CONFIDENCE",
+            CODE_NO_CONFIDENCE,
             "外部研判未给出置信度（契约要求 confidence），本次不产结论",
             detail={"hazard_type": hazard},
         )
@@ -227,8 +230,9 @@ def assess_face(request_payload: dict[str, Any], runner: Any) -> dict[str, Any]:
             item if isinstance(item, str) else str(item.get("note") or item.get("source") or item.get("type") or "")
             for item in (result.get("evidence") or [])
         ],
-        # 结论主体：外部实现 ≠ 平台自建内环，台账要能分清是谁答的
-        "assessed_by": "assess.agents_ext",
+        # 结论主体：**实例 id**（与自建内环同一口径，见 agents/assess.py 的 `self.agent_id`）——
+        # 台账要能分清是哪台本体答的，不只是"外部 vs 自建"。
+        "assessed_by": agent_id,
         # 低置信人工核签护栏（§3.5）：外部实现自报"是否建议转人工"；没有就 False（= 不建议）
         "human_review_suggested": bool(result.get("human_review_suggested") or False),
         # 双盲增强腿：外部实现没有这条腿，显式写"不适用"而不是留空（空会被读成"没评估"）

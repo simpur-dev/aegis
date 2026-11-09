@@ -11,7 +11,6 @@ task_analyze_node：任务解析与灾种识别（全确定性，LLM 不参与�
 
 import re
 from datetime import UTC, datetime
-from typing import Any
 
 from aegis.agents_ext.hazard_registry import normalize_hazard_type, supported_hazards_text
 from aegis.agents_ext.manager_agent.state import (
@@ -31,7 +30,7 @@ def _gen_event_id(hazard_key: str) -> str:
     return f"EVT-{tail}-{ts}"
 
 
-def task_analyze_node(state: dict) -> dict[str, Any]:
+def task_analyze_node(state: dict) -> dict:
     """解析任务输入，验证灾害类型和必要字段。"""
     updates: dict = {"error_history": list(state.get("error_history") or []), "check_result": {}}
 

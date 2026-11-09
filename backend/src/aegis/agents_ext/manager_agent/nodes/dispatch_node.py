@@ -12,7 +12,6 @@ dispatch_node：调度枢纽（hub）—— 弹出调度队列队首，执行对
 """
 
 import time
-from typing import Any
 
 from aegis.agents_ext.manager_agent import dispatcher
 from aegis.agents_ext.manager_agent.state import (
@@ -27,7 +26,7 @@ def _attempt_no(state: dict, agent: str) -> int:
     return sum(1 for c in (state.get("agent_call_log") or []) if c.get("agent") == agent) + 1
 
 
-def dispatch_node(state: dict) -> dict[str, Any]:
+def dispatch_node(state: dict) -> dict:
     pending = list(state.get("pending_agents") or [])
     if not pending:
         # 队列空仍被调度到（防御式）：直接交给路由收尾
