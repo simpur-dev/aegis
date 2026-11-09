@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import timedelta
 from typing import Any, ClassVar
 
@@ -215,6 +216,19 @@ class FakeLlm:
         self.chat_calls += 1
         if self.error is not None:
             raise self.error
+        return self.polish or "复述事实"
+
+
+class _SlowLlm(FakeLlm):
+    """真模型慢起来没有上限：这里用固定长睡复现"润色把 answer 帧扣住"。"""
+
+    def __init__(self, delay: float) -> None:
+        super().__init__(polish="复述事实")
+        self.delay = delay
+
+    async def chat(self, messages: list[dict[str, str]], *, temperature: float = 0.3, max_tokens: int | None = None) -> str:
+        self.chat_calls += 1
+        await asyncio.sleep(self.delay)
         return self.polish or "复述事实"
 
 
@@ -897,6 +911,24 @@ async def test_llm润色失败时回到确定性叙述() -> None:
     events = await collect(service, "wrn_0123456789abcdef0123 依据是什么", reporter="值班员")
     answer = next(event for event in events if event.type == "answer")
     assert "sms=delivered" in answer.data["text"]
+
+
+@pytest.mark.asyncio
+async def test_润色超时就按事实直出而不扣住答案() -> None:
+    """润色只改说法：慢模型不许让已经拿到的事实等一句转述。
+
+    判据是相对关系——替身睡 5 秒、时限 0.05 秒，回来必须远早于 5 秒；
+    断言里不留"实际耗时小于某个魔法毫秒数"，只在用例说明里讲清量级。
+    """
+    llm = _SlowLlm(delay=5.0)
+    service = build_service(llm=llm, assistant_polish_timeout_seconds=0.05)
+    started = time.monotonic()
+    events = await collect(service, "wrn_0123456789abcdef0123 依据是什么", reporter="值班员")
+    elapsed = time.monotonic() - started
+    answer = next(event for event in events if event.type == "answer")
+    assert "sms=delivered" in answer.data["text"]
+    assert elapsed < 2.0, f"润色没有被 0.05s 的时限截断，等了 {elapsed:.2f}s"
+    assert any("润色超时" in row["reason"] for row in service.rejections), service.rejections
 
 
 # ---------- 装配事实 ----------

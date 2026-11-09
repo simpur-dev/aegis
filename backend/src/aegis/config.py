@@ -136,6 +136,10 @@ class Settings(BaseSettings):
     #: 动作台账的周期维护（秒）：过期提案置 expired、卡死 executing 置 failed。
     #: 与启动收尾同一套判据——只在启动跑一次的话，长跑进程里这两类中间态没人再收。
     assistant_maintenance_interval_seconds: float = 60.0
+    #: 措辞润色的时限（秒）。润色只改说法、不带新事实，动作结果已经拿到；
+    #: 慢模型把 answer 帧拖住等于让"已执行"这个事实等一句可有可无的转述。
+    #: 超时按确定性叙述直出（答案内容不变，只是不润色），并记一条降级。
+    assistant_polish_timeout_seconds: float = 3.0
 
     #: 审计流水 `audit_ops` 的热分区保留月数（012 起按月 RANGE 分区）。过期月分区只被
     #: DETACH 成独立归档表，行不删；0 与负数由 SQL 函数拒绝，不会静默把审计抹掉。

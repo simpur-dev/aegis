@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import time
 from collections import deque
@@ -626,17 +627,26 @@ class AssistantService:
         llm = self._llm
         if llm is None:
             return facts[:_ANSWER_LIMIT]
+        # 润色是可有可无的一层：慢模型不许把 answer 帧（已拿到的事实）扣在手里。
+        # 超时就直出，reason 里留一行降级，排查时能分清"模型慢"与"模型编数"。
+        timeout = float(self._settings.assistant_polish_timeout_seconds)
         try:
-            polished = await llm.chat(
-                [
-                    {
-                        "role": "system",
-                        "content": "你是值班秘书。只能复述给定事实，不得新增数字、地名、等级或时间；输出简洁中文要点。",
-                    },
-                    {"role": "user", "content": facts[:2_000]},
-                ],
-                temperature=0.2,
+            polished = await asyncio.wait_for(
+                llm.chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": "你是值班秘书。只能复述给定事实，不得新增数字、地名、等级或时间；输出简洁中文要点。",
+                        },
+                        {"role": "user", "content": facts[:2_000]},
+                    ],
+                    temperature=0.2,
+                ),
+                timeout=timeout,
             )
+        except TimeoutError:
+            self._reject(session, action="llm.polish", reason=f"措辞润色超时（>{timeout:.1f}s），按事实直出")
+            return facts[:_ANSWER_LIMIT]
         except Exception as exc:
             self._reject(session, action="llm.polish", reason=f"措辞润色降级 {type(exc).__name__}")
             return facts[:_ANSWER_LIMIT]
