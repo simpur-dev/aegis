@@ -26,11 +26,16 @@ from conftest import chain_entry
 REGION = "540121"
 TRACE = "trc_" + "0" * 16
 VERDICT_PAYLOAD = {
+    "contract_version": "assess.v1",
     "risk_level": int(RiskLevel.ORANGE),
     "hazard_type": HazardType.DEBRIS_FLOW.value,
+    "region_code": REGION,
     "confidence": 0.78,
+    "confidence_basis": "stub:mean_score=0.78",
     "rationale": "10 分钟降雨 28 毫米且泥位上行",
     "evidence_refs": ["R-DEBRIS-RAIN-1"],
+    "assessed_by": "assess.stub",
+    "source": "platform.stub",
 }
 
 

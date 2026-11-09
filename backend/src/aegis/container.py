@@ -57,6 +57,7 @@ from aegis.observability.instrumentation import register_sla_budgets
 from aegis.observability.metrics import MetricsExporter
 from aegis.observability.telemetry import telemetry_status
 from aegis.observability.tracer import Tracer
+from aegis.pipeline.assess_input import AssessEvidenceBuilder
 from aegis.pipeline.publisher import WarningPublisher
 from aegis.pipeline.report_intake import ReportIntake
 from aegis.pipeline.stages import HazardStages
@@ -175,6 +176,9 @@ class PlatformContainer:
     #: 计数放在容器上而不是散在路由里，`latency_report()` 才能一次给全（指标必须可追溯到样本）。
     #: 同一个 dict 引用也交给 `report_intake` 去加，装配点不另建第二本账。
     report_stats: dict[str, int]
+    #: 研判证据包的唯一构造面（§4.7）：研判段用它拼 `AssessRequest.evidence`，
+    #: 证据读面用它回同样形状——两处若各拼一套，"推"和"拉"迟早给出不同的事实。
+    assess_evidence: AssessEvidenceBuilder | None = None
     analytics: AnalyticsRecorder | None = None
     knowledge: KnowledgeProvider | None = None
     knowledge_state: IntegrationState | None = None
@@ -841,6 +845,8 @@ def create_container(
     )
     # 阈值建议闭环要在链路之前建好：反馈段拿它当入账口，端点拿它当唯一读写面。
     suggestions = ThresholdSuggestionService(store=store, rule_engine=rule_engine)
+    # 证据包与 dev 环境同源：窗口取配置，存储不可达时 builder 自己降级成"只有 board 读数"。
+    assess_evidence = AssessEvidenceBuilder(store, window_minutes=cfg.assess_window_minutes)
     # D7 §4.6 第 4 步：段的判定与记账在 `HazardStages`，段的先后由标准五段模板的边决定。
     # 这里刻意不再另建一个"固定顺序编排器"——两条路径并存的那段日子，parity 用例是唯一的护栏，
     # 而护栏不该是常驻成本（退役过程见 REPORT 的 D7 第 4 步一节）。
@@ -858,6 +864,7 @@ def create_container(
         knowledge=knowledge,
         retrieval=retrieval,
         suggestions=suggestions,
+        assess_evidence=assess_evidence,
     )
     # 段的执行口先于引擎：引擎的服务里要摆这个可调用，而它只依赖段与盘面，不依赖引擎本身。
     stations = ChainStations(stages)
@@ -933,6 +940,7 @@ def create_container(
         rule_engine=rule_engine,
         report_intake=ReportIntake(parser=parser, chain=chain, tracer=tracer, workflow=workflow, report_stats=report_stats),
         report_stats=report_stats,
+        assess_evidence=assess_evidence,
         analytics=analytics,
         knowledge=knowledge,
         knowledge_state=knowledge_state,

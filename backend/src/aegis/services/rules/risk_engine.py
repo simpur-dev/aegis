@@ -10,6 +10,7 @@ from datetime import datetime
 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TriggerHit
+from aegis.domain.provenance import DataProvenance
 from aegis.domain.verdict import RiskVerdict
 from aegis.services.rules.trigger_rules import Rule, RuleEngine
 
@@ -37,7 +38,13 @@ class RiskEngine:
     def level_of(self, rule_id: str) -> RiskLevel | None:
         return self._levels.get(rule_id)
 
-    def assess(self, hits: list[TriggerHit], *, region_code: str | None = None) -> RiskVerdict | None:
+    def assess(
+        self,
+        hits: list[TriggerHit],
+        *,
+        region_code: str | None = None,
+        provenance: DataProvenance | None = None,
+    ) -> RiskVerdict | None:
         if not hits:
             return None
 
@@ -64,6 +71,8 @@ class RiskEngine:
             confidence=round(confidence, 4),
             rationale=rationale,
             hits=scoped,
+            data_provenance=provenance or DataProvenance(method="telemetry_rule"),
+            confidence_basis=f"rule_engine:mean_score={base:.2f};corroboration={corroboration}",
         )
 
     def assess_many(self, hits: list[TriggerHit]) -> list[RiskVerdict]:

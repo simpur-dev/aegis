@@ -23,7 +23,11 @@ from aegis.services.llm.prompt_registry import PromptRegistry
 from aegis.services.memory.memory import InMemoryAgentMemory, MemoryService, new_memory_record_id
 
 TRACE = "trc_" + "7" * 16
-REQUEST_PAYLOAD = {"region_code": "540121", "hits": [{"rule_id": "R-DEBRIS-RAIN-1", "hazard_type": "debris_flow", "score": 0.9}]}
+REQUEST_PAYLOAD = {
+    "region_code": "540121",
+    "window": "60m",
+    "hits": [{"rule_id": "R-DEBRIS-RAIN-1", "hazard_type": "debris_flow", "region_code": "540121", "score": 0.9}],
+}
 
 
 class _StubCompletions:

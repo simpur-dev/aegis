@@ -16,7 +16,7 @@ import pytest
 from aegis.agents.assess import AssessAgent, AssessContextProvider, AssessVerdict
 from aegis.agents.rest_context import CASES_PATH, SEARCH_PATH, RestAssessContext
 from aegis.domain.enums import AgentType, HazardType
-from aegis.domain.messages import make_request, now_iso
+from aegis.domain.messages import make_request
 
 REGION = "540121"
 CASE_ITEM = {"title": "2024 河口泥石流", "degraded": False}
@@ -145,7 +145,7 @@ def _request(hits: list[Any] | None = None) -> Any:
         source="platform.t01",
         target="assess.t01",
         action="assess.risk",
-        payload={"region_code": REGION, "hits": hits or [], "observed_at": now_iso()},
+        payload={"region_code": REGION, "window": "60m", "hits": hits or []},
         trace_id="trc_" + "0" * 16,
         reply_to="reply.t01.inbox",
         deadline_ms=3000,
@@ -182,15 +182,17 @@ async def test_assess把取数降级原样带到响应里() -> None:
 
     gateway = FakeGateway()
     reply = await assess(BrokenContext(), gateway).handle(_request())
-    assert reply.payload["context_degraded"] == ["cases: 请求超时"]
+    assert reply.payload["assessment"]["context_degraded"] == ["cases: 请求超时"]
 
 
 async def test_assess取数正常时响应里降级为空() -> None:
     provider, _ = subject({CASES_PATH: OK_CASES, SEARCH_PATH: OK_SEARCH})
     gateway = FakeGateway()
     # 带 hit 才有可搜的词：`hits=[]` 那档检索腿根本不问（见 `test_没有关键词时检索腿不发`）
-    reply = await assess(provider, gateway).handle(_request(hits=[{"hazard_type": "debris_flow", "rule_id": "R-DEBRIS-RAIN-1"}]))
-    assert reply.payload["context_degraded"] == []
+    reply = await assess(provider, gateway).handle(
+        _request(hits=[{"hazard_type": "debris_flow", "rule_id": "R-DEBRIS-RAIN-1", "region_code": REGION, "score": 0.8}])
+    )
+    assert reply.payload["assessment"]["context_degraded"] == []
     joined = gateway.prompt_vars[0]["context"]
     assert "2024 河口泥石流" in joined and "应急预案第 3 节" in joined, "取到的佐证必须真的进提示词，否则取数白取"
     assert "AEGIS_DATA" in joined, "外部佐证进提示词前必须过注入围栏"

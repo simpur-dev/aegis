@@ -58,11 +58,16 @@ def _assess_response(double_blind: str, disagreement: bool | None = None, mode: 
         request,
         source="assess.stub",
         payload={
-            "risk_level": int(RiskLevel.ORANGE),
+            "contract_version": "assess.v1",
             "hazard_type": HazardType.DEBRIS_FLOW.value,
+            "region_code": REGION,
+            "risk_level": int(RiskLevel.ORANGE),
             "confidence": 0.78,
+            "confidence_basis": "stub:mean_score=0.78",
             "rationale": "10 分钟降雨 28 毫米且泥位上行",
             "evidence_refs": ["R-DEBRIS-RAIN-1"],
+            "assessed_by": "assess.stub",
+            "source": "platform.stub",
             "double_blind": double_blind,
             "double_blind_mode": mode,
         },
@@ -139,8 +144,8 @@ class TestBlindLegTrace:
         result = await _run("agreed")
         assert not any("研判增强腿失败" in note for note in result.degradations), result.degradations
 
-    async def test_旧版应答不带这一格时不炸也不记(self) -> None:
-        """契约向后兼容：没有 `double_blind` 的应答（老智能体）不该被当成增强腿失败。"""
+    async def test_应答不带双盲格时不炸也不记(self) -> None:
+        """`double_blind` 是可选格：没带的应答（单遍实现）不该被当成增强腿失败。"""
         request = make_request(
             source="platform.t01",
             target="assess.stub",
@@ -149,7 +154,20 @@ class TestBlindLegTrace:
             trace_id=TRACE,
             reply_to="reply.t01.inbox",
         )
-        bare = make_response(request, source="assess.stub", payload={"risk_level": 2, "hazard_type": "debris_flow", "confidence": 0.7})
+        bare = make_response(
+            request,
+            source="assess.stub",
+            payload={
+                "contract_version": "assess.v1",
+                "hazard_type": "debris_flow",
+                "region_code": REGION,
+                "risk_level": 2,
+                "confidence": 0.7,
+                "confidence_basis": "stub:0.70",
+                "assessed_by": "assess.stub",
+                "source": "platform.stub",
+            },
+        )
         chain = await chain_entry(
             HazardStages(
                 gateway=_Gateway(bare),  # type: ignore[arg-type]

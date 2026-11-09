@@ -18,11 +18,13 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from aegis.agents.agentkit import AgentKit, Reply
+from aegis.domain.assess import AssessRequest, AssessResponse
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import AgentMessage, ModelInfo, now_iso
+from aegis.domain.provenance import DataProvenance
 from aegis.observability.tracer import percentile
 from aegis.services.llm.prompt_guard import fence_untrusted
 from aegis.services.memory.memory import MemoryService, new_memory_record_id
@@ -99,16 +101,15 @@ class AssessAgent(AgentKit):
             raise RuntimeError("assess 内环需要 LLM 网关（缺位由平台规则降级轨接管）")
         return self.llm
 
-    def _pre_flagged_high_risk(self, payload: dict[str, Any]) -> bool:
+    def _pre_flagged_high_risk(self, rule_level: RiskLevel | None) -> bool:
         """规则轨（平台风险引擎）已经把这次事件报成红/橙——并行预发第二腿的依据。
 
         它只回答"要不要现在就开两腿"，不参与判定：结论的出处仍然只有模型那一份。
-        没带这一格（老调用方）就是不预触发，走原来的"模型报红/橙后补跑第二腿"。
+        请求没带这一格（老调用方）就是不预触发，走原来的"模型报红/橙后补跑第二腿"。
         """
-        try:
-            return int(payload["rule_level"]) <= int(RiskLevel.ORANGE)
-        except (KeyError, TypeError, ValueError):
+        if rule_level is None:
             return False
+        return int(rule_level) <= int(RiskLevel.ORANGE)
 
     def _recent_grade_p50_ms(self) -> float:
         """网关台账里 `assess` 任务的历史 p50：并行发车之前唯一能拿到的耗时事实。
@@ -205,10 +206,13 @@ class AssessAgent(AgentKit):
             raise RuntimeError("assess 内环需要 LLM 网关（缺位由平台规则降级轨接管）")
         # 预算与网关同锚：从请求到达算起，不是从 handle 开始算（排队时间不是免费的）
         started_at = time.perf_counter() - self.elapsed_ms(request) / 1000
-        payload = request.payload or {}
-        region = str(payload.get("region_code", ""))
-        hits = payload.get("hits") or []
-        hazard_hint = self._first_hazard(hits)
+        try:
+            req = AssessRequest.model_validate(request.payload or {})
+        except ValidationError as exc:
+            raise RuntimeError(f"研判请求不合 assess.v1：{len(exc.errors())} 处字段错误") from exc
+        region = req.region_code
+        hits = [hit.model_dump(mode="json") for hit in req.hits]
+        hazard_hint = req.hazard_type.value if req.hazard_type is not None else self._first_hazard(hits)
 
         ctx: dict[str, Any] = {}
         if self.context is not None:
@@ -231,7 +235,7 @@ class AssessAgent(AgentKit):
         blind_status = "not_applicable"
         blind_mode = ""
         second_leg: tuple[AssessVerdict | BaseException, float] | None = None
-        if self.double_blind and self._pre_flagged_high_risk(payload) and self._pair_affordable(request, started_at):
+        if self.double_blind and self._pre_flagged_high_risk(req.rule_level) and self._pair_affordable(request, started_at):
             blind_mode = "parallel"
             (first, first_ms), second_leg = await asyncio.gather(
                 self._grade(task="assess", base_vars=base_vars, request=request),
@@ -280,15 +284,11 @@ class AssessAgent(AgentKit):
                     ctx=ctx,
                 )
 
-        result_payload = self._to_chain_payload(final, region=region, hits=hits)
         # §3.2 双盲状态如实留痕：agreed / arbitrated / skipped_deadline / skipped_budget /
-        # arbitrated_skipped_budget / not_applicable —— 收腿这件事必须看得见，不能伪装成"跑了且一致"
-        result_payload["double_blind"] = blind_status
-        # 这两遍是同时发的还是排队发的：它决定这一段的时延形状（并行≈一趟调用，串行≈两趟）。
-        # 只在增强腿真开过时有值，"" 就是压根没开（跳过或不适用）——别让"没做"读成"做了且一致"。
-        result_payload["double_blind_mode"] = blind_mode
-        # 取数哪条腿没拿到（REST 503/超时/连不上）必须看得见，否则"没有佐证"会读成"佐证就是这些"。
-        result_payload["context_degraded"] = list(ctx.get("degraded") or [])
+        # arbitrated_skipped_budget / not_applicable —— 收腿这件事必须看得见，不能伪装成"跑了且一致"。
+        # 这两遍是同时发的还是排队发的由 `double_blind_mode` 记录；"" 就是压根没开。
+        # 取数哪条腿没拿到（REST 503/超时/连不上）放进 assessment，否则"没有佐证"会读成"佐证就是这些"。
+        result_payload = self._to_response(final, req=req, blind_status=blind_status, blind_mode=blind_mode, ctx=ctx)
 
         if self.memory is not None:
             try:
@@ -307,21 +307,47 @@ class AssessAgent(AgentKit):
 
         return Reply(payload=result_payload, model_info=self._provenance(), disagreement=disagreement)
 
-    def _to_chain_payload(self, verdict: AssessVerdict, *, region: str, hits: list[Any]) -> dict[str, Any]:
-        evidence = list(verdict.evidence_refs) or [self._rule_id(h) for h in hits]
+    def _to_response(
+        self,
+        verdict: AssessVerdict,
+        *,
+        req: AssessRequest,
+        blind_status: str,
+        blind_mode: str,
+        ctx: dict[str, Any],
+    ) -> dict[str, Any]:
+        """内部定级 → 统一 `AssessResponse` 载荷（平台侧直接按契约校验，不再做字段解析）。"""
+        evidence = list(verdict.evidence_refs) or [self._rule_id(h) for h in req.hits]
         rationale = verdict.rationale
         if verdict.confidence < self.confidence_floor:
             # 低置信不拦发布（漏报代价高于误报），但如实标"建议人工核签"，交 assistant 人工闸承接（§3.2 护栏）。
             rationale = f"{rationale}（建议人工核签：置信度 {verdict.confidence:.2f} < {self.confidence_floor:.2f}）"
-        return {
-            "hazard_type": verdict.hazard_type,
-            "risk_level": int(verdict.risk_level),
-            "confidence": float(verdict.confidence),
-            "rationale": rationale[:1000],
-            "evidence_refs": [str(e) for e in evidence][:32],
-            "assessed_by": self.agent_id,
-            "human_review_suggested": bool(verdict.confidence < self.confidence_floor),
-        }
+        request_provenance = req.evidence.provenance if req.evidence is not None else DataProvenance()
+        response = AssessResponse(
+            hazard_type=HazardType(verdict.hazard_type),
+            region_code=req.region_code,
+            risk_level=RiskLevel(int(verdict.risk_level)),
+            confidence=float(verdict.confidence),
+            confidence_basis=f"llm_confidence+floor/boost;double_blind={blind_status}",
+            rationale=rationale[:1000],
+            evidence_refs=[str(item) for item in evidence][:32],
+            assessed_at=now_iso(),
+            assessed_by=self.agent_id,
+            human_review_suggested=bool(verdict.confidence < self.confidence_floor),
+            double_blind=blind_status,
+            double_blind_mode=blind_mode,
+            source="platform.builtin",
+            data_provenance=DataProvenance(
+                data_kind=request_provenance.data_kind,
+                sources=list(request_provenance.sources)[:16],
+                method="llm",
+                method_version="assess.v1",
+                is_mock=request_provenance.is_mock,
+                disclaimer=request_provenance.disclaimer,
+            ),
+            assessment={"context_degraded": list(ctx.get("degraded") or [])},
+        )
+        return response.model_dump(mode="json")
 
     def _provenance(self) -> ModelInfo | None:
         getter = getattr(self.llm, "model_info_for_task", None)

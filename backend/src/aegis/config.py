@@ -276,6 +276,9 @@ class Settings(BaseSettings):
     heartbeat_miss_limit: int = 3
     default_request_deadline_ms: int = 10_000
     gateway_allow_unregistered_action: bool = False
+    # 研判证据窗口：随 `assess.v1` 请求推送的遥测聚合窗口（分钟）。
+    # 与感知/执行的"本批读数"不同，这是**回看窗口**——因子引擎需要一整窗的雨强与位移趋势。
+    assess_window_minutes: int = 60
 
     # 课题6 考核指标口径（量测阈值，单位见字段名）
     sla_sync_ms: int = 3_000

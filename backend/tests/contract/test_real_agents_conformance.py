@@ -69,7 +69,11 @@ class TestGate1SchemaLegality:
         reply = await gateway.dispatch(
             AgentType.ASSESS,
             Action.ASSESS_HAZARD,
-            {"region_code": "540121", "hits": [{"rule_id": "R-1", "hazard_type": "debris_flow", "region_code": "540121", "score": 0.9}]},
+            {
+                "region_code": "540121",
+                "window": "60m",
+                "hits": [{"rule_id": "R-1", "hazard_type": "debris_flow", "region_code": "540121", "score": 0.9}],
+            },
             trace_id=TRACE,
             capability="risk_assess",
         )
@@ -97,7 +101,7 @@ class TestGate2Idempotency:
             source="platform.gateway",
             target="assess.real01",
             action=Action.ASSESS_HAZARD.value,
-            payload={"region_code": "540121", "hits": []},
+            payload={"region_code": "540121", "window": "60m", "hits": []},
             trace_id=TRACE,
             reply_to="reply.gwreal0001.inbox",
             deadline_ms=800,
@@ -131,7 +135,12 @@ class TestGate4Error:
         agent.transport = bus
         await bring_up(bus, gateway, agent)
         with pytest.raises(AegisError):
-            await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, {"region_code": "540121", "hits": []}, trace_id=TRACE)
+            await gateway.dispatch(
+                AgentType.ASSESS,
+                Action.ASSESS_HAZARD,
+                {"region_code": "540121", "window": "60m", "hits": []},
+                trace_id=TRACE,
+            )
         assert gateway.transactions[-1].outcome == "error"
         await agent.stop()
         await gateway.close()

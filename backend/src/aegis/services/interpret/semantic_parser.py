@@ -25,6 +25,7 @@ from typing import Any, Protocol
 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, TriggerHit
+from aegis.domain.provenance import DataProvenance
 from aegis.domain.verdict import RiskVerdict
 from aegis.services.llm.prompt_guard import fence_untrusted
 from aegis.services.rules.risk_engine import RiskEngine
@@ -183,6 +184,13 @@ class ParsedDisaster:
             rationale=rationale[:1_000],
             hits=list(self.hits),
             assessed_by=assessed_by,
+            data_provenance=DataProvenance(
+                data_kind="reported",
+                sources=["platform.report"],
+                method="report_parse",
+                method_version="semantic_parser",
+            ),
+            confidence_basis=f"semantic_parser:legs={len(self.legs)};conflicts={len(self.conflicts)}",
         )
 
     def as_dict(self) -> dict[str, Any]:

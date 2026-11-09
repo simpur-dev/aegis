@@ -21,6 +21,7 @@ from aegis.agents.agentkit import AgentKit, Reply
 from aegis.contracts import ContractRegistry
 from aegis.domain.enums import Action, HazardType, RiskLevel, TaskType
 from aegis.domain.messages import AgentMessage, ModelInfo, TriggerHit
+from aegis.domain.provenance import DataProvenance
 from aegis.domain.verdict import RiskVerdict
 from aegis.services.llm.prompt_guard import fence_untrusted
 from aegis.services.response.task_parser import TaskParser
@@ -163,7 +164,16 @@ class PlanAgent(AgentKit):
             )
         evidence = [e for e in (risk.get("evidence_refs") or []) if isinstance(e, str) and e.startswith("R-")]
         hits = [TriggerHit(rule_id=e, hazard_type=hazard.value, region_code=region, score=0.7) for e in evidence[:32]]
-        return RiskVerdict(hazard_type=hazard, region_code=region, risk_level=level, confidence=confidence, rationale=rationale, hits=hits)
+        return RiskVerdict(
+            hazard_type=hazard,
+            region_code=region,
+            risk_level=level,
+            confidence=confidence,
+            rationale=rationale,
+            hits=hits,
+            data_provenance=DataProvenance.from_payload(risk.get("data_provenance")),
+            confidence_basis=str(risk.get("confidence_basis", "")),
+        )
 
     def _stamp(self, unit: Any) -> Any:
         return unit.model_copy(update={"created_by": self.agent_id})

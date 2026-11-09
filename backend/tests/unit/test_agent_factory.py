@@ -46,7 +46,11 @@ async def test_five_real_agents_register_and_assess_serves(bus: InMemoryBus, gat
     reply = await gateway.dispatch(
         AgentType.ASSESS,
         Action.ASSESS_HAZARD,
-        {"region_code": "540121", "hits": [{"rule_id": "R-1", "hazard_type": "debris_flow", "region_code": "540121", "score": 0.9}]},
+        {
+            "region_code": "540121",
+            "window": "60m",
+            "hits": [{"rule_id": "R-1", "hazard_type": "debris_flow", "region_code": "540121", "score": 0.9}],
+        },
         trace_id=TRACE,
         capability="risk_assess",
     )

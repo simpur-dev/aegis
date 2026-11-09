@@ -22,13 +22,16 @@ from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from pydantic import ValidationError
+
 from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway
 from aegis.bus.registry import AgentRegistry, SelectionReason
 from aegis.config import Settings, get_settings
 from aegis.contracts import ContractRegistry
+from aegis.domain.assess import AssessRequest, AssessResponse
 from aegis.domain.chain import STAGE_ORDER, ChainResult, StageResult, model_receipt
-from aegis.domain.enums import Action, AgentType, HazardType, RiskLevel
+from aegis.domain.enums import Action, AgentType, HazardType
 from aegis.domain.messages import (
     AgentMessage,
     StandardizedTaskUnit,
@@ -43,6 +46,7 @@ from aegis.errors import AegisError
 from aegis.knowledge.provider import CaseMatch, KnowledgeProvider
 from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
+from aegis.pipeline.assess_input import AssessEvidenceBuilder
 from aegis.pipeline.board import ChainBoard
 from aegis.pipeline.publisher import WarningPublisher
 from aegis.services.interpret.text_guard import invented_numbers
@@ -66,6 +70,16 @@ _CONTEXT_DOC_LIMIT = 5
 #: 信封里的分歧格只有三种事实：False（两遍一致）、True（两遍不一致）、缺席（老版应答没带这一格）。
 #: 把 None 折成 False 就是"没评估"冒充"评估过且一致"——§3.2 双盲最怕的正是这种读法。
 _DISAGREEMENT_LABELS: dict[bool | None, str] = {True: "两遍不一致", False: "两遍一致", None: "分歧格未带"}
+
+#: 平票时的灾种先后：取枚举声明顺序，保证两次相同输入选出同一个主灾种。
+_HAZARD_ORDER = {hazard: index for index, hazard in enumerate(HazardType)}
+
+
+def _hazard_or_none(value: str) -> HazardType | None:
+    try:
+        return HazardType(value)
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +164,7 @@ class HazardStages:
         knowledge: KnowledgeProvider | None = None,
         retrieval: HybridRetrievalService | None = None,
         suggestions: SuggestionSink | None = None,
+        assess_evidence: AssessEvidenceBuilder | None = None,
     ) -> None:
         self._gateway = gateway
         self._registry = registry
@@ -170,6 +185,7 @@ class HazardStages:
         self._knowledge = knowledge
         self._retrieval = retrieval
         self._suggestions = suggestions
+        self._assess_evidence = assess_evidence
 
     @property
     def settings(self) -> Settings:
@@ -265,7 +281,14 @@ class HazardStages:
             )
         elif name == "assess":
             stage = await self.assess(
-                result, result.hits, board.region, board.trace, preset_verdict=board.preset_verdict, reported=board.reported
+                result,
+                result.hits,
+                board.region,
+                board.trace,
+                preset_verdict=board.preset_verdict,
+                reported=board.reported,
+                readings=board.readings,
+                intake=board.intake,
             )
         elif name == "plan":
             stage = await self.plan(result, board.trace)
@@ -429,12 +452,23 @@ class HazardStages:
         *,
         preset_verdict: RiskVerdict | None = None,
         reported: bool = False,
+        readings: list[TelemetryReading] | None = None,
+        intake: str = "telemetry",
     ) -> StageResult:
         """定级写进 `result.verdict`；None 就是研判未产出，编排器据此早退。"""
         before = len(result.degradations)
         async with instrumentation.span("stage_assess_ms", trace_id=trace) as span:
             with self._tracer.span("stage_assess_ms", trace_id=trace) as sp:
-                outcome = await self._assess(hits, region, result, trace, preset_verdict=preset_verdict, reported=reported)
+                outcome = await self._assess(
+                    hits,
+                    region,
+                    result,
+                    trace,
+                    preset_verdict=preset_verdict,
+                    reported=reported,
+                    readings=list(readings or []),
+                    intake=intake,
+                )
             verdict = outcome.verdict
             if verdict is None:
                 instrumentation.mark_error(span, "研判未产出定级结论", code="assess_failed")
@@ -467,29 +501,46 @@ class HazardStages:
         *,
         preset_verdict: RiskVerdict | None = None,
         reported: bool = False,
+        readings: list[TelemetryReading] | None = None,
+        intake: str = "telemetry",
     ) -> _AssessOutcome:
         """结论与"这一段是谁答的、双盲走到哪一步"。降级路径的结论来自规则引擎或上报解析腿。"""
         local = preset_verdict or self._risk_engine.assess(hits, region_code=region)
         fallback_note = "采用上报解析定级" if preset_verdict is not None else "采用规则定级"
         if not self._agent_ready(AgentType.ASSESS, "risk_assess", result, stage="研判"):
             return _AssessOutcome(local, False)
-        request_payload: dict[str, Any] = {
-            "region_code": region,
-            "window": "1h",
-            "candidate_hazards": sorted({h.hazard_type for h in hits}),
-            "hits": [h.model_dump() for h in hits],
-            "intake": "report" if reported else "telemetry",
-        }
-        # 规则轨的等级随请求交给智能体，只用作 §3.2 双盲的**预触发信号**（并行发两条腿要在看到
-        # 模型结论之前就决定）；判定口径不变，结论的出处仍然只有模型那一份。规则轨没结论时
-        # 干脆不送这一格——读不到就不预触发，比填一个数冒充"规则也说高危"诚实。
-        if local is not None:
-            request_payload["rule_level"] = int(local.risk_level)
+
+        # 证据只在智能体腿真的要派单时才构建：纯本地部署不该为一次不会发生的请求多查一遍库。
+        evidence = None
+        if self._assess_evidence is not None:
+            try:
+                evidence = await self._assess_evidence.build(region=region, hits=hits, readings=list(readings or []), intake=intake)
+            except Exception as exc:  # 证据构建失败不许炸段：外部会诚实拒绝，本地结论仍能兜底
+                result.degradations.append(f"研判证据构建降级: {type(exc).__name__}: {exc}")
+        if evidence is not None and preset_verdict is None:
+            # 本地兜底与智能体看到同一份证据的出处：台账里"规则定级"也知道它建立在什么数据上。
+            local = self._risk_engine.assess(hits, region_code=region, provenance=evidence.provenance) or local
+
+        window = self._assess_evidence.window if self._assess_evidence is not None else f"{self._settings.assess_window_minutes}m"
+        request = AssessRequest(
+            region_code=region,
+            window=window,
+            hazard_type=self._primary_hazard(hits),
+            candidate_hazards=self._candidate_hazards(hits),
+            hits=hits,
+            # 规则轨的等级随请求交给智能体，只用作 §3.2 双盲的**预触发信号**（并行发两条腿要在看到
+            # 模型结论之前就决定）；判定口径不变，结论的出处仍然只有模型那一份。规则轨没结论时
+            # 干脆不送这一格——读不到就不预触发，比填一个数冒充"规则也说高危"诚实。
+            rule_level=local.risk_level if local is not None else None,
+            intake="report" if reported else "telemetry",
+            evidence=evidence,
+            data_refs=[f"evidence:{region}:{window}"],
+        )
         try:
             response = await self._gateway.dispatch(
                 AgentType.ASSESS,
                 Action.ASSESS_HAZARD,
-                request_payload,
+                request.model_dump(mode="json"),
                 trace_id=trace,
                 capability="risk_assess",
                 # 事务预算 = LLM 档（§5 A 案）：与 `stage_*_ms` 同档同钟；
@@ -502,46 +553,60 @@ class HazardStages:
             result.degradations.append(f"研判降级: {exc.message}")
             return _AssessOutcome(local, False)
 
-        if (verdict := self._parse_agent_assessment(response.payload, region, hits)) is not None:
-            if (receipt := model_receipt(response)) is not None:
-                result.stage_models["assess"] = receipt
-            # 双盲是增强腿：它失败时主结论照用第一遍，但这件事必须落在台账上——
-            # 不落的后果是"双盲没做成"被读成"双盲做成了且一致"（铁律 7：降级要看得见）。
-            blind = str(response.payload.get("double_blind") or "")
-            if blind.startswith("failed"):
-                result.degradations.append(f"研判增强腿失败: {blind}（主结论取第一遍）")
-            return _AssessOutcome(
-                verdict,
-                True,
-                blind_status=blind,
-                disagreement=response.disagreement,
-                blind_mode=str(response.payload.get("double_blind_mode") or ""),
-            )
-        result.degradations.append(f"研判结论不合契约，{fallback_note}")
-        return _AssessOutcome(local, False)
+        try:
+            assessed = AssessResponse.model_validate(response.payload)
+        except ValidationError as exc:
+            result.degradations.append(f"研判结论不合契约（{self._short_validation_error(exc)}），{fallback_note}")
+            return _AssessOutcome(local, False)
+        if assessed.region_code != region:
+            result.degradations.append(f"研判结论区域 {assessed.region_code} 与请求 {region} 不一致，{fallback_note}")
+            return _AssessOutcome(local, False)
+        if request.candidate_hazards and assessed.hazard_type not in request.candidate_hazards:
+            result.degradations.append(f"研判结论灾种 {assessed.hazard_type.value} 不在候选内，{fallback_note}")
+            return _AssessOutcome(local, False)
+
+        verdict = assessed.to_verdict(hits=hits)
+        if (receipt := model_receipt(response)) is not None:
+            result.stage_models["assess"] = receipt
+        # 双盲是增强腿：它失败时主结论照用第一遍，但这件事必须落在台账上——
+        # 不落的后果是"双盲没做成"被读成"双盲做成了且一致"（铁律 7：降级要看得见）。
+        blind = assessed.double_blind
+        if blind.startswith("failed"):
+            result.degradations.append(f"研判增强腿失败: {blind}（主结论取第一遍）")
+        return _AssessOutcome(
+            verdict,
+            True,
+            blind_status=blind,
+            disagreement=response.disagreement,
+            blind_mode=assessed.double_blind_mode,
+        )
 
     @staticmethod
-    def _parse_agent_assessment(payload: dict[str, Any], region: str, hits: list[TriggerHit]) -> RiskVerdict | None:
-        try:
-            level = RiskLevel(int(payload["risk_level"]))
-            hazard = HazardType(str(payload["hazard_type"]))
-            confidence = float(payload["confidence"])
-        except (KeyError, ValueError, TypeError):
-            return None
-        if not 0.0 <= confidence <= 1.0:
-            return None
-        return RiskVerdict(
-            hazard_type=hazard,
-            region_code=region,
-            risk_level=level,
-            confidence=confidence,
-            rationale=str(payload.get("rationale", ""))[:1000] or "智能体结论",
-            hits=hits,
-            assessed_by=str(payload.get("assessed_by", "assess.agent")),
-            # 缺席就是"没转人工"：这一格的语义是智能体自己有没有提出护栏，
-            # 与 §3.2 那个 `disagreement` 的三态不同——那里"没评估"绝不能读成"评估过且一致"。
-            human_review_suggested=bool(payload.get("human_review_suggested", False)),
-        )
+    def _candidate_hazards(hits: list[TriggerHit]) -> list[HazardType]:
+        seen = {hazard for hit in hits if (hazard := _hazard_or_none(hit.hazard_type)) is not None}
+        return [hazard for hazard in HazardType if hazard in seen]
+
+    @staticmethod
+    def _primary_hazard(hits: list[TriggerHit]) -> HazardType | None:
+        """按 hits 的最高 score 选主灾种；平票按 `HazardType` 的声明顺序（结果可复现）。"""
+        best: HazardType | None = None
+        best_score = -1.0
+        best_order = len(_HAZARD_ORDER)
+        for hit in hits:
+            hazard = _hazard_or_none(hit.hazard_type)
+            if hazard is None:
+                continue
+            score = float(hit.score)
+            order = _HAZARD_ORDER[hazard]
+            if score > best_score or (score == best_score and order < best_order):
+                best, best_score, best_order = hazard, score, order
+        return best
+
+    @staticmethod
+    def _short_validation_error(exc: ValidationError) -> str:
+        first = exc.errors()[0]
+        where = ".".join(str(part) for part in first.get("loc", ())) or "payload"
+        return f"{where}: {first.get('msg', '不合契约')}"[:200]
 
     # ---------- ③ 决策 ----------
 

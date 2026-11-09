@@ -27,6 +27,7 @@ from aegis.domain.messages import (
     make_error,
     make_response,
 )
+from aegis.domain.provenance import DataProvenance
 from aegis.domain.verdict import RiskVerdict
 from aegis.services.response.task_parser import TaskParser
 
@@ -199,12 +200,24 @@ class MockAgent:
         hits = request.payload.get("hits", [])
         first = hits[0] if isinstance(hits, list) and hits else {}
         level = RiskLevel.RED if isinstance(hits, list) and len(hits) > 1 else RiskLevel.ORANGE
+        region = str(request.payload.get("region_code") or first.get("region_code") or "540100A1")
         return {
+            "contract_version": "assess.v1",
             "hazard_type": str(first.get("hazard_type", HazardType.DEBRIS_FLOW.value)),
+            "region_code": region,
             "risk_level": int(level),
             "confidence": 0.82,
+            "confidence_basis": "mock_agent:0.82",
             "rationale": f"mock 研判：{len(hits)} 条触发命中",
             "assessed_by": self.agent_id,
+            "source": "platform.mock",
+            "data_provenance": DataProvenance(
+                data_kind="mock",
+                sources=["mock_agent"],
+                method="mock_agent",
+                is_mock=True,
+                disclaimer="替身智能体产物，仅用于联调。",
+            ).model_dump(),
         }
 
     def _plan(self, request: AgentMessage) -> dict[str, Any]:
@@ -236,6 +249,8 @@ class MockAgent:
             confidence=confidence,
             rationale=str(risk.get("rationale", "mock 拆解"))[:500],
             hits=hits,
+            data_provenance=DataProvenance.from_payload(risk.get("data_provenance")),
+            confidence_basis=str(risk.get("confidence_basis", "")),
         )
         raw_event = str(request.payload.get("event_id", ""))
         event_id = raw_event if _EVENT_ID_RE.match(raw_event) else None

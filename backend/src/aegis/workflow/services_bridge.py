@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, TriggerHit, WarningRecord, make_event, now_iso
+from aegis.domain.provenance import DataProvenance
 from aegis.domain.verdict import RiskVerdict
 from aegis.workflow.nodes import WorkflowServices
 
@@ -351,6 +352,8 @@ def build_workflow_services(
                 payload.get("hits") or risk.get("evidence_hits") or [],
                 default_region=str(risk.get("region_code", "540100")),
             ),
+            data_provenance=DataProvenance.from_payload(risk.get("data_provenance")),
+            confidence_basis=str(risk.get("confidence_basis", "")),
         )
         draft = await warning_service.generate(verdict, event_id=payload.get("event_id"))
         return draft.record.model_dump() | {"translation_pending": draft.translation_pending}

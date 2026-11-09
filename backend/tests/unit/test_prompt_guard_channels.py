@@ -126,7 +126,7 @@ async def _assess_vars(replies: list[dict[str, Any]], *, context: str = "") -> d
             action=Action.ASSESS_HAZARD.value,
             reply_to="msg_0000000000000000",
             trace_id=new_trace_id(),
-            payload={"region_code": "540121", "hits": [_hit().model_dump()]},
+            payload={"region_code": "540121", "window": "60m", "hits": [_hit().model_dump()]},
         )
     )
     return llm.calls[0]["prompt_vars"]

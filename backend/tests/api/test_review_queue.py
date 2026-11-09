@@ -19,10 +19,10 @@ import pytest
 from aegis.api.app import create_app
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
+from aegis.domain.assess import AssessResponse
 from aegis.domain.chain import ChainResult, StageResult
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.verdict import RiskVerdict
-from aegis.pipeline.stages import HazardStages
 from aegis.services.memory.review_queue import case_ids, pending_items
 
 REGION = "540121"
@@ -53,15 +53,33 @@ def _chain(trace: str, verdict: RiskVerdict | None) -> ChainResult:
 
 class Test载荷进台账:
     def test_智能体那一格被读进结论并随载荷入账(self) -> None:
-        payload = {"risk_level": 3, "hazard_type": "debris_flow", "confidence": 0.44, "human_review_suggested": True}
-        verdict = HazardStages._parse_agent_assessment(payload, REGION, [])
-        assert verdict is not None and verdict.human_review_suggested is True
+        payload = {
+            "hazard_type": "debris_flow",
+            "region_code": REGION,
+            "risk_level": 3,
+            "confidence": 0.44,
+            "confidence_basis": "llm_confidence+floor/boost",
+            "rationale": "沟道泥位抬升与降雨叠加",
+            "assessed_by": "assess.agent",
+            "source": "platform.builtin",
+            "human_review_suggested": True,
+        }
+        verdict = AssessResponse.model_validate(payload).to_verdict(hits=[])
+        assert verdict.human_review_suggested is True
         assert verdict.as_payload()["human_review_suggested"] is True, "不落进 risk 载荷就等于没进台账"
 
     def test_不带这一格的老载荷就是未建议(self) -> None:
-        payload = {"risk_level": 3, "hazard_type": "debris_flow", "confidence": 0.9}
-        verdict = HazardStages._parse_agent_assessment(payload, REGION, [])
-        assert verdict is not None and verdict.human_review_suggested is False
+        payload = {
+            "hazard_type": "debris_flow",
+            "region_code": REGION,
+            "risk_level": 3,
+            "confidence": 0.9,
+            "confidence_basis": "llm_confidence+floor/boost",
+            "assessed_by": "assess.agent",
+            "source": "platform.builtin",
+        }
+        verdict = AssessResponse.model_validate(payload).to_verdict(hits=[])
+        assert verdict.human_review_suggested is False
 
 
 class Test摊平两种行形状:
