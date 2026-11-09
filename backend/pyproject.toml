@@ -32,6 +32,18 @@ retrieval = ["onnxruntime>=1.30", "tokenizers>=0.21", "numpy>=1.26"]
 iot = ["aiomqtt>=2.2"]
 graph = ["neo4j>=5.26", "graphiti-core>=0.30"]
 objectstore = ["minio>=7.2"]
+# 外部交付智能体模块（`aegis.agents_ext`，2026-11-09 并入自 hazard-landslide-agent）：
+# LangGraph 图编排 + OpenAI 兼容客户端 + 结构化输出。**可选腿**：没装这层时平台一律退回
+# 自建内环（`aegis.agents`），语义不变——装不装只改变 `AEGIS_AGENT_IMPL` 选中的那一套实现，
+# 不改变任何一条链路的动作注册表与降级轨。
+agents_ext = [
+    "langgraph>=0.2",
+    # langgraph 1.x 把 SQLite checkpoint 拆成了独立包（`langgraph.checkpoint.sqlite` 不再随主包提供），
+    # 而外部模块的 Manager 断点恢复正用它。装主包不带它 → 4 条 checkpoint 用例在 import 期就红。
+    "langgraph-checkpoint-sqlite>=2.0",
+    "langchain-core>=0.3",
+    "langchain-openai>=0.2",
+]
 # MCP 工具层（§4.2 / R3）：可选腿。没装这层时平台一律退回 REST 兼容面，语义不变——
 # 装不装只改变 /api/v1/integrations 里 `mcp` 那一行的 driver，不改变任何一条链路。
 mcp = ["mcp>=2.3"]
@@ -82,6 +94,19 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
 # 本项目文档与注释以简体中文为主：中文全角标点不应被视为歧义字符（RUF001/002/003）
 ignore = ["B008", "RUF001", "RUF002", "RUF003"]
 
+[tool.ruff.lint.per-file-ignores]
+# 外部交付的智能体模块（并入自 hazard-landslide-agent，2026-11-09）：三条**纯风格**规则放行，
+# 目的是把"改动面"限制在必要处（尽量不动她的代码），而不是降低质量门禁。
+#   RUF012 —— 可变类属性未标 ClassVar（她的 State/TypedDict 风格）；
+#   RUF013 —— 隐式 Optional（`x: dict = None`，她的"这键可能没有"语义）；
+#   SIM105 —— try/except/pass（她的确定性兜底写法）。
+# **缺陷类规则一条不放行**：F（未使用/重定义）、E/W（行宽与空白）、B（bugbear）、
+# C4（冗余推导）、RUF 其余规则、SIM 其余规则照常生效。
+# 另有一条独立门禁守"外部实现不许直连数据库"（见 tests/unit/test_agents_ext_boundaries.py）。
+"src/aegis/agents_ext/**" = ["RUF012", "SIM105"]
+# 迁入的外部测试用同一组口径（它们进本仓 CI，门禁就该一样）。
+"tests/unit/agents_ext/**" = ["RUF012", "SIM105"]
+
 [tool.mypy]
 # 按 3.12 语法解析：clickhouse-connect 的传递依赖 numpy 的 .pyi 使用了 `type X = ...`（3.12+ 语法），
 # 以 3.11 口径会在解析第三方存根时就报语法错、连带阻断对自有代码的检查。
@@ -107,3 +132,17 @@ module = [
 disallow_untyped_defs = true
 warn_return_any = true
 no_implicit_optional = true
+
+# 外部交付的智能体模块（并入自 hazard-landslide-agent，2026-11-09）：**精确到错误码**地豁免，
+# 不是整模块 ignore_errors —— 下面这些错误码全部来自"她的代码用松散的 `dict` 注解"与
+# "langgraph 1.x 的泛型收紧"，不是真缺陷；真缺陷类（name-defined / return-value / call-arg /
+# assignment / attr-defined 之外的语法与契约错误）照常会被抓到。
+#   type-var   —— langgraph 的 `add_node` 要求节点入参类型与 State 一致，她的节点签名是 `(state: dict)`；
+#   arg-type   —— 同源（TypedDict 与 dict 参数互传）；
+#   attr-defined / index / operator —— `dict` 无参数注解导致值被推成 `object`；
+#   union-attr —— `sys.stdout` 的静态类型是 TextIO，`reconfigure` 是 TextIOWrapper 的方法；
+#   abstract   —— 仿真模型的抽象基类在测试替身里被直接实例化。
+# 记录在案：这不是"降低质量"，而是把外部交付代码的类型债**记在明处**而不是混进全仓口径。
+[[tool.mypy.overrides]]
+module = ["aegis.agents_ext.*"]
+disable_error_code = ["type-var", "arg-type", "attr-defined", "index", "operator", "union-attr", "abstract"]
