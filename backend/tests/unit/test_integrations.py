@@ -460,7 +460,7 @@ class TestContainerWiring:
         ctn = create_container(base_settings(), with_simulator=False)
         for name in ("telemetry", "warnings", "tasks", "chains"):
             assert getattr(ctn.store, name) is not None
-        assert set(ctn.store.snapshot()) == {"telemetry_count", "warning_count", "task_count", "chain_count"}
+        assert set(ctn.store.snapshot()) == {"telemetry_count", "warning_count", "task_count", "chain_count", "site_profile_count"}
 
 
 class TestDegradationReason:

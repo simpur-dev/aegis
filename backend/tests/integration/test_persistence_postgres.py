@@ -34,6 +34,8 @@ from aegis.domain.messages import (
     now_iso,
     utc_now,
 )
+from aegis.domain.provenance import DataProvenance
+from aegis.domain.site import SiteAttribute, SiteProfile
 from aegis.persistence.errors import ConnectionFailedError, QueryFailedError, VectorEmbeddingError
 from aegis.persistence.postgres import PostgresStore
 from aegis.storage.store import AuditRecord
@@ -117,7 +119,7 @@ async def store() -> AsyncIterator[PostgresStore]:
     pool = pg.require_pool()
     await pool.execute(
         "TRUNCATE telemetry_readings, warnings, warning_receipts, standardized_task_units, "
-        "monitoring_stations, chain_runs, workflow_definitions, workflow_instances, workflow_node_states, "
+        "monitoring_stations, site_profiles, chain_runs, workflow_definitions, workflow_instances, workflow_node_states, "
         "audit_ops, handling_tasks, handling_spaces, assistant_alerts, assistant_notifications, "
         "control_actions, operators RESTART IDENTITY CASCADE"
     )
@@ -501,6 +503,47 @@ class TestSpatialQueries:
         summary = await store.hazard_trace_summary(polygon_wkt=ZONE, since=since)
         assert summary["station_count"] == 2  # S3 在面外
         assert summary["readings"] == 1  # 只有面内站点的读数
+
+
+class TestSiteProfiles:
+    @staticmethod
+    def _profile(*, slope: float = 38.0) -> SiteProfile:
+        return SiteProfile(
+            region_code="540121",
+            name="林芝演示区",
+            hazard_types=[HazardType.DEBRIS_FLOW],
+            attributes=[
+                SiteAttribute(key="slope_angle_deg", value=slope, unit="°", source="demo_survey"),
+                SiteAttribute(key="water_source_type", value="rainstorm"),
+            ],
+            provenance=DataProvenance(data_kind="demo", sources=["site_profile:demo"], is_mock=True),
+        )
+
+    async def test_upsert_then_read_back_from_the_database(self, store: PostgresStore) -> None:
+        profile = self._profile()
+        await store.upsert_site_profile(profile)
+
+        fetched = await store.get_site_profile("540121")
+        assert fetched == profile
+        listed = await store.list_site_profiles()
+        assert [row.region_code for row in listed] == ["540121"]
+
+        # 直接从库读原始行：证明画像真的落库，而不是只活在这条连接的读视图里
+        raw = await store.require_pool().fetchrow("SELECT attributes FROM site_profiles WHERE region_code = '540121'")
+        assert any(attr["key"] == "slope_angle_deg" for attr in raw["attributes"])
+
+    async def test_upsert_replaces_instead_of_appending(self, store: PostgresStore) -> None:
+        await store.upsert_site_profile(self._profile(slope=38.0))
+        await store.upsert_site_profile(self._profile(slope=41.0))
+        assert await _count(store, "site_profiles") == 1
+        fetched = await store.get_site_profile("540121")
+        assert fetched is not None and fetched.value_of("slope_angle_deg") == 41.0
+
+    async def test_region_filter_and_missing_row(self, store: PostgresStore) -> None:
+        await store.upsert_site_profile(self._profile())
+        assert [row.region_code for row in await store.list_site_profiles(region_code="540121")] == ["540121"]
+        assert await store.list_site_profiles(region_code="540221") == []
+        assert await store.get_site_profile("540221") is None
 
 
 class TestStationInventory:

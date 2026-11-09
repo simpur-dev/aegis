@@ -18,7 +18,9 @@ from aegis.domain.alert import ACTIONABLE_STATUSES, OPEN_STATUSES
 from aegis.domain.chain import ChainResult
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, parse_iso
 from aegis.domain.operator import Operator
+from aegis.domain.site import SiteProfile
 from aegis.domain.task import ACKABLE_STATUSES, CLAIMABLE_STATUSES, OPEN_TASK_STATUSES
+from aegis.storage.site_profiles import SiteProfileStore
 
 T = TypeVar("T")
 
@@ -822,6 +824,8 @@ class PlatformStore:
         # 站点维表（内存态）：与 PostgreSQL 那份同构，由 `scripts/import_stations.py` 显式写入。
         # 内存视图没有持久层，导入只活到进程结束——这一条由导入命令在结果里说清楚。
         self._station_dim: dict[str, dict[str, object]] = {}
+        # 区域级站点画像（内存态）：静态孕灾属性，由 `scripts/import_site_profiles.py` 显式写入。
+        self.site_profiles = SiteProfileStore()
 
     async def upsert_station(
         self,
@@ -877,6 +881,15 @@ class PlatformStore:
                 continue
             rows.append(station_ledger_row(station_id, region))
         return rows[:limit]
+
+    async def upsert_site_profile(self, profile: SiteProfile) -> None:
+        self.site_profiles.upsert(profile)
+
+    async def get_site_profile(self, region_code: str) -> SiteProfile | None:
+        return self.site_profiles.get(region_code)
+
+    async def list_site_profiles(self, *, region_code: str | None = None, limit: int = 200) -> list[SiteProfile]:
+        return self.site_profiles.list(region_code=region_code, limit=limit)
 
     # ---------- 动作执行记录（可选能力面：SupportsControlActions） ----------
 
@@ -1046,6 +1059,7 @@ class PlatformStore:
             "warning_count": self.warnings.size,
             "task_count": self.tasks.size,
             "chain_count": len(self.chains),
+            "site_profile_count": self.site_profiles.size,
         }
 
 
@@ -1135,6 +1149,12 @@ class StoreProtocol(Protocol):
         hazard_focus: Sequence[str] = (),
         elevation_m: float | None = None,
     ) -> None: ...
+
+    async def upsert_site_profile(self, profile: SiteProfile) -> None: ...
+
+    async def get_site_profile(self, region_code: str) -> SiteProfile | None: ...
+
+    async def list_site_profiles(self, *, region_code: str | None = None, limit: int = 200) -> list[SiteProfile]: ...
 
     def snapshot(self) -> dict[str, object]: ...
 

@@ -28,6 +28,11 @@ data/
 # 漏了这一条，新克隆就没有降级可兜底的案例，而本地测试因为文件在盘上照样全绿。
 !backend/src/aegis/knowledge/data/
 !backend/src/aegis/knowledge/data/hazard_cases.json
+# 例外：演示用区域画像随仓库发布（导入命令的验收路径指向 backend/data/）。
+# 目录放行后只再放行这一份文件，其余内容（models 等运行态数据）仍然不入库。
+!backend/data/
+backend/data/*
+!backend/data/site_profiles.demo.jsonl
 *.db
 *.sqlite3
 logs/

@@ -25,6 +25,7 @@ from aegis.domain.messages import (
     now_iso,
     parse_iso,
 )
+from aegis.domain.site import SiteProfile
 from aegis.persistence.errors import MappingError
 from aegis.workflow.model import NodeRun, WorkflowDef, WorkflowInstance
 from aegis.workflow.persistence import InstanceCheckpoint, WorkflowRuntime
@@ -250,6 +251,40 @@ def station_params(
         list(hazard_focus),
         geom,
         elevation_m,
+    )
+
+
+# ---------- site_profiles ----------
+#
+# 属性与溯源整体存 JSONB：画像的结构由 `aegis.domain.site` 定义，库侧若再拍平一份列，
+# 加一个勘测属性就要动迁移；而这里没有按属性检索的需求，整体读写才是诚实的映射。
+
+
+def site_profile_params(profile: SiteProfile) -> tuple[Any, ...]:
+    attributes = [attribute.model_dump(mode="json") for attribute in profile.attributes]
+    provenance = profile.provenance.model_dump(mode="json")
+    check_json(attributes, field="attributes")
+    check_json(provenance, field="provenance")
+    return (
+        check_id(profile.region_code, field="region_code"),
+        check_text(profile.name, field="name"),
+        [hazard.value for hazard in profile.hazard_types],
+        attributes,
+        provenance,
+    )
+
+
+def site_profile_from_row(row: Mapping[str, Any]) -> SiteProfile:
+    return _revalidate(
+        SiteProfile,
+        {
+            "region_code": row["region_code"],
+            "name": row["name"],
+            "hazard_types": list(row["hazard_types"] or ()),
+            "attributes": list(row["attributes"] or ()),
+            "provenance": dict(row["provenance"] or {}),
+        },
+        field="site_profile",
     )
 
 

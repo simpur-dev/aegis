@@ -29,6 +29,7 @@ import orjson
 from aegis.config import Settings, get_settings
 from aegis.domain.messages import StandardizedTaskUnit, TelemetryReading, WarningRecord, utc_now
 from aegis.domain.operator import Operator
+from aegis.domain.site import SiteProfile
 from aegis.persistence import (
     accuracy,
     alerts,
@@ -101,6 +102,7 @@ WARNINGS_TABLE = "warnings"
 RECEIPTS_TABLE = "warning_receipts"
 CHAINS_TABLE = "chain_runs"
 STATIONS_TABLE = "monitoring_stations"
+SITE_PROFILES_TABLE = "site_profiles"
 WF_DEF_TABLE = "workflow_definitions"
 WF_INSTANCE_TABLE = "workflow_instances"
 WF_NODE_TABLE = "workflow_node_states"
@@ -144,6 +146,10 @@ SQL_CHAIN_UPSERT = insert_upsert(
     CHAINS_TABLE, rows.CHAIN_COLUMNS, ("trace_id", "event_id"), _refreshable(rows.CHAIN_COLUMNS, ("trace_id", "event_id"))
 )
 SQL_STATION_UPSERT = insert_upsert(STATIONS_TABLE, rows.STATION_COLUMNS, ("station_id",), _refreshable(rows.STATION_COLUMNS))
+SQL_SITE_PROFILE_COLUMNS = ("region_code", "name", "hazard_types", "attributes", "provenance")
+SQL_SITE_PROFILE_UPSERT = insert_upsert(
+    SITE_PROFILES_TABLE, SQL_SITE_PROFILE_COLUMNS, ("region_code",), _refreshable(SQL_SITE_PROFILE_COLUMNS)
+)
 SQL_WF_DEF_UPSERT = insert_upsert(WF_DEF_TABLE, rows.WORKFLOW_DEF_COLUMNS, ("workflow_id",), _refreshable(rows.WORKFLOW_DEF_COLUMNS))
 SQL_WF_INSTANCE_UPSERT = insert_upsert(
     WF_INSTANCE_TABLE, rows.WORKFLOW_INSTANCE_COLUMNS, ("instance_id",), _refreshable(rows.WORKFLOW_INSTANCE_COLUMNS)
@@ -744,6 +750,45 @@ class PostgresStore:
         params = rows.station_params(station_id, region_code, lon, lat, name_zh=name_zh, hazard_focus=hazard_focus, elevation_m=elevation_m)
         async with self.acquire() as conn:
             await conn.execute(SQL_STATION_UPSERT, *params)
+
+    async def upsert_site_profile(self, profile: SiteProfile) -> None:
+        """画像由导入命令显式写入，不在热路径：直接 await 让失败可见；成功后再更新读视图。"""
+        params = rows.site_profile_params(profile)
+        async with self.acquire() as conn:
+            await conn.execute(SQL_SITE_PROFILE_UPSERT, *params)
+        await self._read.upsert_site_profile(profile)
+
+    async def get_site_profile(self, region_code: str) -> SiteProfile | None:
+        """单条画像：库可达时以库为准；库不可达退回读视图（画像不该因一次抖动变成 404）。"""
+        if self.connected:
+            try:
+                async with self.acquire() as conn:
+                    record = await conn.fetchrow(f"SELECT * FROM {SITE_PROFILES_TABLE} WHERE region_code = $1", region_code)
+            except Exception as exc:
+                log.warning("站点画像读取失败，退回读视图", extra={"region_code": region_code, "error": f"{type(exc).__name__}: {exc}"})
+            else:
+                return None if record is None else rows.site_profile_from_row(record)
+        return await self._read.get_site_profile(region_code)
+
+    async def list_site_profiles(self, *, region_code: str | None = None, limit: int = 200) -> list[SiteProfile]:
+        if limit <= 0:
+            raise ValueError("limit 必须为正")
+        if self.connected:
+            try:
+                async with self.acquire() as conn:
+                    if region_code is None:
+                        fetched = await conn.fetch(f"SELECT * FROM {SITE_PROFILES_TABLE} ORDER BY region_code LIMIT $1", int(limit))
+                    else:
+                        fetched = await conn.fetch(
+                            f"SELECT * FROM {SITE_PROFILES_TABLE} WHERE region_code = $1 ORDER BY region_code LIMIT $2",
+                            region_code,
+                            int(limit),
+                        )
+            except Exception as exc:
+                log.warning("站点画像清单读取失败，退回读视图", extra={"error": f"{type(exc).__name__}: {exc}"})
+            else:
+                return [rows.site_profile_from_row(record) for record in fetched]
+        return await self._read.list_site_profiles(region_code=region_code, limit=limit)
 
     async def update_task_embedding(self, task_unit_id: str, embedding: Sequence[float], *, model: str) -> None:
         """向量回填由检索模块离线调用，不经写缓冲：回填失败必须让调用方看见。
