@@ -106,6 +106,11 @@ async def run_action(action: Any, params: Any) -> dict[str, Any]:
     return result.data
 
 
+def ledger_row(*, warning_id: str = WRN, result: dict[str, Any] | None = None) -> dict[str, Any]:
+    """动作台账那一行的最小形状：补偿只从这里读参数与执行前状态。"""
+    return {"action_id": "act_0123456789abcdef", "resolved_args": {"warning_id": warning_id}, "result": result or {}}
+
+
 # ---------- 派生状态：唯一真源 ----------
 
 
@@ -303,6 +308,73 @@ async def test_静默只推迟告警且缺台账时如实报错() -> None:
     with pytest.raises(ActionError) as caught:
         await run_action(missing, WarningSilenceParams(warning_id=WRN))
     assert caught.value.code == "E_ALERTS_UNAVAILABLE"
+
+
+# ---------- 撤销后的业务补偿（可逆动作才做） ----------
+
+
+@pytest.mark.asyncio
+async def test_发布撤回的补偿只标撤销且保住发布事实() -> None:
+    store, publisher, _gateway = setup()
+    action = WarningPublish(store, publisher)
+    await store.put(warning())
+    await run_action(action, WarningPublishParams(warning_id=WRN))
+    published = store.get(WRN)
+    assert published is not None and published.released_at is not None
+
+    result = await action.revoke(ledger_row(result={"warning": {"warning_id": WRN}}), ctx())
+
+    assert result.data["warning"]["status"] == "revoked"
+    saved = store.get(WRN)
+    assert saved is not None
+    assert saved.revoked_at is not None
+    assert saved.released_at == published.released_at, "补偿不改写发布事实"
+    assert saved.deliveries == published.deliveries
+    assert store.size == 1, "补偿覆盖同一条读视图记录，不追加"
+
+    again = await action.revoke(ledger_row(), ctx())
+    assert "无需补偿" in again.summary, "重复补偿是幂等的，不该再改一次"
+
+
+@pytest.mark.asyncio
+async def test_改级撤回的补偿按台账里的执行前等级还原() -> None:
+    store, publisher, _gateway = setup()
+    action = WarningChangeLevel(store, publisher)
+    await store.put(warning(released_at=MOMENT))
+    data = await run_action(action, WarningChangeLevelParams(warning_id=WRN, level=3))
+    assert data["before_level"] == 1
+
+    result = await action.revoke(ledger_row(result={"before_level": 1}), ctx())
+
+    assert result.data["restored_level"] == 1
+    saved = store.get(WRN)
+    assert saved is not None and int(saved.risk_level) == 1
+    assert saved.released_at == MOMENT, "改级补偿同样不改写发布事实"
+
+    again = await action.revoke(ledger_row(result={"before_level": 1}), ctx())
+    assert "无需补偿" in again.summary
+
+
+@pytest.mark.asyncio
+async def test_改级撤回缺执行前等级时拒绝猜一个值() -> None:
+    store, publisher, _gateway = setup()
+    action = WarningChangeLevel(store, publisher)
+    await store.put(warning(released_at=MOMENT, risk_level=RiskLevel.ORANGE))
+
+    with pytest.raises(ActionError) as caught:
+        await action.revoke(ledger_row(), ctx())
+
+    assert caught.value.code == "E_ACTION_EXECUTION_FAILED"
+    saved = store.get(WRN)
+    assert saved is not None and int(saved.risk_level) == int(RiskLevel.ORANGE), "补偿失败不能顺手改点别的"
+
+
+@pytest.mark.asyncio
+async def test_补偿找不到目标编号时如实拒绝而不是空转() -> None:
+    store, publisher, _gateway = setup()
+    with pytest.raises(ActionError) as caught:
+        await WarningPublish(store, publisher).revoke(ledger_row(warning_id=""), ctx())
+    assert caught.value.code == "E_ACTION_CONFLICT"
 
 
 @pytest.mark.parametrize("bad", ["", "warning-1", "wrn_ABCDEF123456", "wrn_abc"])

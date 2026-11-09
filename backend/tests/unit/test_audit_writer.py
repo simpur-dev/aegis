@@ -44,6 +44,7 @@ class _Gated(Action):
         params=_Params,
         needs_confirm=True,
         writes=True,
+        reversible=True,
         previewable=True,
     )
 
@@ -53,6 +54,9 @@ class _Gated(Action):
     async def execute(self, targets: ResolvedTargets, params: BaseModel, ctx: Any) -> ActionResult:
         self.calls += 1
         return ActionResult(summary="已发布", data={"target": _Params.model_validate(params).target})
+
+    async def revoke(self, record: dict[str, Any], ctx: Any) -> ActionResult:
+        return ActionResult(summary="已补偿", data={"compensated": True})
 
 
 class _Direct(Action):

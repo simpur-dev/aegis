@@ -31,7 +31,7 @@ from aegis.services.assistant.actions.query import (
     WarningExplain,
     WarningList,
 )
-from aegis.services.assistant.base import Action, ActionContext, ActionResult, ActionSpec
+from aegis.services.assistant.base import Action, ActionContext, ActionError, ActionResult, ActionSpec
 from aegis.services.assistant.intent import IntentClassifier, out_of_scope_action
 from aegis.storage.store import PlatformStore
 
@@ -228,6 +228,7 @@ def settings(**overrides: Any) -> Settings:
 
 #: 写动作（演练/上报）必须有有效席位：匿名只能读。
 DUTY = Operator(operator_id="duty-01", display_name="值班员", role=OperatorRole.DUTY)
+DUTY2 = Operator(operator_id="duty-02", display_name="值班员乙", role=OperatorRole.DUTY)
 LEAD = Operator(operator_id="lead-01", display_name="值班长", role=OperatorRole.LEAD)
 LEAD2 = Operator(operator_id="lead-02", display_name="值班长乙", role=OperatorRole.LEAD)
 
@@ -298,8 +299,54 @@ class _DemoReviewedWrite(_DemoWrite):
     )
 
 
+class _DemoReversible(_DemoWrite):
+    """可撤销的写动作替身：验证"撤销已执行动作必须做业务补偿"。"""
+
+    spec = ActionSpec(
+        name="demo.reversible",
+        title="演示可撤销写动作",
+        domain=ActionDomain.DRILL,
+        required_role=OperatorRole.DUTY,
+        params=_DemoParams,
+        needs_confirm=True,
+        writes=True,
+        reversible=True,
+        previewable=True,
+        example="演示一次可撤销写动作",
+    )
+
+    async def execute(self, targets: Any, params: _DemoParams, ctx: ActionContext) -> ActionResult:
+        self._rec.calls.append("demo.reversible")
+        return ActionResult(data={"note": params.note}, summary="已执行可撤销演示动作")
+
+    async def revoke(self, record: dict[str, Any], ctx: ActionContext) -> ActionResult:
+        self._rec.calls.append(f"revoke:{record['action_id']}")
+        return ActionResult(data={"restored": True}, summary="已补偿")
+
+
+class _DemoBrokenReversible(_DemoReversible):
+    spec = ActionSpec(
+        name="demo.broken",
+        title="演示补偿失败的写动作",
+        domain=ActionDomain.DRILL,
+        required_role=OperatorRole.DUTY,
+        params=_DemoParams,
+        needs_confirm=True,
+        writes=True,
+        reversible=True,
+        previewable=True,
+        example="演示一次补偿失败",
+    )
+
+    async def revoke(self, record: dict[str, Any], ctx: ActionContext) -> ActionResult:
+        raise ActionError("E_ACTION_EXECUTION_FAILED", "补偿腿断了")
+
+
 def demo_registry(rec: Recorder) -> ActionRegistry:
-    registry = ActionRegistry([_DemoWrite(rec), _DemoReviewedWrite(rec)], domains={ActionDomain.DRILL})
+    registry = ActionRegistry(
+        [_DemoWrite(rec), _DemoReviewedWrite(rec), _DemoReversible(rec), _DemoBrokenReversible(rec)],
+        domains={ActionDomain.DRILL},
+    )
     registry.assert_consistent()
     return registry
 
@@ -608,6 +655,125 @@ async def test_周期维护把过期提案与卡死执行中收尾() -> None:
     assert expired is not None and expired["status"] == "expired", expired
     failed = await store.get_action("act_0000000000000004")
     assert failed is not None and failed["status"] == "failed", failed
+
+
+# ---------- 撤销鉴权与可逆性（P0-2） ----------
+
+
+@pytest.mark.asyncio
+async def test_撤销必须带有效席位() -> None:
+    """真机复现：匿名 POST /revoke 也能把动作撤掉——谁做的决定没有落到任何一行上。"""
+    rec = Recorder()
+    store = PlatformStore()
+    service = build_service(rec, registry=demo_registry(rec), store=store)
+    created = await service.create_action("demo.reversible", {"note": "x"}, operator=DUTY)
+
+    with pytest.raises(ActionError) as caught:
+        await service.revoke_action(action_id=created["action_id"])
+    assert caught.value.code == "E_OPERATOR_REQUIRED"
+    current = await store.get_action(created["action_id"])
+    assert current is not None and current["status"] == "proposed", current
+
+
+@pytest.mark.asyncio
+async def test_不可逆动作拒绝撤销() -> None:
+    """演练这类动作撤不回来：说"不可撤销"，而不是把台账改成 revoked 假装收尾了。"""
+    rec = Recorder()
+    store = PlatformStore()
+    service = build_service(rec, registry=demo_registry(rec), store=store)
+    created = await service.create_action("demo.write", {"note": "x"}, operator=LEAD)
+
+    with pytest.raises(ActionError) as caught:
+        await service.revoke_action(action_id=created["action_id"], operator=LEAD)
+    assert caught.value.code == "E_ACTION_NOT_REVERSIBLE"
+    current = await store.get_action(created["action_id"])
+    assert current is not None and current["status"] == "proposed", current
+
+
+@pytest.mark.asyncio
+async def test_别人发起的动作只有值班长能撤销() -> None:
+    rec = Recorder()
+    store = PlatformStore()
+    service = build_service(rec, registry=demo_registry(rec), store=store)
+    created = await service.create_action("demo.reversible", {"note": "x"}, operator=DUTY)
+
+    with pytest.raises(ActionError) as caught:
+        await service.revoke_action(action_id=created["action_id"], operator=DUTY2)
+    assert caught.value.code == "E_ACTION_NOT_ALLOWED"
+
+    revoked = await service.revoke_action(action_id=created["action_id"], operator=LEAD)
+    assert revoked["status"] == "revoked"
+    assert revoked["was"] == "proposed"
+    assert rec.calls == [], "提案还没执行，撤销不该触发业务补偿"
+
+
+@pytest.mark.asyncio
+async def test_已执行的可逆动作撤销要做业务补偿并留痕() -> None:
+    rec = Recorder()
+    store = PlatformStore()
+    service = build_service(rec, registry=demo_registry(rec), store=store)
+    created = await service.create_action("demo.reversible", {"note": "x"}, operator=DUTY)
+    executed = await service.confirm(action_id=created["action_id"], operator=DUTY)
+    assert executed["status"] == "executed", executed
+    assert rec.calls == ["demo.reversible"]
+
+    revoked = await service.revoke_action(action_id=created["action_id"], operator=DUTY)
+    assert revoked["status"] == "revoked"
+    assert revoked["was"] == "executed"
+    assert rec.calls == ["demo.reversible", f"revoke:{created['action_id']}"]
+    assert revoked["compensation"]["restored"] is True
+
+    current = await store.get_action(created["action_id"])
+    assert current is not None and current["status"] == "revoked", current
+    audit = next(
+        row
+        for row in store.audit_snapshot()
+        if row["action_id"] == created["action_id"] and row["after"] and "compensation" in row["after"]
+    )
+    assert audit["after"]["compensation"]["restored"] is True
+    assert audit["operator_id"] == DUTY.operator_id
+
+
+@pytest.mark.asyncio
+async def test_补偿失败时台账仍是revoked但回执必须说清补偿失败() -> None:
+    """台账已经迁到 revoked 之后才发现补偿腿断了：不能假装完整撤销，
+    也不能把已撤销的台账倒回去——回执与审计要同时带出这条事实。"""
+    rec = Recorder()
+    store = PlatformStore()
+    service = build_service(rec, registry=demo_registry(rec), store=store)
+    created = await service.create_action("demo.broken", {"note": "x"}, operator=DUTY)
+    await service.confirm(action_id=created["action_id"], operator=DUTY)
+
+    revoked = await service.revoke_action(action_id=created["action_id"], operator=DUTY)
+    assert revoked["status"] == "revoked"
+    assert "E_ACTION_EXECUTION_FAILED" in revoked["compensation_error"], revoked
+
+    current = await store.get_action(created["action_id"])
+    assert current is not None and current["status"] == "revoked", current
+    audit = next(
+        row
+        for row in store.audit_snapshot()
+        if row["action_id"] == created["action_id"] and row["after"] and "compensation_error" in row["after"]
+    )
+    assert "E_ACTION_EXECUTION_FAILED" in audit["after"]["compensation_error"]
+
+
+@pytest.mark.asyncio
+async def test_超出六十秒撤销窗口如实拒绝() -> None:
+    rec = Recorder()
+    store = PlatformStore()
+    service = build_service(rec, registry=demo_registry(rec), store=store)
+    created = await service.create_action("demo.reversible", {"note": "x"}, operator=DUTY)
+    store.control_actions._rows[created["action_id"]]["updated_at"] = (
+        store.control_actions._now() - timedelta(seconds=61)
+    )
+
+    with pytest.raises(ActionError) as caught:
+        await service.revoke_action(action_id=created["action_id"], operator=DUTY)
+    assert caught.value.code == "E_ACTION_CONFLICT"
+    current = await store.get_action(created["action_id"])
+    assert current is not None and current["status"] == "proposed", current
+
 
 
 # ---------- 认知镜像与不编数 ----------

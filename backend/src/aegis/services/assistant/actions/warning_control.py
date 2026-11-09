@@ -87,6 +87,13 @@ class _WarningControlAction(Action):
             raise ActionError("E_TARGET_NOT_FOUND", f"预警不存在：{warning_id}（读视图只保留本进程最近记录）")
         return record
 
+    def _record_from_ledger(self, record: dict[str, Any]) -> WarningRecord:
+        """补偿只能从动作台账的 `resolved_args` 里找目标：撤销请求本身不带参数。"""
+        warning_id = str((record.get("resolved_args") or {}).get("warning_id") or "")
+        if warning_id == "":
+            raise ActionError("E_ACTION_CONFLICT", "动作台账里没有 warning_id，无法补偿")
+        return self._record(warning_id)
+
     async def resolve(self, params: BaseModel, ctx: ActionContext) -> ResolvedTargets:
         assert isinstance(params, WarningTargetParams)
         record = self._record(params.warning_id)
@@ -128,6 +135,7 @@ class WarningPublish(_WarningControlAction):
         params=WarningPublishParams,
         needs_confirm=True,
         writes=True,
+        reversible=True,
         previewable=True,
         dual_review=True,
         example="把 wrn_abcdef123456 发出去",
@@ -144,6 +152,18 @@ class WarningPublish(_WarningControlAction):
             raise ActionError("E_ACTION_EXECUTION_FAILED", f"全部通道失败：{exc.message}") from exc
         await self._save(published)
         return ActionResult(data={"warning": self._brief(published)}, summary=f"预警 {record.warning_id} 已发布")
+
+    async def revoke(self, record: dict[str, Any], ctx: ActionContext) -> ActionResult:
+        """发布撤回的补偿：把预警标记为 revoked。发布事实与触达回执保留（不污染触达指标）。"""
+        current = self._record_from_ledger(record)
+        if current.revoked_at:
+            return ActionResult(data={"warning": self._brief(current)}, summary=f"预警 {current.warning_id} 已是撤销态，无需补偿")
+        revoked = self._publisher.mark_revoked(current)
+        await self._save(revoked)
+        return ActionResult(
+            data={"warning": self._brief(revoked)},
+            summary=f"已补偿：预警 {current.warning_id} 标记为 revoked（触达回执保留）",
+        )
 
 
 class WarningRevoke(_WarningControlAction):
@@ -182,6 +202,7 @@ class WarningChangeLevel(_WarningControlAction):
         params=WarningChangeLevelParams,
         needs_confirm=True,
         writes=True,
+        reversible=True,
         previewable=True,
         dual_review=True,
         example="把 wrn_abcdef123456 调整为 2 级",
@@ -196,6 +217,24 @@ class WarningChangeLevel(_WarningControlAction):
         return ActionResult(
             data={"warning": self._brief(updated), "before_level": before, "after_level": params.level},
             summary=f"预警 {record.warning_id} 等级 {before} → {params.level}",
+        )
+
+    async def revoke(self, record: dict[str, Any], ctx: ActionContext) -> ActionResult:
+        """改级撤回的补偿：把等级改回执行前那一档（值来自动作台账的 result.before_level）。"""
+        before = (record.get("result") or {}).get("before_level")
+        if not isinstance(before, int) or isinstance(before, bool):
+            raise ActionError(
+                "E_ACTION_EXECUTION_FAILED",
+                "动作台账里没有记录改级前的等级，无法自动补偿；请到「预警发布」页人工核对",
+            )
+        current = self._record_from_ledger(record)
+        if int(current.risk_level) == before:
+            return ActionResult(data={"warning": self._brief(current)}, summary=f"预警 {current.warning_id} 已是 {before} 级，无需补偿")
+        restored = self._publisher.change_level(current, before)
+        await self._save(restored)
+        return ActionResult(
+            data={"warning": self._brief(restored), "restored_level": before},
+            summary=f"已补偿：预警 {current.warning_id} 等级改回 {before} 级",
         )
 
 

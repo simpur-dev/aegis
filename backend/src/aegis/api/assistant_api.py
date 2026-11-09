@@ -254,7 +254,11 @@ def build_router() -> APIRouter:
         service = _assistant(ctn)
         operator, identity_kind = await _identity(ctn, x_operator, x_operator_key)
         _require_strong_identity(ctn, operator, identity_kind)
-        return await service.revoke_action(action_id=action_id, operator=operator)
+        try:
+            return await service.revoke_action(action_id=action_id, operator=operator)
+        except ActionError as exc:
+            # 没有席位 / 动作不可逆 / 不是本人 都是 HTTP 事实，与确认同一张错误码表
+            raise _http_error(exc) from exc
 
     return router
 

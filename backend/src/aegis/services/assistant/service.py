@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aegis.config import Settings, get_settings
-from aegis.domain.operator import Operator
+from aegis.domain.operator import Operator, OperatorRole, role_at_least
 from aegis.observability.tracer import Tracer
 from aegis.services.assistant.audit import AuditTrail
 from aegis.services.assistant.base import Action, ActionContext, ActionError, ResolvedTargets
@@ -425,16 +425,65 @@ class AssistantService:
         }
 
     async def revoke_action(self, *, action_id: str, operator: Operator | None = None) -> dict[str, Any]:
-        """60 秒撤销窗口。超出窗口或已处置时如实返回 rejected，不假装撤销成功。"""
+        """60 秒撤销窗口：先认人、再认动作，最后才动台账。
+
+        撤销不是"删掉一条提案"：已执行的动作已经在业务侧落了副作用，必须调
+        `action.revoke()` 做补偿（发布 → 标记 revoked；改级 → 改回原等级）。
+        责任落在发起人身上：本人只能撤自己的，值班长及以上可以替别人收尾。
+        """
         if self._repo is None:
-            return {"status": "rejected", "action_id": action_id, "reason": "当前形态没有动作台账（control_actions）"}
-        record = await self._repo.revoke_action(action_id)
+            raise ActionError("E_ACTION_UNAVAILABLE", "当前形态没有动作台账（control_actions），撤销不可用")
+        if operator is None:
+            raise ActionError("E_OPERATOR_REQUIRED", "撤销动作需要有效席位（X-Aegis-Operator）")
+        record = await self._repo.get_action(action_id)
         if record is None:
-            return {"status": "rejected", "action_id": action_id, "reason": "超出撤销窗口，或动作已被处置"}
-        self._reject(None, action=str(record["action"]), reason="动作在撤销窗口内被撤销")
-        # 撤销也是一次状态迁移（§931：control_actions(revoked) + audit_ops）：写一行 result
+            raise ActionError("E_ACTION_NOT_FOUND", f"动作不存在：{action_id}")
         action = self._registry.get(str(record["action"]))
-        if self._audit.available and action is not None:
+        if action is None:
+            raise ActionError("E_ACTION_NOT_FOUND", f"动作 {record['action']} 不在注册表内")
+        if not action.spec.reversible:
+            raise ActionError(
+                "E_ACTION_NOT_REVERSIBLE",
+                f"「{action.spec.title}」不可撤销：只有声明可逆的动作提供撤销",
+            )
+        if operator.operator_id != str(record["operator_id"]) and not role_at_least(operator.role, OperatorRole.LEAD):
+            raise ActionError(
+                "E_ACTION_NOT_ALLOWED",
+                f"撤销别人的动作需要 {OperatorRole.LEAD.value} 及以上角色；本人只能撤销自己发起的动作",
+            )
+        status = str(record.get("status") or "")
+        if status not in {"proposed", "executed"}:
+            raise ActionError("E_ACTION_CONFLICT", f"动作当前是 {status}，不能撤销")
+        revoked = await self._repo.revoke_action(action_id)
+        if revoked is None:
+            raise ActionError("E_ACTION_CONFLICT", "超出撤销窗口（执行后 60 秒内），或动作已被处置；请走正式撤回流程")
+
+        compensation: dict[str, Any] | None = None
+        compensation_error: str | None = None
+        if status == "executed":
+            # 提案还没执行：撤掉它只是撤掉一次授权，业务侧什么都没发生，不需要补偿
+            try:
+                outcome = await action.revoke(
+                    record,
+                    ActionContext(
+                        session_id="",
+                        operator=operator,
+                        utterance=str(record.get("utterance") or ""),
+                        space_id=record.get("space_id"),
+                    ),
+                )
+                compensation = {"summary": outcome.summary, **outcome.data}
+            except ActionError as exc:
+                compensation_error = f"{exc.code}: {exc.message}"
+            except Exception as exc:
+                compensation_error = f"{type(exc).__name__}: {exc}"
+
+        after: dict[str, Any] = {"revoked": True}
+        if compensation is not None:
+            after["compensation"] = compensation
+        if compensation_error is not None:
+            after["compensation_error"] = compensation_error
+        if self._audit.available:
             await self._audit.write(
                 self._audit.result(
                     action_id=action_id,
@@ -444,10 +493,15 @@ class AssistantService:
                     ctx=ActionContext(
                         session_id="", operator=operator, utterance=str(record.get("utterance") or ""), space_id=record.get("space_id")
                     ),
-                    after={"revoked": True},
+                    after=after,
                 )
             )
-        return {"status": "revoked", "action_id": action_id, "action": str(record["action"])}
+        result: dict[str, Any] = {"status": "revoked", "action_id": action_id, "action": action.spec.name, "was": status}
+        if compensation_error is not None:
+            result["compensation_error"] = compensation_error
+        elif compensation is not None:
+            result["compensation"] = compensation
+        return result
 
     # ---------- 编排 ----------
 

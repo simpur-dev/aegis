@@ -241,7 +241,7 @@ async def test_未知动作确认被拒而不是500(container: PlatformContainer
 
 
 @pytest.mark.asyncio
-async def test_动作资源可查状态且撤销窗口外如实拒绝(container: PlatformContainer) -> None:
+async def test_动作资源可查状态且撤销按可逆性与席位如实拒绝(container: PlatformContainer) -> None:
     async with _client(container) as client:
         created = (
             await client.post(
@@ -257,8 +257,17 @@ async def test_动作资源可查状态且撤销窗口外如实拒绝(container:
         assert status["status"] == "proposed"
         assert status["operator_id"] == "duty-01"
 
-        revoked = (await client.post(f"/api/v1/assistant/actions/{created['action_id']}/revoke", headers=DUTY_HEADERS)).json()
-        assert revoked["status"] == "revoked"
+        # 演练撤不回来：台账不能被改成 revoked 假装收尾
+        refused = await client.post(f"/api/v1/assistant/actions/{created['action_id']}/revoke", headers=DUTY_HEADERS)
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["code"] == "E_ACTION_NOT_REVERSIBLE"
+        still = (await client.get(f"/api/v1/assistant/actions/{created['action_id']}")).json()
+        assert still["status"] == "proposed"
+
+        # 没有席位也不能撤销：谁做的决定必须落到一行上
+        anonymous = await client.post(f"/api/v1/assistant/actions/{created['action_id']}/revoke")
+        assert anonymous.status_code == 401
+        assert anonymous.json()["detail"]["code"] == "E_OPERATOR_REQUIRED"
 
         missing = await client.get("/api/v1/assistant/actions/act_deadbeef0000")
         assert missing.status_code == 404

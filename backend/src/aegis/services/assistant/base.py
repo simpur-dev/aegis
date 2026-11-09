@@ -148,6 +148,10 @@ class Action(ABC):
     async def execute(self, targets: ResolvedTargets, params: BaseModel, ctx: ActionContext) -> ActionResult:
         """执行动作。业务拒绝抛 `ActionError`（业务错误码透传），其它异常由执行器归一。"""
 
-    async def revoke(self, action_id: str, ctx: ActionContext) -> ActionResult:
-        """撤销一次已执行的动作。只有 `spec.reversible` 为真的动作需要实现。"""
+    async def revoke(self, record: dict[str, Any], ctx: ActionContext) -> ActionResult:
+        """撤销一次动作（已执行的还要做业务补偿）。只有 `spec.reversible` 为真的动作需要实现。
+
+        `record` 是动作台账里的那一行：补偿要读它的 `result`（例如改级前的 `before_level`），
+        只拿一个 `action_id` 是补偿不了的。
+        """
         raise ActionError("E_ACTION_NOT_REVERSIBLE", f"动作 {self.spec.name} 不支持撤销")
