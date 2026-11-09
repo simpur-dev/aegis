@@ -27,23 +27,29 @@ from aegis.agents_ext.warning_agent.tools.hazard_warning_rule_registry import (
     list_hazard_warning_capabilities,
 )
 
-ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "ice_rock_snow_avalanche", "glacial_lake_outburst"]
+ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "avalanche", "lake_outburst"]
 
 
-def _events(hazard, n=2):
-    """按 Risk 注册表 sample_values 构造观测记录（走真实 Risk 因子引擎）。"""
-    profile = HAZARD_RISK_PROFILES_for_warning()[hazard]
-    return [
-        dict(
-            profile.get("sample_values", {}),
-            event_id=f"MOCK-{i:03d}",
-            time="2024-07-08T03:00:00Z",
-            latitude=29.6 + i * 0.01,
-            longitude=95.3 + i * 0.01,
-            region="西藏",
-        )
-        for i in range(1, n + 1)
-    ]
+def _observation(factor, value):
+    """按 FactorObservation 口径构造一条观测（数值给 min/max/mean，类别给 class_value）。"""
+    common = {"samples": 2, "observed_at": "2024-07-08T03:00:00.000Z", "sources": ["test"], "derivation": "test"}
+    if isinstance(value, str):
+        return {"factor": factor, "class_value": value, **common}
+    return {
+        "factor": factor,
+        "min_value": float(value),
+        "max_value": float(value),
+        "mean_value": float(value),
+        **common,
+    }
+
+
+def _observations(hazard, overrides=None):
+    """按 Risk 注册表 sample_values 构造观测面（走真实 Risk 因子引擎）。"""
+    values = dict(HAZARD_RISK_PROFILES_for_warning()[hazard]["sample_values"])
+    if overrides:
+        values.update(overrides)
+    return [_observation(name, value) for name, value in values.items()]
 
 
 def HAZARD_RISK_PROFILES_for_warning():
@@ -53,12 +59,12 @@ def HAZARD_RISK_PROFILES_for_warning():
     return HAZARD_RISK_PROFILES
 
 
-def _risk_result(hazard, risk_status="success", overrides=None, drop_R=False, events=None):
+def _risk_result(hazard, risk_status="success", overrides=None, drop_R=False, observations=None):
     """构造 Risk 最终交付物 Mock（走真实 Risk 因子引擎，字段契约一致）。"""
     profile = HAZARD_RISK_PROFILES_for_warning()[hazard]
-    if events is None:
-        events = _events(hazard)
-    assessment = profile["assessment_tool"](events, "西藏")
+    if observations is None:
+        observations = _observations(hazard)
+    assessment = profile["assessment_tool"](observations, "西藏")
     if drop_R:
         assessment["R"] = None
         assessment["assessment_status"] = "insufficient_data"
@@ -160,7 +166,7 @@ def test_rule_mapping_and_escalation():
     assert level in ("advisory", "watch", "warning")
 
     # 保护规则升级：泥石流上游溃决联动 → 强制 warning
-    rr_hits = _risk_result("debris_flow", events=_events_override_hit("debris_flow"))
+    rr_hits = _risk_result("debris_flow", observations=_observations_override_hit("debris_flow"))
     n2 = hazard_warning_rule_node({"hazard_type": "debris_flow", "risk_result": rr_hits})
     assert n2["warning_rule_result"]["escalation_applied"] is True
     assert n2["warning_rule_result"]["warning_level"] == "warning"
@@ -174,17 +180,11 @@ def test_rule_mapping_and_escalation():
     print("  √ test_rule_mapping_and_escalation")
 
 
-def _events_override_hit(hazard):
+def _observations_override_hit(hazard):
     """构造命中保护规则的观测（泥石流：上游溃决联动=yes）。"""
-    HAZARD_RISK_PROFILES_for_warning()[hazard]
-    events = _events(hazard)
-    flag_fields = {"debris_flow": "upstream_breach_flag", "glacial_lake_outburst": "ice_avalanche_into_lake"}
+    flag_fields = {"debris_flow": "upstream_breach_flag", "lake_outburst": "ice_avalanche_into_lake"}
     field = flag_fields.get(hazard)
-    if field:
-        for ev in events:
-            if field in ev:
-                ev[field] = "yes"
-    return events
+    return _observations(hazard, {field: "yes"} if field else None)
 
 
 def test_cap_mapping_and_errors():

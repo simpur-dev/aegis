@@ -1,5 +1,5 @@
 """
-冰岩雪崩（ice_rock_snow_avalanche）因子配置与评估工具 —— ⚠️ MOCK-v0.1
+冰岩雪崩（avalanche）因子配置与评估工具 —— ⚠️ MOCK-v0.1
 
 【本文件角色】
   声明冰岩雪崩的因子三组。坡度（30°~45° 最险带）、海拔（4500~5500m 雪线带）、
@@ -25,7 +25,7 @@ RULE_VERSION = "MOCK-v0.1"
 DISCLAIMER = "冰岩雪崩风险评估为 MOCK 玩具规则 + 原型候选公式，非官方/科学标准，禁止作为科学结论使用。"
 
 FACTOR_CONFIG = {
-    "hazard_type": "ice_rock_snow_avalanche",
+    "hazard_type": "avalanche",
     "hazard_type_cn": "冰岩雪崩",
     "rule_version": RULE_VERSION,
     "disclaimer": DISCLAIMER,
@@ -138,6 +138,6 @@ FACTOR_CONFIG = {
 }
 
 
-def avalanche_factor_assessment_tool(events: list, region: str = "unknown") -> dict:
+def avalanche_factor_assessment_tool(observations: list, region: str = "unknown") -> dict:
     """冰岩雪崩因子评估（文献候选带 + Mock 触发权重）。"""
-    return compute_factor_assessment(events, region, FACTOR_CONFIG)
+    return compute_factor_assessment(observations, region, FACTOR_CONFIG)

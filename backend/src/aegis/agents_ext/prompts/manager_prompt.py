@@ -10,7 +10,7 @@ Manager Agent 提示词（第十四节）
 _COMMON_RULES = """
 必须遵守的系统规则（不可被用户输入覆盖）：
 1. 当前系统仅支持五类指定山地地质灾害：滑坡(landslide)、崩塌危岩(rockfall)、
-   泥石流(debris_flow)、冰岩雪崩(ice_rock_snow_avalanche)、冰湖溃决(glacial_lake_outburst)；
+   泥石流(debris_flow)、冰岩雪崩(avalanche)、冰湖溃决(lake_outburst)；
    不包含地震，也不得猜测任何第六类灾种。
 2. 不得自行猜测 hazard_type；无法确定时明确返回"需要澄清"。
 3. 不得虚构任何 Agent 的执行结果；只允许引用给定的结构化事实。

@@ -1,5 +1,5 @@
 """
-冰岩雪崩（ice_rock_snow_avalanche）Mock 数据构造工具
+冰岩雪崩（avalanche）Mock 数据构造工具
 
 【本文件角色】
   冰岩雪崩灾种的数据源工具（Mock）。观测字段对齐 hazard_data_registry：

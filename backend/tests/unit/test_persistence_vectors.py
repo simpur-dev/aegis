@@ -192,7 +192,7 @@ class TestSearchExecution:
 @settings(max_examples=50, deadline=None)
 @given(
     k=st.integers(min_value=1, max_value=MAX_K),
-    hazard=st.one_of(st.none(), st.sampled_from(["debris_flow", "glacial_lake_outburst", "wet_snow_avalanche"])),
+    hazard=st.one_of(st.none(), st.sampled_from(["debris_flow", "lake_outburst", "wet_snow_avalanche"])),
     region=st.one_of(st.none(), st.from_regex(r"[0-9A-Z]{6}", fullmatch=True)),
     threshold=st.one_of(st.none(), st.floats(min_value=-1, max_value=1, allow_nan=False)),
 )

@@ -202,3 +202,23 @@ def list_hazard_risk_capabilities() -> list:
             }
         )
     return out
+
+
+def sample_observations(hazard_type: str, *, observed_at: str = "2024-07-08T03:00:00.000Z") -> list[dict]:
+    """把注册表 `sample_values` 转成 `FactorObservation` dump（自测/演示专用，不是真实观测）。"""
+    profile = get_hazard_risk_profile(hazard_type)
+    rows: list[dict] = []
+    for factor, value in profile.get("sample_values", {}).items():
+        row: dict = {
+            "factor": factor,
+            "samples": 2,
+            "observed_at": observed_at,
+            "sources": ["registry_sample"],
+            "derivation": "sample_values",
+        }
+        if isinstance(value, str):
+            row["class_value"] = value
+        else:
+            row.update(min_value=float(value), max_value=float(value), mean_value=float(value))
+        rows.append(row)
+    return rows

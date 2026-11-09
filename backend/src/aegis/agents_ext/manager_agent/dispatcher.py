@@ -47,9 +47,9 @@ def run_data(state: dict) -> dict:
 
 
 def run_risk(state: dict) -> dict:
-    from aegis.agents_ext.risk_agent.main import run_risk_agent
+    from aegis.agents_ext.risk_agent.legacy import run_risk_agent_legacy
 
-    return run_risk_agent(
+    return run_risk_agent_legacy(
         _task_desc(state, "评估灾害风险"), data_result=state.get("data_result", {}) or {}, hazard_type=state["hazard_type"]
     )
 

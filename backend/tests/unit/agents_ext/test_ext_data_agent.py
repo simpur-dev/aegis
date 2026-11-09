@@ -35,7 +35,7 @@ from aegis.agents_ext.hazard_registry import (
     normalize_hazard_type,
 )
 
-ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "ice_rock_snow_avalanche", "glacial_lake_outburst"]
+ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "avalanche", "lake_outburst"]
 
 
 # ============================================================
@@ -87,9 +87,9 @@ def test_registry_field_spec_per_hazard():
     """注册表：五灾种必需观测字段互不相同（按各自致灾机理声明）。"""
     req_sets = {k: frozenset(HAZARD_DATA_REQUIREMENTS[k]["required_observation_fields"]) for k in ALL_HAZARDS}
     assert req_sets["landslide"] != req_sets["debris_flow"]
-    assert req_sets["rockfall"] != req_sets["glacial_lake_outburst"]
-    assert "lake_volume_m3" in req_sets["glacial_lake_outburst"]
-    assert "release_volume_m3" in req_sets["ice_rock_snow_avalanche"]
+    assert req_sets["rockfall"] != req_sets["lake_outburst"]
+    assert "lake_volume_m3" in req_sets["lake_outburst"]
+    assert "release_volume_m3" in req_sets["avalanche"]
     assert "block_volume_m3" in req_sets["rockfall"]
     print("  √ test_registry_field_spec_per_hazard")
 
@@ -106,7 +106,7 @@ def test_mock_data_source_contract():
             assert "event_id" in ev and "latitude" in ev and "region" in ev
     # 灾种 → 工具路由正确（data_source_detail 一一对应）
     assert get_data_source_tool("landslide")({"x": 1})["data_source_detail"] == "mock_landslide_constructor"
-    assert get_data_source_tool("glacial_lake_outburst")({"x": 1})["data_source_detail"] == "mock_glacial_lake_constructor"
+    assert get_data_source_tool("lake_outburst")({"x": 1})["data_source_detail"] == "mock_glacial_lake_constructor"
     print("  √ test_mock_data_source_contract")
 
 
@@ -246,7 +246,7 @@ def test_registry_class_fields_declared():
         "outburst",
         "spring",
     ]
-    gl = get_hazard_data_requirements("glacial_lake_outburst")["observation_fields"]
+    gl = get_hazard_data_requirements("lake_outburst")["observation_fields"]
     assert gl["ice_avalanche_into_lake"]["type"] == "class"
     assert gl["ice_avalanche_into_lake"]["allowed"] == ["no", "yes"]
     # 新增观测字段的监测方式声明存在（docx 监测矩阵）

@@ -46,7 +46,8 @@ def _imported_modules(path: Path) -> list[str]:
 def test_模块存在且有内容() -> None:
     files = _python_files()
     assert len(files) > 50, f"外部实现只有 {len(files)} 个文件，搬入是否完整？"
-    assert (PACKAGE / "adapter.py").exists(), "适配层必须在：没有它，外部实现无法走平台契约"
+    assert (PACKAGE / "runtime.py").exists(), "装配入口必须在：容器经它构造外部实现"
+    assert (PACKAGE / "risk_agent" / "agent.py").exists(), "研判本体必须直接继承 AgentKit 实现 assess.v1"
 
 
 @pytest.mark.parametrize("path", _python_files(), ids=lambda p: p.name)

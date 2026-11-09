@@ -35,7 +35,7 @@ from aegis.agents_ext.feedback_agent.tools.feedback_memory_tool import (  # noqa
     load_feedback_records,
 )
 
-ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "ice_rock_snow_avalanche", "glacial_lake_outburst"]
+ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "avalanche", "lake_outburst"]
 
 
 def _categories(fb: dict) -> set:
@@ -176,12 +176,12 @@ def test_07_risk_simulation_hazard_mismatch():
 # 8. Warning 内容与上游结果不一致能够识别
 # ============================================================
 def test_08_warning_inconsistency_detected():
-    blocks = build_consistent_pipeline_results("glacial_lake_outburst", event_id="EVT-T08")
+    blocks = build_consistent_pipeline_results("lake_outburst", event_id="EVT-T08")
     alert = blocks["warning_result"]["alert"]
     real_r = alert["based_on"]["R"]
     alert["based_on"]["R"] = (real_r or 50.0) + 233.0  # 依据链 R 被篡改
     alert["based_on"]["risk_level"] = "high-不存在等级"  # 依据链等级被篡改
-    fb = run_feedback_agent("测试8：预警不一致", hazard_type="glacial_lake_outburst", event_id="EVT-T08", **blocks)
+    fb = run_feedback_agent("测试8：预警不一致", hazard_type="lake_outburst", event_id="EVT-T08", **blocks)
     hits = [i for i in fb["feedback_items"] if i["category"] == "warning_consistency_issue"]
     assert len(hits) >= 2, f"未充分识别 Warning 与上游不一致: {hits}"
     # 且必须完成反思与建议（进入过 reflection）
@@ -336,9 +336,9 @@ def test_13_upstream_results_untouched():
 # 14. 输出结构符合 Manager Agent 的输入要求
 # ============================================================
 def test_14_manager_contract():
-    blocks = build_consistent_pipeline_results("avalanche" and "ice_rock_snow_avalanche", event_id="EVT-T14")
+    blocks = build_consistent_pipeline_results("avalanche", event_id="EVT-T14")
     blocks["simulation_result"]["hazard_type"] = "landslide"  # 制造问题走完整链路
-    fb = run_feedback_agent("测试14：Manager 契约", hazard_type="ice_rock_snow_avalanche", event_id="EVT-T14", **blocks)
+    fb = run_feedback_agent("测试14：Manager 契约", hazard_type="avalanche", event_id="EVT-T14", **blocks)
     required_top = [
         "feedback_id",
         "event_id",

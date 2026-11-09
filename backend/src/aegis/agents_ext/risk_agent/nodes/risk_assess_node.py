@@ -1,15 +1,16 @@
 """
 RiskAssess 节点（面向西藏五类山地地质灾害，因子化口径）
 
-【本文件角色】评估主节点：校验灾种 → 归一化 Data 输出 → 按灾种路由因子评估工具
+【本文件角色】评估主节点：校验灾种 → 取统一证据包的观测面 → 按灾种路由因子评估工具
               （P/T/R 框架）→ LLM 仅做结果解释（不计算、不定级）。
 【设计思想】
   - 数值计算全部在 factor_engine（确定性、可测试、可审计）；
   - risk_level 由引擎按 MOCK 临时阈值给出（provisional_level），
     LLM 不得自行编造风险等级或数值；
-  - 灾种 → 工具的映射由 hazard_risk_registry 决定，hazard_type 必须显式传入。
+  - 灾种 → 工具的映射由 hazard_risk_registry 决定，hazard_type 必须显式传入；
+  - 输入是 `assess.v1` 证据包的 `FactorObservation` 观测面，不再是别的 Agent 的 State 包。
 【对外契约】
-  读取：task / hazard_type（必填）/ data_result / retry_count
+  读取：task / hazard_type（必填）/ observations / region_code / retry_count
   写入：hazard_type / risk_factors / calculation_result(=因子评估信封) / evidence /
         risk_result / uncertainties / next
   提供给：risk_validate_node、risk_output_node
@@ -48,46 +49,6 @@ class RiskExplanation(BaseModel):
     uncertainties: list[str] = Field(description="不确定性/数据局限说明")
     needs_more_data: bool = Field(description="是否因数据不足无法可靠解释")
     missing_info: list[str] = Field(description="缺失的关键信息")
-
-
-# ============================================================
-# ★ 关键适配层：把 Data 的 data_result 归一化（灾种无关，保留复用）★
-# ============================================================
-
-
-def _normalize_data_result(data_result: dict) -> dict:
-    """兼容 Data Agent 两种可能的输出结构，统一提取 events/status/quality/source。"""
-    if not isinstance(data_result, dict):
-        return {"events": [], "status": "failed", "data_quality": {}, "missing_data": [], "source": "unknown"}
-
-    inner = data_result.get("processed_data", {})
-
-    if isinstance(inner, dict) and "events" in inner:
-        events = inner.get("events", [])
-        source = inner.get("data_source") or inner.get("source", "unknown")
-    elif isinstance(inner, dict) and isinstance(inner.get("processed_data"), dict):
-        deep = inner["processed_data"]
-        events = deep.get("events", [])
-        source = deep.get("data_source") or deep.get("source", "unknown")
-    else:
-        events = []
-        source = "unknown"
-
-    return {
-        "events": events,
-        "status": data_result.get("status", "unknown"),
-        "data_quality": data_result.get("data_quality", {}),
-        "missing_data": data_result.get("missing_data", []),
-        "source": source,
-    }
-
-
-def _summarize_data(norm: dict) -> str:
-    return (
-        f"Data Agent 状态={norm['status']}，观测记录数={len(norm['events'])}，"
-        f"数据源={norm['source']}（Mock 数据），"
-        f"样例={json.dumps(norm['events'][:3], ensure_ascii=False)}"
-    )
 
 
 def _insufficient_return(
@@ -142,8 +103,9 @@ def risk_assess_node(state: RiskAgentState) -> dict[str, Any]:
     """风险评估节点（按灾种路由因子评估；LLM 仅解释）。"""
 
     task = state.get("task", "")
-    data_result = state.get("data_result", {})
+    observations = state.get("observations", []) or []
     hazard_raw = state.get("hazard_type", "") or ""
+    region = str(state.get("region_code") or "unknown")
     retry_count = state.get("retry_count", 0)
 
     # ---------- 步骤0：灾种校验（显式必填）----------
@@ -162,25 +124,20 @@ def risk_assess_node(state: RiskAgentState) -> dict[str, Any]:
 
     profile = get_hazard_risk_profile(hazard_key)
 
-    # ---------- 步骤1：归一化 Data 输出 ----------
-    norm = _normalize_data_result(data_result)
-    events = norm["events"]
-    region = events[0].get("region", "unknown") if events else "unknown"
-
-    # ---------- 情况A：无有效数据 ----------
-    if not events:
+    # ---------- 情况A：证据包没有观测 ----------
+    if not observations:
         print("[RiskAssess] 数据不足，跳过因子引擎，标记 insufficient_data")
         return _insufficient_return(
             hazard_key,
             hazard_raw,
             profile,
-            reasoning="Data Agent 未提供有效灾种观测数据",
+            reasoning="研判请求未携带可用的因子观测（证据包为空）",
             missing_info=[f"{profile['hazard_type_cn']}观测数据"],
             error_message="数据不足：无有效观测记录",
         )
 
     # ---------- 情况B：按灾种调用因子评估工具（P/T/R 框架）----------
-    assessment = profile["assessment_tool"](events, region)
+    assessment = profile["assessment_tool"](observations, region)
     print(
         f"[RiskAssess] 灾种={hazard_key} 引擎={assessment['engine_version']} "
         f"状态={assessment['assessment_status']} P={assessment['P']} "

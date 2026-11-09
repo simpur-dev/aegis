@@ -1,5 +1,5 @@
 """
-冰湖溃决（glacial_lake_outburst）Mock 数据构造工具
+冰湖溃决（lake_outburst）Mock 数据构造工具
 
 【本文件角色】
   冰湖溃决灾种的数据源工具（Mock）。观测字段对齐 hazard_data_registry：

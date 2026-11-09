@@ -143,12 +143,12 @@ class TestTally:
         cases = [
             case("a", hazard="debris_flow"),
             case("b", hazard="debris_flow", truth=False, predicted=True),
-            case("c", hazard="glacial_lake_outburst"),
+            case("c", hazard="lake_outburst"),
         ]
         grouped = per_hazard_tally(cases)
-        assert set(grouped) == {"debris_flow", "glacial_lake_outburst"}
+        assert set(grouped) == {"debris_flow", "lake_outburst"}
         assert grouped["debris_flow"].tp == 1 and grouped["debris_flow"].fp == 1
-        assert grouped["glacial_lake_outburst"].total == 1
+        assert grouped["lake_outburst"].total == 1
 
     def test_per_hazard_tally_is_empty_for_no_cases(self) -> None:
         assert per_hazard_tally([]) == {}
@@ -294,11 +294,9 @@ class TestMeasureHonesty:
             measure(None, target=1.5)
 
     def test_per_hazard_breakdown_is_present_for_measured_report(self) -> None:
-        cases = [case(f"d{i}", hazard="debris_flow") for i in range(20)] + [
-            case(f"g{i}", hazard="glacial_lake_outburst") for i in range(20)
-        ]
+        cases = [case(f"d{i}", hazard="debris_flow") for i in range(20)] + [case(f"g{i}", hazard="lake_outburst") for i in range(20)]
         report = measure(dataset_of(*cases, kind="field"), target=0.8)
-        assert set(report.per_hazard) == {"debris_flow", "glacial_lake_outburst"}
+        assert set(report.per_hazard) == {"debris_flow", "lake_outburst"}
         assert sum(c.total for c in report.per_hazard.values()) == 40
 
     def test_type_correct_counts_only_hazard_type_matches(self) -> None:

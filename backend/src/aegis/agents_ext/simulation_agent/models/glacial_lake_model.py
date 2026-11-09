@@ -1,7 +1,7 @@
 """
 Simulation Agent 冰湖溃决仿真模型（MOCK）
 
-【本文件角色】glacial_lake_outburst（冰湖溃决）灾种的玩具级确定性仿真模型。
+【本文件角色】lake_outburst（冰湖溃决）灾种的玩具级确定性仿真模型。
 
 【诚实声明 / 重要红线】
   本模型是 MOCK（MODEL_VERSION="MOCK-v0.1"）：所有输出都是 mock_ 前缀的
@@ -33,6 +33,7 @@ Simulation Agent 冰湖溃决仿真模型（MOCK）
 import math
 import time
 
+from aegis.agents_ext.hazard_registry import GLACIAL_LAKE_OUTBURST
 from aegis.agents_ext.simulation_agent.models.base_model import (
     MOCK_DISCLAIMER,
     SEVERITY_MULTIPLIER,
@@ -45,7 +46,7 @@ class GlacialLakeOutburstMockModel(BaseHazardSimulationModel):
     """冰湖溃决 MOCK 模型。指标：mock_hazard_index / mock_impact_index /
     mock_flood_wave_index，全部 0~1 归一化合成值。"""
 
-    hazard_type = "glacial_lake_outburst"
+    hazard_type = GLACIAL_LAKE_OUTBURST
     MODEL_VERSION = "MOCK-v0.1"
     simulation_mode = "mock"
     is_real_prediction = False

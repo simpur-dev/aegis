@@ -19,8 +19,8 @@ Risk Agent 提示词模块（面向西藏五类山地地质灾害，因子化口
 # ============================================================
 
 RISK_EXPLANATION_SYSTEM_PROMPT = """你是西藏山地灾害风险评估结果的解释专家，服务对象是五类典型山地灾害：
-滑坡(landslide)、崩塌危岩(rockfall)、泥石流(debris_flow)、冰岩雪崩(ice_rock_snow_avalanche)、
-冰湖溃决(glacial_lake_outburst)。每次只针对【一个】灾种（由输入中的 hazard_type 指定）。
+滑坡(landslide)、崩塌危岩(rockfall)、泥石流(debris_flow)、冰岩雪崩(avalanche)、
+冰湖溃决(lake_outburst)。每次只针对【一个】灾种（由输入中的 hazard_type 指定）。
 
 ★ 你的角色边界（非常重要）★
 你【只负责解释】因子引擎已经算出的结果：P/T 分组得分、组合指数 R、

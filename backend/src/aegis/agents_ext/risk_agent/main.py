@@ -1,44 +1,89 @@
 """
-Risk Agent 入口 / 独立测试（面向西藏五类山地地质灾害）
+Risk Agent 的**权威入口**：吃统一 `assess.v1` 契约，吐 `AssessResponse`。
 
-【为什么能独立跑】
-  不依赖 Data Agent 真实运行，用 Mock 的 data_result（结构 = Data 最终 State 平铺，
-  观测字段来自 hazard_risk_registry 的 sample_values）即可验证 Risk 全流程。
-  接入 Manager 时只需把真 Data 输出塞进 data_result。
+【这一层做什么】
+  只做"内部图结果 → 契约响应"的一次性收口：灾种解析、状态四态 → 错误码、
+  临时等级 → 平台 RiskLevel、置信度/出处/证据引用的组装。平台侧因此不再认识
+  "外部结果 dict"，也不需要任何适配层。
 
 【灾种显式必填】
-  hazard_type 必须显式传入（标准键或明确中文名），
-  缺失/无法识别 → status=insufficient_data 并给出明确原因，绝不让 LLM 猜测灾种。
+  `request.hazard_type` 优先；缺失时取 `hits` 里第一条灾种，仍取不到就诚实拒绝
+  （`E_ASSESS_INSUFFICIENT`），绝不让 LLM 猜测灾种。地震/未知灾种 →
+  `E_ASSESS_HAZARD_UNSUP`。
 
 【诚实声明】
-  五灾种风险规则全部为 MOCK 玩具规则（MOCK-v0.1），
-  输出不是真实地质灾害风险预测。
+  五灾种风险规则全部为 MOCK 玩具规则（MOCK-v0.1），R 为原型候选公式；
+  响应恒带 `data_provenance.is_mock=True`、`human_review_suggested=True`、
+  置信度封顶 0.60。输出不是真实地质灾害风险预测。
 
 【对外契约】
-  run_risk_agent() 返回的 dict = Risk 最终 risk_result
-    # 给 Simulation / 给测试断言
-
-【运行方式】
-  cd C:\\Users\\lixin\\Desktop\\地政预警项目
-  .venv\\Scripts\\python.exe -m agents.risk_agent.main
+  run_risk_agent(request, evidence, *, agent_id=..., max_retries=3) -> AssessResponse
+  失败抛 `AssessRejected`（由 `agent.py` 转成 error 回执）。
+  旧 events 口径的入口在 `legacy.py`，仅供未接线的 manager 内部使用，平台路径不引用。
 """
 
-import json
-import sys
-
+from aegis.agents_ext.hazard_registry import (
+    HAZARD_CN_NAME,
+    UnsupportedHazardError,
+    require_hazard,
+    supported_hazards_text,
+)
+from aegis.agents_ext.risk_agent.errors import AssessRejected
 from aegis.agents_ext.risk_agent.graph import create_risk_agent
 from aegis.agents_ext.risk_agent.state import RiskAgentState
-from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import get_hazard_risk_profile
+from aegis.domain.assess import AssessErrorCode, AssessEvidence, AssessRequest, AssessResponse
+from aegis.domain.enums import HazardType, RiskLevel
+from aegis.domain.messages import now_iso
+
+#: 数据出处标记：外部实现的数据/权重是 Mock 源，读的人一眼能看出。
+SOURCE_MARK = "agents_ext_mock"
+
+#: 临时等级（MOCK 阈值）→ 平台 RiskLevel。`none` 是"算出来没风险"；`unknown` 不进表
+#: （那是"算不出来"，不能写成 5=无风险）。
+_LEVEL_FROM_PROVISIONAL = {"high": RiskLevel.RED, "medium": RiskLevel.ORANGE, "low": RiskLevel.YELLOW, "none": RiskLevel.NONE}
+
+_MAX_EVIDENCE_REFS = 32
 
 
-def run_risk_agent(task: str, data_result: dict, hazard_type: str, max_retries: int = 3) -> dict:
-    """运行 Risk Agent，返回结构化风险结果（risk_result）。"""
-    agent = create_risk_agent()
+def _resolve_hazard(request: AssessRequest) -> str:
+    """请求显式灾种优先，其次第一条命中携带的灾种；取不到/不支持就拒绝。"""
+    raw = request.hazard_type.value if request.hazard_type is not None else ""
+    if not raw:
+        raw = next((hit.hazard_type for hit in request.hits if hit.hazard_type), "")
+    if not raw:
+        raise AssessRejected(
+            AssessErrorCode.INSUFFICIENT,
+            "研判请求未提供灾种（hazard_type 与 hits 均为空），无法选择评估规则",
+            detail={"supported": supported_hazards_text()},
+        )
+    try:
+        return require_hazard(raw)
+    except UnsupportedHazardError as exc:
+        raise AssessRejected(
+            AssessErrorCode.HAZARD_UNSUP,
+            str(exc),
+            detail={"hazard_type": raw, "supported": supported_hazards_text()},
+        ) from exc
 
-    initial_state: RiskAgentState = {
-        "task": task,
-        "hazard_type": hazard_type,  # ★ 必填 ★ 灾种
-        "data_result": data_result,  # >>> 交接自 Data（Manager 填；测试用 Mock）
+
+def _evidence_refs(request: AssessRequest, result: dict) -> list[str]:
+    """证据引用：请求给的证据快照 + 命中的规则 + 实际用到的因子（去重、截断 32）。"""
+    refs: list[str] = list(request.data_refs)
+    assessment = result.get("assessment", {}) or {}
+    refs.extend(f"rule:{hit['rule_id']}" for hit in assessment.get("rule_hits", []) if isinstance(hit, dict) and hit.get("rule_id"))
+    refs.extend(f"factor:{key}" for key, spec in (assessment.get("factor_scores") or {}).items() if not spec.get("missing"))
+    return list(dict.fromkeys(refs))[:_MAX_EVIDENCE_REFS]
+
+
+def _initial_state(request: AssessRequest, evidence: AssessEvidence, hazard: str, *, max_retries: int) -> RiskAgentState:
+    return {
+        "task": f"研判 {request.region_code} 的{HAZARD_CN_NAME.get(hazard, hazard)}风险",
+        "hazard_type": hazard,
+        "region_code": request.region_code,
+        "observations": [item.model_dump(mode="json") for item in evidence.observations],
+        "site_profile": evidence.site_profile.model_dump(mode="json") if evidence.site_profile is not None else None,
+        "data_provenance": evidence.provenance.model_dump(mode="json"),
+        "max_retries": max_retries,
         "risk_factors": [],
         "calculation_result": {},
         "risk_result": {},
@@ -46,103 +91,76 @@ def run_risk_agent(task: str, data_result: dict, hazard_type: str, max_retries: 
         "uncertainties": [],
         "validation_result": {},
         "retry_count": 0,
-        "max_retries": max_retries,
         "next": "",
         "error_message": "",
         "status": "",
     }
 
-    print("=" * 60)
-    print(f"[Risk Agent] 任务: {task}")
-    print(f"[Risk Agent] 灾种: {hazard_type}")
-    print(f"[Risk Agent] 输入观测记录数: {len(data_result.get('processed_data', {}).get('events', []))}")
-    print("=" * 60)
 
-    final_state = agent.invoke(initial_state)
-    return final_state.get("risk_result", {})
+def run_risk_agent(
+    request: AssessRequest,
+    evidence: AssessEvidence,
+    *,
+    agent_id: str = "assess.agents_ext",
+    max_retries: int = 3,
+) -> AssessResponse:
+    """统一契约入口：`AssessRequest` + 证据包 → `AssessResponse`；给不出结论抛 `AssessRejected`。"""
+    hazard = _resolve_hazard(request)
+    final_state = create_risk_agent().invoke(_initial_state(request, evidence, hazard, max_retries=max_retries))
+    result = final_state.get("risk_result", {}) or {}
+    status = str(final_state.get("status") or result.get("status") or "")
 
+    if status == "insufficient_data":
+        reasons = result.get("assessment", {}).get("insufficient_reasons") or result.get("missing_info") or []
+        raise AssessRejected(
+            AssessErrorCode.INSUFFICIENT,
+            f"数据不足以支撑{HAZARD_CN_NAME.get(hazard, hazard)}研判：" + "；".join(str(r) for r in reasons)[:300],
+            retryable=False,
+            detail={"hazard_type": hazard, "missing_info": list(result.get("missing_info", []))[:16]},
+        )
+    if status == "failed":
+        raise AssessRejected(
+            AssessErrorCode.FAILED,
+            f"研判执行失败：{result.get('reasoning') or '内部验证未通过'}"[:300],
+            retryable=True,
+            detail={"hazard_type": hazard},
+        )
+    if status != "success":
+        raise AssessRejected(
+            AssessErrorCode.UNCERTAIN,
+            f"研判未能形成可采纳结论（status={status or '空'}）：{result.get('reasoning') or ''}"[:300],
+            retryable=True,
+            detail={"hazard_type": hazard, "validation": result.get("validation", {})},
+        )
 
-# ============================================================
-# Mock 构造：严格对齐 Data 最终 State 的【平铺】结构
-# 观测字段取值来自 hazard_risk_registry 的 sample_values（与 data_agent 的
-# 滑坡等 Mock 数据口径一致），保证字段名不漂移。
-# ============================================================
+    provisional = str(result.get("risk_level") or "")
+    level = _LEVEL_FROM_PROVISIONAL.get(provisional)
+    if level is None:
+        # "算不出来"不能落成平台 5（无风险）：宁可拒绝，也不做假定级。
+        raise AssessRejected(
+            AssessErrorCode.BAD_LEVEL,
+            f"研判档位无法映射到平台等级：{provisional!r}",
+            detail={"hazard_type": hazard, "provisional_level": provisional},
+        )
 
-
-def _mock_data_result(hazard_type: str = "debris_flow", complete: bool = True) -> dict:
-    """构造某灾种的 Mock data_result（平铺结构）。
-
-    complete=True  → 2 条必需字段齐全的观测记录（正常评估路径）
-    complete=False → 2 条必需观测字段全部缺失的记录（数据不足路径）
-    """
-    profile = get_hazard_risk_profile(hazard_type)
-    sample = profile.get("sample_values", {})
-
-    events = []
-    for i in range(1, 3):
-        ev = {
-            "event_id": f"MOCK-{profile['hazard_type_cn']}-{i:03d}",
-            "time": "2024-07-08T03:00:00Z",
-            "latitude": 29.6 + i * 0.01,
-            "longitude": 95.3 + i * 0.01,
-            "region": "西藏",
-            "source": "mock",
-        }
-        for field, value in sample.items():
-            ev[field] = value if complete else None  # 数据不足时置空必需观测字段
-        events.append(ev)
-
-    return {
-        "processed_data": {
-            "events": events,
-            "data_source": "mock",
-            "hazard_type": profile["hazard_type"],
-            "is_mock": True,
-            "clean_report": {},
-            "normalization_report": {},
-        },
-        "data_quality": {"is_valid": True, "completeness_ratio": 1.0, "validation_reason": "Mock 合格"},
-        "missing_data": [],
-        "status": "success",
-        "error_message": "",
-        "hazard_type": profile["hazard_type"],
-    }
-
-
-if __name__ == "__main__":
-    # Windows 控制台中文输出保障
-    # 【并入主线时的改动】`sys.stdout` 的静态类型是 TextIO，而 `reconfigure` 是 TextIOWrapper 的方法；
-    # 直接调用过不了 mypy。用 getattr 取、取不到就跳过——这正是"没有这个方法时也不该炸"的语义。
-    _reconfigure = getattr(sys.stdout, "reconfigure", None)
-    if _reconfigure is not None:
-        try:
-            _reconfigure(encoding="utf-8")
-        except Exception:
-            pass
-
-    # ---------- 用例1：泥石流正常评估 ----------
-    r1 = run_risk_agent("评估西藏波密地区泥石流危险性", _mock_data_result("debris_flow"), hazard_type="debris_flow")
-    print("\n【用例1 泥石流正常】\n", json.dumps(r1, ensure_ascii=False, indent=2, default=str))
-
-    # ---------- 用例2：中文别名（"泥石流" → debris_flow） ----------
-    r2 = run_risk_agent("评估泥石流风险（中文灾种名）", _mock_data_result("debris_flow"), hazard_type="泥石流")
-    print("\n【用例2 中文别名】hazard_type =", r2.get("hazard_type"), "| risk_level =", r2.get("risk_level"))
-
-    # ---------- 用例3：未知灾种 → insufficient_data + 明确原因 ----------
-    r3 = run_risk_agent("评估火山泥流", _mock_data_result("debris_flow"), hazard_type="火山泥流")
-    print("\n【用例3 未知灾种】status =", r3.get("status"), "| 原因 =", r3.get("missing_info"))
-
-    # ---------- 用例4：必需观测字段缺失 → 数据不足，不强制给等级 ----------
-    r4 = run_risk_agent("评估滑坡风险（缺必需观测字段）", _mock_data_result("landslide", complete=False), hazard_type="landslide")
-    print("\n【用例4 数据不足】status =", r4.get("status"), "| risk_level =", r4.get("risk_level"))
-
-    # ---------- 用例5：冰湖溃决正常评估 ----------
-    r5 = run_risk_agent("评估西藏定结冰湖溃决危险性", _mock_data_result("glacial_lake_outburst"), hazard_type="glacial_lake_outburst")
-    print(
-        "\n【用例5 冰湖溃决】hazard_type =",
-        r5.get("hazard_type"),
-        "| risk_level =",
-        r5.get("risk_level"),
-        "| 规则版本 =",
-        r5.get("model_info", {}).get("rule_version"),
+    return AssessResponse(
+        hazard_type=HazardType(hazard),
+        region_code=request.region_code,
+        risk_level=level,
+        confidence=float(result.get("confidence", 0.0)),
+        confidence_basis=str(result.get("confidence_basis") or ""),
+        rationale=str(result.get("reasoning") or "")[:1000],
+        evidence_refs=_evidence_refs(request, result),
+        assessed_at=now_iso(),
+        assessed_by=agent_id,
+        # mock 方法是恒定的：MOCK 权重 + 原型公式，任何一条结论都建议人工核签。
+        human_review_suggested=True,
+        double_blind="not_applicable",
+        double_blind_mode="",
+        source=SOURCE_MARK,
+        data_provenance=result.get("data_provenance", {}),
+        assessment=result.get("assessment", {}),
     )
+
+
+__all__ = ["SOURCE_MARK", "run_risk_agent"]

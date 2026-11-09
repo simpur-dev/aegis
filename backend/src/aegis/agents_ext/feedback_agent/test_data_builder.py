@@ -59,13 +59,12 @@ def build_data_result(hazard_type: str, event_id: str = "EVT-T-001") -> dict:
 
 def build_risk_result(hazard_type: str, data_result: dict) -> dict:
     """构造 Risk Agent 最终 risk_result（走真实因子引擎，与 risk_output_node 契约一致）。"""
-    from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import get_hazard_risk_profile
+    from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import get_hazard_risk_profile, sample_observations
 
     hazard_key = normalize_hazard_type(hazard_type)
     profile = get_hazard_risk_profile(hazard_key)
-    events = (data_result.get("processed_data", {}) or {}).get("events", [])
 
-    assessment = profile["assessment_tool"](events, "西藏波密")
+    assessment = profile["assessment_tool"](sample_observations(hazard_key, observed_at=_now_iso()), "西藏波密")
     status = "success" if assessment.get("assessment_status") == "scored" else "insufficient_data"
 
     return {

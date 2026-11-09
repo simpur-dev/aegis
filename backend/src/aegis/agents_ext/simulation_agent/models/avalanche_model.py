@@ -1,7 +1,7 @@
 """
 Simulation Agent 冰岩雪崩仿真模型（MOCK）
 
-【本文件角色】ice_rock_snow_avalanche（冰岩雪崩）灾种的玩具级确定性仿真模型。
+【本文件角色】avalanche（冰岩雪崩）灾种的玩具级确定性仿真模型。
 
 【诚实声明 / 重要红线】
   本模型是 MOCK（MODEL_VERSION="MOCK-v0.1"）：所有输出都是 mock_ 前缀的
@@ -32,6 +32,7 @@ Simulation Agent 冰岩雪崩仿真模型（MOCK）
 import math
 import time
 
+from aegis.agents_ext.hazard_registry import ICE_ROCK_SNOW_AVALANCHE
 from aegis.agents_ext.simulation_agent.models.base_model import (
     MOCK_DISCLAIMER,
     SEVERITY_MULTIPLIER,
@@ -44,7 +45,7 @@ class AvalancheMockModel(BaseHazardSimulationModel):
     """冰岩雪崩 MOCK 模型。指标：mock_hazard_index / mock_impact_index /
     mock_avalanche_power_index，全部 0~1 归一化合成值。"""
 
-    hazard_type = "ice_rock_snow_avalanche"
+    hazard_type = ICE_ROCK_SNOW_AVALANCHE
     MODEL_VERSION = "MOCK-v0.1"
     simulation_mode = "mock"
     is_real_prediction = False

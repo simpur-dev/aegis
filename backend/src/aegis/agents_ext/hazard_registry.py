@@ -24,16 +24,24 @@
   提供给：三个 Agent（data / risk / simulation）及其工具、节点、测试。
 """
 
+from aegis.domain.enums import HazardType
+
 # ============================================================
 # 五类灾种标准键（字符串常量，不用 Enum：全项目 State 均为字符串，
 # 常量可直接参与 f-string / JSON 序列化 / == 比较，风格零摩擦）
+#
+# 【键名与平台一致，不再另立一套】键值直接取 `aegis.domain.enums.HazardType` 的
+# 枚举值：外部实现与平台共用同一个 `assess.v1` 契约，灾种键若两套名字，
+# 每次过契约都要翻译一次——那正是被删掉的适配层在做的事。
+# 旧交付里的 `ice_rock_snow_avalanche` / `glacial_lake_outburst` 只在别名表里保留
+# （兼容外部调用方），不再是标准键。
 # ============================================================
 
-LANDSLIDE = "landslide"  # 滑坡
-ROCKFALL = "rockfall"  # 崩塌危岩
-DEBRIS_FLOW = "debris_flow"  # 泥石流
-ICE_ROCK_SNOW_AVALANCHE = "ice_rock_snow_avalanche"  # 冰岩雪崩
-GLACIAL_LAKE_OUTBURST = "glacial_lake_outburst"  # 冰湖溃决
+LANDSLIDE = HazardType.LANDSLIDE.value  # 滑坡
+ROCKFALL = HazardType.ROCKFALL.value  # 崩塌危岩
+DEBRIS_FLOW = HazardType.DEBRIS_FLOW.value  # 泥石流
+ICE_ROCK_SNOW_AVALANCHE = HazardType.AVALANCHE.value  # 冰岩雪崩
+GLACIAL_LAKE_OUTBURST = HazardType.LAKE_OUTBURST.value  # 冰湖溃决
 
 # 支持的灾种（有序；【禁止】添加 earthquake 或任何第六类）
 SUPPORTED_HAZARDS = [
@@ -53,7 +61,7 @@ HAZARD_CN_NAME = {
     GLACIAL_LAKE_OUTBURST: "冰湖溃决",
 }
 
-# 别名归一化表：中文灾种名 / 英文变体 → 规范键。
+# 别名归一化表：中文灾种名 / 英文变体 / 旧交付键 → 规范键。
 # 原则"宁缺毋滥"：歧义词不收录（如"岩崩"），避免误路由。
 HAZARD_ALIAS = {
     "滑坡": LANDSLIDE,
@@ -72,13 +80,14 @@ HAZARD_ALIAS = {
     "冰岩雪崩": ICE_ROCK_SNOW_AVALANCHE,
     "雪崩": ICE_ROCK_SNOW_AVALANCHE,
     "冰岩崩": ICE_ROCK_SNOW_AVALANCHE,
-    "ice_rock_snow_avalanche": ICE_ROCK_SNOW_AVALANCHE,
+    "ice_rock_snow_avalanche": ICE_ROCK_SNOW_AVALANCHE,  # 旧交付键，兼容外部调用方
     "avalanche": ICE_ROCK_SNOW_AVALANCHE,
     "snow_avalanche": ICE_ROCK_SNOW_AVALANCHE,
     "冰湖溃决": GLACIAL_LAKE_OUTBURST,
     "冰湖": GLACIAL_LAKE_OUTBURST,
     "溃决洪水": GLACIAL_LAKE_OUTBURST,
-    "glacial_lake_outburst": GLACIAL_LAKE_OUTBURST,
+    "glacial_lake_outburst": GLACIAL_LAKE_OUTBURST,  # 旧交付键，兼容外部调用方
+    "lake_outburst": GLACIAL_LAKE_OUTBURST,
     "glof": GLACIAL_LAKE_OUTBURST,
     "gflof": GLACIAL_LAKE_OUTBURST,
 }

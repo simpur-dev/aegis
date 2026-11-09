@@ -149,6 +149,6 @@ FACTOR_CONFIG = {
 }
 
 
-def landslide_factor_assessment_tool(events: list, region: str = "unknown") -> dict:
+def landslide_factor_assessment_tool(observations: list, region: str = "unknown") -> dict:
     """滑坡因子评估：返回 P/T/R + 因子得分 + 覆盖率 + 规则命中的统一信封。"""
-    return compute_factor_assessment(events, region, FACTOR_CONFIG)
+    return compute_factor_assessment(observations, region, FACTOR_CONFIG)

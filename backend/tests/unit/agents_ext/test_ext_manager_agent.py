@@ -29,7 +29,7 @@ from aegis.agents_ext.manager_agent.state import (
     AGENT_WARNING,
 )
 
-ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "ice_rock_snow_avalanche", "glacial_lake_outburst"]
+ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "avalanche", "lake_outburst"]
 
 CALL_LOG = []  # Mock 子图被调用序列（验证调度顺序 / 是否被调用）
 
@@ -416,7 +416,7 @@ def test_P3_mock_redline_stops_no_retry():
     extra = copy.deepcopy(_default_extra(AGENT_SIMULATION))
     extra["model_info"]["is_real_prediction"] = True
     install_mocks({AGENT_SIMULATION: {"status": "success", "extra": extra}})
-    r = run_manager_agent("glacial_lake_outburst", task_type="full_analysis", event_id="EVT-P3-REDLINE")
+    r = run_manager_agent("lake_outburst", task_type="full_analysis", event_id="EVT-P3-REDLINE")
     assert CALL_LOG.count(AGENT_SIMULATION) == 1, f"红线违规不得重试: {CALL_LOG}"
     assert AGENT_WARNING not in CALL_LOG, "红线违规应拒绝下游"
     assert r["human_review_required"] is True
@@ -458,7 +458,7 @@ def test_P3_warning_level_untouched():
 
     for agent in (AGENT_RISK, AGENT_WARNING):
         dispatcher.set_runner(agent, _cap(agent, dispatcher.AGENT_RUNNERS[agent]))
-    r = run_manager_agent("ice_rock_snow_avalanche", task_type="full_analysis", event_id="EVT-P3-NOTOUCH")
+    r = run_manager_agent("avalanche", task_type="full_analysis", event_id="EVT-P3-NOTOUCH")
     assert r["risk_result"] == snapshot_holder[AGENT_RISK], "Manager 不得修改风险结果"
     assert r["warning_result"] == snapshot_holder[AGENT_WARNING], "Manager 不得修改预警结果"
     assert r["warning_result"]["alert"]["warning_level"] == "warning"  # 原样
@@ -568,7 +568,7 @@ def test_P4_feedback_loop_bounded():
     from aegis.agents_ext.config import MANAGER_MAX_FEEDBACK_LOOPS
 
     install_mocks({AGENT_FEEDBACK: _scripted_runner(AGENT_FEEDBACK, [{"status": "issues_found", "extra": _fb_issues("data")}])})
-    r = run_manager_agent("glacial_lake_outburst", task_type="full_analysis", event_id="EVT-P4-LIMIT")
+    r = run_manager_agent("lake_outburst", task_type="full_analysis", event_id="EVT-P4-LIMIT")
     loops = MANAGER_MAX_FEEDBACK_LOOPS
     assert CALL_LOG.count(AGENT_FEEDBACK) == loops + 1, f"feedback 应被调用 {loops + 1} 次后止损: {CALL_LOG}"
     assert r["final_report"]["execution_summary"]["feedback_loop_count"] == loops
@@ -582,7 +582,7 @@ def test_P4_feedback_loop_bounded():
 def test_P4_no_issues_regression():
     """D-回归：no_issues 正常链路不受闭环实现影响。"""
     install_mocks()
-    r = run_manager_agent("ice_rock_snow_avalanche", task_type="full_analysis", event_id="EVT-P4-REG")
+    r = run_manager_agent("avalanche", task_type="full_analysis", event_id="EVT-P4-REG")
     assert r["task_status"] == "completed" and list(AGENT_ORDER) == CALL_LOG
     fr = r["final_report"]["feedback_review"]
     assert fr["feedback_loop_count"] == 0 and fr["rerun_plan"] == []

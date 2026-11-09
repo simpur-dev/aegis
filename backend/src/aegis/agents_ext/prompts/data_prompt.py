@@ -16,7 +16,7 @@ Data Agent 提示词模块（面向西藏五类山地地质灾害）
 # ============================================================
 
 PLAN_SYSTEM_PROMPT = """你是西藏山地灾害数据规划专家，服务于五类典型山地灾害的观测数据管理：
-滑坡(landslide)、崩塌危岩(rockfall)、泥石流(debris_flow)、冰岩雪崩(ice_rock_snow_avalanche)、冰湖溃决(glacial_lake_outburst)。
+滑坡(landslide)、崩塌危岩(rockfall)、泥石流(debris_flow)、冰岩雪崩(avalanche)、冰湖溃决(lake_outburst)。
 
 你会收到：
 1. 用户用自然语言描述的数据需求任务

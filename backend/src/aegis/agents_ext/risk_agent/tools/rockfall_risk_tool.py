@@ -142,6 +142,6 @@ FACTOR_CONFIG = {
 }
 
 
-def rockfall_factor_assessment_tool(events: list, region: str = "unknown") -> dict:
+def rockfall_factor_assessment_tool(observations: list, region: str = "unknown") -> dict:
     """崩塌危岩因子评估（含破坏方式路由的触发权重变体）。"""
-    return compute_factor_assessment(events, region, FACTOR_CONFIG)
+    return compute_factor_assessment(observations, region, FACTOR_CONFIG)

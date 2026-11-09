@@ -285,7 +285,7 @@ class PlatformContainer:
         由调用方如实退回自建内环——不让一个可选依赖决定整条链路能不能跑。
         """
         try:
-            from aegis.agents_ext.adapter import build_ext_agents
+            from aegis.agents_ext.runtime import build_ext_agents
 
             return build_ext_agents(self.transport)
         except Exception as exc:
@@ -411,12 +411,12 @@ class PlatformContainer:
                 else ""
             )
             self.agent_context_face = resolve_context_face(self.settings.agent_context_face, mcp_url=mcp_url)
-            # 走哪一套实现（builtin/ext）：默认 builtin 不变；ext 是外部交付模块经适配层走同一契约。
+            # 走哪一套实现（builtin/ext）：默认 builtin 不变；ext 直接实现同一个 assess.v1 契约。
             if self.settings.agent_impl == "ext":
                 self.real_agents = self._build_ext_agents()
                 if self.real_agents:
                     log.info(
-                        "智能体实现走外部交付模块（agents_ext，经适配层走同一契约）",
+                        "智能体实现走外部交付模块（agents_ext，直接实现 assess.v1 契约）",
                         extra={"impl": "ext"},
                     )
                 else:

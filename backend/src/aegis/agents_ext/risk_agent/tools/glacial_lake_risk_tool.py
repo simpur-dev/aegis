@@ -1,5 +1,5 @@
 """
-冰湖溃决（glacial_lake_outburst）因子配置与评估工具 —— ⚠️ MOCK-v0.1
+冰湖溃决（lake_outburst）因子配置与评估工具 —— ⚠️ MOCK-v0.1
 
 【本文件角色】
   声明冰湖溃决的因子三组：孕灾 P（库容/水位比/坝高/冰川状态）、
@@ -25,7 +25,7 @@ RULE_VERSION = "MOCK-v0.1"
 DISCLAIMER = "冰湖溃决风险评估为 MOCK 玩具规则 + 原型候选公式，非官方/科学标准，禁止作为科学结论使用。"
 
 FACTOR_CONFIG = {
-    "hazard_type": "glacial_lake_outburst",
+    "hazard_type": "lake_outburst",
     "hazard_type_cn": "冰湖溃决",
     "rule_version": RULE_VERSION,
     "disclaimer": DISCLAIMER,
@@ -194,6 +194,6 @@ FACTOR_CONFIG = {
 }
 
 
-def glacial_lake_factor_assessment_tool(events: list, region: str = "unknown") -> dict:
+def glacial_lake_factor_assessment_tool(observations: list, region: str = "unknown") -> dict:
     """冰湖溃决因子评估（含扳机保护规则与下游影响因子）。"""
-    return compute_factor_assessment(events, region, FACTOR_CONFIG)
+    return compute_factor_assessment(observations, region, FACTOR_CONFIG)

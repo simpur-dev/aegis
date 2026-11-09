@@ -19,6 +19,13 @@ Simulation Agent 确定性默认情景生成工具
 保证流程还能继续往下跑，不需要人工手动写情景。**
 """
 
+from aegis.agents_ext.hazard_registry import (
+    DEBRIS_FLOW,
+    GLACIAL_LAKE_OUTBURST,
+    ICE_ROCK_SNOW_AVALANCHE,
+    LANDSLIDE,
+    ROCKFALL,
+)
 from aegis.agents_ext.simulation_agent.tools.hazard_model_router import (
     get_model_requirements,
     normalize_hazard_type,
@@ -29,11 +36,11 @@ SEVERITY_FILL_FACTOR = {"low": 0.25, "medium": 0.5, "high": 0.75}
 
 # 各灾种默认触发因素描述（演示用文本）
 DEFAULT_TRIGGERS = {
-    "landslide": "持续强降雨",
-    "rockfall": "岩体风化与机械扰动",
-    "debris_flow": "短时强降雨",
-    "ice_rock_snow_avalanche": "持续升温叠加新增降雪",
-    "glacial_lake_outburst": "冰崩涌浪与水位上涨",
+    LANDSLIDE: "持续强降雨",
+    ROCKFALL: "岩体风化与机械扰动",
+    DEBRIS_FLOW: "短时强降雨",
+    ICE_ROCK_SNOW_AVALANCHE: "持续升温叠加新增降雪",
+    GLACIAL_LAKE_OUTBURST: "冰崩涌浪与水位上涨",
 }
 
 

@@ -164,8 +164,8 @@ def run_deterministic_checks(
                 "critical",
                 ["hazard_type"],
                 f"灾种'{hazard_type}'不在五类标准灾种内，Feedback Agent 拒绝检查"
-                "（本项目仅支持 landslide/rockfall/debris_flow/ice_rock_snow_avalanche/"
-                "glacial_lake_outburst，不包含地震）",
+                "（本项目仅支持 landslide/rockfall/debris_flow/avalanche/"
+                "lake_outburst，不包含地震）",
                 [f"输入 hazard_type={hazard_type!r}", f"支持清单={SUPPORTED_HAZARDS}"],
                 confidence=0.99,
             )

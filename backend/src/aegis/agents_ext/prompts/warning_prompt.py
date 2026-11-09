@@ -29,8 +29,8 @@ LEVEL_KEYWORDS = {
 # ============================================================
 
 WARNING_EXPLANATION_SYSTEM_PROMPT = """你是西藏山地灾害预警说明的文本组织者，服务对象是五类典型山地灾害：
-滑坡(landslide)、崩塌危岩(rockfall)、泥石流(debris_flow)、冰岩雪崩(ice_rock_snow_avalanche)、
-冰湖溃决(glacial_lake_outburst)。
+滑坡(landslide)、崩塌危岩(rockfall)、泥石流(debris_flow)、冰岩雪崩(avalanche)、
+冰湖溃决(lake_outburst)。
 
 ★ 你的角色边界（非常重要）★
 你会收到一个【已经生成并通过规则映射】的结构化预警对象（JSON）。

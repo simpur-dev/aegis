@@ -41,15 +41,15 @@ from aegis.agents_ext.simulation_agent.tools.scenario_validate_tool import valid
 from aegis.agents_ext.simulation_agent.tools.simulation_executor import execute_scenario_with_timeout
 
 # 所有的灾种类型
-ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "ice_rock_snow_avalanche", "glacial_lake_outburst"]
+ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "avalanche", "lake_outburst"]
 
 # 每个灾种一个"合法基准情景"（参数取约束区间中段，确定性），相当于一个基本的灾种模板
 BASE_SCENARIOS = {
     "landslide": {"rainfall_mm_h": 80.0, "slope_angle_deg": 45.0},
     "rockfall": {"block_volume_m3": 8.0, "slope_height_m": 120.0},
     "debris_flow": {"rainfall_mm_h": 60.0, "catchment_area_km2": 10.0, "channel_gradient": 0.35},
-    "ice_rock_snow_avalanche": {"release_volume_m3": 50000.0, "vertical_drop_m": 800.0},
-    "glacial_lake_outburst": {"lake_volume_m3": 5000000.0, "dam_height_m": 60.0},
+    "avalanche": {"release_volume_m3": 50000.0, "vertical_drop_m": 800.0},
+    "lake_outburst": {"lake_volume_m3": 5000000.0, "dam_height_m": 60.0},
 }
 
 
@@ -128,7 +128,7 @@ def test_router_normalize_alias():
     assert normalize_hazard_type("泥石流") == "debris_flow"
     assert normalize_hazard_type(" 滑坡 ") == "landslide"
     assert normalize_hazard_type("Debris-Flow") == "debris_flow"
-    assert normalize_hazard_type("GLOF") == "glacial_lake_outburst"
+    assert normalize_hazard_type("GLOF") == "lake_outburst"
     assert normalize_hazard_type("火山泥流") == ""
     assert normalize_hazard_type("") == ""
     assert is_supported_hazard("泥石流") is True

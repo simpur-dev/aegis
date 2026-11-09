@@ -1,27 +1,27 @@
 """
 Risk Agent 的共享状态定义。
 
-【与 Data Agent State 的对照】（方便你理解为什么长这样）
-  机制完全相同：节点读 state、return 局部合并（LangGraph 标准玩法）。
-  字段分组也对齐你的 Data State：输入 / 阶段产出 / 控制流 / 最终输出。
+【输入口径】
+  Risk Agent 不再接受"别的 Agent 的 State 平铺包"，只接受统一契约 `assess.v1` 的
+  证据面（`AssessEvidence`）拆出来的几样东西：
 
-【★ 交接契约 —— 哪些字段给谁 ★】
+      task            ← 任务描述（由入口从请求生成，只作 LLM 解释的上下文）
+      hazard_type     ← 平台灾种键（必填；缺失/不支持走 insufficient_data）
+      observations    ← `FactorObservation` dump 列表（按因子名取用）
+      site_profile    ← `SiteProfile` dump 或 None（画像属性已作为 quality="site"
+                        的观测并入 observations，这里只作区域透传）
+      data_provenance ← 请求证据的出处 dump（输出节点改写为本次研判口径）
 
-  ▶ Manager 启动 Risk 时【必须填】的输入字段：
-      task          ← 任务描述
-      data_result   ← ★★ 放 Data Agent 的最终完整 State（平铺结构）★★
-                       即你 data_output_node return 出来的那一份：
-                       {processed_data:{events:[...]}, data_quality:{...},
-                        missing_data:[...], status:..., error_message:...}
-      max_retries   ← 可选，不填默认 3（对齐你 Data 路由里的 MAX_RETRIES=3）
+  这样外部实现与平台内环读的是同一份证据结构；`hits` 只是规则命中，不是观测，
+  不再冒充事件骨架喂给因子引擎。
 
-  ▶ Risk 内部流转、Manager 不用管的字段：
-      risk_factors, calculation_result, evidence, uncertainties,
-      validation_result, retry_count, next, error_message
-
-  ▶ Risk 产出、【提供给下游】的字段：
-      risk_result   ← ★ 给 Simulation Agent 读的结构化风险结果 ★
-      status        ← ★ 给 Manager 判断流程是否继续 ★
+【节点契约】
+  assess   读 task / hazard_type / observations / retry_count / validation_result
+           写 risk_factors / calculation_result / evidence / risk_result / uncertainties
+  validate 读 risk_result / evidence / uncertainties
+           写 validation_result / retry_count
+  output   读 risk_result / evidence / validation_result / calculation_result / data_provenance
+           写 risk_result（最终交付物）/ status
 """
 
 from typing import TypedDict
@@ -30,39 +30,29 @@ from typing import TypedDict
 class RiskAgentState(TypedDict):
     """Risk Agent 的全局状态，贯穿整个评估流程"""
 
-    # === 输入（由 Manager 填充，RiskAgent拿到就有，只读，一般不修改）===
-    task: str  # 任务描述：Manager给过来的任务，例如："评估西藏波密地区泥石流风险"
-    hazard_type: str  # ★ 必填 ★ 灾种（标准键或明确中文名，如 "debris_flow"/"泥石流"）；
-    # risk_assess_node 归一化后写回标准键（无效灾种会走 insufficient_data）
-    # 标准键定义见根目录 hazard_registry.py（本项目不研究地震）
-    data_result: dict  # 从Data Agent交接过来的数据！DataAgent处理完数据之后，把它的state平铺打包放到这里。
-    # 里面包含该灾种清洗后的观测记录、质量信息等数据，是风险评估的原始素材。
+    # === 输入（入口填充，节点只读）===
+    task: str  # 任务描述：给 LLM 解释用的上下文
+    hazard_type: str  # ★ 必填 ★ 平台灾种键（见 aegis.domain.enums.HazardType）
+    region_code: str  # 区域编码（证据包的 region_code，透传给因子信封）
+    observations: list  # FactorObservation dump 列表（平台证据包的观测面）
+    site_profile: dict | None  # SiteProfile dump（可空）
+    data_provenance: dict  # 请求证据的 DataProvenance dump（输出节点改写为本次研判口径）
+    max_retries: int  # 最大允许重试次数（默认 3）
 
     # === 评估阶段（risk_assess 节点写入）===
-    risk_factors: list  # 识别出的风险因素列表，LLM在这里找出有哪些风险
-    calculation_result: dict  # 确定性计算工具结果：调用tools里risk_calculation_tool算出来的数值结果
-    # 比如缺口、风险量化指标，纯数学计算，不是LLM猜测
-    evidence: list  # 证据链，每条证据绑定来源
-    # 后面验证节点会核对证据是否真实
-    risk_result: dict  # LLM生成的风险结论初稿
-    # 👉注意注释：assess节点写初稿，risk_output节点覆盖，变成交付给Manager的最终版本
-    uncertainties: list  # 不确定性说明：哪些地方数据不全、信息模糊，没法百分百确定，后续输出节点会写到报告里
+    risk_factors: list  # 识别出的风险因素列表
+    calculation_result: dict  # 确定性因子引擎信封（P/T/R/覆盖率/规则命中）
+    evidence: list  # 证据链，每条绑定来源
+    risk_result: dict  # 评估初稿；output 节点覆盖为最终交付物
+    uncertainties: list  # 不确定性说明
 
     # === 验证阶段（risk_validate 节点写入）===
-    validation_result: dict  # 验证报告！**这是控制路由最核心的字段！**
-    # graph的条件分支会读取这个字典，判断下一步怎么走：
-    # 例如 {"is_valid":True/False,"reason":"证据不足/计算错误"}
-    # 如果校验失败，就回到评估节点重试；校验成功，进入输出节点
+    validation_result: dict  # 验证报告；graph 条件路由读它
 
-    # === 控制流（循环、异常、路由控制）===
-    retry_count: int  # 当前已经重试多少次，每次校验失败+1，用来限制循环
-    max_retries: int  # 最大允许重试次数（注释默认3次），防止无限循环死循环
-    next: str  # 备用路由标识（注释说了：实际路由以validation_result为准，镜像DataAgent写法，保留字段）
-    error_message: str  # 错误信息：工具报错、LLM调用失败、数据异常时，在这里记录报错文本
+    # === 控制流 ===
+    retry_count: int  # 已重试次数（每次校验建议 retry +1）
+    next: str  # 备用路由标识（实际路由以 validation_result 为准）
+    error_message: str  # 工具/模型/数据异常文本
 
-    # === 输出（risk_output节点写入，交给上游Manager Agent）===
-    status: str  # 给Manager的状态标记，4种固定取值：
-    # success：评估成功
-    # uncertain：评估结果存在不确定性
-    # insufficient_data：数据不足无法评估
-    # failed：评估执行失败
+    # === 输出（risk_output 节点写入）===
+    status: str  # success / uncertain / insufficient_data / failed

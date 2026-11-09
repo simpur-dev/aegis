@@ -30,8 +30,8 @@ Simulation Agent 灾种模型路由工具
   landslide                滑坡
   rockfall                 崩塌危岩
   debris_flow              泥石流
-  ice_rock_snow_avalanche  冰岩雪崩
-  glacial_lake_outburst    冰湖溃决
+  avalanche                冰岩雪崩
+  lake_outburst            冰湖溃决
 """
 
 

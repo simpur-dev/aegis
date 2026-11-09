@@ -140,11 +140,28 @@ def normalize_value(value, norm: dict):
 # ============================================================
 
 
-def compute_factor_assessment(events, region: str, config: dict) -> dict:
+def _representative(item: dict, agg: str):
+    """一条因子观测的代表值：类别因子取 `class_value`，数值因子按配置的聚合口径取。
+
+    窗口聚合已经发生在平台证据构建层（`min/max/mean` 都随观测一起送来）；
+    这里只选"这个因子在本次窗口里的代表值"：触发类（agg=max）取窗口最大值，
+    孕灾类（agg=mean）取窗口均值，站点画像只有单值——`max_value` 就是它。
+    """
+    if item.get("class_value") is not None:
+        return item["class_value"]
+    preferred = ("mean_value", "max_value") if agg == "mean" else ("max_value", "mean_value")
+    for name in preferred:
+        value = item.get(name)
+        if value is not None:
+            return value
+    return item.get("min_value")
+
+
+def compute_factor_assessment(observations, region: str, config: dict) -> dict:
     """按灾种因子配置计算 P/T 分组得分、R 指数、规则命中与覆盖率。
 
     参数:
-        events: Data Agent 的观测记录列表
+        observations: 平台证据包里的 `FactorObservation` dump 列表（按 `factor` 取用）
         region: 区域（透传）
         config: 灾种因子配置（来自各 *_risk_tool.py 的 FACTOR_CONFIG）：
           {
@@ -165,7 +182,11 @@ def compute_factor_assessment(events, region: str, config: dict) -> dict:
 
     返回: 统一评估信封（见文件头与测试）。
     """
-    records = events if isinstance(events, list) else []
+    rows = observations if isinstance(observations, list) else []
+    by_factor: dict[str, dict] = {}
+    for item in rows:
+        if isinstance(item, dict) and isinstance(item.get("factor"), str) and item["factor"] not in by_factor:
+            by_factor[item["factor"]] = item
     groups_cfg = config.get("groups", {})
     route_cfg = config.get("route") or None
     min_coverage = config.get("min_coverage", DEFAULT_MIN_COVERAGE)
@@ -177,10 +198,9 @@ def compute_factor_assessment(events, region: str, config: dict) -> dict:
     weights_override = {}
     if route_cfg:
         route_key = route_cfg["factor_key"]
-        for rec in records:
-            if isinstance(rec, dict) and rec.get(route_key) is not None:
-                route_value = rec[route_key]
-                break
+        route_obs = by_factor.get(route_key)
+        if route_obs is not None:
+            route_value = _representative(route_obs, "class")
         variants = route_cfg.get("variants", {})
         if route_value in variants:
             weights_override = variants[route_value]
@@ -189,41 +209,27 @@ def compute_factor_assessment(events, region: str, config: dict) -> dict:
             route_note = f"路由因子 '{route_key}' 缺失或取值'{route_value}'无对应变体，使用默认权重"
             warnings.append(route_note)
 
-    # ---------- 逐因子聚合与归一化 ----------
+    # ---------- 逐因子取观测值并归一化 ----------
     factor_scores = {}
     for group_name, factors in groups_cfg.items():
         for f in factors:
             key = f["key"]
-            values = [rec.get(f["source_field"]) for rec in records if isinstance(rec, dict) and rec.get(f["source_field"]) is not None]
-            coverage = (len(values) / len(records)) if records else 0.0
-
-            z, note = None, ""
-            if f.get("type", "numeric") == "class":
-                # 分类因子：逐记录映射 z 后按 agg 聚合（max=触发性取最不利）
-                zs = [normalize_value(v, f["normalize"])[0] for v in values]
-                zs = [x for x in zs if x is not None]
-                if zs:
-                    z = max(zs) if f.get("agg", "max") == "max" else sum(zs) / len(zs)
-                elif values:
-                    note = "取值无法映射"
-            else:
-                if values:
-                    agg = f.get("agg", "max")
-                    agg_value = max(values) if agg == "max" else sum(values) / len(values)
-                    z, note = normalize_value(agg_value, f["normalize"])
-                else:
-                    note = "无观测值"
+            item = by_factor.get(key)
+            agg = f.get("agg", "max")
+            value = _representative(item, agg) if item is not None else None
+            z, note = (None, "无观测值") if value is None else normalize_value(value, f["normalize"])
+            if value is not None and z is None and not note:
+                note = "取值无法映射"
 
             factor_scores[key] = {
                 "label": f["label"],
                 "group": group_name,
                 "unit": f.get("unit", ""),
                 "monitor": f.get("monitor", ""),
-                "agg": f.get("agg", "max"),
-                "raw_value": (
-                    max(values) if (values and f.get("agg", "max") == "max") else (round(sum(values) / len(values), 3) if values else None)
-                ),
-                "record_coverage": round(coverage, 3),
+                "agg": agg,
+                "raw_value": value,
+                "samples": int(item.get("samples", 0)) if item is not None else 0,
+                "observations": 1 if item is not None else 0,
                 "z": z,
                 "weight": None,  # 路由确定后填充
                 "weight_source": f.get("weight_source", {}),
@@ -282,6 +288,7 @@ def compute_factor_assessment(events, region: str, config: dict) -> dict:
         R = round(100.0 * P * T, 2)
 
     # 临时分级（MOCK 阈值；非官方等级）
+    # R==0 是"算出来没有风险"，不是"算不出来"——写成 none；只有 R is None（数据不足）才是 unknown。
     provisional_level = "unknown"
     if R is not None:
         if PROVISIONAL_LEVEL_THRESHOLDS["high"] <= R:
@@ -290,13 +297,17 @@ def compute_factor_assessment(events, region: str, config: dict) -> dict:
             provisional_level = "medium"
         elif R > 0:
             provisional_level = "low"
+        else:
+            provisional_level = "none"
 
     # ---------- 保护规则命中（独立于指数，不被综合评分稀释） ----------
     rule_hits = []
     for rule in config.get("protected_rules", []):
         when = rule.get("when", {})
         field, equals = when.get("field"), when.get("equals")
-        hit = any(isinstance(rec, dict) and rec.get(field) == equals for rec in records)
+        hit_obs = by_factor.get(field)
+        observed = None if hit_obs is None else _representative(hit_obs, "class")
+        hit = observed is not None and str(observed) == str(equals)
         if hit:
             rule_hits.append(
                 {
@@ -331,14 +342,18 @@ def compute_factor_assessment(events, region: str, config: dict) -> dict:
         "provisional_level_status": PROVISIONAL_LEVEL_STATUS,
         "factor_scores": factor_scores,
         "completeness": completeness,
+        "coverage_basis": "weighted_factor_coverage",
         "min_coverage": min_coverage,
         "missing_factors": [k for k, v in factor_scores.items() if v["missing"]],
         "rule_hits": rule_hits,
         "route_value": route_value,
         "route_note": route_note,
         "warnings": warnings,
-        "record_count": len(records),
+        "sample_count": sum(int(item.get("samples", 0)) for item in rows if isinstance(item, dict)),
         "rule_version": config.get("rule_version", "MOCK-v0.1"),
         "disclaimer": config.get("disclaimer", ""),
-        "aggregation_note": ("触发类因子取记录最大值、孕灾类因子取均值（原型聚合约定，无规范来源）；分类因子按最不利取值。"),
+        "aggregation_note": (
+            "窗口聚合在证据构建层完成；因子按声明的 agg 取代表值（触发类取窗口最大值、"
+            "孕灾类取窗口均值，站点画像取单值）。分类因子取观测到的类别值。"
+        ),
     }

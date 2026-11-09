@@ -14,7 +14,7 @@
 
 import sys
 
-ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "ice_rock_snow_avalanche", "glacial_lake_outburst"]
+ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "avalanche", "lake_outburst"]
 
 
 def _preset_scenarios(hazard: str, sample_values: dict) -> list:
@@ -40,7 +40,7 @@ def run_e2e(hazard_type: str) -> dict:
     """串联运行四 Agent，返回各阶段结果摘要。"""
 
     from aegis.agents_ext.data_agent.main import run_data_agent
-    from aegis.agents_ext.risk_agent.main import run_risk_agent
+    from aegis.agents_ext.risk_agent.legacy import run_risk_agent_legacy
     from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import get_hazard_risk_profile
     from aegis.agents_ext.simulation_agent.main import run_simulation_agent
     from aegis.agents_ext.warning_agent.main import run_warning_agent
@@ -54,7 +54,7 @@ def run_e2e(hazard_type: str) -> dict:
     assert data_final["processed_data"].get("is_mock") is True
 
     # ---------- 2. Risk Agent ----------
-    risk_result = run_risk_agent(task, data_result=data_final, hazard_type=hazard_type)
+    risk_result = run_risk_agent_legacy(task, data_result=data_final, hazard_type=hazard_type)
     assert risk_result["hazard_type"] == hazard_type
     assert risk_result["status"] in ("success", "uncertain"), f"[E2E][Risk] {hazard_type} status={risk_result['status']}"
     assessment = risk_result.get("assessment", {})

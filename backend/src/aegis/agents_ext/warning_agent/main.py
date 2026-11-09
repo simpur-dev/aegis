@@ -64,21 +64,10 @@ def run_warning_agent(
 def _mock_risk_result(hazard_type: str = "debris_flow"):
     """**Risk Agent 的 Mock 构造函数**，用来**伪造一套格式完全和真实风险引擎输出一模一样的风险评估返回结构体**，"""
     """构造最小 Risk 最终交付物（走真实 Risk 因子引擎，保证字段契约一致）。"""
-    from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import get_hazard_risk_profile
+    from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import get_hazard_risk_profile, sample_observations
 
     profile = get_hazard_risk_profile(hazard_type)
-    events = [
-        dict(
-            profile.get("sample_values", {}),
-            event_id=f"MOCK-{i:03d}",
-            time="2024-07-08T03:00:00Z",
-            latitude=29.6 + i * 0.01,
-            longitude=95.3 + i * 0.01,
-            region="西藏",
-        )
-        for i in range(1, 3)
-    ]
-    assessment = profile["assessment_tool"](events, "西藏")
+    assessment = profile["assessment_tool"](sample_observations(hazard_type), "西藏")
     return {
         "status": "success" if assessment["assessment_status"] == "scored" else "insufficient_data",
         "hazard_type": hazard_type,

@@ -151,6 +151,6 @@ FACTOR_CONFIG = {
 }
 
 
-def debris_flow_factor_assessment_tool(events: list, region: str = "unknown") -> dict:
+def debris_flow_factor_assessment_tool(observations: list, region: str = "unknown") -> dict:
     """泥石流因子评估（含水源类型路由的触发权重变体与联动保护规则）。"""
-    return compute_factor_assessment(events, region, FACTOR_CONFIG)
+    return compute_factor_assessment(observations, region, FACTOR_CONFIG)
