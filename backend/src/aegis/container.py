@@ -358,6 +358,29 @@ class PlatformContainer:
                     extra={"count": len(escalated), "alert_ids": [row["alert_id"] for row in escalated]},
                 )
 
+    async def _maintain_assistant_forever(self) -> None:
+        """助手动作台账的周期收尾：过期提案置 `expired`、卡死 `executing` 置 `failed`。
+
+        只在启动时收一次的话，长跑进程里这两类中间态没人再收：确认只会得到一句
+        "已被处置"，而台账上它永远停在执行中。判据与服务启动收尾完全同一套。
+        """
+        interval = max(5.0, float(self.settings.assistant_maintenance_interval_seconds))
+        while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=interval)
+                return
+            except TimeoutError:
+                pass
+            if self.assistant is None:
+                return
+            try:
+                report = await self.assistant.maintenance()
+            except Exception as exc:
+                log.warning("助手动作台账维护失败", extra={"error": f"{type(exc).__name__}: {exc}"})
+                continue
+            if report["expired"] or report["failed"]:
+                log.warning("助手动作台账周期收尾", extra=report)
+
     async def start(
         self,
         *,
@@ -400,6 +423,8 @@ class PlatformContainer:
         await self._start_alerting()
         self.gateway.set_result_handler(self.chain.handle_agent_message)
         await self.registry.start_sweeper()
+        if self.assistant is not None:
+            self._tasks.append(asyncio.create_task(self._maintain_assistant_forever(), name="assistant-maintenance"))
 
         runtime = self.settings.agent_runtime
         if runtime == "real":

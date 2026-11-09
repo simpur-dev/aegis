@@ -9,9 +9,11 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from typing import Any, ClassVar
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
 from aegis.config import Settings
 from aegis.domain.operator import Operator, OperatorRole
@@ -29,6 +31,7 @@ from aegis.services.assistant.actions.query import (
     WarningExplain,
     WarningList,
 )
+from aegis.services.assistant.base import Action, ActionContext, ActionResult, ActionSpec
 from aegis.services.assistant.intent import IntentClassifier, out_of_scope_action
 from aegis.storage.store import PlatformStore
 
@@ -225,17 +228,80 @@ def settings(**overrides: Any) -> Settings:
 
 #: 写动作（演练/上报）必须有有效席位：匿名只能读。
 DUTY = Operator(operator_id="duty-01", display_name="值班员", role=OperatorRole.DUTY)
+LEAD = Operator(operator_id="lead-01", display_name="值班长", role=OperatorRole.LEAD)
+LEAD2 = Operator(operator_id="lead-02", display_name="值班长乙", role=OperatorRole.LEAD)
 
 
-def build_service(rec: Recorder | None = None, *, llm: Any | None = None, **overrides: Any) -> AssistantService:
+def build_service(
+    rec: Recorder | None = None,
+    *,
+    llm: Any | None = None,
+    registry: ActionRegistry | None = None,
+    store: PlatformStore | None = None,
+    **overrides: Any,
+) -> AssistantService:
     return AssistantService(
-        registry=build_registry(rec or Recorder()),
+        registry=registry or build_registry(rec or Recorder()),
         llm=llm,
         settings=settings(**overrides),
         # 写动作要落动作台账；内存实现与 SQL 版同一套状态机，只是重启即失
-        control_actions=PlatformStore(),
+        control_actions=store if store is not None else PlatformStore(),
         control_actions_persistent=False,
     )
+
+
+class _DemoParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: str = "demo"
+
+
+class _DemoWrite(Action):
+    """测试专用写动作：要确认、有预览，用来复现"确认失败把动作卡在 executing"。
+
+    真实动作里找不到一个"确认人不合格"还能稳定复现的（角色门槛都在 duty 以下），
+    这条只存在于测试里，不注册进容器。
+    """
+
+    spec = ActionSpec(
+        name="demo.write",
+        title="演示写动作",
+        domain=ActionDomain.DRILL,
+        required_role=OperatorRole.LEAD,
+        params=_DemoParams,
+        needs_confirm=True,
+        writes=True,
+        previewable=True,
+        example="演示一次写动作",
+    )
+
+    def __init__(self, rec: Recorder) -> None:
+        self._rec = rec
+
+    async def execute(self, targets: Any, params: _DemoParams, ctx: ActionContext) -> ActionResult:
+        self._rec.calls.append("demo.write")
+        return ActionResult(data={"note": params.note}, summary="已执行演示写动作")
+
+
+class _DemoReviewedWrite(_DemoWrite):
+    spec = ActionSpec(
+        name="demo.reviewed",
+        title="演示高危写动作",
+        domain=ActionDomain.DRILL,
+        required_role=OperatorRole.LEAD,
+        params=_DemoParams,
+        needs_confirm=True,
+        writes=True,
+        previewable=True,
+        dual_review=True,
+        example="演示一次高危写动作",
+    )
+
+
+def demo_registry(rec: Recorder) -> ActionRegistry:
+    registry = ActionRegistry([_DemoWrite(rec), _DemoReviewedWrite(rec)], domains={ActionDomain.DRILL})
+    registry.assert_consistent()
+    return registry
 
 
 # ---------- 越权闸 ----------
@@ -411,6 +477,137 @@ async def test_过期动作确认后不执行() -> None:
     result = await service.confirm(action_id=proposal.data["action_id"], operator=DUTY)
     assert result["status"] in ("expired", "rejected")
     assert rec.calls == []
+
+
+# ---------- 确认失败不卡死（P0-3） ----------
+
+
+@pytest.mark.asyncio
+async def test_确认人角色不够时提案留在proposed且换人可以再确认() -> None:
+    """真机复现：lead 门槛的提案被 duty 点确认后，台账停在 executing——
+    之后连 lead 也确认不了（"已被处置"），动作永远不执行、也永远不失败。"""
+    rec = Recorder()
+    store = PlatformStore()
+    service = build_service(rec, registry=demo_registry(rec), store=store)
+    created = await service.create_action("demo.write", {"note": "x"}, operator=LEAD)
+    action_id = created["action_id"]
+
+    denied = await service.confirm(action_id=action_id, operator=DUTY)
+    assert denied["status"] == "rejected", denied
+    assert "lead" in denied["reason"], denied
+
+    current = await store.get_action(action_id)
+    assert current is not None and current["status"] == "proposed", current
+
+    retry = await service.confirm(action_id=action_id, operator=LEAD)
+    assert retry["status"] == "executed", retry
+    assert rec.calls == ["demo.write"]
+
+
+@pytest.mark.asyncio
+async def test_提案参数已不合法时如实拒绝且不卡成executing() -> None:
+    """部署升级后 params 模型收紧了：旧提案的 resolved_args 不再能解析。
+    确认必须回"参数不合法"并把提案留在 proposed（到期由维护收尾），
+    而不是先迁到 executing 再抛 422——那会一直卡到 10 分钟卡死回收。"""
+    rec = Recorder()
+    store = PlatformStore()
+    await store.create_action(
+        action_id="act_0000000000000001",
+        operator_id=LEAD.operator_id,
+        action="demo.write",
+        space_id=None,
+        utterance="演示",
+        resolved_args={"bogus": 1},
+        impact_scope={},
+        expires_in_seconds=300,
+        idempotency_key=None,
+    )
+    service = build_service(rec, registry=demo_registry(rec), store=store)
+    result = await service.confirm(action_id="act_0000000000000001", operator=LEAD)
+    assert result["status"] == "rejected", result
+    assert "参数不合法" in result["reason"], result
+    assert rec.calls == []
+
+    current = await store.get_action("act_0000000000000001")
+    assert current is not None and current["status"] == "proposed", current
+
+
+@pytest.mark.asyncio
+async def test_第二票之后执行前失败要标记failed不能卡在executing() -> None:
+    """双人复核的第二票已经把台账迁到 executing；此后的解析失败如果只抛错不改状态，
+    这条动作就永远停在 executing（复核票也白花了）。执行前失败必须落 failed——
+    对已经过了迁移点的动作而言，这是它唯一的终态。"""
+    store = PlatformStore()
+    await store.create_action(
+        action_id="act_0000000000000002",
+        operator_id=LEAD.operator_id,
+        action="demo.reviewed",
+        space_id=None,
+        utterance="演示",
+        resolved_args={"bogus": 1},
+        impact_scope={},
+        expires_in_seconds=300,
+        idempotency_key=None,
+        review_required=2,
+    )
+    await store.review_action(
+        "act_0000000000000002", {"operator_id": "lead-01", "role": "lead", "at": "2026-11-09T00:00:00Z"}
+    )
+    rec = Recorder()
+    service = build_service(rec, registry=demo_registry(rec), store=store, assistant_dual_review_enabled=True)
+
+    result = await service.confirm(action_id="act_0000000000000002", operator=LEAD2)
+    assert result["status"] == "rejected", result
+    assert "参数不合法" in result["reason"], result
+    assert rec.calls == []
+
+    current = await store.get_action("act_0000000000000002")
+    assert current is not None and current["status"] == "failed", current
+    assert current["error"] is not None and current["error"]["code"] == "E_ACTION_PARAM_INVALID", current
+
+
+@pytest.mark.asyncio
+async def test_周期维护把过期提案与卡死执行中收尾() -> None:
+    """起点回收只在启动跑一次；长跑进程里过期提案与卡死的 executing 谁也等不到重启。
+    维护必须与启动收尾同一套判据：proposed 过期置 expired、executing 超 10 分钟置 failed。"""
+    store = PlatformStore()
+    await store.create_action(
+        action_id="act_0000000000000003",
+        operator_id=LEAD.operator_id,
+        action="demo.write",
+        space_id=None,
+        utterance="演示",
+        resolved_args={"note": "x"},
+        impact_scope={},
+        expires_in_seconds=-1,
+        idempotency_key=None,
+    )
+    await store.create_action(
+        action_id="act_0000000000000004",
+        operator_id=LEAD.operator_id,
+        action="demo.write",
+        space_id=None,
+        utterance="演示",
+        resolved_args={"note": "x"},
+        impact_scope={},
+        expires_in_seconds=300,
+        idempotency_key=None,
+    )
+    await store.confirm_action("act_0000000000000004")
+    # 卡死判据是"超过 10 分钟没更新"：不能真等，把这一行的时钟拨回去
+    store.control_actions._rows["act_0000000000000004"]["updated_at"] = (
+        store.control_actions._now() - timedelta(seconds=660)
+    )
+
+    rec = Recorder()
+    service = build_service(rec, registry=demo_registry(rec), store=store)
+    report = await service.maintenance()
+
+    assert report == {"expired": 1, "failed": 1}, report
+    expired = await store.get_action("act_0000000000000003")
+    assert expired is not None and expired["status"] == "expired", expired
+    failed = await store.get_action("act_0000000000000004")
+    assert failed is not None and failed["status"] == "failed", failed
 
 
 # ---------- 认知镜像与不编数 ----------

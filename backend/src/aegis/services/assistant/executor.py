@@ -170,26 +170,36 @@ class Executor:
         )
 
     async def resume(self, action: Action, ctx: ActionContext, action_id: str, *, preconfirmed: bool = False) -> ExecutionOutcome:
-        """确认后的执行：原子迁移 `proposed → executing`，再跑动作、落结果。
+        """确认后的执行：先把参数/权限/目标核对完，再原子迁移 `proposed → executing`。
+
+        顺序不能反过来：迁移一旦落库，这条动作就不再是 `proposed`——此后任何失败
+        （参数在版本升级后不再合法、确认人角色不够、目标已被删）都会把它卡在 `executing`，
+        既不能重试也不能撤销，只能等 10 分钟后的卡死回收。所以三步只读核对放在迁移前：
+        迁移前失败，动作仍是 `proposed`，换个人还能再来；迁移后失败一律标记 `failed`。
 
         `preconfirmed=True` 用于双人复核的第二票：那一票已经在台账里把状态迁到 `executing`，
         这里不能再调一次 `confirm_action`（命中 0 行会被误报成"已过期"）。
         """
         started = time.perf_counter()
         repo = self._require_repo()
+        record = await repo.get_action(action_id)
+        if record is None:
+            raise ActionError("E_ACTION_CONFLICT", "动作不存在或已被清理，本次确认没有生效")
+        status = str(record.get("status") or "")
         if preconfirmed:
-            record = await repo.get_action(action_id)
-            if record is None or record.get("status") != "executing":
+            if status != "executing":
                 raise ActionError("E_ACTION_CONFLICT", "第二票已落库但动作不在 executing，结果未知")
-        else:
-            record = await repo.confirm_action(action_id)
-            if record is None:
-                raise ActionError("E_ACTION_CONFLICT", "动作已被处置、已过期或不存在，本次确认没有生效")
-        params = self._parse(action, dict(record.get("resolved_args") or {}))
+        elif status == "expired":
+            raise ActionError("E_ACTION_EXPIRED", "动作已过期，确认没有生效")
+        elif status != "proposed":
+            raise ActionError("E_ACTION_CONFLICT", "动作已被处置、已过期或不存在，本次确认没有生效")
+
         try:
+            params = self._parse(action, dict(record.get("resolved_args") or {}))
             self._authorize(action, ctx)
+            targets = await action.resolve(params, ctx)
         except ActionError as exc:
-            # 确认人角色不够也是越权：intent 行已随提案落库，这里补一行 rejected 凑成对
+            # 越权/参数/目标失败也要留痕：有台账时 intent 行已随提案落库，这里补一行 rejected 凑成对。
             await self._audit.write(
                 self._audit.rejected(
                     action_id=action_id,
@@ -201,8 +211,14 @@ class Executor:
                     resolved_args=dict(record.get("resolved_args") or {}),
                 )
             )
+            if preconfirmed:
+                # 第二票已经把状态迁到 executing：不落终态就再也收不了尾
+                await repo.mark_action_failed(action_id, {"code": exc.code, "message": exc.message})
             raise
-        targets = await action.resolve(params, ctx)
+
+        # 原子抢占仍在台账里：两个人同时确认，只有一个能从 proposed 迁走
+        if not preconfirmed and await repo.confirm_action(action_id) is None:
+            raise ActionError("E_ACTION_CONFLICT", "动作已被处置、已过期或不存在，本次确认没有生效")
         try:
             result = await self._execute(action, targets, params, ctx)
         except ActionError as exc:

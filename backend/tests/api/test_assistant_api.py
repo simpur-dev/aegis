@@ -190,10 +190,17 @@ async def test_未装配时外显成503而不是假装可用(container: Platform
 
 
 @pytest.mark.asyncio
+async def test_助手装配时启动动作台账周期维护(container: PlatformContainer) -> None:
+    """周期维护是"卡死 10 分钟没人收"的另一半：循环没起来，启动收尾就只发生了那一次。"""
+    assert "assistant-maintenance" in {task.get_name() for task in container._tasks}
+
+
+@pytest.mark.asyncio
 async def test_配置关闭时这个出口根本不存在() -> None:
     container = create_container(_settings(assistant_enabled=False), with_simulator=False)
     await container.start()
     assert container.assistant is None
+    assert "assistant-maintenance" not in {task.get_name() for task in container._tasks}, "助手没装配却起了维护循环"
     try:
         async with _client(container) as client:
             assert (await client.get("/api/v1/assistant/capabilities")).status_code == 404

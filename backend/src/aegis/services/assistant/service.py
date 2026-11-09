@@ -245,10 +245,15 @@ class AssistantService:
         try:
             outcome = await self._executor.resume(action, ctx, action_id, preconfirmed=preconfirmed)
         except ActionError as exc:
-            # `confirm_action` 命中 0 行时分不清"已处置"与"已过期"：读回当前态再说，
-            # 否则界面上会把"已经执行过"报成"过期"，两条回执的话术不一样。
-            status = await self._conflict_status(action_id)
             self._reject(None, action=action.spec.name, reason=exc.message, detail={"code": exc.code})
+            # 只有"没抢到迁移"（或明确过期）才需要读回当前态分辨 expired/rejected。
+            # 参数不合法、角色不够、目标不存在都是执行前就被拒：动作仍是 proposed，
+            # 报成 expired 会让值班员以为"窗口过了"，其实换个人/修好参数还能再来。
+            status = (
+                await self._conflict_status(action_id)
+                if exc.code in {"E_ACTION_CONFLICT", "E_ACTION_EXPIRED"}
+                else "rejected"
+            )
             return {"status": status, "action_id": action_id, "action": action.spec.name, "reason": exc.message, "result": None}
         data = {} if outcome.result is None else dict(outcome.result.data)
         return {"status": "executed", "action_id": action_id, "action": action.spec.name, "actor": actor, "result": data}
@@ -404,6 +409,20 @@ class AssistantService:
         if self._repo is None:
             return None
         return await self._repo.get_action(action_id)
+
+    async def maintenance(self) -> dict[str, int]:
+        """周期收尾动作台账：`proposed` 过期置 `expired`，卡死的 `executing` 置 `failed`。
+
+        与启动时 `container._recover_control_actions` 同一套判据。只在那时收一次不够：
+        长跑进程里卡住的 `executing` 与过期的提案谁也等不到下一次重启，
+        确认时只能得到一句"已被处置"，而台账上它永远是执行中。
+        """
+        if self._repo is None:
+            return {"expired": 0, "failed": 0}
+        return {
+            "expired": await self._repo.expire_actions(),
+            "failed": await self._repo.recover_stuck_actions(),
+        }
 
     async def revoke_action(self, *, action_id: str, operator: Operator | None = None) -> dict[str, Any]:
         """60 秒撤销窗口。超出窗口或已处置时如实返回 rejected，不假装撤销成功。"""
