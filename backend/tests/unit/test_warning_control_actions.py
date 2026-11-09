@@ -29,7 +29,9 @@ from aegis.services.assistant.actions.warning_control import (
     WarningSilence,
     WarningSilenceParams,
 )
-from aegis.services.assistant.base import ActionContext, ActionError
+from aegis.services.assistant.base import ActionContext, ActionDomain, ActionError
+from aegis.services.assistant.intent import IntentClassifier
+from aegis.services.assistant.registry import ActionRegistry
 from aegis.storage.store import WarningStore
 
 WRN = "wrn_abcdef123456"
@@ -375,6 +377,19 @@ async def test_补偿找不到目标编号时如实拒绝而不是空转() -> No
     with pytest.raises(ActionError) as caught:
         await WarningPublish(store, publisher).revoke(ledger_row(warning_id=""), ctx())
     assert caught.value.code == "E_ACTION_CONFLICT"
+
+
+def test_发布带编号的指令按写入意图路由而不是一段解释() -> None:
+    """「发布 wrn_…」没有"把/请"前缀：以前会掉进 warning.explain，说半天历史定级。"""
+    store, publisher, _gateway = setup()
+    classifier = IntentClassifier(ActionRegistry([WarningPublish(store, publisher)], domains={ActionDomain.WARNING}))
+
+    decided = classifier.classify(f"发布 {WRN}")
+    assert decided.action == "warning.publish"
+    assert decided.args["warning_id"] == WRN
+
+    asked = classifier.classify(f"{WRN} 发布了吗")
+    assert asked.action is None, "问句被当成了发布指令"
 
 
 @pytest.mark.parametrize("bad", ["", "warning-1", "wrn_ABCDEF123456", "wrn_abc"])

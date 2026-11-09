@@ -45,6 +45,8 @@ const ASSISTANT_FIELD_LABELS: Record<string, string> = {
   session_id: '会话号',
   reporter: '上报人名义',
   region_code: '区划代码',
+  hazard_hint: '灾种提示',
+  idempotency_key: '幂等键',
   action_id: '动作号',
   actor: '确认人名义',
 }
@@ -262,10 +264,12 @@ export interface ChatRequestDto {
   session_id?: string
   reporter?: string
   region_code?: string
+  /** 同一句草稿的重复提交键：断线重发命中的是同一行动作台账，不重复生成提案。 */
+  idempotency_key?: string
 }
 
 /**
- * 只发后端声明过的 4 个键：多一个键就是 422，空字符串也会被 pydantic 的
+ * 只发后端声明过的 5 个键：多一个键就是 422，空字符串也会被 pydantic 的
  * `min_length` 判死，所以可选键要么有值要么不带。
  */
 function toChatBody(request: ChatRequestDto): ChatRequestDto {
@@ -273,6 +277,7 @@ function toChatBody(request: ChatRequestDto): ChatRequestDto {
   if (request.session_id) body.session_id = request.session_id
   if (request.reporter) body.reporter = request.reporter
   if (request.region_code) body.region_code = request.region_code
+  if (request.idempotency_key) body.idempotency_key = request.idempotency_key
   return body
 }
 
@@ -287,6 +292,7 @@ export const CHAT_LIMITS = {
   message: { min: 1, max: 2_000 },
   reporter: { min: 2, max: 64 },
   region_code: { pattern: /^[0-9A-Z]{6,24}$/ },
+  idempotency_key: { min: 8, max: 64 },
 } as const
 
 /**
@@ -316,6 +322,10 @@ export function preflightChat(request: ChatRequestDto): string {
   const region = request.region_code
   if (region !== undefined && region !== '' && !CHAT_LIMITS.region_code.pattern.test(region)) {
     return `区划代码「${region}」不合口径：后端要求 6..24 位大写字母或数字，这一条没有发出去。`
+  }
+  const key = request.idempotency_key
+  if (key !== undefined && key !== '' && (key.length < CHAT_LIMITS.idempotency_key.min || key.length > CHAT_LIMITS.idempotency_key.max)) {
+    return `幂等键长度 ${key.length} 不合口径：后端要求 ${CHAT_LIMITS.idempotency_key.min}..${CHAT_LIMITS.idempotency_key.max} 字，这一条没有发出去。`
   }
   return ''
 }

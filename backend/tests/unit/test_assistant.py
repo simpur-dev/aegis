@@ -408,6 +408,25 @@ def test_越权判定只看祈使式与整体作用域(text: str, expected: tupl
     assert out_of_scope_action(text) == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 「发布 wrn_…」没有"把/请"也是指令：以前会被 warning.explain 接成一段解释
+        ("发布 wrn_0123456789abcdef0123", ("warning.publish", "发布")),
+        ("撤销 wrn_0123456789abcdef0123", ("warning.revoke", "撤销")),
+        # 问句是在问事实，不是让人去执行
+        ("wrn_0123456789abcdef0123 发布了吗", None),
+        ("为什么没有发布 wrn_0123456789abcdef0123", None),
+        # 名词用法：「已发布的…」不是指令
+        ("已发布 wrn_0123456789abcdef0123 的触达情况", None),
+        # 不在词表里的动词不猜
+        ("清理 wrn_0123456789abcdef0123", None),
+    ],
+)
+def test_动词加编号才算指令而问句与名词用法不误判(text: str, expected: tuple[str, str] | None) -> None:
+    assert out_of_scope_action(text) == expected
+
+
 def test_每个动作的示例句都被自己的词表判回该动作() -> None:
     """能力面把 `example` 交给页面当"点这里试一条"的预填文本。
 
@@ -435,10 +454,82 @@ def test_示例句非空且动作集合无重复() -> None:
 @pytest.mark.asyncio
 async def test_llm建议注册表外动作时拒绝并留痕() -> None:
     llm = FakeLlm(action="delete.all")
-    service = build_service(llm=llm)
-    await collect(service, "随便说点什么吧")
+    store = PlatformStore()
+    service = build_service(llm=llm, store=store)
+    await collect(service, "随便说点什么吧", operator=DUTY)
     assert llm.json_calls == 1
     assert any(event["action"] == "delete.all" for event in service.rejections), service.rejections
+    rows = [row for row in store.audit_snapshot() if row["action"] == "delete.all"]
+    assert rows, "LLM 建议的未注册动作只在内存里留痕，重启就没了"
+    assert rows[0]["after"]["rejected"] == "E_ACTION_NOT_OPEN", rows[0]
+    assert rows[0]["operator_id"] == DUTY.operator_id
+
+
+# ---------- 聊天级拒绝的落库与幂等 ----------
+
+
+class _BulkRevoke(_DemoWrite):
+    """注册表里真有 warning.revoke 时的越权闸：批量指令要被拦在"逐条处置"之外。"""
+
+    spec = ActionSpec(
+        name="warning.revoke",
+        title="撤销预警",
+        domain=ActionDomain.DRILL,
+        required_role=OperatorRole.LEAD,
+        params=_DemoParams,
+        needs_confirm=True,
+        writes=True,
+        previewable=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_聊天级越权拒绝写进动作审计而不是只留内存() -> None:
+    rec = Recorder()
+    store = PlatformStore()
+    registry = ActionRegistry([_BulkRevoke(rec)], domains={ActionDomain.DRILL})
+    registry.assert_consistent()
+    service = build_service(rec, registry=registry, store=store)
+    await collect(service, "把全网预警都删掉", reporter="值班员", operator=LEAD)
+    assert rec.calls == []
+    rows = [row for row in store.audit_snapshot() if row["action"] == "warning.revoke"]
+    assert len(rows) == 1, rows
+    assert rows[0]["operator_id"] == LEAD.operator_id
+    assert rows[0]["after"]["rejected"] == "E_ACTION_BULK_SCOPE"
+    assert "全网预警" in rows[0]["utterance"]
+
+
+@pytest.mark.asyncio
+async def test_未注册动作的越权拒绝也落审计且记的是动作名() -> None:
+    rec = Recorder()
+    store = PlatformStore()
+    service = build_service(rec, store=store)
+    await collect(service, "把 wrn_0123456789abcdef0123 删掉", reporter="值班员", operator=DUTY)
+    rows = [row for row in store.audit_snapshot() if row["action"] == "warning.revoke"]
+    # build_service 的替身注册表里没有 warning.revoke：闸说"未开放"，
+    # 审计行仍要记下被拒的是哪个动作（没有 Action 对象也不能空着）。
+    assert len(rows) == 1, rows
+    assert rows[0]["after"]["rejected"] == "E_ACTION_NOT_OPEN"
+
+
+@pytest.mark.asyncio
+async def test_同一幂等键重发不会多出第二张待确认卡片() -> None:
+    rec = Recorder()
+    store = PlatformStore()
+    service = build_service(rec, store=store)
+    first = await collect(service, "发起一次演练", operator=DUTY, idempotency_key="ck_test_00000001")
+    second = await collect(service, "发起一次演练", operator=DUTY, idempotency_key="ck_test_00000001")
+    p1 = next(event for event in first if event.type == "proposal")
+    p2 = next(event for event in second if event.type == "proposal")
+    assert p1.data["replayed"] is False
+    assert p2.data["replayed"] is True
+    assert p2.data["action_id"] == p1.data["action_id"]
+    assert len(await store.list_actions(limit=50)) == 1, "同一幂等键重发居然落了第二张提案"
+
+    third = await collect(service, "发起一次演练", operator=DUTY, idempotency_key="ck_test_00000002")
+    p3 = next(event for event in third if event.type == "proposal")
+    assert p3.data["action_id"] != p1.data["action_id"], "换了幂等键仍是同一条台账：键没有生效"
+    assert len(await store.list_actions(limit=50)) == 2
 
 
 # ---------- 四类任务的通路 ----------

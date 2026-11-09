@@ -123,6 +123,7 @@ class AssistantService:
         reporter: str | None = None,
         region_code: str | None = None,
         hazard_hint: str | None = None,
+        idempotency_key: str | None = None,
     ) -> AsyncGenerator[AssistantEvent, None]:
         started = time.perf_counter()
         body = str(text or "").strip()[:2_000]
@@ -153,7 +154,19 @@ class AssistantService:
                     if unregistered
                     else f"指令要求「{verb}」作用于整体范围，超出单条处置能力；请点名具体编号"
                 )
-                self._reject(session, action=action_name, reason=reason)
+                code = "E_ACTION_NOT_OPEN" if unregistered else "E_ACTION_BULK_SCOPE"
+                self._reject(session, action=action_name, reason=reason, detail={"code": code})
+                # 聊天级拒绝也要落 audit_ops：内存 deque 重启即失，越权尝试不能只活在进程里。
+                if self._audit.available:
+                    await self._audit.write(
+                        self._audit.rejected(
+                            action_id=None,
+                            action=self._registry.get(action_name) or action_name,
+                            operator=operator,
+                            error=ActionError(code, reason),
+                            utterance=body,
+                        )
+                    )
                 yield AssistantEvent(
                     "rejected",
                     {
@@ -184,7 +197,15 @@ class AssistantService:
         session.history.append({"role": "user", "text": body[:500]})
 
         answer_parts: list[str] = []
-        async for event in self._run_intent(session, intent, body=body, operator=operator, reporter=reporter, region_code=region_code):
+        async for event in self._run_intent(
+            session,
+            intent,
+            body=body,
+            operator=operator,
+            reporter=reporter,
+            region_code=region_code,
+            idempotency_key=idempotency_key,
+        ):
             if event.type == "answer":
                 answer_parts.append(str(event.data.get("text", "")))
             yield event
@@ -217,7 +238,8 @@ class AssistantService:
         P4 二次认证（设计 §14.1.3）：高危动作（`spec.dual_review=True` 那 10 个）在
         `step_up_auth_enabled` 打开时要**本人再出示一次令牌**。它与双人复核正交——
         复核是"两个不同席位各投一票"（横向），二次认证是"本人再亮一次钥匙"（纵向）。
-        校验放在真正执行前（复核票收齐之后），失败**不消耗复核票**（票还没执行，只是没通过认证）。
+        校验**先于复核票**：认证没过就落票，同一个人第二次带对令牌来时会被判"已经投过"，
+        第二票更是会把状态直接迁到 `executing` 再卡住——失败不消耗复核票的前提是票还没落。
         """
         if self._repo is None:
             return {"status": "rejected", "reason": "当前形态没有动作台账（control_actions），写动作不可用", "action_id": action_id}
@@ -235,13 +257,13 @@ class AssistantService:
             space_id=record.get("space_id"),
             approved=True,
         )
+        # 二次认证先于记票：认证失败时不落票、不迁状态，否则同一个人再也点不动第二次。
+        step_up = await self._step_up(action, operator, operator_key, record)
+        if step_up is not None:
+            return step_up
         preconfirmed = await self._vote_if_required(action_id, action, record, operator)
         if isinstance(preconfirmed, dict):
             return preconfirmed
-        # 二次认证在执行前：复核票已收齐、动作准备执行，正是要"再证明一次你是你"的那一刻。
-        step_up = await self._step_up(action, operator, operator_key)
-        if step_up is not None:
-            return step_up
         try:
             outcome = await self._executor.resume(action, ctx, action_id, preconfirmed=preconfirmed)
         except ActionError as exc:
@@ -263,19 +285,22 @@ class AssistantService:
         action: Action,
         operator: Operator | None,
         operator_key: str | None,
+        record: dict[str, Any],
     ) -> dict[str, Any] | None:
         """高危动作的二次认证。返回 `None` 表示通过（可以执行），返回 dict 表示就地回执。
 
         只在"开关打开 + 该动作是高危"时才拦：默认关时 D5「指令即执行」逐字不变。
+        回执与审计都带真实 `action_id`：认证失败是"这条动作没通过认证"，不是一条无主事件。
         """
         if self._operator_auth is None or not self._step_up_enabled:
             return None
         if not action.spec.dual_review:
             return None
+        action_id = str(record.get("action_id") or "")
         if operator is None:
             return {
                 "status": "rejected",
-                "action_id": "",
+                "action_id": action_id,
                 "action": action.spec.name,
                 "reason": "高危动作需要二次认证：先选席位再带上 X-Aegis-Operator-Key",
                 "result": None,
@@ -287,15 +312,18 @@ class AssistantService:
             if self._audit.available:
                 await self._audit.write(
                     self._audit.rejected(
-                        action_id=None,
+                        action_id=action_id,
                         action=action,
                         operator=operator,
                         error=exc,
+                        utterance=str(record.get("utterance") or ""),
+                        space_id=record.get("space_id"),
+                        resolved_args=dict(record.get("resolved_args") or {}),
                     )
                 )
             return {
                 "status": "rejected",
-                "action_id": "",
+                "action_id": action_id,
                 "action": action.spec.name,
                 "reason": exc.message,
                 "result": None,
@@ -514,9 +542,21 @@ class AssistantService:
         operator: Operator | None,
         reporter: str | None,
         region_code: str | None,
+        idempotency_key: str | None,
     ) -> AsyncGenerator[AssistantEvent, None]:
         if intent.rejected:
             self._reject(session, action=intent.rejected, reason="建议的动作不在注册表内")
+            if self._audit.available:
+                reason = f"LLM 建议的动作 {intent.rejected} 不在注册表内，已拒绝"
+                await self._audit.write(
+                    self._audit.rejected(
+                        action_id=None,
+                        action=intent.rejected,
+                        operator=operator,
+                        error=ActionError("E_ACTION_NOT_OPEN", reason),
+                        utterance=body[:500],
+                    )
+                )
         if intent.action is None:
             yield AssistantEvent("answer", {"text": self._capability_hint(intent.note)})
             return
@@ -526,6 +566,7 @@ class AssistantService:
             utterance=body[:500],
             operator=operator,
             approved=False,
+            idempotency_key=idempotency_key,
         )
         yield AssistantEvent("status", {"text": f"执行 {intent.action}"})
         try:

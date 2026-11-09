@@ -257,6 +257,41 @@ describe('对话：每一帧都留在时间线上', () => {
     expect(mockedChat.mock.calls[1]?.[0]).toMatchObject({ session_id: 'sess_0001' })
   })
 
+  /**
+   * 幂等键跟着"这一句草稿"走：失败重发要命中同一行动作台账，
+   * 换一句新话则必须换键，否则后端的幂等重放会把新意图当成旧的重复提交。
+   */
+  it('同一句草稿失败重发时复用同一个幂等键', async () => {
+    mockedChat.mockImplementationOnce(() => {
+      throw new AssistantApiError(503, '语义交互服务未装配（assistant）')
+    })
+    mockedChat.mockReturnValueOnce(framesOf([{ type: 'meta', session_id: 'sess_0001', llm_configured: true, actions: [] }]))
+    const wrapper = await renderView()
+    await sendMessage(wrapper, '同一句重试用例：查预警')
+    expect(byTestid(wrapper, 'stream-error').text()).toContain('语义交互服务未装配')
+    // 失败后草稿留在框里，再点一次发送就是"重试同一句"
+    await wrapper.find('[data-testid="send"]').trigger('click')
+    await flushPromises()
+    const first = mockedChat.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    const second = mockedChat.mock.calls[1]?.[0] as unknown as Record<string, unknown>
+    expect(first.idempotency_key).toBe(second.idempotency_key)
+    expect(String(first.idempotency_key)).toMatch(/^chat_[0-9a-z]+$/)
+    expect(String(first.idempotency_key).length).toBeGreaterThanOrEqual(CHAT_LIMITS.idempotency_key.min)
+    expect(String(first.idempotency_key).length).toBeLessThanOrEqual(CHAT_LIMITS.idempotency_key.max)
+  })
+
+  it('换一句新草稿时换一个新的幂等键', async () => {
+    mockedChat.mockReturnValue(framesOf([{ type: 'meta', session_id: 'sess_0001', llm_configured: true, actions: [] }]))
+    const wrapper = await renderView()
+    await sendMessage(wrapper, '换键用例：查预警')
+    await sendMessage(wrapper, '换键用例：再看一次任务')
+    const first = mockedChat.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    const second = mockedChat.mock.calls[1]?.[0] as unknown as Record<string, unknown>
+    expect(first.idempotency_key).toBeDefined()
+    expect(second.idempotency_key).toBeDefined()
+    expect(first.idempotency_key).not.toBe(second.idempotency_key)
+  })
+
   it('空消息不打后端：后端要求 1..2000 字，这里就地说明', async () => {
     const wrapper = await renderView()
     await sendMessage(wrapper, '   ')

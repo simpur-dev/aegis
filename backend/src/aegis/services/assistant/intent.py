@@ -98,12 +98,18 @@ _INTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 #: 祈使式前缀：只有"把/请/帮我…"或整体作用域才算"要执行"，否则"这条预警可以撤回吗"会被误杀。
 _IMPERATIVE_PREFIX = re.compile(r"^(把|请|帮我|我们|立即|马上|现在|快)")
+#: 问句一律不当指令：带"吗/为什么/是否/怎么"的句子是在问事实，不是让人去执行。
+#: 少了这道闸，`wrn_xxx 发布了吗`会命中"发布"动词，被当成一次发布指令送进确认闸。
+_QUESTION_RE = re.compile(r"[?？]|吗|呢|为什么|为何|是否|怎么|怎样|如何|什么|哪[个些条]|多少|能不能|可不可以|要不要")
+#: 紧贴动词前面的否定/完成副词：「已发布的预警」是名词短语，不是"去发布"。
+_VERB_OBJECT_MARKERS = "已未刚被"
 
 #: 写动作动词 → 目标动作名。命中的动作若已注册，就按正常意图继续解析参数；
 #: 未注册时才由 `AssistantService.respond` 明确回"该动作未开放"，而不是含糊地接一份清单。
 _VERB_ACTIONS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("删除", "删掉", "清空", "撤回", "撤销", "撤掉"), "warning.revoke"),
-    (("直接发布", "立即发布", "发出去", "发布出去"), "warning.publish"),
+    # 「发布」放最后：更具体的说法先命中，回执里的 instruction 才说得准
+    (("直接发布", "立即发布", "发出去", "发布出去", "发布"), "warning.publish"),
     (("改级", "调整等级", "调整为", "改成", "降为", "升为"), "warning.change_level"),
     (("静默", "免打扰"), "warning.silence"),
     (("重发", "再发一遍"), "warning.resend"),
@@ -152,18 +158,39 @@ class PlanDecomposition(BaseModel):
     steps: list[PlanStep] = Field(default_factory=list)
 
 
+def _commands(body: str, verb: str, *, imperative: bool) -> bool:
+    """这个动词在这句话里是不是在"让人去执行"。
+
+    三种成立：① 有祈使前缀或整体作用域；② 动词就在句首（`发布 wrn_…`）；
+    ③ 动词紧贴在一条编号前面（"请 发布wrn_…"之外的「发布一下 wrn_…」）。
+    「已发布 wrn_… 的触达情况」这类名词用法不算——前面那个"已"就是判据。
+    """
+    at = body.find(verb)
+    if at < 0:
+        return False
+    if imperative:
+        return True
+    if at == 0:
+        return True
+    target = _TARGET_ID_RE.search(body)
+    if target is None or at >= target.start():
+        return False
+    return body[at - 1] not in _VERB_OBJECT_MARKERS
+
+
 def out_of_scope_action(text: str) -> tuple[str, str] | None:
     """命中"要执行某个写动作"时返回 (目标动作名, 命中的动词)，否则 None。
 
-    只判祈使式或整体作用域：`"这条预警可以撤回吗"` 是问句，不是指令，不能闸。
+    只判祈使式、整体作用域或"动词 + 编号"：`"这条预警可以撤回吗"` / `"wrn_… 发布了吗"`
+    是问句，不是指令，不能闸；`"发布 wrn_…"` 没有"把/请"也仍是指令。
     """
     body = str(text or "").strip()
-    imperative = bool(_IMPERATIVE_PREFIX.search(body)) or any(word in body for word in ("全部", "所有", "全网", "都"))
-    if not imperative:
+    if _QUESTION_RE.search(body):
         return None
+    imperative = bool(_IMPERATIVE_PREFIX.search(body)) or any(word in body for word in ("全部", "所有", "全网", "都"))
     for verbs, action in _VERB_ACTIONS:
         for verb in verbs:
-            if verb in body:
+            if _commands(body, verb, imperative=imperative):
                 return action, verb
     return None
 

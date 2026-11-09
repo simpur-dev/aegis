@@ -106,24 +106,32 @@ class AuditTrail:
         self,
         *,
         action_id: str | None,
-        action: Action,
+        action: Action | str,
         operator: Operator | None,
         error: Any,
         utterance: str = "",
         space_id: str | None = None,
         resolved_args: dict[str, Any] | None = None,
     ) -> AuditRecord:
-        """越权/资格被拒：只有一行 result，`after.rejected` 是给读审计的人看的失败原因。"""
+        """越权/资格被拒：只有一行 result，`after.rejected` 是给读审计的人看的失败原因。
+
+        `action` 允许直接给名字：越权闸拦下的可能是注册表里根本没有的动作名，
+        那时没有 `Action` 对象可传；审计行仍要记下"想做什么"。
+        """
         return AuditRecord(
             phase="result",
             action_id=action_id or self.new_action_id(),
             operator_id=UNKNOWN if operator is None else operator.operator_id,
             role=UNKNOWN if operator is None else operator.role.value,
-            action=action.spec.name,
+            action=action if isinstance(action, str) else action.spec.name,
             space_id=space_id,
             utterance=utterance,
             resolved_args=dict(resolved_args or {}),
-            after={"rejected": getattr(error, "code", type(error).__name__), "message": str(getattr(error, "message", error))[:200]},
+            # `ActionError` 用 code、`OperatorKeyError` 用 reason：两种拒绝都要留下机器可读的原因码
+            after={
+                "rejected": getattr(error, "code", getattr(error, "reason", type(error).__name__)),
+                "message": str(getattr(error, "message", error))[:200],
+            },
         )
 
     async def write(self, record: AuditRecord) -> None:

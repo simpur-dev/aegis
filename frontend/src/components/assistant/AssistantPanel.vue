@@ -61,6 +61,24 @@ function useExample(spec: ActionSpecDto): void {
   draft.value = spec.example
 }
 
+/**
+ * 幂等键跟着"这一句草稿"走，不是每次发送新造：
+ * 断线重发或双击时同一句会命中同一行动作台账，不会多出一张待确认卡片。
+ * 成功收尾才清掉；失败保留，让重试仍然是"同一次意图"。
+ */
+let pendingSend: { text: string; key: string } | null = null
+
+function newIdempotencyKey(): string {
+  const uuid = globalThis.crypto?.randomUUID?.()
+  if (uuid) return `chat_${uuid.replace(/-/g, '').slice(0, 24)}`
+  return `chat_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+}
+
+function idempotencyKeyFor(text: string): string {
+  if (pendingSend === null || pendingSend.text !== text) pendingSend = { text, key: newIdempotencyKey() }
+  return pendingSend.key
+}
+
 async function send(): Promise<void> {
   const text = draft.value.trim()
   const request = {
@@ -68,6 +86,7 @@ async function send(): Promise<void> {
     session_id: sessionId.value ?? undefined,
     reporter: reporter.value.trim() || undefined,
     region_code: regionCode.value.trim() || undefined,
+    idempotency_key: idempotencyKeyFor(text),
   }
   // 发出前按后端口径挡一次（数值与本文件的正则由跨端门禁对着 assistant_api.py 校验）
   const blocked = preflightChat(request)
@@ -90,6 +109,7 @@ async function send(): Promise<void> {
       }
     }
     draft.value = ''
+    pendingSend = null
   } catch (error) {
     if (isAssistantUnavailable(error)) streamError.value = `语义交互服务未装配：${error instanceof Error ? error.message : String(error)}`
     else if (isAssistantDisabled(error)) streamError.value = '助手出口未启用（路由整段没挂载）：这一轮请求没有发出，页面上没有新事实。'

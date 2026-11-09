@@ -224,6 +224,12 @@ describe('CHAT_LIMITS 与后端 ChatRequest 对账', () => {
   it('区划代码的正则与后端同一条', () => {
     expect(CHAT_LIMITS.region_code.pattern.source).toBe(patternOf(fieldLine('region_code')))
   })
+
+  it('幂等键长度上下界与后端一致', () => {
+    const line = fieldLine('idempotency_key')
+    expect(CHAT_LIMITS.idempotency_key.min).toBe(intOf(line, 'min_length'))
+    expect(CHAT_LIMITS.idempotency_key.max).toBe(intOf(line, 'max_length'))
+  })
 })
 
 /**
@@ -257,12 +263,52 @@ describe('preflightChat', () => {
     expect(preflightChat({ message: '查预警', region_code: 'A'.repeat(24) })).toBe('')
   })
 
+  it('幂等键按 8..64 字拦下：短一个、长一个都在本地说明', () => {
+    const pad = (length: number) => 'k'.repeat(length)
+    expect(preflightChat({ message: '查预警', idempotency_key: pad(CHAT_LIMITS.idempotency_key.min - 1) })).toContain(
+      `幂等键长度 ${CHAT_LIMITS.idempotency_key.min - 1}`,
+    )
+    expect(preflightChat({ message: '查预警', idempotency_key: pad(CHAT_LIMITS.idempotency_key.min) })).toBe('')
+    expect(preflightChat({ message: '查预警', idempotency_key: pad(CHAT_LIMITS.idempotency_key.max) })).toBe('')
+    expect(preflightChat({ message: '查预警', idempotency_key: pad(CHAT_LIMITS.idempotency_key.max + 1) })).toContain(
+      `幂等键长度 ${CHAT_LIMITS.idempotency_key.max + 1}`,
+    )
+  })
+
   it('可选键留空等于不填，不会被 min_length 判死', () => {
-    expect(preflightChat({ message: '查预警', reporter: '', region_code: '' })).toBe('')
+    expect(preflightChat({ message: '查预警', reporter: '', region_code: '', idempotency_key: '' })).toBe('')
   })
 
   it('会话号不在这里挡：它是后端给的，本地拒绝会把整场对话锁死', () => {
     expect(preflightChat({ message: '查预警', session_id: 'not a valid id' })).toBe('')
+  })
+})
+
+/**
+ * 幂等键必须真的进到报文里：`toChatBody` 是白名单收敛，漏掉一格的表现是
+ * "页面以为重发命中了同一笔，后端每次都新建一张待确认卡"，而两边都不报错。
+ */
+describe('对话报文里的幂等键', () => {
+  it('带键时原样进 JSON 报文', async () => {
+    let body: Record<string, unknown> = {}
+    const capture = async (_input: string, init?: RequestInit): Promise<ChatResponseLike> => {
+      body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      return responseOf(200, {})
+    }
+    await expect(
+      streamChat({ message: '查预警', idempotency_key: 'chat_0123456789abcdef' }, { fetchImpl: capture }).next(),
+    ).rejects.toThrow()
+    expect(body.idempotency_key).toBe('chat_0123456789abcdef')
+  })
+
+  it('不带键时报文里没有这一格（后端 extra="forbid"，空串也会被 min_length 判死）', async () => {
+    let body: Record<string, unknown> = {}
+    const capture = async (_input: string, init?: RequestInit): Promise<ChatResponseLike> => {
+      body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      return responseOf(200, {})
+    }
+    await expect(streamChat({ message: '查预警' }, { fetchImpl: capture }).next()).rejects.toThrow()
+    expect('idempotency_key' in body).toBe(false)
   })
 })
 

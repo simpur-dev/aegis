@@ -226,11 +226,32 @@ async def test_已退役的端点在路由上不存在(container: PlatformContai
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "payload", [{"message": ""}, {"message": "在线智能体有几个", "session_id": "坏会话"}, {"message": "在线", "extra": 1}]
+    "payload",
+    [
+        {"message": ""},
+        {"message": "在线智能体有几个", "session_id": "坏会话"},
+        {"message": "在线", "extra": 1},
+        {"message": "在线智能体有几个", "idempotency_key": "short"},
+    ],
 )
 async def test_非法请求体被模式挡住(container: PlatformContainer, payload: dict[str, Any]) -> None:
     async with _client(container) as client:
         assert (await client.post("/api/v1/assistant/chat", json=payload)).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_同一幂等键的重复提交只落一张提案(container: PlatformContainer) -> None:
+    async with _client(container) as client:
+        body = {"message": f"帮我上报：540121 {REPORT_NOTE}", "reporter": "值班员", "idempotency_key": "chat_key_0001"}
+        first = _frames((await client.post("/api/v1/assistant/chat", json=body, headers=DUTY_HEADERS)).text)
+        second = _frames((await client.post("/api/v1/assistant/chat", json=body, headers=DUTY_HEADERS)).text)
+        p1 = next(frame for frame in first if frame["type"] == "proposal")
+        p2 = next(frame for frame in second if frame["type"] == "proposal")
+        assert p1["replayed"] is False
+        assert p2["replayed"] is True
+        assert p2["action_id"] == p1["action_id"], "同一幂等键重发居然生成了新的动作号"
+        assert container.assistant is not None
+        assert len(await container.assistant._repo.list_actions(limit=50)) == 1  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio

@@ -44,6 +44,8 @@ class ChatRequest(BaseModel):
     reporter: str | None = Field(default=None, min_length=2, max_length=64)
     region_code: str | None = Field(default=None, pattern=r"^[0-9A-Z]{6,24}$")
     hazard_hint: str | None = Field(default=None, max_length=64)
+    # 同一次用户意图的重复提交（断线重发、双击）靠它命中同一行台账，不重复生成提案
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=64)
 
 
 class CreateActionRequest(BaseModel):
@@ -166,6 +168,7 @@ def build_router() -> APIRouter:
             reporter=payload.reporter,
             region_code=payload.region_code,
             hazard_hint=payload.hazard_hint,
+            idempotency_key=payload.idempotency_key,
         )
 
         async def _gen() -> AsyncIterator[str]:
