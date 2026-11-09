@@ -195,15 +195,21 @@ class AgentKit:
             )
             return
         except Exception as exc:  # 内环异常不得静默：回类型化 error.raise，让网关如实记账
+            # 内环可以自带错误码与"重试有没有意义"（外部实现用它区分"数据不足"与"内部炸了"）。
+            # 没有这两个属性时沿用原来的 INTERNAL 口径——自建内环不受影响。
+            code = getattr(exc, "error_code", None) or ErrorCode.INTERNAL
+            retryable = bool(getattr(exc, "retryable", True))
+            detail = dict(getattr(exc, "error_detail", {}) or {})
+            detail.setdefault("agent_id", self.agent_id)
             await self._publish(
                 reply_subject,
                 make_error(
                     request,
                     source=self.agent_id,
-                    code=ErrorCode.INTERNAL,
-                    message=f"内环异常: {type(exc).__name__}",
-                    detail={"agent_id": self.agent_id},
-                    retryable=True,
+                    code=code,
+                    message=str(getattr(exc, "message", "") or f"内环异常: {type(exc).__name__}")[:300],
+                    detail=detail,
+                    retryable=retryable,
                 ),
             )
             return
