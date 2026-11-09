@@ -71,9 +71,7 @@ def test_不依赖平台内部实现(path: Path) -> None:
             continue
         if module.startswith("aegis.agents_ext"):
             continue
-        assert not module.startswith(PLATFORM_INTERNAL), (
-            f"{path.name} 依赖了平台内部实现 {module}——它就不再是总线上的独立服务"
-        )
+        assert not module.startswith(PLATFORM_INTERNAL), f"{path.name} 依赖了平台内部实现 {module}——它就不再是总线上的独立服务"
 
 
 def test_不写死仓库外路径() -> None:
@@ -88,19 +86,19 @@ def test_不写死仓库外路径() -> None:
         # 文档字符串（模块/函数的第一条表达式常量）不算可执行代码
         docstrings = set()
         for node in ast.walk(tree):
-            if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                body = getattr(node, "body", [])
-                if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
-                    if isinstance(body[0].value.value, str):
-                        docstrings.add(id(body[0].value))
+            if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            body = getattr(node, "body", [])
+            if not body or not isinstance(body[0], ast.Expr) or not isinstance(body[0].value, ast.Constant):
+                continue
+            if isinstance(body[0].value.value, str):
+                docstrings.add(id(body[0].value))
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
                 value = node.value
                 assert not value.startswith("C:\\"), f"{path.name} 里写死了 Windows 绝对路径：{value}"
                 assert not value.startswith("C:/"), f"{path.name} 里写死了 Windows 绝对路径：{value}"
-                assert "data/manager_checkpoints.sqlite" not in value, (
-                    f"{path.name} 用了相对 CWD 的数据路径（会随启动目录漂移）：{value}"
-                )
+                assert "data/manager_checkpoints.sqlite" not in value, f"{path.name} 用了相对 CWD 的数据路径（会随启动目录漂移）：{value}"
 
 
 def test_不残留明文密钥() -> None:
@@ -108,7 +106,7 @@ def test_不残留明文密钥() -> None:
 
     这条门禁钉住"不会再有人往里塞明文凭据"：密钥只能从环境变量来。
     """
-    banned = ("ZHIPUAI_API_KEY = \"", "sk-", "api_key=\"", "API_KEY = \"")
+    banned = ('ZHIPUAI_API_KEY = "', "sk-", 'api_key="', 'API_KEY = "')
     for path in _python_files():
         text = path.read_text(encoding="utf-8")
         for pattern in banned:
@@ -121,7 +119,7 @@ def test_配置面只从环境变量取凭据() -> None:
     assert config.exists(), "外部实现必须有自己的配置面（凭据来源集中在一处）"
     text = config.read_text(encoding="utf-8")
     assert "os.environ" in text, "config.py 必须从环境变量取凭据"
-    assert 'ZHIPUAI_API_KEY = os.environ' in text, "凭据入口必须是环境变量读取"
+    assert "ZHIPUAI_API_KEY = os.environ" in text, "凭据入口必须是环境变量读取"
 
 
 def test_不修改全局sys_path() -> None:

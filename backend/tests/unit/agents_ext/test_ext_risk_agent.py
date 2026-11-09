@@ -25,26 +25,22 @@ from aegis.agents_ext.hazard_registry import (
     normalize_hazard_type,
     require_hazard,
 )
-from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import (
-    HAZARD_RISK_PROFILES,
-    get_hazard_risk_profile,
-    list_hazard_risk_capabilities,
-)
+from aegis.agents_ext.risk_agent.tools.debris_flow_risk_tool import debris_flow_factor_assessment_tool
 from aegis.agents_ext.risk_agent.tools.factor_engine import (
     R_FORMULA_EXPRESSION,
     R_FORMULA_STATUS,
-    compute_factor_assessment,
     normalize_value,
 )
-from aegis.agents_ext.risk_agent.tools.landslide_risk_tool import landslide_factor_assessment_tool
-from aegis.agents_ext.risk_agent.tools.rockfall_risk_tool import rockfall_factor_assessment_tool
-from aegis.agents_ext.risk_agent.tools.debris_flow_risk_tool import debris_flow_factor_assessment_tool
-from aegis.agents_ext.risk_agent.tools.avalanche_risk_tool import avalanche_factor_assessment_tool
 from aegis.agents_ext.risk_agent.tools.glacial_lake_risk_tool import glacial_lake_factor_assessment_tool
+from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import (
+    HAZARD_RISK_PROFILES,
+    list_hazard_risk_capabilities,
+)
+from aegis.agents_ext.risk_agent.tools.landslide_risk_tool import landslide_factor_assessment_tool
 from aegis.agents_ext.risk_agent.tools.risk_evidence_tool import risk_evidence_tool
+from aegis.agents_ext.risk_agent.tools.rockfall_risk_tool import rockfall_factor_assessment_tool
 
-ALL_HAZARDS = ["landslide", "rockfall", "debris_flow",
-               "ice_rock_snow_avalanche", "glacial_lake_outburst"]
+ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "ice_rock_snow_avalanche", "glacial_lake_outburst"]
 
 
 def _events(hazard, n=2, overrides=None, drop_fields=None):
@@ -52,10 +48,13 @@ def _events(hazard, n=2, overrides=None, drop_fields=None):
     profile = HAZARD_RISK_PROFILES[hazard]
     out = []
     for i in range(1, n + 1):
-        ev = {"event_id": f"{hazard[:2].upper()}-{i:03d}",
-              "time": "2024-07-08T03:00:00Z",
-              "latitude": 29.6 + i * 0.01, "longitude": 95.3 + i * 0.01,
-              "region": "西藏"}
+        ev = {
+            "event_id": f"{hazard[:2].upper()}-{i:03d}",
+            "time": "2024-07-08T03:00:00Z",
+            "latitude": 29.6 + i * 0.01,
+            "longitude": 95.3 + i * 0.01,
+            "region": "西藏",
+        }
         ev.update(profile.get("sample_values", {}))
         out.append(ev)
     if overrides:
@@ -71,6 +70,7 @@ def _events(hazard, n=2, overrides=None, drop_fields=None):
 # ============================================================
 # 第一层：注册表与因子引擎（不依赖 LLM，必跑）
 # ============================================================
+
 
 def test_registry_five_hazards():
     """注册表：恰含五个灾种（无地震）；全部 mock 状态并声明局限。"""
@@ -99,9 +99,10 @@ def test_registry_normalization():
 def test_weight_schema():
     """权重 schema：每灾种 P/T 组权重非负、和为 1，且来源四要素齐全。"""
     for key in ALL_HAZARDS:
-        config = HAZARD_RISK_PROFILES[key]
+        HAZARD_RISK_PROFILES[key]
         # 通过评估工具所在模块取 FACTOR_CONFIG：直接调工具模块常量
         import importlib
+
         module_name = {
             "landslide": "aegis.agents_ext.risk_agent.tools.landslide_risk_tool",
             "rockfall": "aegis.agents_ext.risk_agent.tools.rockfall_risk_tool",
@@ -117,9 +118,9 @@ def test_weight_schema():
                 assert w >= 0, f"{key}.{group}.{key} 权重非负"
                 total += w
                 ws = f["weight_source"]
-                assert set(ws.keys()) >= {"source_reference", "method",
-                                           "valid_region", "validation_status"}, \
+                assert set(ws.keys()) >= {"source_reference", "method", "valid_region", "validation_status"}, (
                     f"{key}.{group}.{f['key']} 权重来源四要素必须齐全"
+                )
             assert abs(total - 1.0) < 1e-9, f"{key}.{group} 权重之和应为 1，实际 {total}"
     print("  √ test_weight_schema（5 灾种 P/T 组）")
 
@@ -139,10 +140,8 @@ def test_normalize_methods():
     # sqrt_pos
     assert normalize_value(125.0, {"method": "sqrt_pos", "U": 500.0})[0] == 0.5
     # band_pos（文献候选带：带内=1，带外线性衰减）
-    assert normalize_value(38.0, {"method": "band_pos", "L": 20.0, "band_lo": 30.0,
-                                   "band_hi": 45.0, "U": 60.0})[0] == 1.0
-    z_out, _ = normalize_value(20.0, {"method": "band_pos", "L": 20.0, "band_lo": 30.0,
-                                       "band_hi": 45.0, "U": 60.0})
+    assert normalize_value(38.0, {"method": "band_pos", "L": 20.0, "band_lo": 30.0, "band_hi": 45.0, "U": 60.0})[0] == 1.0
+    z_out, _ = normalize_value(20.0, {"method": "band_pos", "L": 20.0, "band_lo": 30.0, "band_hi": 45.0, "U": 60.0})
     assert z_out == 0.0
     # class_map：映射内/外
     assert normalize_value("yes", {"method": "class_map", "class_map": {"no": 0.0, "yes": 1.0}})[0] == 1.0
@@ -179,16 +178,16 @@ def test_engine_coverage_renormalization():
     env_full = debris_flow_factor_assessment_tool(full, "西藏")
     env_part = debris_flow_factor_assessment_tool(partial, "西藏")
     assert env_full["assessment_status"] == "scored"
-    assert env_part["assessment_status"] == "scored"          # 非必需缺失不门控
+    assert env_part["assessment_status"] == "scored"  # 非必需缺失不门控
     assert "sediment_supply_index" in env_part["missing_factors"]
-    assert env_part["completeness"]["P"] < 1.0                 # 覆盖率如实披露
+    assert env_part["completeness"]["P"] < 1.0  # 覆盖率如实披露
     assert env_part["P"] > 0 and env_part["P"] <= 1.0
     print("  √ test_engine_coverage_renormalization")
 
 
 def test_engine_protected_rules():
     """保护规则：扳机命中独立于指数（冰崩入湖 / 溃决联动 / 严重渗漏）。"""
-    gl = _events("glacial_lake_outburst")   # sample_values 冰崩入湖=yes
+    gl = _events("glacial_lake_outburst")  # sample_values 冰崩入湖=yes
     env = glacial_lake_factor_assessment_tool(gl, "西藏")
     hit_ids = [h["rule_id"] for h in env["rule_hits"]]
     assert "GL-ICE-AVALANCHE-SURGE" in hit_ids
@@ -199,22 +198,18 @@ def test_engine_protected_rules():
     assert "DF-OUTBURST-LINK" in [h["rule_id"] for h in env2["rule_hits"]]
 
     # 未命中：全部 no → 无规则命中
-    df_no = _events("debris_flow", overrides={"upstream_breach_flag": "no",
-                                               "spring_surge_flag": "no"})
+    df_no = _events("debris_flow", overrides={"upstream_breach_flag": "no", "spring_surge_flag": "no"})
     assert debris_flow_factor_assessment_tool(df_no, "西藏")["rule_hits"] == []
     print("  √ test_engine_protected_rules")
 
 
 def test_engine_route_variants():
     """路由变体：崩塌同数据不同破坏方式 → 触发权重不同 → T/R 不同；缺路由走默认。"""
-    base = _events("rockfall")
-    env_slide = rockfall_factor_assessment_tool(
-        _events("rockfall", overrides={"failure_mode": "sliding"}), "西藏")
-    env_topple = rockfall_factor_assessment_tool(
-        _events("rockfall", overrides={"failure_mode": "toppling"}), "西藏")
+    _events("rockfall")
+    env_slide = rockfall_factor_assessment_tool(_events("rockfall", overrides={"failure_mode": "sliding"}), "西藏")
+    env_topple = rockfall_factor_assessment_tool(_events("rockfall", overrides={"failure_mode": "toppling"}), "西藏")
     assert env_slide["route_value"] == "sliding"
-    assert env_topple["T"] != env_slide["T"] or env_topple["R"] != env_slide["R"], \
-        "不同破坏方式的触发权重变体应产生不同触发评分"
+    assert env_topple["T"] != env_slide["T"] or env_topple["R"] != env_slide["R"], "不同破坏方式的触发权重变体应产生不同触发评分"
     # 缺路由因子 → 默认权重 + 警示
     no_route = _events("rockfall", drop_fields=["failure_mode"])
     env_default = rockfall_factor_assessment_tool(no_route, "西藏")
@@ -233,7 +228,7 @@ def test_per_hazard_assessment_normal():
         assert env["R"] == round(100.0 * env["P"] * env["T"], 2)
         assert env["provisional_level"] in ("low", "medium", "high")
         for spec in env["factor_scores"].values():
-            assert "weight_source" in spec and spec["weight_source"]
+            assert spec.get("weight_source")
             assert spec["data_status"] in ("mock", "literature", "real", "pending")
         assert env["rule_version"].startswith("MOCK-")
         assert "MOCK" in env["disclaimer"]
@@ -259,8 +254,7 @@ def test_evidence_tool_generic():
     ev = risk_evidence_tool(env, hazard_limitations=limits)
     types = [e["type"] for e in ev]
     assert "observation" in types and "limitation" in types
-    assert any("候选组合公式" in e["statement"] and "R=" in e["statement"]
-               for e in ev if e["type"] == "observation")
+    assert any("候选组合公式" in e["statement"] and "R=" in e["statement"] for e in ev if e["type"] == "observation")
     assert any("mock" in e.get("caveat", "").lower() for e in ev if e["type"] == "derived")
     print("  √ test_evidence_tool_generic")
 
@@ -269,32 +263,50 @@ def test_evidence_tool_generic():
 # 第二层：端到端图测试（LLM 解释失败走模板兜底，两种情况断言都通过）
 # ============================================================
 
+
 def _mock_data_result(hazard, complete=True):
     """上游 Data 输出的最小 Mock（平铺结构，观测字段取注册表 sample_values）。"""
     profile = HAZARD_RISK_PROFILES[hazard]
     events = []
     for i in range(1, 3):
-        ev = {"event_id": f"MOCK-{i:03d}", "time": "2024-07-08T03:00:00Z",
-              "latitude": 29.6 + i * 0.01, "longitude": 95.3 + i * 0.01, "region": "西藏"}
+        ev = {
+            "event_id": f"MOCK-{i:03d}",
+            "time": "2024-07-08T03:00:00Z",
+            "latitude": 29.6 + i * 0.01,
+            "longitude": 95.3 + i * 0.01,
+            "region": "西藏",
+        }
         for f, v in profile.get("sample_values", {}).items():
             ev[f] = v if complete else None
         events.append(ev)
     return {
-        "processed_data": {"events": events, "data_source": "mock",
-                            "hazard_type": hazard, "is_mock": True},
+        "processed_data": {"events": events, "data_source": "mock", "hazard_type": hazard, "is_mock": True},
         "data_quality": {"is_valid": True},
-        "missing_data": [], "status": "success", "error_message": "",
+        "missing_data": [],
+        "status": "success",
+        "error_message": "",
         "hazard_type": hazard,
     }
 
 
 def _run_graph(task, hazard_type, data_result):
     from aegis.agents_ext.risk_agent.graph import create_risk_agent
+
     state = {
-        "task": task, "hazard_type": hazard_type, "data_result": data_result,
-        "risk_factors": [], "calculation_result": {}, "risk_result": {},
-        "evidence": [], "uncertainties": [], "validation_result": {},
-        "retry_count": 0, "max_retries": 3, "next": "", "error_message": "", "status": "",
+        "task": task,
+        "hazard_type": hazard_type,
+        "data_result": data_result,
+        "risk_factors": [],
+        "calculation_result": {},
+        "risk_result": {},
+        "evidence": [],
+        "uncertainties": [],
+        "validation_result": {},
+        "retry_count": 0,
+        "max_retries": 3,
+        "next": "",
+        "error_message": "",
+        "status": "",
     }
     return create_risk_agent().invoke(state)
 
@@ -303,7 +315,7 @@ def test_graph_normal_per_hazard():
     """五灾种正常输入：status 合法、hazard_type 正确、R 与公式声明存在、Mock 标记齐全。"""
     for key in ALL_HAZARDS:
         final = _run_graph(f"评估{key}风险", key, _mock_data_result(key))
-        out = final["risk_result"]      # ★ 图完成后 risk_result = output 节点 final_output
+        out = final["risk_result"]  # ★ 图完成后 risk_result = output 节点 final_output
         assert final["status"] in ("success", "uncertain", "insufficient_data", "failed")
         assert out["hazard_type"] == key
         assert out["provisional_level_status"] == "mock_thresholds"
@@ -353,8 +365,7 @@ def test_graph_alias_cn():
 
 def test_graph_protected_rule_hit():
     """图级保护规则：冰湖 Mock 数据冰崩入湖=yes → 触发条件含 GL-ICE-AVALANCHE-SURGE。"""
-    final = _run_graph("评估冰湖风险", "glacial_lake_outburst",
-                        _mock_data_result("glacial_lake_outburst"))
+    final = _run_graph("评估冰湖风险", "glacial_lake_outburst", _mock_data_result("glacial_lake_outburst"))
     out = final["risk_result"]
     hit_ids = [h["rule_id"] for h in out["rule_hits"]]
     assert "GL-ICE-AVALANCHE-SURGE" in hit_ids

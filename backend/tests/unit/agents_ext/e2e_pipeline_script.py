@@ -14,18 +14,23 @@
 
 import sys
 
-ALL_HAZARDS = ["landslide", "rockfall", "debris_flow",
-               "ice_rock_snow_avalanche", "glacial_lake_outburst"]
+ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "ice_rock_snow_avalanche", "glacial_lake_outburst"]
 
 
 def _preset_scenarios(hazard: str, sample_values: dict) -> list:
     """按灾种观测字段构造两个情景（medium/high），供 Simulation 的情景对比。"""
     scenarios = []
     for i, severity in enumerate(("medium", "high"), start=1):
-        sc = {"scenario_id": f"SC-{i:02d}", "hazard_type": hazard,
-              "severity_level": severity,
-              "trigger": "端到端测试触发（Mock）", "trigger_source_tag": "assumption",
-              "duration_hours": 6.0, "notes": "e2e 端到端测试情景", "test_hooks": {}}
+        sc = {
+            "scenario_id": f"SC-{i:02d}",
+            "hazard_type": hazard,
+            "severity_level": severity,
+            "trigger": "端到端测试触发（Mock）",
+            "trigger_source_tag": "assumption",
+            "duration_hours": 6.0,
+            "notes": "e2e 端到端测试情景",
+            "test_hooks": {},
+        }
         sc.update(sample_values)
         scenarios.append(sc)
     return scenarios
@@ -36,27 +41,26 @@ def run_e2e(hazard_type: str) -> dict:
 
     from aegis.agents_ext.data_agent.main import run_data_agent
     from aegis.agents_ext.risk_agent.main import run_risk_agent
+    from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import get_hazard_risk_profile
     from aegis.agents_ext.simulation_agent.main import run_simulation_agent
     from aegis.agents_ext.warning_agent.main import run_warning_agent
-    from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import get_hazard_risk_profile
 
     task = f"端到端测试：{hazard_type} 灾种的数据获取、风险评估、情景推演与预警生成"
 
     # ---------- 1. Data Agent ----------
     data_final = run_data_agent(task, hazard_type=hazard_type)
-    assert data_final["status"] in ("success", "partial"), \
-        f"[E2E][Data] {hazard_type} status={data_final['status']}"
+    assert data_final["status"] in ("success", "partial"), f"[E2E][Data] {hazard_type} status={data_final['status']}"
     assert data_final["hazard_type"] == hazard_type
     assert data_final["processed_data"].get("is_mock") is True
 
     # ---------- 2. Risk Agent ----------
     risk_result = run_risk_agent(task, data_result=data_final, hazard_type=hazard_type)
     assert risk_result["hazard_type"] == hazard_type
-    assert risk_result["status"] in ("success", "uncertain"), \
-        f"[E2E][Risk] {hazard_type} status={risk_result['status']}"
+    assert risk_result["status"] in ("success", "uncertain"), f"[E2E][Risk] {hazard_type} status={risk_result['status']}"
     assessment = risk_result.get("assessment", {})
-    assert assessment.get("assessment_status") == "scored", \
+    assert assessment.get("assessment_status") == "scored", (
         f"[E2E][Risk] {hazard_type} 因子引擎未评分: {assessment.get('insufficient_reasons')}"
+    )
     assert assessment.get("formula", {}).get("status") == "prototype_candidate"
     assert assessment.get("R") is not None
 
@@ -69,8 +73,7 @@ def run_e2e(hazard_type: str) -> dict:
         hazard_type=hazard_type,
         preset_scenario_configs=_preset_scenarios(hazard_type, sample_values),
     )
-    assert sim_result["status"] in ("success", "uncertain"), \
-        f"[E2E][Simulation] {hazard_type} status={sim_result['status']}"
+    assert sim_result["status"] in ("success", "uncertain"), f"[E2E][Simulation] {hazard_type} status={sim_result['status']}"
     assert sim_result["hazard_type"] == hazard_type
     assert sim_result["model_info"]["is_real_prediction"] is False
 
@@ -82,8 +85,7 @@ def run_e2e(hazard_type: str) -> dict:
         simulation_result=sim_result,
         data_result=data_final,
     )
-    assert warning_result["status"] == "draft", \
-        f"[E2E][Warning] {hazard_type} status={warning_result['status']}"
+    assert warning_result["status"] == "draft", f"[E2E][Warning] {hazard_type} status={warning_result['status']}"
     alert = warning_result["alert"]
     assert alert["hazard_type"] == hazard_type
     assert alert["mock_only"] is True and alert["alert_status"] == "draft"
@@ -124,9 +126,11 @@ if __name__ == "__main__":
     print("端到端结果汇总")
     print("=" * 60)
     for r in results:
-        print(f"  {r['hazard_type']:<26} data={r['data_status']:<8} "
-              f"risk={r['risk_status']:<9} level={r['risk_level']:<7} R={r['R']:<6} "
-              f"sim={r['simulation_status']:<9} warning={r['warning_status']:<7} "
-              f"level={r['warning_level']}")
+        print(
+            f"  {r['hazard_type']:<26} data={r['data_status']:<8} "
+            f"risk={r['risk_status']:<9} level={r['risk_level']:<7} R={r['R']:<6} "
+            f"sim={r['simulation_status']:<9} warning={r['warning_status']:<7} "
+            f"level={r['warning_level']}"
+        )
 
     print("\n端到端测试全部通过 ✅")

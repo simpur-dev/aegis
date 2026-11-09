@@ -15,34 +15,41 @@ Warning Agent 测试套件（西藏五类山地地质灾害口径）
 
 import sys
 
-from aegis.agents_ext.hazard_registry import UnsupportedHazardError, normalize_hazard_type
+from aegis.agents_ext.hazard_registry import UnsupportedHazardError
+from aegis.agents_ext.warning_agent.nodes.alert_builder_node import alert_builder_node
+from aegis.agents_ext.warning_agent.nodes.hazard_warning_rule_node import hazard_warning_rule_node
+from aegis.agents_ext.warning_agent.nodes.warning_decision_node import warning_decision_node
+from aegis.agents_ext.warning_agent.nodes.warning_validator_node import warning_validator_node
 from aegis.agents_ext.warning_agent.tools.hazard_warning_rule_registry import (
     HAZARD_WARNING_RULES,
     get_hazard_warning_rules,
     get_suggested_actions,
     list_hazard_warning_capabilities,
 )
-from aegis.agents_ext.warning_agent.nodes.warning_decision_node import warning_decision_node
-from aegis.agents_ext.warning_agent.nodes.hazard_warning_rule_node import hazard_warning_rule_node
-from aegis.agents_ext.warning_agent.nodes.alert_builder_node import alert_builder_node
-from aegis.agents_ext.warning_agent.nodes.warning_validator_node import warning_validator_node
 
-ALL_HAZARDS = ["landslide", "rockfall", "debris_flow",
-               "ice_rock_snow_avalanche", "glacial_lake_outburst"]
+ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "ice_rock_snow_avalanche", "glacial_lake_outburst"]
 
 
 def _events(hazard, n=2):
     """按 Risk 注册表 sample_values 构造观测记录（走真实 Risk 因子引擎）。"""
     profile = HAZARD_RISK_PROFILES_for_warning()[hazard]
-    return [dict(profile.get("sample_values", {}),
-                 event_id=f"MOCK-{i:03d}", time="2024-07-08T03:00:00Z",
-                 latitude=29.6 + i * 0.01, longitude=95.3 + i * 0.01, region="西藏")
-            for i in range(1, n + 1)]
+    return [
+        dict(
+            profile.get("sample_values", {}),
+            event_id=f"MOCK-{i:03d}",
+            time="2024-07-08T03:00:00Z",
+            latitude=29.6 + i * 0.01,
+            longitude=95.3 + i * 0.01,
+            region="西藏",
+        )
+        for i in range(1, n + 1)
+    ]
 
 
 def HAZARD_RISK_PROFILES_for_warning():
     """Warning 测试需要 Risk 的 sample_values 与因子引擎（跨包只读引用，仅测试用）。"""
     from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import HAZARD_RISK_PROFILES
+
     return HAZARD_RISK_PROFILES
 
 
@@ -61,13 +68,12 @@ def _risk_result(hazard, risk_status="success", overrides=None, drop_R=False, ev
         "hazard_type": hazard,
         "risk_level": assessment.get("provisional_level", "unknown"),
         "reasoning": "（Mock）因子引擎评估结果",
-        "trigger_conditions": [f"{h['rule_id']}: {h['description']}"
-                                for h in assessment.get("rule_hits", [])],
+        "trigger_conditions": [f"{h['rule_id']}: {h['description']}" for h in assessment.get("rule_hits", [])],
         "assessment": assessment,
-        "evidence": [], "uncertainties": ["（Mock）"],
+        "evidence": [],
+        "uncertainties": ["（Mock）"],
         "validation": {"is_valid": True, "issues": [], "recommendation": "proceed"},
-        "model_info": {"rule_version": assessment.get("rule_version", "MOCK-v0.1"),
-                        "implementation_status": "mock", "is_mock": True},
+        "model_info": {"rule_version": assessment.get("rule_version", "MOCK-v0.1"), "implementation_status": "mock", "is_mock": True},
         "metadata": {"note": "Mock"},
     }
     if overrides:
@@ -81,14 +87,18 @@ def complete_ok(hazard, events):
 
 
 def _decision_state(hazard, risk_result, simulation_result=None, data_result=None):
-    return {"hazard_type": hazard, "risk_result": risk_result,
-            "simulation_result": simulation_result or {},
-            "data_result": data_result or {}}
+    return {
+        "hazard_type": hazard,
+        "risk_result": risk_result,
+        "simulation_result": simulation_result or {},
+        "data_result": data_result or {},
+    }
 
 
 # ============================================================
 # 第一层
 # ============================================================
+
 
 def test_warning_registry():
     """规则注册表：五灾种独立声明，全部 Mock；地震不存在。"""
@@ -116,8 +126,7 @@ def test_decision_gating():
     assert any("不一致" in r for r in d2["decision_result"]["reasons"])
 
     # 风险失败
-    d3 = warning_decision_node(_decision_state("debris_flow",
-                                                _risk_result("debris_flow", risk_status="failed")))
+    d3 = warning_decision_node(_decision_state("debris_flow", _risk_result("debris_flow", risk_status="failed")))
     assert d3["decision_result"]["can_warn"] is False
 
     # 因子引擎未评分
@@ -130,15 +139,13 @@ def test_decision_gating():
     assert d5["decision_result"]["can_warn"] is False
 
     # 数据"部分可用" + Risk 已评分 → 不硬性拒绝（分层：Risk 覆盖率门控为准）
-    partial_data = {"status": "partial",
-                     "data_sufficiency": {"sufficient": False, "reason": "部分可用"}}
+    partial_data = {"status": "partial", "data_sufficiency": {"sufficient": False, "reason": "部分可用"}}
     d6 = warning_decision_node(_decision_state("debris_flow", rr, data_result=partial_data))
     assert d6["decision_result"]["can_warn"] is True
     assert d6["decision_result"]["checks"]["data_sufficiency"]["note"]
 
     # Data 完全失败（status=failed）→ 拒绝
-    failed_data = {"status": "failed",
-                    "data_sufficiency": {"sufficient": False, "reason": "获取失败"}}
+    failed_data = {"status": "failed", "data_sufficiency": {"sufficient": False, "reason": "获取失败"}}
     d7 = warning_decision_node(_decision_state("debris_flow", rr, data_result=failed_data))
     assert d7["decision_result"]["can_warn"] is False
     print("  √ test_decision_gating")
@@ -169,10 +176,9 @@ def test_rule_mapping_and_escalation():
 
 def _events_override_hit(hazard):
     """构造命中保护规则的观测（泥石流：上游溃决联动=yes）。"""
-    profile = HAZARD_RISK_PROFILES_for_warning()[hazard]
+    HAZARD_RISK_PROFILES_for_warning()[hazard]
     events = _events(hazard)
-    flag_fields = {"debris_flow": "upstream_breach_flag",
-                    "glacial_lake_outburst": "ice_avalanche_into_lake"}
+    flag_fields = {"debris_flow": "upstream_breach_flag", "glacial_lake_outburst": "ice_avalanche_into_lake"}
     field = flag_fields.get(hazard)
     if field:
         for ev in events:
@@ -188,10 +194,16 @@ def test_cap_mapping_and_errors():
         serialize_cap_xml,
         validate_cap_dict,
     )
+
     rr = _risk_result("debris_flow")
     rule = hazard_warning_rule_node({"hazard_type": "debris_flow", "risk_result": rr})
-    state = {"hazard_type": "debris_flow", "warning_rule_result": rule["warning_rule_result"],
-             "risk_result": rr, "simulation_result": {}, "data_result": {}}
+    state = {
+        "hazard_type": "debris_flow",
+        "warning_rule_result": rule["warning_rule_result"],
+        "risk_result": rr,
+        "simulation_result": {},
+        "data_result": {},
+    }
     alert = alert_builder_node(state)["alert_object"]
 
     cap = internal_alert_to_cap(alert, explanation_text="Mock 模拟说明")
@@ -236,16 +248,20 @@ def test_alert_builder():
     """告警构建：生命周期/Mock 标记/预留接口字段齐全，建议行动与等级匹配。"""
     rr = _risk_result("landslide")
     rule = hazard_warning_rule_node({"hazard_type": "landslide", "risk_result": rr})
-    state = {"hazard_type": "landslide", "warning_rule_result": rule["warning_rule_result"],
-             "risk_result": rr, "simulation_result": {}, "data_result": {}}
+    state = {
+        "hazard_type": "landslide",
+        "warning_rule_result": rule["warning_rule_result"],
+        "risk_result": rr,
+        "simulation_result": {},
+        "data_result": {},
+    }
     alert = alert_builder_node(state)["alert_object"]
     assert alert["alert_status"] == "draft" and alert["mock_only"] is True
     assert alert["official_grade"] is None
     assert alert["alert_id"].startswith("ALT-LANDSLIDE-")
     assert alert["delivery"]["send_status"] == "not_implemented"
     assert alert["cap"]["status"] == "not_implemented"
-    assert alert["suggested_actions"] == get_suggested_actions("landslide",
-                                                                alert["warning_level"])
+    assert alert["suggested_actions"] == get_suggested_actions("landslide", alert["warning_level"])
     print("  √ test_alert_builder")
 
 
@@ -253,38 +269,45 @@ def test_validator_checks():
     """消息校验：必要字段/官方等级禁用/Mock 披露/建议行动。"""
     rr = _risk_result("debris_flow")
     rule = hazard_warning_rule_node({"hazard_type": "debris_flow", "risk_result": rr})
-    state = {"hazard_type": "debris_flow", "warning_rule_result": rule["warning_rule_result"],
-             "risk_result": rr, "simulation_result": {}, "data_result": {}}
+    state = {
+        "hazard_type": "debris_flow",
+        "warning_rule_result": rule["warning_rule_result"],
+        "risk_result": rr,
+        "simulation_result": {},
+        "data_result": {},
+    }
     alert = alert_builder_node(state)["alert_object"]
     level = alert["warning_level"]
     level_cn = {"warning": "警报", "watch": "关注", "advisory": "提示", "none": "无预警建议"}[level]
     good_explanation = {
-        "text": (f"泥石流（debris_flow）当前为{level_cn}（Mock 模拟），"
-                  f"依据 R={alert.get('based_on', {}).get('R')}（原型候选公式）。"
-                  "数据为 Mock 构造，结果具有不确定性，禁止用于实际发布。"),
+        "text": (
+            f"泥石流（debris_flow）当前为{level_cn}（Mock 模拟），"
+            f"依据 R={alert.get('based_on', {}).get('R')}（原型候选公式）。"
+            "数据为 Mock 构造，结果具有不确定性，禁止用于实际发布。"
+        ),
         "cautions": ["Mock 模拟产物"],
     }
-    v1 = warning_validator_node({"alert_object": alert, "explanation": good_explanation,
-                                  "decision_result": {"can_warn": True},
-                                  "retry_count": 0, "max_retries": 3})
+    v1 = warning_validator_node(
+        {"alert_object": alert, "explanation": good_explanation, "decision_result": {"can_warn": True}, "retry_count": 0, "max_retries": 3}
+    )
     assert v1["validation_result"]["is_valid"] is True
     assert v1["validation_result"]["recommendation"] == "proceed"
 
     # 官方等级措辞 → 问题
     bad = dict(good_explanation)
     bad["text"] = "泥石流红色预警！立即转移！"
-    v2 = warning_validator_node({"alert_object": alert, "explanation": bad,
-                                  "decision_result": {"can_warn": True},
-                                  "retry_count": 0, "max_retries": 3})
+    v2 = warning_validator_node(
+        {"alert_object": alert, "explanation": bad, "decision_result": {"can_warn": True}, "retry_count": 0, "max_retries": 3}
+    )
     assert v2["validation_result"]["recommendation"] in ("retry", "fail")
     assert any("官方等级" in i for i in v2["validation_result"]["issues"])
 
     # 缺少 Mock 披露 → 问题
     bad2 = dict(good_explanation)
     bad2["text"] = "泥石流警报（确定性结论，不存在不确定性）"
-    v3 = warning_validator_node({"alert_object": alert, "explanation": bad2,
-                                  "decision_result": {"can_warn": True},
-                                  "retry_count": 0, "max_retries": 3})
+    v3 = warning_validator_node(
+        {"alert_object": alert, "explanation": bad2, "decision_result": {"can_warn": True}, "retry_count": 0, "max_retries": 3}
+    )
     assert v3["validation_result"]["recommendation"] in ("retry", "fail")
     assert any("Mock" in i or "披露" in i for i in v3["validation_result"]["issues"])
     print("  √ test_validator_checks")
@@ -294,16 +317,27 @@ def test_validator_checks():
 # 第二层：端到端图测试（解释 LLM 失败走模板兜底，断言两种情况都通过）
 # ============================================================
 
+
 def _run_graph(task, hazard_type, risk_result, simulation_result=None, data_result=None):
     from aegis.agents_ext.warning_agent.graph import create_warning_agent
+
     state = {
-        "task": task, "hazard_type": hazard_type,
-        "risk_result": risk_result, "simulation_result": simulation_result or {},
+        "task": task,
+        "hazard_type": hazard_type,
+        "risk_result": risk_result,
+        "simulation_result": simulation_result or {},
         "data_result": data_result or {},
-        "decision_result": {}, "warning_rule_result": {}, "alert_object": {},
-        "explanation": {}, "validation_result": {},
-        "retry_count": 0, "max_retries": 3, "next": "", "error_message": "",
-        "status": "", "warning_result": {},
+        "decision_result": {},
+        "warning_rule_result": {},
+        "alert_object": {},
+        "explanation": {},
+        "validation_result": {},
+        "retry_count": 0,
+        "max_retries": 3,
+        "next": "",
+        "error_message": "",
+        "status": "",
+        "warning_result": {},
     }
     return create_warning_agent().invoke(state)
 
@@ -329,8 +363,7 @@ def test_graph_insufficient():
     assert final["status"] == "insufficient_data"
     assert final["warning_result"]["alert_object"] is None
 
-    final2 = _run_graph("生成预警", "debris_flow",
-                         _risk_result("debris_flow", risk_status="failed"))
+    final2 = _run_graph("生成预警", "debris_flow", _risk_result("debris_flow", risk_status="failed"))
     assert final2["status"] == "insufficient_data"
     print("  √ test_graph_insufficient")
 

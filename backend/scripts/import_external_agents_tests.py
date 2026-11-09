@@ -13,12 +13,11 @@
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from import_external_agents import rewrite_source  # noqa: E402
+from import_external_agents import rewrite_source
 
 #: 她的"不是用例"的文件 → 迁入后落在**实现包内**的相对路径。
 #: `test_data_builder.py` 是 mock 数据构造器（feedback 测试按原名 import 它），

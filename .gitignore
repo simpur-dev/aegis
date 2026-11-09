@@ -78,3 +78,7 @@ backend/.tmp-verify/
 
 # 外部智能体模块的运行时产物（反馈记忆 JSON）：由环境变量指定路径，不进代码仓
 backend/src/aegis/agents_ext/feedback_agent/memory/
+
+# 本地临时产物（不入仓）
+/.workbuddy/
+/frontend/dist.stale/

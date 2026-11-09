@@ -17,7 +17,14 @@ SRC="${1:?用法: import_external_agents_all.sh <外部仓库路径>}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 echo "== 1/5 搬实现 =="
-rm -rf "$REPO/backend/src/aegis/agents_ext"
+# 只删**外部来源**的那些目录，不整个 rm -rf：平台侧在这个包里加的文件
+# （adapter.py 适配层等）必须留下——它们不来自外部仓库，重跑搬入不该抹掉。
+for d in data_agent feedback_agent manager_agent risk_agent simulation_agent warning_agent prompts workflow; do
+  rm -rf "$REPO/backend/src/aegis/agents_ext/$d"
+done
+rm -f "$REPO/backend/src/aegis/agents_ext/config.py" \
+      "$REPO/backend/src/aegis/agents_ext/llm.py" \
+      "$REPO/backend/src/aegis/agents_ext/hazard_registry.py"
 python "$REPO/backend/scripts/import_external_agents.py" "$SRC"
 
 echo "== 2/5 搬测试 =="
@@ -26,6 +33,7 @@ python "$REPO/backend/scripts/import_external_agents_tests.py" "$SRC"
 
 echo "== 3/5 后处理（固化必要改造）=="
 python "$REPO/backend/scripts/postprocess_external_agents.py" "$REPO"
+python "$REPO/backend/scripts/postprocess_external_agents_types.py" "$REPO"
 
 echo "== 4/5 ruff 自动修与格式化 =="
 cd "$REPO/backend"

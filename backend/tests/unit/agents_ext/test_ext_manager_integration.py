@@ -27,26 +27,40 @@ Manager 真实集成测试（决策点 5）：Manager 调度【真实】Simulati
 """
 
 import sys
-from pathlib import Path
 
-
-from aegis.agents_ext.manager_agent import dispatcher  # noqa: E402
-from aegis.agents_ext.manager_agent.main import run_manager_agent  # noqa: E402
-from aegis.agents_ext.manager_agent.state import (  # noqa: E402
-    AGENT_DATA, AGENT_SIMULATION, AGENT_WARNING,
+from aegis.agents_ext.manager_agent import dispatcher
+from aegis.agents_ext.manager_agent.main import run_manager_agent
+from aegis.agents_ext.manager_agent.state import (
+    AGENT_DATA,
+    AGENT_SIMULATION,
+    AGENT_WARNING,
 )
 
 # 两个确定性直传情景（medium/high）：非空时真实 Simulation 跳过 LLM 情景设计，
 # 结果可复现（口径与 e2e_pipeline_test 的 preset 一致）。
 _PRESET = [
-    {"scenario_id": "SC-01", "severity_level": "medium", "trigger": "中等降雨",
-     "trigger_source_tag": "assumption", "rainfall_mm_h": 40.0,
-     "catchment_area_km2": 5.0, "channel_gradient": 0.3, "duration_hours": 6.0,
-     "notes": "Manager 集成测试情景"},
-    {"scenario_id": "SC-02", "severity_level": "high", "trigger": "强降雨",
-     "trigger_source_tag": "assumption", "rainfall_mm_h": 90.0,
-     "catchment_area_km2": 8.0, "channel_gradient": 0.5, "duration_hours": 6.0,
-     "notes": "Manager 集成测试情景"},
+    {
+        "scenario_id": "SC-01",
+        "severity_level": "medium",
+        "trigger": "中等降雨",
+        "trigger_source_tag": "assumption",
+        "rainfall_mm_h": 40.0,
+        "catchment_area_km2": 5.0,
+        "channel_gradient": 0.3,
+        "duration_hours": 6.0,
+        "notes": "Manager 集成测试情景",
+    },
+    {
+        "scenario_id": "SC-02",
+        "severity_level": "high",
+        "trigger": "强降雨",
+        "trigger_source_tag": "assumption",
+        "rainfall_mm_h": 90.0,
+        "catchment_area_km2": 8.0,
+        "channel_gradient": 0.5,
+        "duration_hours": 6.0,
+        "notes": "Manager 集成测试情景",
+    },
 ]
 
 
@@ -58,6 +72,7 @@ def _real_upstream(hazard: str = "debris_flow"):
     """
     from aegis.agents_ext.simulation_agent.main import _mock_data_result
     from aegis.agents_ext.warning_agent.main import _mock_risk_result
+
     data = _mock_data_result()
     data["hazard_type"] = hazard
     risk = _mock_risk_result(hazard)
@@ -65,7 +80,7 @@ def _real_upstream(hazard: str = "debris_flow"):
 
 
 def _use_real_agents():
-    dispatcher.restore_runners()          # 撤销任何 Mock，恢复真实 Agent 适配层
+    dispatcher.restore_runners()  # 撤销任何 Mock，恢复真实 Agent 适配层
 
 
 def _order(final_report):
@@ -76,10 +91,15 @@ def test_INT_manager_calls_real_simulation():
     """决策点 5 核心：Manager 真实调用 Simulation，状态更新 + 结果传递 + preset 传参。"""
     _use_real_agents()
     sup_data, sup_risk = _real_upstream("debris_flow")
-    r = run_manager_agent("debris_flow", task_type="simulation_only",
-                          region="西藏波密", event_id="EVT-INT-SIM",
-                          data_result=sup_data, risk_result=sup_risk,
-                          preset_scenario_configs=_PRESET)
+    r = run_manager_agent(
+        "debris_flow",
+        task_type="simulation_only",
+        region="西藏波密",
+        event_id="EVT-INT-SIM",
+        data_result=sup_data,
+        risk_result=sup_risk,
+        preset_scenario_configs=_PRESET,
+    )
     # 真实 Simulation 被 Manager 调用并成功
     assert r["agent_status"][AGENT_SIMULATION] in ("success", "uncertain"), r["agent_status"]
     assert _order(r["final_report"]) == [AGENT_SIMULATION], _order(r["final_report"])
@@ -91,8 +111,7 @@ def test_INT_manager_calls_real_simulation():
     assert len(sim.get("simulation_results", [])) >= 1, "真实模拟应产出情景结果"
     md = r["final_report"]["mock_disclosure"]
     assert md["data_is_mock"] is True and md["simulation_is_real_prediction"] is False
-    print(f"✅ INT-1：Manager 真实调用 Simulation（{len(sim['simulation_results'])} 情景）"
-          f"｜状态更新、传参、Mock 红线透传全部正确")
+    print(f"✅ INT-1：Manager 真实调用 Simulation（{len(sim['simulation_results'])} 情景）｜状态更新、传参、Mock 红线透传全部正确")
 
 
 def test_INT_real_simulation_to_warning_handoff():
@@ -100,23 +119,30 @@ def test_INT_real_simulation_to_warning_handoff():
     _use_real_agents()
     sup_data, sup_risk = _real_upstream("debris_flow")
     # 第一步：Manager 调度真实 Simulation
-    step1 = run_manager_agent("debris_flow", task_type="simulation_only",
-                              event_id="EVT-INT-HANDOFF-SIM",
-                              data_result=sup_data, risk_result=sup_risk,
-                              preset_scenario_configs=_PRESET)
+    step1 = run_manager_agent(
+        "debris_flow",
+        task_type="simulation_only",
+        event_id="EVT-INT-HANDOFF-SIM",
+        data_result=sup_data,
+        risk_result=sup_risk,
+        preset_scenario_configs=_PRESET,
+    )
     assert step1["task_status"] == "completed", (step1["task_status"], step1["error_message"])
     produced_sim = step1["simulation_result"]
     # 第二步：Manager 调度真实 Warning，消费上一步 Manager 产出的模拟交付物
-    step2 = run_manager_agent("debris_flow", task_type="warning_only",
-                              event_id="EVT-INT-HANDOFF-WARN",
-                              risk_result=sup_risk, data_result=sup_data,
-                              simulation_result=produced_sim)
+    step2 = run_manager_agent(
+        "debris_flow",
+        task_type="warning_only",
+        event_id="EVT-INT-HANDOFF-WARN",
+        risk_result=sup_risk,
+        data_result=sup_data,
+        simulation_result=produced_sim,
+    )
     assert step2["agent_status"][AGENT_WARNING] == "draft", step2["agent_status"]
     assert _order(step2["final_report"]) == [AGENT_WARNING]
     alert = step2["warning_result"]["alert"]
     assert alert["hazard_type"] == "debris_flow"
-    assert alert["mock_only"] is True and alert["official_grade"] is None, \
-        "等级唯一由 Warning 规则引擎决定，且不伪装真实"
+    assert alert["mock_only"] is True and alert["official_grade"] is None, "等级唯一由 Warning 规则引擎决定，且不伪装真实"
     print("✅ INT-2：Manager 产出的真实 simulation_result 成功交付真实 Warning（衔接正确）")
 
 
@@ -124,9 +150,7 @@ def test_INT_real_warning_independent_and_capability_note():
     """真实 Warning 可在直供 Risk 上独立运行；能力限制（region 过滤未实现）如实呈现。"""
     _use_real_agents()
     _, sup_risk = _real_upstream("debris_flow")
-    r = run_manager_agent("debris_flow", task_type="warning_only",
-                          region="西藏波密", event_id="EVT-INT-WARN",
-                          risk_result=sup_risk)
+    r = run_manager_agent("debris_flow", task_type="warning_only", region="西藏波密", event_id="EVT-INT-WARN", risk_result=sup_risk)
     assert r["task_status"] == "completed", (r["task_status"], r["error_message"])
     assert _order(r["final_report"]) == [AGENT_WARNING]
     assert r["warning_result"]["status"] == "draft"

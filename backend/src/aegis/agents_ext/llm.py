@@ -7,8 +7,10 @@
   仍用 langchain_openai.ChatOpenAI 直连，无需换 SDK / 无需新依赖）。
 
 【API Key 配置】
-  Key 本身不在本文件：到根目录 config.py 的 ZHIPUAI_API_KEY 里粘贴
-  （或设置环境变量 ZHIPUAI_API_KEY，环境变量优先）。
+  Key 本身不在本文件：走环境变量 AEGIS_EXT_LLM_API_KEY
+  （旧名 ZHIPUAI_API_KEY 仍兼容，但文档与配置面只登记平台口径那一个）。
+  【并入主线时的改动】原实现让运维"把 Key 粘进 config.py"——那是把凭据写回源码，
+  主线口径是**只从环境变量读**（见 agents_ext/config.py）。
   没填 Key 时本工厂不报错：返回一个占位 Key 的实例，
   真正调用时 401 失败 → 各节点既有 try/except 会打印原因并走确定性兜底，
   流程不崩；错误信息里会带上"去哪里填 Key"的指引。
@@ -53,8 +55,11 @@ from aegis.agents_ext import config
 
 # Key 未配置时的占位值：调用 API 时必然 401。
 # ★ 必须是纯 ASCII（HTTP 头无法编码中文），但内容仍是"去哪里填 Key"的指引
+# 【并入主线时的改动】原提示串让运维"把 Key 粘进 config.py"——主线口径是**只从环境变量读**
+# （源码里不该有凭据），照着旧提示做等于把凭据重新写回源码。
 _PLACEHOLDER_KEY = (
-    "ZHIPU_KEY_NOT_SET: paste your Zhipu API key into config.py (ZHIPUAI_API_KEY at project root), or run: setx ZHIPUAI_API_KEY your_key"
+    "ZHIPU_KEY_NOT_SET: set the AEGIS_EXT_LLM_API_KEY environment variable "
+    "(or ZHIPUAI_API_KEY for compatibility); keys must not be written into source files"
 )
 
 
@@ -117,8 +122,13 @@ def get_llm():
     返回:
         ZhipuCompatChatOpenAI 实例（未绑定结构化输出，由各节点自己 .with_structured_output）
     """
-    # Key 优先级：环境变量 ZHIPUAI_API_KEY > config.py 里的 ZHIPUAI_API_KEY > 占位值
-    api_key = os.environ.get("ZHIPUAI_API_KEY") or (getattr(config, "ZHIPUAI_API_KEY", "") or "").strip()
+    # Key 优先级：平台口径 AEGIS_EXT_LLM_API_KEY > 旧名 ZHIPUAI_API_KEY（兼容她原来的用法）> 占位值。
+    # 平台口径的名字写在配置面（.env.example / config.py）上，旧名只作兼容，不再是文档里的主口径。
+    api_key = (
+        os.environ.get("AEGIS_EXT_LLM_API_KEY")
+        or os.environ.get("ZHIPUAI_API_KEY")
+        or (getattr(config, "ZHIPUAI_API_KEY", "") or "").strip()
+    )
     if not api_key:
         api_key = _PLACEHOLDER_KEY
 

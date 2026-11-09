@@ -56,6 +56,7 @@ def _load() -> dict[str, Any]:
         from aegis.agents_ext.feedback_agent.main import run_feedback_agent
         from aegis.agents_ext.manager_agent.main import run_manager_agent
         from aegis.agents_ext.risk_agent.main import run_risk_agent
+        from aegis.agents_ext.simulation_agent.main import run_simulation_agent
         from aegis.agents_ext.warning_agent.main import run_warning_agent
     except ImportError as exc:  # pragma: no cover - 取决于是否装了 extra
         raise ExternalAgentsUnavailableError(f"外部智能体实现不可用（依赖未安装或导入失败）：{exc}；平台退回自建内环") from exc
@@ -64,6 +65,7 @@ def _load() -> dict[str, Any]:
         "feedback": run_feedback_agent,
         "manager": run_manager_agent,
         "risk": run_risk_agent,
+        "simulation": run_simulation_agent,
         "warning": run_warning_agent,
     }
 

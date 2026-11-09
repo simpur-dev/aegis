@@ -10,6 +10,12 @@
 - 分工边界：**平台侧**（L1 接入 / L2 数据 / L4 服务 / L5 应用 / 基座）与 **L3 五大智能体本体**
   均由本仓库承载——智能体自建于 `backend/src/aegis/agents/`（agentkit 契约壳 + LLM 内环），
   按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入总线；外部团队的实现按同一契约接入，`agents/` 是交付落点
+- **L3 现在有两套并存实现**（2026-11-09 起）：平台自建内环（`backend/src/aegis/agents/`，接真实数据面）
+  与一份外部交付模块（`backend/src/aegis/agents_ext/`，LangGraph 图编排，经三层适配
+  `adapter.py` 契约壳 / `contract_face.py` 语义翻译 / `levels.py` 口径对照，
+  适配成同一份 `AgentMessage v1` 契约），由 `AEGIS_AGENT_IMPL=builtin|ext` 选择，**默认 builtin 不变**。
+  **外部那一侧当前只接通了研判段的 `assess.hazard`**，其余动作明确不接线（走 error 通道）。
+  详见 `docs/architecture.md` §3.1 与 `docs/adr/0011`
 - 架构依据：五层+一基座（实现态见 `docs/architecture.md`），融合"一张图 + 一总线 + 四预"扩展；
   LLM 智能体化升级（对齐 MA-RIAEW）见 `docs/课题6_架构升级方案.md`，决策记录 `docs/adr/0007`；
   模块边界与分层归位（2026-10-16 P1–P6）见决策记录 `docs/adr/0008`
@@ -27,7 +33,9 @@ aegis/
 │   ├── agent_message.v1.schema.json
 │   ├── stu.v1.schema.json
 │   └── AGENT_INTEGRATION_SPEC.v1.md
-├── agents/                    # L3 智能体的交付落点与接入指引（外部实现按契约接入；自建本体在 backend/src/aegis/agents/）
+├── agents/                    # L3 智能体的交付落点与接入指引（外部实现按契约接入；自建本体在 backend/src/aegis/agents/；
+│                              #   已并入的外部实现落在 backend/src/aegis/agents_ext/，本目录是索引）
+├── archive/                   # 存档区（不进主线构建）：外部模块并入前的原始物料与占位说明的溯源副本
 ├── backend/
 │   ├── src/aegis/
 │   │   ├── config.py          # 运行配置与考核指标阈值口径（唯一配置面）
@@ -49,11 +57,12 @@ aegis/
 │   │   ├── workflow/          # 自研 DAG 引擎（19 类节点，面板可拖 18 类）与 5 灾种内置模板（含案例驱动推演节点）
 │   │   ├── edge/              # 站端↔网关弱网链路（Eclipse Zenoh POC：有界缓冲 + 按序重放）
 │   │   ├── observability/     # 时延账本、OpenTelemetry 埋点与导出、Prometheus 导出
-│   │   ├── agents/            # 五大智能体本体：agentkit 契约壳 + LLM 内环 + 三态运行时（real 与 mock 互斥）；mock 留作契约门禁对照
+│   │   ├── agents/            # 五大智能体本体（自建）：agentkit 契约壳 + LLM 内环 + 三态运行时（real 与 mock 互斥）；mock 留作契约门禁对照
+│   │   ├── agents_ext/       # 外部交付的智能体模块（并入自 hazard-landslide-agent，LangGraph 图编排）：adapter.py 契约壳 + contract_face.py 语义翻译 + levels.py 口径对照，适配成同一份 AgentMessage v1 契约；AEGIS_AGENT_IMPL=ext 时启用（默认 builtin；当前只接通了研判段 assess.hazard）
 │   │   └── api/               # FastAPI HTTP/SSE 接口：`app.py` 只做装配（闸/lifespan/异常/MCP 挂载），端点在 `routers/` 按资源分文件；另有工作流接口与语义交互（助手 SSE + 人工确认）
-│   ├── scripts/               # drill / metrics_report / accuracy_replay / eval_report_parsing / quality_gate / emit_model_cards / load_curve / zenoh_poc / import_stations / ingest_cases
+│   ├── scripts/               # drill / metrics_report / accuracy_replay / eval_report_parsing / quality_gate / emit_model_cards / load_curve / zenoh_poc / import_stations / ingest_cases；外部智能体模块的搬入可复现脚本 import_external_agents_all.sh
 │   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
-│   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / dev
+│   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / agents_ext / dev
 ├── frontend/                  # Vue 3 + Vite；Cesium 一张图、Vue Flow 编排画布
 ├── deploy/                    # docker-compose（含 profile）、镜像构建、Prometheus/Alertmanager 配置
 ├── docs/                      # 现行文档：实现态架构、架构升级方案、ADR、实测记录、进度看板、选型与许可证清单
@@ -154,6 +163,19 @@ cd .. && npm run dev              # API http://127.0.0.1:8001/docs ｜ Web http:
 #    real 需配 LLM key，且与 mock 互斥——一个订阅面只挂一副，杜绝双跑抢答。
 #    含 LLM 的协同事务走 LLM 档 deadline（AEGIS_SLA_AGENT_TXN_MS，默认 60s），
 #    与调度档 ≤2s/≤10s（工作流量测点，禁入 LLM）分档并报表，见《课题6_架构升级方案》§5。
+#
+# 7) 智能体走哪一套实现：AEGIS_AGENT_IMPL = builtin（默认；平台自建内环，接真实数据面）| ext
+#    （外部交付模块 backend/src/aegis/agents_ext/，LangGraph 图编排，经适配层走同一份
+#     AgentMessage v1 契约）。两套并存，不是替换。
+#    ext 需要装可选依赖：uv sync --extra dev --extra agents_ext（平台镜像里已带）；
+#    没装则装配点如实退回 builtin 并记 warning，平台照常起来，不会因为一个可选依赖起不来。
+#    ext 的模型凭据只从环境变量读：AEGIS_EXT_LLM_API_KEY（留空则它的 LLM 腿降级为确定性模板）。
+#    ext 的数据工具目前是内存 Mock 源，结论带 source=agents_ext_mock 标记——不冒充平台实测数据。
+#    ext 当前只接通了研判段的 assess.hazard：感知段（要 trigger_hits）、plan.stu、execute.warn、
+#    feedback.attribute 明确不接线，请求被类型化错误（E_EXT_ACTION_UNSUP）拒绝，
+#    走 error 通道、事务记 error、不计协同成功。
+#    已知限制（数据面缺口、外部无 confidence、图取消不掉、LLM 绕开平台网关、共享记忆未打通等）
+#    见 docs/adr/0011 的"已知限制"一节与 docs/architecture.md §3.1。
 ```
 
 跑起来后按这几条自查（都不需要额外工具）：

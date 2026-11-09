@@ -161,12 +161,12 @@ EXACT_FIXES: tuple[tuple[str, str, str, str], ...] = (
 def supported_hazards_text() -> str:
     """支持灾种的可读文本（用于错误提示），如"滑坡(landslide)、泥石流(debris_flow)…"。"""
     return "、".join(f"{HAZARD_CN_NAME[k]}({k})" for k in SUPPORTED_HAZARDS)''',
-        '''
+        """
 
 # 【并入主线时的改动】原文件在这里**又定义了一遍** `supported_hazards_text`，
 # 与上面从 hazard_registry 导入的那份实现逐字相同——覆盖它无害，但违反该模块自己的
 # "灾种定义只有一处"的单一真源原则（两份实现一旦各自演化就漂移）。
-# 现在只保留导入那一份：灾种清单的唯一定义源永远是 hazard_registry。''',
+# 现在只保留导入那一份：灾种清单的唯一定义源永远是 hazard_registry。""",
         "删掉与 hazard_registry 逐字相同的重复定义（单一真源）",
     ),
     (
@@ -199,7 +199,7 @@ def supported_hazards_text() -> str:
 )
 
 #: `assert False, "消息"` → `raise AssertionError("消息")`（python -O 下 assert 会被去掉）。
-ASSERT_FALSE_RE = re.compile(r'\bassert False,\s*(.+)$', re.MULTILINE)
+ASSERT_FALSE_RE = re.compile(r"\bassert False,\s*(.+)$", re.MULTILINE)
 
 
 def apply_exact_fixes(repo: Path) -> int:
@@ -228,7 +228,7 @@ def apply_assert_false(repo: Path) -> int:
             text = _read(path)
             if "assert False" not in text:
                 continue
-            new_text = ASSERT_FALSE_RE.sub(lambda m: f'raise AssertionError({m.group(1)})', text)
+            new_text = ASSERT_FALSE_RE.sub(lambda m: f"raise AssertionError({m.group(1)})", text)
             if _write(path, new_text):
                 print(f"  fixed {path.name} —— assert False → raise AssertionError")
                 changed += 1

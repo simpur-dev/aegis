@@ -16,7 +16,13 @@ Data Agent 测试套件（面向西藏五类山地地质灾害）
 """
 
 import sys
+from datetime import UTC
 
+from aegis.agents_ext.data_agent.tools import (
+    data_clean_tool,
+    data_normalize_tool,
+    data_validate_tool,
+)
 from aegis.agents_ext.data_agent.tools.hazard_data_registry import (
     HAZARD_DATA_REQUIREMENTS,
     build_query_param_model,
@@ -24,24 +30,18 @@ from aegis.agents_ext.data_agent.tools.hazard_data_registry import (
     get_hazard_data_requirements,
     list_hazard_data_capabilities,
 )
-from aegis.agents_ext.data_agent.tools import (
-    data_clean_tool,
-    data_normalize_tool,
-    data_validate_tool,
-)
 from aegis.agents_ext.hazard_registry import (
-    SUPPORTED_HAZARDS,
     UnsupportedHazardError,
     normalize_hazard_type,
 )
 
-ALL_HAZARDS = ["landslide", "rockfall", "debris_flow",
-               "ice_rock_snow_avalanche", "glacial_lake_outburst"]
+ALL_HAZARDS = ["landslide", "rockfall", "debris_flow", "ice_rock_snow_avalanche", "glacial_lake_outburst"]
 
 
 # ============================================================
 # 第一层：注册表与工具测试（不依赖 LLM，必跑）
 # ============================================================
+
 
 def test_registry_five_hazards():
     """注册表：恰含五个标准灾种键，不含地震。"""
@@ -64,8 +64,13 @@ def test_registry_normalization():
     req = get_hazard_data_requirements("泥石流")
     # 必需字段 = 公共必需(event_id/time/lat/lon) + 灾种必需观测
     assert set(req["required_fields"]) == {
-        "event_id", "time", "latitude", "longitude",
-        "rainfall_mm_h", "catchment_area_km2", "channel_gradient",
+        "event_id",
+        "time",
+        "latitude",
+        "longitude",
+        "rainfall_mm_h",
+        "catchment_area_km2",
+        "channel_gradient",
     }
     # 物理范围含公共坐标 + 观测字段
     assert req["valid_ranges"]["latitude"] == (-90.0, 90.0)
@@ -80,10 +85,7 @@ def test_registry_normalization():
 
 def test_registry_field_spec_per_hazard():
     """注册表：五灾种必需观测字段互不相同（按各自致灾机理声明）。"""
-    req_sets = {
-        k: frozenset(HAZARD_DATA_REQUIREMENTS[k]["required_observation_fields"])
-        for k in ALL_HAZARDS
-    }
+    req_sets = {k: frozenset(HAZARD_DATA_REQUIREMENTS[k]["required_observation_fields"]) for k in ALL_HAZARDS}
     assert req_sets["landslide"] != req_sets["debris_flow"]
     assert req_sets["rockfall"] != req_sets["glacial_lake_outburst"]
     assert "lake_volume_m3" in req_sets["glacial_lake_outburst"]
@@ -129,10 +131,10 @@ def test_normalize_tool_parameterized():
     raw = get_data_source_tool("landslide")({"region": "西藏"})
     cleaned = data_clean_tool(raw, required_fields=req["required_fields"])
     r = data_normalize_tool(cleaned, normalize_precision=req["normalize_precision_full"])
-    ev1 = [e for e in r["events"] if e["event_id"] == "LS2024001"][0]
-    assert ev1["time"] == "2024-07-08T03:00:00+00:00"      # ISO 8601
-    assert ev1["rainfall_mm_h"] == 85.0                     # 1 位小数
-    assert ev1["soil_moisture_ratio"] == 0.78               # 2 位小数
+    ev1 = next(e for e in r["events"] if e["event_id"] == "LS2024001")
+    assert ev1["time"] == "2024-07-08T03:00:00+00:00"  # ISO 8601
+    assert ev1["rainfall_mm_h"] == 85.0  # 1 位小数
+    assert ev1["soil_moisture_ratio"] == 0.78  # 2 位小数
     assert "time_iso8601" in r["normalization_applied"]
     print("  √ test_normalize_tool_parameterized")
 
@@ -141,10 +143,15 @@ def test_validate_tool_ranges():
     """校验工具：物理范围异常被捕获 + 完整度阈值判定（以滑坡为例）。"""
     req = get_hazard_data_requirements("landslide")
     events = [
-        {"event_id": "E1", "time": "t", "latitude": 29.0, "longitude": 95.0,
-         "rainfall_mm_h": 999.0, "slope_angle_deg": 45.0},   # 降雨超物理范围
-        {"event_id": "E2", "time": "t", "latitude": 29.0, "longitude": 95.0,
-         "rainfall_mm_h": 30.0, "slope_angle_deg": 40.0},
+        {
+            "event_id": "E1",
+            "time": "t",
+            "latitude": 29.0,
+            "longitude": 95.0,
+            "rainfall_mm_h": 999.0,
+            "slope_angle_deg": 45.0,
+        },  # 降雨超物理范围
+        {"event_id": "E2", "time": "t", "latitude": 29.0, "longitude": 95.0, "rainfall_mm_h": 30.0, "slope_angle_deg": 40.0},
     ]
     r = data_validate_tool(
         {"events": events},
@@ -152,8 +159,8 @@ def test_validate_tool_ranges():
         valid_ranges=req["valid_ranges"],
     )
     assert any(a["field"] == "rainfall_mm_h" for a in r["anomalies"])
-    assert r["completeness_ratio"] == 1.0        # 必需字段齐全
-    assert r["is_valid"] is False                # 异常率 50% > 10%
+    assert r["completeness_ratio"] == 1.0  # 必需字段齐全
+    assert r["is_valid"] is False  # 异常率 50% > 10%
     print("  √ test_validate_tool_ranges")
 
 
@@ -163,7 +170,7 @@ def test_query_param_model_menu_constraint():
     ok = Model()  # 全默认
     assert ok.region == "西藏" and ok.time_range == "24h" and ok.min_rainfall_mm_h == 0.0
     try:
-        Model(min_rainfall_mm_h=999.0)   # 超出菜单范围 (0, 300)
+        Model(min_rainfall_mm_h=999.0)  # 超出菜单范围 (0, 300)
         raise AssertionError("越界参数应被拒绝")
     except Exception:
         pass
@@ -173,9 +180,18 @@ def test_query_param_model_menu_constraint():
 def test_validate_class_field():
     """校验工具：分类字段取值不在 allowed 集合 → 异常（以泥石流水源类型为例）。"""
     req = get_hazard_data_requirements("debris_flow")
-    events = [{"event_id": "E1", "time": "t", "latitude": 29.0, "longitude": 95.0,
-               "rainfall_mm_h": 30.0, "catchment_area_km2": 5.0, "channel_gradient": 0.2,
-               "water_source_type": "volcano"}]   # 非法分类取值
+    events = [
+        {
+            "event_id": "E1",
+            "time": "t",
+            "latitude": 29.0,
+            "longitude": 95.0,
+            "rainfall_mm_h": 30.0,
+            "catchment_area_km2": 5.0,
+            "channel_gradient": 0.2,
+            "water_source_type": "volcano",
+        }
+    ]  # 非法分类取值
     r = data_validate_tool(
         {"events": events},
         required_fields=req["required_fields"],
@@ -185,22 +201,33 @@ def test_validate_class_field():
     assert any(a["field"] == "water_source_type" for a in r["anomalies"])
     # 合法分类值不应报异常
     events[0]["water_source_type"] = "rainstorm"
-    r2 = data_validate_tool({"events": events}, req["required_fields"],
-                             req["valid_ranges"], req["allowed_values"])
+    r2 = data_validate_tool({"events": events}, req["required_fields"], req["valid_ranges"], req["allowed_values"])
     assert not any(a["field"] == "water_source_type" for a in r2["anomalies"])
     print("  √ test_validate_class_field")
 
 
 def test_validate_expiry():
     """校验工具：数据过期检查（显式 as_of，避免依赖当前时钟）。"""
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     req = get_hazard_data_requirements("landslide")
-    events = [{"event_id": "E1", "time": "2024-01-01T00:00:00Z", "latitude": 29.0,
-               "longitude": 95.0, "rainfall_mm_h": 10.0, "slope_angle_deg": 30.0}]
-    as_of = datetime(2024, 1, 10, tzinfo=timezone.utc)   # 距记录 9 天 ≈ 216h
+    events = [
+        {
+            "event_id": "E1",
+            "time": "2024-01-01T00:00:00Z",
+            "latitude": 29.0,
+            "longitude": 95.0,
+            "rainfall_mm_h": 10.0,
+            "slope_angle_deg": 30.0,
+        }
+    ]
+    as_of = datetime(2024, 1, 10, tzinfo=UTC)  # 距记录 9 天 ≈ 216h
     r = data_validate_tool(
-        {"events": events}, req["required_fields"], req["valid_ranges"],
-        max_age_hours=72.0, as_of=as_of,
+        {"events": events},
+        req["required_fields"],
+        req["valid_ranges"],
+        max_age_hours=72.0,
+        as_of=as_of,
     )
     assert r["expired_records"] == 1
     assert any("数据过期" in a["reason"] for a in r["anomalies"])
@@ -212,10 +239,13 @@ def test_validate_expiry():
 
 def test_registry_class_fields_declared():
     """注册表：分类字段声明了 allowed 集合与监测方式（docx 监测矩阵对齐）。"""
-    assert get_hazard_data_requirements("rockfall")["allowed_values"]["failure_mode"] == \
-        ["sliding", "toppling", "falling"]
-    assert get_hazard_data_requirements("debris_flow")["allowed_values"]["water_source_type"] == \
-        ["rainstorm", "snowmelt", "outburst", "spring"]
+    assert get_hazard_data_requirements("rockfall")["allowed_values"]["failure_mode"] == ["sliding", "toppling", "falling"]
+    assert get_hazard_data_requirements("debris_flow")["allowed_values"]["water_source_type"] == [
+        "rainstorm",
+        "snowmelt",
+        "outburst",
+        "spring",
+    ]
     gl = get_hazard_data_requirements("glacial_lake_outburst")["observation_fields"]
     assert gl["ice_avalanche_into_lake"]["type"] == "class"
     assert gl["ice_avalanche_into_lake"]["allowed"] == ["no", "yes"]
@@ -239,15 +269,24 @@ def test_capabilities_declaration():
 #          两种情况下断言都必须通过）
 # ============================================================
 
+
 def _run_graph(task, hazard_type):
     from aegis.agents_ext.data_agent.graph import build_data_agent_graph
+
     initial_state = {
         "task": task,
         "hazard_type": hazard_type,
-        "data_requirement": {}, "processing_plan": "",
-        "raw_data": {}, "processed_data": {},
-        "data_quality": {}, "missing_data": [], "data_sufficiency": {},
-        "retry_count": 0, "next": "", "error_message": "", "status": "pending",
+        "data_requirement": {},
+        "processing_plan": "",
+        "raw_data": {},
+        "processed_data": {},
+        "data_quality": {},
+        "missing_data": [],
+        "data_sufficiency": {},
+        "retry_count": 0,
+        "next": "",
+        "error_message": "",
+        "status": "pending",
     }
     return build_data_agent_graph().invoke(initial_state)
 
@@ -256,8 +295,7 @@ def test_graph_normal_per_hazard():
     """五灾种正常流程：数据可获取、灾种写入输出、Mock 标记存在。"""
     for key in ALL_HAZARDS:
         final = _run_graph(f"获取{key}观测数据", key)
-        assert final["status"] in ("success", "partial"), \
-            f"{key} 正常流程不应 failed: {final.get('error_message')}"
+        assert final["status"] in ("success", "partial"), f"{key} 正常流程不应 failed: {final.get('error_message')}"
         assert final["hazard_type"] == key
         pd = final["processed_data"]
         assert pd.get("hazard_type") == key
