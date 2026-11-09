@@ -6,10 +6,11 @@
  * 而它们说的是同一条腿。这里也只发一次请求。
  */
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import type { CapabilitiesDto } from '@/api/assistant'
 import { assistantApi, isAssistantDisabled, isAssistantUnavailable } from '@/api/assistant'
+import { operatorSeat } from '@/api/operatorSeat'
 
 export type CapabilitiesKind = 'none' | 'unavailable' | 'disabled' | 'other'
 
@@ -34,6 +35,12 @@ async function load(): Promise<void> {
     loading.value = false
   }
 }
+
+// 能力面按席位判定：换席位不重载，页面就会拿旧角色的 allowed 去灰按钮，
+// 与后端实际权限对不上（席位头本身已随请求实时发送，这里只补"读回来的那份清单"）。
+watch(operatorSeat, () => {
+  void load()
+})
 
 /** 只给测试用：模块级状态在用例之间会串。 */
 export function resetAssistantCapabilities(): void {

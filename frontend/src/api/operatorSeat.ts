@@ -9,6 +9,7 @@
  * 不是认证。界面上必须始终让"你是谁"可见，否则写动作的审计就无人认领。
  */
 
+import type { AxiosInstance } from 'axios'
 import { ref, type Ref } from 'vue'
 
 export const OPERATOR_HEADER = 'X-Aegis-Operator'
@@ -48,4 +49,18 @@ export function clearOperatorSeat(): void {
 /** 给写动作请求装席位头；没选席位时返回空对象，由后端 401 说"没带席位"。 */
 export function operatorHeaders(): Record<string, string> {
   return operatorSeat.value === '' ? {} : { [OPERATOR_HEADER]: operatorSeat.value }
+}
+
+/**
+ * 给 axios 实例装席位头拦截器（与 `installServiceToken` 同一形态）。
+ *
+ * 在请求时读当前席位、不在创建时抄一份：席位是运行期可变的，抄进默认头会让
+ * "刚换了席位、请求还带着旧头"变成一条只有后端审计才看得见的错账。
+ */
+export function installOperatorHeader(instance: AxiosInstance): void {
+  instance.interceptors.request.use((config) => {
+    const value = operatorSeat.value
+    if (value !== '') config.headers.set(OPERATOR_HEADER, value)
+    return config
+  })
 }

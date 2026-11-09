@@ -141,9 +141,12 @@ def build_router() -> APIRouter:
     async def capabilities(
         ctn: PlatformContainer = Depends(get_container),
         x_operator: OperatorHeader = None,
+        x_operator_key: OperatorKeyHeader = None,
     ) -> dict[str, Any]:
         service = _assistant(ctn)
-        operator = await _operator(ctn, x_operator)
+        # 能力面与写动作同一条身份解析：只看声明头会把"带了令牌的人"读成另一个角色，
+        # 页面据此灰掉的按钮与执行器实际判定就对不上了。
+        operator, _ = await _identity(ctn, x_operator, x_operator_key)
         return service.capabilities(None if operator is None else operator.role)
 
     @router.post("/chat")
@@ -152,9 +155,10 @@ def build_router() -> APIRouter:
         request: Request,
         ctn: PlatformContainer = Depends(get_container),
         x_operator: OperatorHeader = None,
+        x_operator_key: OperatorKeyHeader = None,
     ) -> Response:
         service = _assistant(ctn)
-        operator = await _operator(ctn, x_operator)
+        operator, _ = await _identity(ctn, x_operator, x_operator_key)
         stream = service.respond(
             payload.message,
             session_id=payload.session_id,

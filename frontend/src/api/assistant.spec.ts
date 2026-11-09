@@ -22,6 +22,7 @@ import {
   streamChat,
   type ChatResponseLike,
 } from './assistant'
+import { clearOperatorSeat, installOperatorHeader, setOperatorSeat } from './operatorSeat'
 
 function rawAction(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -262,5 +263,59 @@ describe('preflightChat', () => {
 
   it('会话号不在这里挡：它是后端给的，本地拒绝会把整场对话锁死', () => {
     expect(preflightChat({ message: '查预警', session_id: 'not a valid id' })).toBe('')
+  })
+})
+
+/**
+ * 席位头是写动作的前提：后端 `/chat` 读 `X-Aegis-Operator` 才能把提案落给具体席位。
+ * 真机复现过：面板只带服务令牌，后端拿到 operator=None，所有写动作在提案前就被拒，
+ * 能力面也永远全灰。
+ */
+describe('席位头随 /chat 发出', () => {
+  afterEach(() => clearOperatorSeat())
+
+  async function captureHeaders(): Promise<Record<string, string>> {
+    let headers: Record<string, string> = {}
+    const capture = async (_input: string, init?: RequestInit): Promise<ChatResponseLike> => {
+      headers = (init?.headers ?? {}) as Record<string, string>
+      return responseOf(200, {})
+    }
+    await expect(
+      (async () => {
+        for await (const _ of streamChat({ message: '查预警' }, { fetchImpl: capture })) {
+          // 200 但没有可读流：断言只看请求头，这里随后抛出的"没流"是预期分支
+        }
+      })(),
+    ).rejects.toThrow()
+    return headers
+  }
+
+  it('选了席位时带上 X-Aegis-Operator', async () => {
+    setOperatorSeat('duty-01')
+    expect((await captureHeaders())['X-Aegis-Operator']).toBe('duty-01')
+  })
+
+  it('没选席位时不带这个头（由后端说"需要有效席位"）', async () => {
+    clearOperatorSeat()
+    expect((await captureHeaders())['X-Aegis-Operator']).toBeUndefined()
+  })
+
+  it('axios 那三条（能力面/确认/撤销）也带席位头，且换席位后立刻生效', async () => {
+    const seen: Array<string | null> = []
+    const instance = axios.create({
+      baseURL: '/',
+      adapter: async (config) => {
+        seen.push(config.headers.get('X-Aegis-Operator') as string | null)
+        return { data: {}, status: 200, statusText: 'ok', headers: {}, config }
+      },
+    })
+    installOperatorHeader(instance)
+
+    setOperatorSeat('duty-01')
+    await instance.get('/x')
+    setOperatorSeat('lead-01')
+    await instance.get('/x')
+
+    expect(seen).toEqual(['duty-01', 'lead-01'])
   })
 })

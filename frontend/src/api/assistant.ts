@@ -25,11 +25,14 @@
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios'
 
 import { describeValidationDetail } from '@/utils/validationDetail'
+import { installOperatorHeader, operatorHeaders } from '@/api/operatorSeat'
 import { installServiceToken, tokenHeaders } from '@/api/serviceToken'
 import { drainSseData, splitSseData } from '@/utils/sse'
 
 const http = axios.create({ baseURL: '/', timeout: 20_000 })
 installServiceToken(http)
+// 席位头与告警/处置空间同源：助手写动作、确认、撤销都靠它把账落到具体席位
+installOperatorHeader(http)
 
 /**
  * 对话/确认这两个请求体的字段在界面上的叫法，供 422 的字段名配中文。
@@ -507,7 +510,7 @@ export async function* streamChat(
   }
   const response = await doFetch(ASSISTANT_ENDPOINTS.chat, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...tokenHeaders() },
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...tokenHeaders(), ...operatorHeaders() },
     body: JSON.stringify(toChatBody(request)),
     signal: options.signal,
   }).catch((error: unknown) => {
