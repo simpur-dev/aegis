@@ -75,3 +75,6 @@ backend/.tmp-verify/
 
 # 归档区：只作溯源，不进主线构建（不进 wheel/镜像/门禁扫描）
 /archive/external_agents_source_20261109/*.zip
+
+# 外部智能体模块的运行时产物（反馈记忆 JSON）：由环境变量指定路径，不进代码仓
+backend/src/aegis/agents_ext/feedback_agent/memory/
