@@ -193,6 +193,28 @@ class TestQualityFiltering:
         assert any("非有限值" in note and "2" in note for note in evidence.notes), evidence.notes
 
 
+class TestStoreReadCap:
+    """库读视图有上限：触顶时更早的读数已被存储层丢掉，证据包必须说出去。"""
+
+    async def test_库读触顶显式置truncated(self) -> None:
+        stored = [_reading("rain_10min", 1.0, station=f"PG-{i:05d}", minutes_ago=1) for i in range(5_001)]
+        evidence = await _build([], stored=stored)
+
+        assert evidence.truncated is True
+        assert any("5000" in note and "上限" in note for note in evidence.notes), evidence.notes
+        # 保留的是窗口内最新的一批：最早入库的那条被存储层丢弃
+        rain = _factor(evidence, "rainfall_mm_h")
+        assert rain.samples == 5_000
+        assert "PG-00000" not in rain.station_ids
+
+    async def test_库读刚好上限不置truncated(self) -> None:
+        stored = [_reading("rain_10min", 1.0, station=f"PG-{i:05d}", minutes_ago=1) for i in range(5_000)]
+        evidence = await _build([], stored=stored)
+
+        assert evidence.truncated is False
+        assert _factor(evidence, "rainfall_mm_h").samples == 5_000
+
+
 class TestScopeAndDedup:
     async def test_board与库读数去重只算一次(self) -> None:
         one = _reading("rain_10min", 1.2)

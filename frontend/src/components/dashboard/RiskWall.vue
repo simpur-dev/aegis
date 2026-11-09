@@ -11,6 +11,8 @@
  * ② 没研判出风险的链路只能说"未标注区域"，不许从任务单元号上截一段冒充区划代码；
  * ③ 置信没量到写 `—`，不写 0%。
  */
+import { computed } from 'vue'
+
 import type { RiskLevel } from '@/api/types'
 import { RISK_COLORS, RISK_LABELS } from '@/api/types'
 
@@ -20,13 +22,29 @@ export interface RiskCell {
   level: RiskLevel
   confidence: number
   degraded: boolean
+  isMock: boolean
+  disclaimer: string
 }
 
-defineProps<{ cells: RiskCell[]; windowSize: number }>()
+const props = defineProps<{ cells: RiskCell[]; windowSize: number }>()
+
+/**
+ * 墙上有 mock 结论就得挂一句使用限制；文案优先用结论自带的 `disclaimer`
+ * （外部实现的"禁止用于实际预警决策"就写在那里），没有就给一句统一的。
+ */
+const mockNotice = computed<string>(() => {
+  const mocked = props.cells.filter((cell) => cell.isMock)
+  if (!mocked.length) return ''
+  return mocked.find((cell) => cell.disclaimer)?.disclaimer ?? '含模拟数据结论，仅供演练与契约联调，不得作为实际预警依据。'
+})
 </script>
 
 <template>
   <div class="risk-wall">
+    <div v-if="mockNotice" class="risk-wall__notice" data-testid="risk-mock-notice" role="note">
+      <span class="risk-wall__notice-tag">模拟数据</span>
+      <span>{{ mockNotice }}</span>
+    </div>
     <div
       v-for="cell in cells"
       :key="cell.region"
@@ -43,6 +61,7 @@ defineProps<{ cells: RiskCell[]; windowSize: number }>()
         <div class="cell__hazard">{{ cell.hazard }}</div>
         <div class="cell__facts">
           <span class="cell__conf">置信 {{ cell.confidence > 0 ? `${Math.round(cell.confidence * 100)}%` : '—' }}</span>
+          <span v-if="cell.isMock" class="cell__mock" :title="cell.disclaimer || '该结论来自模拟数据'">模拟数据</span>
           <span v-if="cell.degraded" class="cell__degraded">降级：平台规则兜底</span>
         </div>
       </div>
@@ -64,6 +83,24 @@ defineProps<{ cells: RiskCell[]; windowSize: number }>()
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: var(--aeg-space-s2);
+}
+/* 免责声明横跨整面墙：它约束的是墙上全部瓦片，不是某一格 */
+.risk-wall__notice {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: var(--aeg-space-s2);
+  align-items: baseline;
+  padding: var(--aeg-space-s1) var(--aeg-space-s3);
+  border: 1px dashed var(--aeg-color-status-warning);
+  border-radius: var(--aeg-radius-md);
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-xs);
+}
+.risk-wall__notice-tag {
+  flex: 0 0 auto;
+  font-weight: var(--aeg-weight-semibold);
+  color: var(--aeg-color-status-warning);
 }
 /* 空态要占满整面墙，不是挤进一个 190px 的格子（"短词折行"判据抓过的） */
 .risk-wall > .empty-hero {
@@ -115,5 +152,12 @@ defineProps<{ cells: RiskCell[]; windowSize: number }>()
 }
 .cell__degraded {
   color: var(--aeg-color-status-warning);
+}
+.cell__mock {
+  padding: 0 4px;
+  border: 1px solid var(--aeg-color-status-warning);
+  border-radius: 3px;
+  color: var(--aeg-color-status-warning);
+  font-weight: var(--aeg-weight-semibold);
 }
 </style>

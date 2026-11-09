@@ -47,6 +47,8 @@ UNMAPPED_REASONS: dict[str, str] = {
 
 _SIMULATED_SOURCES = frozenset({"simulator", "demo", "mock"})
 _MOCK_DISCLAIMER = "证据包含模拟/演示数据，仅供演练与契约联调，不得作为实际预警依据。"
+#: 库读视图一次最多取的条数；超过时存储层只回窗口内最新的一批，更早的读数是静默丢失的。
+_STORE_READ_LIMIT = 5_000
 
 
 class AssessEvidenceBuilder:
@@ -89,7 +91,7 @@ class AssessEvidenceBuilder:
         generated_at = now_iso(moment)
 
         profile = await self._store.get_site_profile(region) if self._store is not None else None
-        raw = self._collect(region, readings or (), since, moment)
+        raw, store_capped = self._collect(region, readings or (), since, moment)
         notes: list[str] = []
 
         dropped_quality = sum(1 for reading in raw if reading.quality_flag != "ok")
@@ -149,7 +151,9 @@ class AssessEvidenceBuilder:
             notes.append("窗口内没有可用的 ok 遥测，也未配置站点画像：证据为空")
 
         provenance = self._provenance(finite, profile, intake)
-        truncated = False
+        truncated = store_capped
+        if store_capped:
+            notes.append(f"窗口内库存读数超过 {_STORE_READ_LIMIT} 条上限，库读只取最新的 {_STORE_READ_LIMIT} 条")
         if len(observations) > self._max_observations:
             observations = observations[: self._max_observations]
             truncated = True
@@ -174,18 +178,28 @@ class AssessEvidenceBuilder:
 
     # ---------- 采集与派生 ----------
 
-    def _collect(self, region: str, readings: Sequence[TelemetryReading], since: datetime, until: datetime) -> list[TelemetryReading]:
-        """板面读数优先于库读视图；按 (station_id, metric, observed_at) 去重后再验窗口。"""
+    def _collect(
+        self, region: str, readings: Sequence[TelemetryReading], since: datetime, until: datetime
+    ) -> tuple[list[TelemetryReading], bool]:
+        """板面读数优先于库读视图；按 (station_id, metric, observed_at) 去重后再验窗口。
+
+        返回 (窗口内读数, 库读是否触顶)。库读多取一条判断触顶：窗口内超过上限时存储层
+        只回最新的一批，更早的读数已被丢掉——这件事必须由 `truncated` 说出去，不能静默。
+        """
         merged: dict[tuple[str, str, str], TelemetryReading] = {}
         for reading in readings:
             merged.setdefault((reading.station_id, reading.metric, reading.observed_at), reading)
+        store_capped = False
         if self._store is not None:
             stored = self._store.telemetry.query(
                 region_code=region,
                 since=now_iso(since),
                 until=now_iso(until),
-                limit=5_000,
+                limit=_STORE_READ_LIMIT + 1,
             )
+            store_capped = len(stored) > _STORE_READ_LIMIT
+            if store_capped:
+                stored = stored[-_STORE_READ_LIMIT:]
             for reading in stored:
                 merged.setdefault((reading.station_id, reading.metric, reading.observed_at), reading)
         in_window: list[TelemetryReading] = []
@@ -196,7 +210,7 @@ class AssessEvidenceBuilder:
                 continue
             if since <= observed <= until:
                 in_window.append(reading)
-        return in_window
+        return in_window, store_capped
 
     @staticmethod
     def _is_finite(value: float) -> bool:

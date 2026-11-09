@@ -119,6 +119,8 @@ const regionGrid = computed(() => {
       level: chain.risk?.risk_level ?? 5,
       confidence: chain.risk?.confidence ?? 0,
       degraded: chain.degradations.length > 0,
+      isMock: chain.risk?.data_provenance?.is_mock ?? false,
+      disclaimer: chain.risk?.data_provenance?.disclaimer ?? '',
     }))
     .sort((a, b) => a.level - b.level || b.confidence - a.confidence || a.region.localeCompare(b.region))
 })

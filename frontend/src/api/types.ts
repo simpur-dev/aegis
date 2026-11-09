@@ -113,6 +113,12 @@ export interface ChainSummary {
     risk_level: RiskLevel
     confidence: number
     rationale: string
+    /** 溯源一等字段（`RiskVerdict.data_provenance`）：历史行可能没有，缺席不等于 observed。 */
+    data_provenance?: {
+      data_kind: string
+      is_mock: boolean
+      disclaimer: string
+    }
   } | null
   task_units: string[]
   warning_id?: string | null

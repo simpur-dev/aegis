@@ -370,3 +370,18 @@ def test_graph_r_zero_maps_to_none_not_unknown() -> None:
     out = run_risk_agent(_request("debris_flow"), _evidence("debris_flow", observations=zeros))
     assert out.risk_level.value == 5
     assert out.assessment["R"] == 0
+
+
+def test_nodes_log_instead_of_print(capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture) -> None:
+    """图跑一轮：节点日志走 logging，stdout 不再冒出调试行。"""
+    with caplog.at_level("INFO", logger="aegis.agents_ext.risk_agent.nodes"):
+        _run_graph("debris_flow")
+
+    captured = capsys.readouterr()
+    assert "[RiskAssess]" not in captured.out
+    assert "[RiskValidate]" not in captured.out
+    assert "[RiskOutput]" not in captured.out
+    names = {record.name for record in caplog.records}
+    assert "aegis.agents_ext.risk_agent.nodes.risk_assess_node" in names
+    assert "aegis.agents_ext.risk_agent.nodes.risk_validate_node" in names
+    assert "aegis.agents_ext.risk_agent.nodes.risk_output_node" in names

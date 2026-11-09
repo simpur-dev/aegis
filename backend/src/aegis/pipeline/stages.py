@@ -522,11 +522,12 @@ class HazardStages:
             local = self._risk_engine.assess(hits, region_code=region, provenance=evidence.provenance) or local
 
         window = self._assess_evidence.window if self._assess_evidence is not None else f"{self._settings.assess_window_minutes}m"
+        candidates = self._candidate_hazards(hits)
         request = AssessRequest(
             region_code=region,
             window=window,
-            hazard_type=self._primary_hazard(hits),
-            candidate_hazards=self._candidate_hazards(hits),
+            hazard_type=self._request_hazard(local, hits, candidates),
+            candidate_hazards=candidates,
             hits=hits,
             # 规则轨的等级随请求交给智能体，只用作 §3.2 双盲的**预触发信号**（并行发两条腿要在看到
             # 模型结论之前就决定）；判定口径不变，结论的出处仍然只有模型那一份。规则轨没结论时
@@ -580,6 +581,16 @@ class HazardStages:
             disagreement=response.disagreement,
             blind_mode=assessed.double_blind_mode,
         )
+
+    @classmethod
+    def _request_hazard(cls, local: RiskVerdict | None, hits: list[TriggerHit], candidates: list[HazardType]) -> HazardType | None:
+        """派单灾种必须与本地兜底结论同源：外部拒单/超时时，降级文本里的灾种就是台账里的灾种。
+
+        本地结论灾种不在 hits 候选内（上报解析腿可能给出没有对应命中的灾种）时，退回按 score 选主灾种，
+        保证 `AssessRequest.hazard_type ∈ candidate_hazards`。"""
+        if local is not None and (not candidates or local.hazard_type in candidates):
+            return local.hazard_type
+        return cls._primary_hazard(hits)
 
     @staticmethod
     def _candidate_hazards(hits: list[TriggerHit]) -> list[HazardType]:

@@ -17,6 +17,7 @@ RiskAssess 节点（面向西藏五类山地地质灾害，因子化口径）
 """
 
 import json
+import logging
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -35,6 +36,8 @@ from aegis.agents_ext.risk_agent.llm_setup import get_risk_llm
 from aegis.agents_ext.risk_agent.state import RiskAgentState
 from aegis.agents_ext.risk_agent.tools.hazard_risk_registry import get_hazard_risk_profile
 from aegis.agents_ext.risk_agent.tools.risk_evidence_tool import risk_evidence_tool
+
+log = logging.getLogger(__name__)
 
 # ============================================================
 # Pydantic：LLM 仅做解释（★ 不含 risk_level / 任何数值决策字段 ★）
@@ -112,7 +115,7 @@ def risk_assess_node(state: RiskAgentState) -> dict[str, Any]:
     try:
         hazard_key = require_hazard(hazard_raw)
     except UnsupportedHazardError as e:
-        print(f"[RiskAssess] 灾种无效: {e}")
+        log.warning("[RiskAssess] 灾种无效: %s", e)
         return _insufficient_return(
             "",
             hazard_raw,
@@ -126,7 +129,7 @@ def risk_assess_node(state: RiskAgentState) -> dict[str, Any]:
 
     # ---------- 情况A：证据包没有观测 ----------
     if not observations:
-        print("[RiskAssess] 数据不足，跳过因子引擎，标记 insufficient_data")
+        log.info("[RiskAssess] 数据不足，跳过因子引擎，标记 insufficient_data")
         return _insufficient_return(
             hazard_key,
             hazard_raw,
@@ -138,10 +141,15 @@ def risk_assess_node(state: RiskAgentState) -> dict[str, Any]:
 
     # ---------- 情况B：按灾种调用因子评估工具（P/T/R 框架）----------
     assessment = profile["assessment_tool"](observations, region)
-    print(
-        f"[RiskAssess] 灾种={hazard_key} 引擎={assessment['engine_version']} "
-        f"状态={assessment['assessment_status']} P={assessment['P']} "
-        f"T={assessment['T']} R={assessment['R']} 覆盖率={assessment['completeness']}"
+    log.info(
+        "[RiskAssess] 灾种=%s 引擎=%s 状态=%s P=%s T=%s R=%s 覆盖率=%s",
+        hazard_key,
+        assessment["engine_version"],
+        assessment["assessment_status"],
+        assessment["P"],
+        assessment["T"],
+        assessment["R"],
+        assessment["completeness"],
     )
 
     # ---------- 情况C：引擎判定数据不足（必需因子缺失/覆盖率低于门控）----------
@@ -190,7 +198,7 @@ def risk_assess_node(state: RiskAgentState) -> dict[str, Any]:
         risk_factors = r.risk_factors or profile["risk_factors"]
         uncertainties = r.uncertainties
     except Exception as e:
-        print(f"[RiskAssess] LLM 解释失败，模板兜底: {e}")
+        log.warning("[RiskAssess] LLM 解释失败，模板兜底: %s", e)
         reasoning = (
             f"因子引擎输出：P={assessment['P']}，T={assessment['T']}，"
             f"R={assessment['R']}（原型候选公式）；保护规则命中 "
@@ -216,7 +224,7 @@ def risk_assess_node(state: RiskAgentState) -> dict[str, Any]:
         f"R 公式为项目原型自拟候选组合公式（{assessment['formula']['expression']}），未经历史数据验证，不构成真实预警能力"
     )
 
-    print(f"[RiskAssess] 临时等级={risk_result['risk_level']}（MOCK 阈值）")
+    log.info("[RiskAssess] 临时等级=%s（MOCK 阈值）", risk_result["risk_level"])
 
     return {
         "hazard_type": hazard_key,

@@ -109,6 +109,27 @@ async def test_ext_研判段产出带溯源的一等结论(monkeypatch: pytest.M
         await container.shutdown()
 
 
+async def test_外部拒单的降级文本与本地灾种一致(monkeypatch: pytest.MonkeyPatch) -> None:
+    """540221：雨强与冰湖规则同时命中、score 同为 1.0，本地定级取最严重的冰湖溃决。
+
+    外部实现拒单时会用请求灾种组织"数据不足以支撑 X 研判"——请求若按灾种声明顺序
+    改发泥石流，台账里就会出现"结论冰湖溃决、降级文本泥石流"两个灾种同屏。
+    """
+    _block_ext_llm(monkeypatch)
+    container = await _build_container()
+    try:
+        await _load_demo_profiles(container)
+        results = await container.chain.process_many(_surge("540221"))
+        assert len(results) == 1
+        result = results[0]
+        assert result.ok, result.as_dict()
+        assert result.verdict is not None
+        assert result.verdict.hazard_type.value == "lake_outburst"
+        assert all("泥石流" not in note for note in result.degradations), result.degradations
+    finally:
+        await container.shutdown()
+
+
 async def test_证据构建失败时研判降级且不产无风险结论(monkeypatch: pytest.MonkeyPatch) -> None:
     _block_ext_llm(monkeypatch)
     container = await _build_container()

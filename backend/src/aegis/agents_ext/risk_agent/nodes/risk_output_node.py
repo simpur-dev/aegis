@@ -11,6 +11,7 @@ RiskOutput 节点（面向西藏五类山地地质灾害，因子化口径）
     >>> 提供给 Manager 全局 State：读 status 判断流程是否继续
 """
 
+import logging
 from typing import Any
 
 from aegis.agents_ext.hazard_registry import normalize_hazard_type
@@ -18,6 +19,8 @@ from aegis.agents_ext.risk_agent.confidence import assess_confidence
 from aegis.agents_ext.risk_agent.state import RiskAgentState
 from aegis.agents_ext.risk_agent.tools.factor_engine import FACTOR_ENGINE_VERSION, R_FORMULA_NOTE
 from aegis.domain.provenance import DataProvenance
+
+log = logging.getLogger(__name__)
 
 
 def risk_output_node(state: RiskAgentState) -> dict[str, Any]:
@@ -125,7 +128,13 @@ def risk_output_node(state: RiskAgentState) -> dict[str, Any]:
         },
     }
 
-    print(f"[RiskOutput] status={status} hazard_type={hazard_type} 风险等级={final_output['risk_level']} R={assessment.get('R')}")
+    log.info(
+        "[RiskOutput] status=%s hazard_type=%s 风险等级=%s R=%s",
+        status,
+        hazard_type,
+        final_output["risk_level"],
+        assessment.get("R"),
+    )
 
     return {
         "risk_result": final_output,  # >>> 覆盖为最终交付物，给 Warning / Simulation / Manager

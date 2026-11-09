@@ -439,6 +439,78 @@ describe('风险区域网格不许拼出假的区划代码', () => {
 })
 
 /**
+ * 外部因子实现的结论是 MOCK 玩具规则；风险瓦片若只写等级与置信，
+ * 读的人会把它当成实测结论。`data_provenance` 已经随 `/api/v1/events` 的 risk 到达前端，
+ * 这里钉住：mock 结论必须有"模拟数据"徽标和一句可见的使用限制，非 mock 不摆徽标。
+ */
+describe('风险瓦片必须标明模拟数据与使用限制', () => {
+  const mockRisk = {
+    hazard_type: 'debris_flow',
+    region_code: '540121',
+    risk_level: 2,
+    confidence: 0.42,
+    rationale: '测试',
+    human_review_suggested: true,
+    data_provenance: {
+      data_kind: 'mock',
+      sources: ['platform.telemetry:simulator'],
+      method: 'factor_engine_mock',
+      method_version: 'FACTOR-ENGINE-v0.1',
+      is_mock: true,
+      disclaimer: '因子权重为占位值，禁止用于实际预警决策',
+    },
+  }
+
+  it('mock 结论带徽标，并把免责声明挂在墙上', async () => {
+    responses()
+    mocked.events.mockResolvedValue({ items: [{ ...chainOf('trc_mock'), risk: mockRisk }] } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+
+    const cell = wrapper.find('[data-testid="risk-cell-540121"]')
+    expect(cell.text()).toContain('模拟数据')
+    expect(cell.find('.cell__mock').attributes('title')).toContain('禁止用于实际预警决策')
+    const notice = wrapper.find('[data-testid="risk-mock-notice"]')
+    expect(notice.exists(), '有 mock 结论就必须在墙上说明它的用途限制').toBe(true)
+    expect(notice.text()).toContain('禁止用于实际预警决策')
+    wrapper.unmount()
+  })
+
+  it('实测结论不摆 mock 徽标，也不挂免责声明', async () => {
+    responses()
+    const observed = {
+      ...mockRisk,
+      data_provenance: {
+        ...mockRisk.data_provenance,
+        data_kind: 'observed',
+        method: 'telemetry_rule',
+        is_mock: false,
+        disclaimer: '',
+      },
+    }
+    mocked.events.mockResolvedValue({ items: [{ ...chainOf('trc_obs'), risk: observed }] } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="risk-cell-540121"]').text()).not.toContain('模拟数据')
+    expect(wrapper.find('[data-testid="risk-mock-notice"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('没标出处（历史行）不冒充实测结论', async () => {
+    responses()
+    const legacy = { ...mockRisk, data_provenance: undefined }
+    mocked.events.mockResolvedValue({ items: [{ ...chainOf('trc_legacy'), risk: legacy }] } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="risk-cell-540121"]').text()).not.toContain('模拟数据')
+    expect(wrapper.find('[data-testid="risk-mock-notice"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+/**
  * 值班员上班第一眼看的是"有没有单在等我"。
  *
  * 真机量过：这台进程 2 张工单等着签，落地页上"待签/等人签/核签/工单"

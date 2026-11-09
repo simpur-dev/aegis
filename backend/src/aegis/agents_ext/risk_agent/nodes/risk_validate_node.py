@@ -11,6 +11,7 @@ RiskValidate 节点
 """
 
 import json
+import logging
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -22,6 +23,8 @@ from aegis.agents_ext.prompts.risk_prompt import (
 )
 from aegis.agents_ext.risk_agent.llm_setup import get_risk_llm
 from aegis.agents_ext.risk_agent.state import RiskAgentState
+
+log = logging.getLogger(__name__)
 
 
 class RiskValidationOutput(BaseModel):
@@ -41,7 +44,7 @@ def risk_validate_node(state: RiskAgentState) -> dict[str, Any]:
 
     # 数据不足分支（assess 已标记）：不验证，放行 output
     if risk_result.get("needs_more_data") and not evidence:
-        print("[RiskValidate] 数据不足，跳过验证")
+        log.info("[RiskValidate] 数据不足，跳过验证")
         return {
             "validation_result": {
                 "is_valid": False,
@@ -75,7 +78,7 @@ def risk_validate_node(state: RiskAgentState) -> dict[str, Any]:
         }
     except Exception as e:
         # 兜底：验证 LLM 不可用时用规则粗判，避免卡死
-        print(f"[RiskValidate] LLM 验证失败，规则兜底: {e}")
+        log.warning("[RiskValidate] LLM 验证失败，规则兜底: %s", e)
         ok = len(evidence) > 0
         validation = {
             "is_valid": ok,
@@ -85,7 +88,7 @@ def risk_validate_node(state: RiskAgentState) -> dict[str, Any]:
             "recommendation": "proceed" if ok else "retry",
         }
 
-    print(f"[RiskValidate] 建议={validation['recommendation']} 问题={validation['issues']}")
+    log.info("[RiskValidate] 建议=%s 问题=%s", validation["recommendation"], validation["issues"])
 
     # ---------- ★ 缺陷修复：retry 判定时自增 retry_count ----------
     # 此前 assess / validate / output 三个节点都不写 retry_count，而 graph.py 的

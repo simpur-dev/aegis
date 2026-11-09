@@ -16,6 +16,7 @@ from aegis.config import Settings
 from aegis.domain.chain import ChainResult
 from aegis.domain.enums import AgentType, HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, TriggerHit, make_request, make_response, new_event_id, now_iso
+from aegis.domain.verdict import RiskVerdict
 from aegis.pipeline.assess_input import AssessEvidenceBuilder
 from aegis.pipeline.board import ChainBoard
 from aegis.pipeline.stages import HazardStages
@@ -177,8 +178,8 @@ class TestRequestShape:
         assert payload["hazard_type"] == HazardType.DEBRIS_FLOW.value
         assert payload["candidate_hazards"] == [HazardType.LANDSLIDE.value, HazardType.DEBRIS_FLOW.value]
 
-    async def test_平票按灾种声明顺序(self, settings: Settings) -> None:
-        gateway = _Gateway(dict(ASSESS_PAYLOAD, hazard_type=HazardType.LANDSLIDE.value))
+    async def test_平票时派单灾种跟随本地定级(self, settings: Settings) -> None:
+        gateway = _Gateway(dict(ASSESS_PAYLOAD, hazard_type=HazardType.DEBRIS_FLOW.value))
         stages = _stages(gateway, settings, builder=_builder(PlatformStore()))
         hits = [
             _hit(HazardType.DEBRIS_FLOW, 0.8, "R-2"),
@@ -187,7 +188,9 @@ class TestRequestShape:
 
         await stages.run_stage("assess", _board(hits))
 
-        assert gateway.calls[0]["hazard_type"] == HazardType.LANDSLIDE.value
+        # 两条命中同分同级时本地引擎取命中顺序里的第一条；派单必须跟它一致，
+        # 不能另按 `HazardType` 声明顺序再选一次——那样降级文本与台账会各说一个灾种。
+        assert gateway.calls[0]["hazard_type"] == HazardType.DEBRIS_FLOW.value
 
     async def test_未注入builder时窗口取配置(self, settings: Settings) -> None:
         gateway = _Gateway()
@@ -198,6 +201,62 @@ class TestRequestShape:
 
         assert gateway.calls[0]["window"] == "45m"
         assert gateway.calls[0]["evidence"] is None, "没有 builder 就不该凭空造证据"
+
+
+class TestRequestHazard:
+    """派单灾种与本地兜底结论同源：降级文本里说的灾种必须就是台账里的灾种。"""
+
+    async def test_三条命中同分时取本地最严重等级而非声明顺序(self, settings: Settings) -> None:
+        """540221 现场口径：R-LAKE-1 / R-LAKE-2 / R-DEBRIS-RAIN-1 的 score 都是 1.0。
+
+        本地引擎按"最严重等级"定级（R-LAKE-2 一级 → 冰湖溃决），
+        而按 `HazardType` 声明顺序会先碰到泥石流——旧实现把泥石流发给了外部实现。
+        """
+        gateway = _Gateway(dict(ASSESS_PAYLOAD, hazard_type=HazardType.LAKE_OUTBURST.value))
+        stages = _stages(gateway, settings, builder=_builder(PlatformStore()))
+        hits = [
+            _hit(HazardType.LAKE_OUTBURST, 1.0, "R-LAKE-1"),
+            _hit(HazardType.LAKE_OUTBURST, 1.0, "R-LAKE-2"),
+            _hit(HazardType.DEBRIS_FLOW, 1.0, "R-DEBRIS-RAIN-1"),
+        ]
+
+        await stages.run_stage("assess", _board(hits))
+
+        payload = gateway.calls[0]
+        assert payload["hazard_type"] == HazardType.LAKE_OUTBURST.value
+        assert payload["candidate_hazards"] == [HazardType.DEBRIS_FLOW.value, HazardType.LAKE_OUTBURST.value]
+
+    async def test_上报结论灾种不在命中候选内时服从契约(self, settings: Settings) -> None:
+        """上报解析腿可能给出没有对应命中的灾种；请求不能因此违反 hazard∈candidates。"""
+        gateway = _Gateway(dict(ASSESS_PAYLOAD, hazard_type=HazardType.DEBRIS_FLOW.value))
+        stages = _stages(gateway, settings, builder=_builder(PlatformStore()))
+        hits = [_hit(HazardType.DEBRIS_FLOW, 0.9, "R-DEBRIS-RAIN-1")]
+        preset = RiskVerdict(
+            hazard_type=HazardType.AVALANCHE,
+            region_code=REGION,
+            risk_level=RiskLevel.ORANGE,
+            confidence=0.5,
+            rationale="上报解析定级",
+            hits=hits,
+        )
+        result = ChainResult(trace_id=TRACE, event_id=new_event_id())
+        result.hits = hits
+        board = ChainBoard(result=result, trace=TRACE, region=REGION, readings=[_reading()], intake="report", preset_verdict=preset)
+
+        await stages.run_stage("assess", board)
+
+        assert gateway.calls[0]["hazard_type"] == HazardType.DEBRIS_FLOW.value
+
+    def test_无命中候选时请求灾种取本地结论(self) -> None:
+        preset = RiskVerdict(
+            hazard_type=HazardType.LAKE_OUTBURST,
+            region_code=REGION,
+            risk_level=RiskLevel.ORANGE,
+            confidence=0.5,
+            rationale="上报解析定级",
+        )
+        assert HazardStages._request_hazard(preset, [], []) == HazardType.LAKE_OUTBURST
+        assert HazardStages._request_hazard(None, [], []) is None
 
 
 class TestAdoption:
