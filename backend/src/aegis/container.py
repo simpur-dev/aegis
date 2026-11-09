@@ -287,7 +287,7 @@ class PlatformContainer:
         try:
             from aegis.agents_ext.runtime import build_ext_agents
 
-            return build_ext_agents(self.transport)
+            return build_ext_agents(self.transport, pool_workers=self.settings.ext_assess_pool_workers)
         except Exception as exc:
             log.warning(
                 "外部智能体实现不可用，退回自建内环",

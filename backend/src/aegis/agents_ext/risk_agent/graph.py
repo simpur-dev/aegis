@@ -14,7 +14,11 @@ Risk Agent 的 LangGraph 图构建
 【对外契约】
   build_risk_agent_graph() / create_risk_agent()
     # 提供给全局 workflow / Manager 调用
+  create_risk_agent() 是**进程级共享**的编译图（lru_cache 单例）：
+  图构建与编译只在首次调用时发生一次；`invoke` 每次自行创建运行态，可并发复用。
 """
+
+from functools import lru_cache
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -90,6 +94,13 @@ def build_risk_agent_graph() -> CompiledStateGraph:
     return graph.compile()
 
 
-def create_risk_agent():
-    """便捷函数：创建并返回编译好的 Risk Agent 图。>>> 给 Manager 用"""
+@lru_cache(maxsize=1)
+def create_risk_agent() -> CompiledStateGraph:
+    """返回共享的已编译图：构建 + 编译只做一次。
+
+    基线实测每次重建的编译开销 p50 11.5ms，占直调 `run_risk_agent` 的约 74%——
+    真模型 11–20s 时不可见，但规则/mock 路径上它是主要成本。节点在执行期才取 LLM
+    工厂，缓存图不会锁死模型实例；LangGraph 的 `invoke` 每次新建运行态，无 checkpointer
+    时同一编译图可被多线程并发调用（并发复用见 `test_ext_risk_agent.py`）。
+    """
     return build_risk_agent_graph()

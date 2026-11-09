@@ -11,8 +11,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
+import threading
+import time
 from typing import Any
 
 import pytest
@@ -61,12 +64,25 @@ def _no_llm(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(importlib.import_module(module_name), "get_risk_llm", lambda: _BrokenLlm())
 
 
-def _agent() -> RiskAssessAgent:
+def _agent(*, pool_workers: int = 1) -> RiskAssessAgent:
     return RiskAssessAgent(
         transport=_NullTransport(),  # type: ignore[arg-type]
         agent_type=AgentType.ASSESS,
         agent_id="assess.agents_ext",
         capabilities=["risk_assess"],
+        pool_workers=pool_workers,
+    )
+
+
+def _ok_response(request: AssessRequest) -> AssessResponse:
+    return AssessResponse(
+        hazard_type=HazardType.DEBRIS_FLOW,
+        region_code=request.region_code,
+        risk_level=RiskLevel.YELLOW,
+        confidence=0.4,
+        confidence_basis="coverage=0.60;validation=pass;method=factor_engine_mock;cap=0.60",
+        source="agents_ext_mock",
+        assessed_by="assess.agents_ext",
     )
 
 
@@ -398,3 +414,84 @@ async def test_pull_leg_wrong_region_is_failure(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(AssessRejected) as exc_info:
         await _agent().handle(_request(payload))
     assert exc_info.value.error_code == AssessErrorCode.INSUFFICIENT
+
+
+# ============================================================
+# 专用线程池（#5：不与事件循环默认执行器抢线程）
+# ============================================================
+
+
+def test_pool_workers_must_be_positive() -> None:
+    """容量 0 在构造期就拒绝，而不是等第一条请求才发现起不来池。"""
+    with pytest.raises(ValueError, match="≥1"):
+        _agent(pool_workers=0)
+
+
+def test_build_ext_agents_carries_pool_workers() -> None:
+    """装配层传入的容量必须落到实例上（否则又是个拧不动的空旋钮）。"""
+    from aegis.agents_ext.runtime import build_ext_agents
+
+    agents = build_ext_agents(_NullTransport(), pool_workers=3)  # type: ignore[arg-type]
+    assert agents[0].pool_workers == 3  # type: ignore[union-attr]
+
+
+async def test_dedicated_pool_bounds_concurrent_graph_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """池容量即并发上限：6 个请求、池 2 → 峰值 2，且线程来自 ext 专用池。"""
+    active = 0
+    peak = 0
+    names: set[str] = set()
+    lock = threading.Lock()
+
+    def slow_runner(request: AssessRequest, _evidence: AssessEvidence, **_kwargs: Any) -> AssessResponse:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            names.add(threading.current_thread().name)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return _ok_response(request)
+
+    monkeypatch.setattr(agent_module, "run_risk_agent", slow_runner)
+    agent = _agent(pool_workers=2)
+    try:
+        replies = await asyncio.gather(*(agent.handle(_request(_payload())) for _ in range(6)))
+    finally:
+        await agent.stop()
+
+    assert len(replies) == 6
+    assert peak == 2, f"专用池容量 2 时并发峰值应为 2，实际 {peak}"
+    assert names and all(name.startswith("aegis-ext-assess") for name in names), f"请求跑到了别的执行器上: {names}"
+
+
+async def test_pool_propagates_request_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """专用池像 asyncio.to_thread 一样带上下文进线程：日志 trace_id 不丢。"""
+    from aegis.logging import trace_id_var
+
+    seen: list[str | None] = []
+
+    def runner(request: AssessRequest, _evidence: AssessEvidence, **_kwargs: Any) -> AssessResponse:
+        seen.append(trace_id_var.get())
+        return _ok_response(request)
+
+    monkeypatch.setattr(agent_module, "run_risk_agent", runner)
+    token = trace_id_var.set("trc_pool_propagation")
+    agent = _agent(pool_workers=1)
+    try:
+        await agent.handle(_request(_payload()))
+    finally:
+        trace_id_var.reset(token)
+        await agent.stop()
+
+    assert seen == ["trc_pool_propagation"]
+
+
+async def test_stop_shuts_down_the_dedicated_pool() -> None:
+    """stop() 之后池不再接任务：停机后没有新研判能排进来。"""
+    agent = _agent(pool_workers=1)
+    await agent.handle(_request(_payload()))
+    await agent.stop()
+
+    with pytest.raises(RuntimeError, match="shutdown"):
+        agent._pool.submit(int)  # type: ignore[attr-defined]

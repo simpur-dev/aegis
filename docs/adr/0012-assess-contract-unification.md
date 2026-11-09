@@ -89,7 +89,9 @@ builtin（`agents/assess.py`）、mock（`agents/mock.py`）、ext（`agents_ext
 
 - 校验 `action == assess.hazard`、`AssessRequest.model_validate`；
 - 取请求内证据或拉取证据；
-- 调 `run_risk_agent(request, evidence) -> AssessResponse`（同步图放 `asyncio.to_thread`）；
+- 调 `run_risk_agent(request, evidence) -> AssessResponse`（同步图在研判专用
+  `ThreadPoolExecutor` 里跑，容量 `AEGIS_EXT_ASSESS_POOL_WORKERS`；编译图进程级复用，
+  不再每次研判重建）；
 - 返回 `Reply(payload=response.model_dump(mode="json"))`。
 
 `runtime.build_ext_agents` 只注册这一个本体（`agent_id="assess.agents_ext"`）。
@@ -151,8 +153,8 @@ API 与前端 `ReportRiskDto` 加可选字段。读者从台账就能回答
   `is_mock=True`、人工核签恒真、置信度封顶 0.6；
 - **只有研判段接线**：plan / execute / feedback / perceive 不注册，网关记 `no_agent`；
 - **外部的 LLM 仍绕开平台网关**：不进模型台账、不经提示注入围栏（ADR-0011 §5 仍成立）；
-- **线程里的 LangGraph 图取消不掉**：deadline 只取消协程，超时后线程继续跑
-  （ADR-0011 §3 仍成立）；
+- **线程里的 LangGraph 图取消不掉**：deadline 只取消协程，超时后线程继续跑；
+  专用池在 `stop()` 时也只取消排队任务，运行中的研判线程不中断（ADR-0011 §3 仍成立）；
 - **manager / data_agent 仍在 legacy 口径**：`run_risk_agent_legacy` 只服务未接线 manager，
   平台路径禁止引用；
 - **冰湖/雪崩可能长期"数据不足"**：事件标志类因子当前没有遥测来源，

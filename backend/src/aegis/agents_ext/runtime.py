@@ -23,8 +23,12 @@ class ExternalAgentsUnavailableError(RuntimeError):
     """外部实现未装配（依赖没装 / 导入失败）：平台据此退回自建内环，而不是整条链路不可用。"""
 
 
-def build_ext_agents(transport: BusTransport, llm: object | None = None) -> list[AgentKit]:
-    """构造外部实现的内环（不启动）；调用方负责 `start()`。"""
+def build_ext_agents(transport: BusTransport, llm: object | None = None, *, pool_workers: int = 8) -> list[AgentKit]:
+    """构造外部实现的内环（不启动）；调用方负责 `start()`。
+
+    `pool_workers` 是研判专用线程池容量（平台侧部署键 `AEGIS_EXT_ASSESS_POOL_WORKERS`），
+    由装配层传入；不传时用模块默认值，便于出进程/独立使用。
+    """
     try:
         from aegis.agents_ext.hazard_registry import SUPPORTED_HAZARDS
         from aegis.agents_ext.risk_agent.agent import RiskAssessAgent
@@ -39,6 +43,7 @@ def build_ext_agents(transport: BusTransport, llm: object | None = None) -> list
             hazard_types=list(SUPPORTED_HAZARDS),
             version="agents-ext-1.0.0",
             llm=llm,
+            pool_workers=pool_workers,
         )
     ]
 

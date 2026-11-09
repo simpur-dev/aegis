@@ -227,6 +227,11 @@ class Settings(BaseSettings):
     # `ext` 需要装了可选 extra `agents_ext`；没装则装配点如实退回 builtin 并记 warning。
     agent_impl: Literal["builtin", "ext"] = "builtin"
 
+    # ext 研判的专用线程池容量（只对 `agent_impl=ext` 生效）。研判图是同步的，一次真模型调用
+    # 会占线程 11–20s；走默认 asyncio 线程池会和检索/分析旁路的 to_thread 抢同一批线程。
+    # 专用池把这条腿隔离出来，容量按部署并发调。下限 1，避免"配了 0 起不来池"的静默故障。
+    ext_assess_pool_workers: int = Field(default=8, ge=1)
+
     # 案例知识层：默认纯内存提供者（零外部依赖，16 条内置预案模板，性质见 knowledge/cases.py）。
     # 给了 graphiti URI 才走图谱主路径，并在图谱不可用时自动回落到内存（降级链由 provider 保证）。
     knowledge_graphiti_uri: str = ""

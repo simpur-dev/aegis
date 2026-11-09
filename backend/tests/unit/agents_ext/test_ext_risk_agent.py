@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import importlib
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -385,3 +386,43 @@ def test_nodes_log_instead_of_print(capsys: pytest.CaptureFixture[str], caplog: 
     assert "aegis.agents_ext.risk_agent.nodes.risk_assess_node" in names
     assert "aegis.agents_ext.risk_agent.nodes.risk_validate_node" in names
     assert "aegis.agents_ext.risk_agent.nodes.risk_output_node" in names
+
+
+# ============================================================
+# 第三层：编译图复用（#4：每次研判重建图的成本）
+# ============================================================
+
+
+def test_compiled_graph_is_built_once_and_reused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """两次取图 + 一次完整研判共用同一份编译产物：build 只应发生一次。"""
+    from aegis.agents_ext.risk_agent import graph as graph_module
+
+    graph_module.create_risk_agent.cache_clear()
+    builds: list[int] = []
+    original = graph_module.build_risk_agent_graph
+
+    def counting_build() -> Any:
+        builds.append(1)
+        return original()
+
+    monkeypatch.setattr(graph_module, "build_risk_agent_graph", counting_build)
+    try:
+        first = graph_module.create_risk_agent()
+        second = graph_module.create_risk_agent()
+        out = _run_graph("debris_flow")
+    finally:
+        graph_module.create_risk_agent.cache_clear()
+
+    assert first is second, "连续取图必须返回同一个编译实例"
+    assert len(builds) == 1, "第一次之后的调用（含 run_risk_agent）不得再重建图"
+    assert out["hazard_type"] == "debris_flow"
+
+
+def test_shared_graph_handles_concurrent_runs_without_cross_talk() -> None:
+    """同一编译图被多线程并发调用：每个结果只回显自己的灾种，不串味。"""
+    jobs = [hazard for hazard in ALL_HAZARDS for _ in range(2)]
+    with ThreadPoolExecutor(max_workers=5, thread_name_prefix="graph-concurrency") as pool:
+        outputs = list(pool.map(_run_graph, jobs))
+
+    assert [out["hazard_type"] for out in outputs] == jobs
+    assert all(out["data_provenance"]["is_mock"] is True for out in outputs)

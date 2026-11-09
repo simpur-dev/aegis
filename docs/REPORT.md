@@ -3761,7 +3761,35 @@ CI 覆盖率 job 已扩到 8 个模块、321 条相关用例，并纳入 `test_w
 - **共享记忆未打通**：外部反馈记忆写自己的 JSON 文件，不进平台共享命名空间。
 - **线程里的图取消不掉**：`AgentKit` 的 deadline 只取消协程，超时后那张 LangGraph 图仍在跑
   （内部还有自己的重试环），会继续烧 CPU 与模型调用。掐断得走进程隔离，本期未做。
-- **131 处 `print()`** 遍布外部模块，未改（改它属于"她的代码大改"，不在本期范围）。
+- **113 处 `print()`** 仍分布在外部模块（研判三节点 live 路径的 9 处已改为 `logging`；
+  其余多在 legacy/demo/CLI 路径），未整体清理（属于"她的代码大改"，不在本期范围）。
+
+### 研判执行器与图复用（2026-11-09 性能批）
+
+| 项 | 量测（本机，LLM 用必抛桩隔离网络；同一进程同一批样本） |
+| --- | --- |
+| 每次重建图 | `build_risk_agent_graph()` p50 **2.87ms**（21 次） |
+| 缓存命中 | `create_risk_agent()` p50 **0.0001ms**（2001 次） |
+| 直调研判（重建 + invoke） | p50 **4.41ms** |
+| 直调研判（复用编译图） | p50 **1.29ms**（`cached graph invoke` 1.26ms） |
+
+绝对值与早先体检样本（编译 11.5ms / 直调 15.5ms）不同，两次量测口径与机器状态未必一致；
+可比的相对关系一致：重建约占直调 run 的 71%（3.15/4.41ms），修复后这部分归零。
+
+改法：`create_risk_agent` 用 `lru_cache(maxsize=1)` 做进程级单例，图只构建编译一次；
+`RiskAssessAgent` 的同步研判与证据拉取改投**专用** `ThreadPoolExecutor`
+（部署键 `AEGIS_EXT_ASSESS_POOL_WORKERS`，默认 8），不再与检索/分析旁路共用事件循环默认池
+（默认池上限 32，真模型 11–20s 的研判会长时间占槽）。网关对单本体的 inflight 上限是
+`max_concurrency=4`（`bus/registry.py`），所以默认 8 不会压低当前有效并发，只是把占用从共享池隔开；
+要提吞吐时再按部署调大这个键。用例钉住：图只 build 一次；
+同一编译图多线程并发不串灾种；池容量即并发峰值（6 请求 / 池 2 → 峰值 2）；线程名
+`aegis-ext-assess`；contextvars（日志 trace_id）透传；`stop()` 后池不再接任务。
+
+门禁（2026-11-09，本机）：`uv run pytest -q` **4110 tests / 0 failed / 0 errors / 119 skipped**
+（627.5s，junit `backend/reports/full_20261109_perf.xml`；同日首轮同口径 449.2s，墙钟随机器负载波动）；`ruff check src tests` 与
+`ruff format --check` 558 文件全绿、`mypy src` 353 文件全绿。新增/变更 8 条用例，并做变异复核：
+关掉缓存、改回默认执行器、去掉 contextvars 透传三路各自转红（峰值 6≠2、trace_id 读成 None、
+build 计数 >1），还原后全绿。
 
 ### 一件必须由人做的事
 
