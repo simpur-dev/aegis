@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -17,8 +18,12 @@ from aegis.api.app import create_app
 from aegis.config import Settings
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.container import PlatformContainer, create_container
+from aegis.domain.assess import AssessEvidence
 from aegis.domain.chain import ChainResult
-from aegis.domain.messages import new_event_id, utc_now
+from aegis.domain.enums import HazardType
+from aegis.domain.messages import TelemetryReading, new_event_id, now_iso, utc_now
+from aegis.domain.provenance import DataProvenance
+from aegis.domain.site import SiteAttribute, SiteProfile
 from aegis.pipeline.board import ChainBoard
 from conftest import REGION, api_surface
 
@@ -518,3 +523,94 @@ class TestTokenGateCoversWholeApiSurface:
                 assert (await c.get("/api/v1/workflow/definitions")).status_code == 200
         finally:
             await ctn.shutdown()
+
+
+def _profile() -> SiteProfile:
+    return SiteProfile(
+        region_code=REGION,
+        name="测试区",
+        hazard_types=[HazardType.DEBRIS_FLOW],
+        attributes=[
+            SiteAttribute(key="slope_angle_deg", value=42.0, unit="deg", source="demo_survey"),
+            SiteAttribute(key="aspect", value="N", source="demo_survey"),
+        ],
+        provenance=DataProvenance(data_kind="demo", sources=["site_profile:demo"], is_mock=True),
+    )
+
+
+class TestAssessDataApi:
+    """研判数据面：遥测时间窗、证据包读面、区域画像读面。"""
+
+    async def test_遥测时间窗过滤与逆序窗拒绝(self, client: httpx.AsyncClient, container: PlatformContainer) -> None:
+        now = utc_now()
+        await container.store.telemetry.add(
+            [
+                TelemetryReading(
+                    station_id="RG-T1",
+                    metric="rain_10min",
+                    value=1.0,
+                    unit="mm",
+                    region_code=REGION,
+                    observed_at=now_iso(now - timedelta(hours=2)),
+                ),
+                TelemetryReading(
+                    station_id="RG-T1", metric="rain_10min", value=2.0, unit="mm", region_code=REGION, observed_at=now_iso(now)
+                ),
+            ]
+        )
+        since = now_iso(now - timedelta(hours=1))
+        body = (await client.get("/api/v1/telemetry", params={"region_code": REGION, "since": since})).json()
+        assert body["count"] == 1, "窗口外的旧读数不该出现"
+        assert body["items"][0]["value"] == 2.0
+
+        inverted = await client.get("/api/v1/telemetry", params={"since": now_iso(now), "until": since})
+        assert inverted.status_code == 422
+        assert inverted.json()["detail"]["code"] == "E_BAD_WINDOW"
+        naive = await client.get("/api/v1/telemetry", params={"since": "2026-01-01T00:00:00"})
+        assert naive.status_code == 422, "裸时间会被按本地时区猜一遍，必须拒绝"
+
+    async def test_证据读面与推送腿同一构造口径(self, client: httpx.AsyncClient, container: PlatformContainer) -> None:
+        now = utc_now()
+        await container.store.telemetry.add(
+            [
+                TelemetryReading(
+                    station_id="RG-E1", metric="rain_10min", value=1.2, unit="mm", region_code=REGION, observed_at=now_iso(now)
+                ),
+                TelemetryReading(
+                    station_id="GNS-E1",
+                    metric="displacement_mm",
+                    value=0.0,
+                    unit="mm",
+                    region_code=REGION,
+                    observed_at=now_iso(now - timedelta(hours=1)),
+                ),
+                TelemetryReading(
+                    station_id="GNS-E1", metric="displacement_mm", value=2.0, unit="mm", region_code=REGION, observed_at=now_iso(now)
+                ),
+            ]
+        )
+        await container.store.upsert_site_profile(_profile())
+
+        response = await client.get("/api/v1/assess/evidence", params={"region_code": REGION, "window_minutes": 90})
+        assert response.status_code == 200
+        evidence = AssessEvidence.model_validate(response.json())
+        assert evidence.region_code == REGION and evidence.window == "90m"
+        factors = {item.factor: item for item in evidence.observations}
+        assert factors["rainfall_mm_h"].max_value == pytest.approx(7.2), "10 分钟雨量要按 ×6 折成小时雨强"
+        assert factors["displacement_mm_day"].max_value == pytest.approx(48.0), "2mm/1h → 48mm/day"
+        assert factors["slope_angle_deg"].quality == "site", "静态孕灾属性以 site 口径透传"
+        assert factors["aspect"].class_value == "N"
+        assert evidence.provenance.data_kind == "mock" and evidence.provenance.is_mock is True
+
+    async def test_站点画像读面_列表与单条与404(self, client: httpx.AsyncClient, container: PlatformContainer) -> None:
+        await container.store.upsert_site_profile(_profile())
+        listed = (await client.get("/api/v1/site-profiles", params={"region_code": REGION})).json()
+        assert listed["count"] == 1 and listed["items"][0]["region_code"] == REGION
+
+        single = await client.get(f"/api/v1/site-profiles/{REGION}")
+        assert single.status_code == 200
+        assert {attr["key"] for attr in single.json()["attributes"]} == {"slope_angle_deg", "aspect"}
+
+        missing = await client.get("/api/v1/site-profiles/999999")
+        assert missing.status_code == 404
+        assert missing.json()["detail"]["code"] == "E_SITE_PROFILE_NOT_FOUND"

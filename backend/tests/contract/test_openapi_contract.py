@@ -13,10 +13,12 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
 import pytest
 import schemathesis
 from hypothesis import settings
+from schemathesis.specs.openapi.checks import positive_data_acceptance
 
 from aegis.api.app import create_app
 from aegis.config import Settings
@@ -72,12 +74,72 @@ def test_filter_patterns_are_regex_and_select_real_operations() -> None:
     assert len(list(SCHEMA.include(path_regex=TASK_LOOKUP).get_all_operations())) >= 1
 
 
+def test_telemetry_declares_the_window_rejection_response() -> None:
+    """逆序窗只能运行期判，但 422 的响应形状必须进 OpenAPI——文档缺这一支，调用方只能靠猜。
+
+    模糊测试对它的放行口径（见下一条用例）以这份声明为前提，所以先把声明钉死。
+    """
+    from fastapi.testclient import TestClient
+
+    spec = APP.openapi()
+    body_schema = spec["paths"]["/api/v1/telemetry"]["get"]["responses"]["422"]["content"]["application/json"]["schema"]
+    object_branch = next(branch for branch in body_schema["anyOf"] if branch.get("type") == "object")
+    detail_schema = object_branch["properties"]["detail"]
+    assert set(detail_schema["required"]) == {"code", "message"}
+
+    response = TestClient(APP).get(
+        "/api/v1/telemetry",
+        params={"since": "2026-01-02T00:00:00Z", "until": "2026-01-01T00:00:00Z"},
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert set(body) == {"detail"}
+    assert body["detail"]["code"] == "E_BAD_WINDOW"
+    assert isinstance(body["detail"]["message"], str)
+
+
+def _is_aware_iso(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def _normalize_generated_window(case: schemathesis.Case) -> None:
+    """schemathesis 4.28 对 `format: date-time` 的正向生成会漏出非 ISO 串或裸时间（如 "AAA"）。
+
+    那不在接口声明域内（`since`/`until` 明确要求带时区），先用合法值替换再打，
+    免得参数校验的 422 与业务窗口拒绝混在一起，把后者的放行口径撑成"任何 422 都行"。
+    """
+    if case.operation.path != "/api/v1/telemetry":
+        return
+    for key in ("since", "until"):
+        if key in case.query and not _is_aware_iso(case.query[key]):
+            case.query[key] = "2026-01-01T00:00:00Z"
+
+
 @pytest.mark.slow
 @SCHEMA.include(path_regex=READ_ONLY).parametrize()
 @settings(max_examples=25, deadline=None)
 def test_read_operations_satisfy_the_declared_contract(case: schemathesis.Case) -> None:
-    """状态码与响应结构必须与声明一致，且不得出现 5xx。"""
-    case.call_and_validate(base_url=BASE_URL)
+    """状态码与响应结构必须与声明一致，且不得出现 5xx。
+
+    `/api/v1/telemetry` 的 `since`/`until` 是两个独立参数，先后关系表达不进 OpenAPI；
+    逆序窗返回声明过的 422（`E_BAD_WINDOW`）。仅这一种响应按契约放行：
+    响应体仍须符合声明的 422 形状，且 code 必须是 `E_BAD_WINDOW`；
+    参数校验产生的 422（`detail` 是数组）照常走完整校验，不放行。
+    """
+    _normalize_generated_window(case)
+    response = case.call(base_url=BASE_URL)
+    if case.operation.path == "/api/v1/telemetry" and response.status_code == 422:
+        detail = response.json().get("detail")
+        if isinstance(detail, dict) and detail.get("code") == "E_BAD_WINDOW":
+            case.validate_response(response, excluded_checks=[positive_data_acceptance])
+            return
+    case.validate_response(response)
 
 
 def test_readyz_reports_503_before_the_bus_connects_and_200_after() -> None:
