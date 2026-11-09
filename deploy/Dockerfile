@@ -16,9 +16,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # seekdb（pymysql）在这里：`.env.example` 把 `AEGIS_RETRIEVAL_INDEX_BACKEND=seekdb` 交给部署面选，
 # 容器里没有驱动就等于给运维一个"打开必抛"的开关（缺依赖时 retrieval/seekdb.py 抛
 # "seekdb 检索需要 pymysql 依赖"）——一个纯 Python 驱动，几十 KB，不值得让它成为现场惊喜。
+# agents_ext（langgraph/langchain）在这里：外部交付的智能体模块经适配层走同一契约，
+# 部署面用 `AEGIS_AGENT_IMPL=ext` 选它。**装它不是为了默认启用**——默认仍是 builtin——
+# 而是为了让"切实现"这件事在容器形态下也做得到：依赖不在镜像里时，装配点只能如实退回
+# builtin 并记 warning，部署方想选 ext 就得自己改镜像构建，那不叫可选。
 COPY backend/pyproject.toml backend/uv.lock ./backend/
 RUN cd backend && uv sync --frozen --no-dev \
-    --extra postgres --extra iot --extra analytics --extra graph --extra retrieval --extra seekdb --extra mcp
+    --extra postgres --extra iot --extra analytics --extra graph --extra retrieval --extra seekdb --extra mcp --extra agents_ext
 
 COPY backend ./backend
 COPY contracts /contracts

@@ -274,6 +274,23 @@ class PlatformContainer:
         if failed or expired:
             log.warning("动作台账启动收尾", extra={"failed": failed, "expired": expired})
 
+    def _build_ext_agents(self) -> list[Any]:
+        """构造外部交付模块（`agents_ext`）的智能体内环。
+
+        返回空列表表示"外部实现此刻不可用"（可选 extra 没装 / 导入失败），
+        由调用方如实退回自建内环——不让一个可选依赖决定整条链路能不能跑。
+        """
+        try:
+            from aegis.agents_ext.adapter import build_ext_agents
+
+            return build_ext_agents(self.transport)
+        except Exception as exc:
+            log.warning(
+                "外部智能体实现不可用，退回自建内环",
+                extra={"error": f"{type(exc).__name__}: {exc}"[:200]},
+            )
+            return []
+
     async def _start_alerting(self) -> None:
         """订阅既有预警广播，把"已发出的预警"变成"值班员桌上的卡"。
 
@@ -390,18 +407,45 @@ class PlatformContainer:
                 else ""
             )
             self.agent_context_face = resolve_context_face(self.settings.agent_context_face, mcp_url=mcp_url)
-            self.real_agents = build_agent_runtime(
-                self.transport,
-                rule_engine=self.rule_engine,
-                base_url=f"http://127.0.0.1:{self.settings.http_port}",
-                llm=self.llm_gateway,
-                parser=self.parser,
-                contracts=self.contracts,
-                service_token=self.settings.service_token,
-                memory=self.memory,
-                mcp_url=mcp_url,
-                context_face=self.agent_context_face,
-            )
+            # 走哪一套实现（builtin/ext）：默认 builtin 不变；ext 是外部交付模块经适配层走同一契约。
+            if self.settings.agent_impl == "ext":
+                self.real_agents = self._build_ext_agents()
+                if self.real_agents:
+                    log.info(
+                        "智能体实现走外部交付模块（agents_ext，经适配层走同一契约）",
+                        extra={"impl": "ext"},
+                    )
+                else:
+                    # 依赖没装 → 如实退回自建内链：不能让"没装可选 extra"变成整条链路不可用。
+                    log.warning(
+                        "AEGIS_AGENT_IMPL=ext 但外部实现不可用（依赖未安装或导入失败），退回自建内环",
+                        extra={"impl": "builtin"},
+                    )
+                    self.real_agents = build_agent_runtime(
+                        self.transport,
+                        rule_engine=self.rule_engine,
+                        base_url=f"http://127.0.0.1:{self.settings.http_port}",
+                        llm=self.llm_gateway,
+                        parser=self.parser,
+                        contracts=self.contracts,
+                        service_token=self.settings.service_token,
+                        memory=self.memory,
+                        mcp_url=mcp_url,
+                        context_face=self.agent_context_face,
+                    )
+            else:
+                self.real_agents = build_agent_runtime(
+                    self.transport,
+                    rule_engine=self.rule_engine,
+                    base_url=f"http://127.0.0.1:{self.settings.http_port}",
+                    llm=self.llm_gateway,
+                    parser=self.parser,
+                    contracts=self.contracts,
+                    service_token=self.settings.service_token,
+                    memory=self.memory,
+                    mcp_url=mcp_url,
+                    context_face=self.agent_context_face,
+                )
             log.info(
                 f"真智能体佐证取数走 {self.agent_context_face} 门面",
                 extra={"agent_context_face": self.agent_context_face, "mcp_url": mcp_url or None},

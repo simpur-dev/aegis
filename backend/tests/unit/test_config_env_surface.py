@@ -90,12 +90,12 @@ class TestDeploymentEnvKeys:
     def test_image_installs_every_platform_side_extra(self) -> None:
         """镜像缺一个 extra，对应腿在生产里就只是 /api/v1/integrations 上的一行降级。"""
         dockerfile = (REPO_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")
-        installed = set(re.findall(r"--extra ([a-z]+)", dockerfile))
+        installed = set(re.findall(r"--extra ([a-z0-9_]+)", dockerfile))
         pyproject = (REPO_ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8")
-        declared = set(re.findall(r"^([a-z]+) = \[", pyproject, re.MULTILINE))
+        declared = set(re.findall(r"^([a-z0-9_]+) = \[", pyproject, re.MULTILINE))
         # seekdb 也在内：`.env.example` 把 AEGIS_RETRIEVAL_INDEX_BACKEND 的 seekdb 档交给部署面去选，
         # 没有 pymysql 驱动时那是一个"打开即抛"的开关，而不是一个可选项。
-        server_side = {"postgres", "iot", "analytics", "graph", "retrieval", "seekdb", "mcp"}
+        server_side = {"postgres", "iot", "analytics", "graph", "retrieval", "seekdb", "mcp", "agents_ext"}
         assert server_side <= installed, f"Dockerfile 未安装: {sorted(server_side - installed)}"
         # 边缘与压测用的 extra 不该进平台镜像：它们会把 1GB 级依赖带到服务端
         assert not ({"edge", "perf", "dev", "objectstore"} & installed)
@@ -108,12 +108,12 @@ class TestDeploymentEnvKeys:
         MQTT 装配面用例因此在 CI 上必红、在装着 iot 的开发机上永远绿；它此前还被 `--maxfail=1`
         挡在另一条红后面，修好那条才露出来。这条守卫把两边的关系直接钉住。
         """
-        image = set(re.findall(r"--extra ([a-z]+)", (REPO_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")))
-        ci = set(re.findall(r"--extra ([a-z]+)", CI.read_text(encoding="utf-8")))
+        image = set(re.findall(r"--extra ([a-z0-9_]+)", (REPO_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")))
+        ci = set(re.findall(r"--extra ([a-z0-9_]+)", CI.read_text(encoding="utf-8")))
         missing = sorted(image - ci)
         assert not missing, f"镜像发出去而 CI 不测的依赖闭包: {missing}——这些腿的用例在 CI 上要么硬红要么静默跳过"
 
     def test_ci_syncs_the_same_extras_it_tests(self) -> None:
         """CI 只装 dev 会让可选子系统的用例静默跳过，绿色 CI 等于什么都没测。"""
-        installed = set(re.findall(r"--extra ([a-z]+)", CI.read_text(encoding="utf-8")))
+        installed = set(re.findall(r"--extra ([a-z0-9_]+)", CI.read_text(encoding="utf-8")))
         assert {"postgres", "analytics", "retrieval", "graph", "edge", "perf"} <= installed

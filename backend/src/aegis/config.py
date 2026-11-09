@@ -219,6 +219,14 @@ class Settings(BaseSettings):
     # 真模式下缺 LLM/解析器等依赖由内环自己如实降级，装配点不塞会谎报的替身。
     agent_runtime: Literal["mock", "real", "off"] = "mock"
 
+    # 真实智能体走**哪一套实现**（2026-11-09 并入外部交付模块后新增）：
+    #   builtin = 平台自建内环（`aegis.agents`，已过契约 7 项一致性门禁；默认）
+    #   ext     = 外部交付模块（`aegis.agents_ext`，LangGraph 实现，经适配层走同一契约）
+    # 两套**并存**，不是替换：外部实现的数据工具是内存 Mock 源（其响应带 `source=agents_ext_mock`），
+    # 平台自建内环接真实数据面。选哪套由部署方定，默认不变。
+    # `ext` 需要装了可选 extra `agents_ext`；没装则装配点如实退回 builtin 并记 warning。
+    agent_impl: Literal["builtin", "ext"] = "builtin"
+
     # 案例知识层：默认纯内存提供者（零外部依赖，16 条内置预案模板，性质见 knowledge/cases.py）。
     # 给了 graphiti URI 才走图谱主路径，并在图谱不可用时自动回落到内存（降级链由 provider 保证）。
     knowledge_graphiti_uri: str = ""
