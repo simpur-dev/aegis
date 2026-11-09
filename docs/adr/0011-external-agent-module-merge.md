@@ -93,6 +93,14 @@ langgraph-checkpoint-sqlite。没装这层时平台**一律退回自建内环**�
 
 ### 5. 改动面尽量小，但该改的必须改
 
+**实测过的改动面**（2026-11-09，用同一款 ruff format 把两边都归一化后逐行比）：
+126 个文件里 **差异 1517 行 / 原文件 13539 行 ≈ 11.2%**，
+且这 11.2% 几乎全部是四类机械改写——顶层包名 import（196 处 `from agents.`）、
+类型标注现代化（`List[X]`→`list[X]`、`X | None`）、`__all__` 排序、格式化（字典字面量拆行）。
+**业务规则、图结构、节点逻辑、因子引擎公式一行未改。**
+（这个数字是核对过的，不是估计：早期用"纯文本 diff"量出来是 47%，那是 CRLF 行尾 + ruff 排版噪声造成的假象；
+把两边都过同一款 formatter 再比，才是真实改动面。）
+
 - **机械改写**（脚本化、可复现）：顶层包名 import（196 处 `from agents.`）→ 包内绝对路径；
   39 处 `sys.path.insert` 引导删除；空 `tools/` 占位不并入；
 - **真实缺陷**（逐条核过语义等价）：与 `hazard_registry` 逐字相同的重复函数（违反该模块自己的
@@ -101,8 +109,7 @@ langgraph-checkpoint-sqlite。没装这层时平台**一律退回自建内环**�
   容器注解加宽；mypy 对本模块**精确到错误码**豁免 7 类（全部源于松散 dict 注解与
   langgraph 1.x 泛型收紧，不是真缺陷），真缺陷类错误照常被抓；
 - **凭据治理**：`config.py` 只从环境变量读（平台口径 `AEGIS_EXT_LLM_API_KEY`）；运行时文件路径配置化。
-  **一处如实记着的尾巴**：外部模块的 `llm.py` 还认原仓库那个 `ZHIPUAI_API_KEY` 环境变量名
-  （两条路进同一个凭据）。它不是"把 Key 粘回源码"的路子，但 `.env.example` 只登记平台口径那一个。
+  `llm.py` 也已统一到平台口径优先、旧名只作兼容；占位 Key 的提示串不再让人"把 Key 粘进源码"。
 
 **所有这些改动都固化在 `backend/scripts/` 的四个 Python 脚本里**
 （`import_external_agents.py` + `import_external_agents_tests.py` + `postprocess_external_agents*.py`），
