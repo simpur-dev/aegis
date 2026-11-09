@@ -582,10 +582,104 @@ describe('对话框的 Enter / Shift+Enter', () => {
     await flushPromises()
   })
 
+  /**
+   * 只有 Enter 才是发送。此前这里没有键名判断：普通字母、退格、方向键都会被
+   * `preventDefault` 并顺带发起一轮对话——真机上表现为"敲第一个字就没反应"。
+   */
+  it('普通按键不是发送：不拦默认行为，也不发起对话', async () => {
+    const wrapper = await renderView()
+    for (const key of ['a', 'Backspace', 'ArrowLeft']) {
+      const notCanceled = await dispatchKeydown(wrapper, { key })
+      expect(notCanceled, `${key} 被 preventDefault 了`).toBe(true)
+    }
+    expect(mockedChat).not.toHaveBeenCalled()
+    expect(byTestid(wrapper, 'stream-error').exists()).toBe(false)
+  })
+
+  it('输入法合成中的 Enter 不发送、也不拦截选词', async () => {
+    const wrapper = await renderView()
+    await wrapper.find('[data-testid="field-message"]').setValue('沟道泥位')
+    expect(await dispatchKeydown(wrapper, { key: 'Enter', isComposing: true })).toBe(true)
+    // 旧 Safari 在合成期只给 keyCode 229
+    expect(await dispatchKeydown(wrapper, { key: 'Enter' }, 229)).toBe(true)
+    expect(mockedChat).not.toHaveBeenCalled()
+  })
+
   it('约定写在字数条旁边，不靠人猜', async () => {
     const wrapper = await renderView()
     expect(byTestid(wrapper, 'char-count').text()).toContain('Enter 发送')
     expect(byTestid(wrapper, 'char-count').text()).toContain('Shift+Enter 换行')
+  })
+})
+
+/** 真按键要落在 textarea 上：trigger() 造的事件没有 cancelable，测不出"有没有被拦"。 */
+async function dispatchKeydown(
+  wrapper: Awaited<ReturnType<typeof renderView>>,
+  init: KeyboardEventInit,
+  keyCode?: number,
+): Promise<boolean> {
+  const el = wrapper.find('[data-testid="field-message"]').element as HTMLTextAreaElement
+  const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+  if (keyCode !== undefined) Object.defineProperty(event, 'keyCode', { value: keyCode })
+  const notCanceled = el.dispatchEvent(event)
+  await flushPromises()
+  return notCanceled
+}
+
+/**
+ * 停止按钮：流式读取要能被主动掐断。
+ * 真机场景是"问错了 / 发现这一轮要等很久"——没有停止，用户只能刷新整页，
+ * 而刷新会把还没渲染完的时间线与会话号一起丢掉。
+ */
+describe('流式进行中的停止与草稿保护', () => {
+  it('点「停止」真的掐断这一轮，并说清它不是网络故障', async () => {
+    mockedChat.mockImplementation((_body, options = {}) => (async function* () {
+      await new Promise<void>((_resolve, reject) => {
+        options.signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('aborted', 'AbortError')),
+          { once: true },
+        )
+      })
+      yield { type: 'done', session_id: 'sess_0001', latency_ms: 1, rejected_count: 0 }
+    })())
+    const wrapper = await renderView()
+    await wrapper.find('[data-testid="field-message"]').setValue('把这一轮停掉')
+    await wrapper.find('[data-testid="send"]').trigger('click')
+    await flushPromises()
+
+    const signal = mockedChat.mock.calls[0]?.[1]?.signal
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal?.aborted).toBe(false)
+
+    await byTestid(wrapper, 'stop').trigger('click')
+    await flushPromises()
+
+    expect(signal?.aborted).toBe(true)
+    expect(byTestid(wrapper, 'stream-error').text()).toContain('已停止接收这一轮')
+    expect(byTestid(wrapper, 'stream-error').text()).not.toContain('对话中断')
+  })
+
+  it('流式期间新打的内容，不会在这一轮收尾时被清空', async () => {
+    let release: (() => void) | null = null
+    mockedChat.mockImplementation(() => (async function* () {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      yield { type: 'meta', session_id: 'sess_0001', llm_configured: true, actions: [] }
+      yield { type: 'done', session_id: 'sess_0001', latency_ms: 1, rejected_count: 0 }
+    })())
+    const wrapper = await renderView()
+    const field = wrapper.find('[data-testid="field-message"]')
+    await field.setValue('第一句')
+    await wrapper.find('[data-testid="send"]').trigger('click')
+    await flushPromises()
+
+    await field.setValue('第二句：我在等结果的时候打的')
+    ;(release as (() => void) | null)?.()
+    await flushPromises()
+
+    expect((field.element as HTMLTextAreaElement).value).toBe('第二句：我在等结果的时候打的')
   })
 })
 

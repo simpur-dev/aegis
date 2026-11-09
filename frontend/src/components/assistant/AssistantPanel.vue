@@ -17,7 +17,7 @@ import { message } from 'ant-design-vue'
 import { nextTick, onMounted, ref, watch } from 'vue'
 
 import type { ActionSpecDto, ConfirmResultDto, ProposalFrame } from '@/api/assistant'
-import { assistantApi, CHAT_LIMITS, isAssistantDisabled, isAssistantUnavailable, preflightChat } from '@/api/assistant'
+import { assistantApi, CHAT_LIMITS, isAbortError, isAssistantDisabled, isAssistantUnavailable, preflightChat } from '@/api/assistant'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import AlertStack from '@/components/assistant/AlertStack.vue'
 import HandlingBar from '@/components/assistant/HandlingBar.vue'
@@ -79,6 +79,14 @@ function idempotencyKeyFor(text: string): string {
   return pendingSend.key
 }
 
+/** 当前这一轮的可中断句柄：停止按钮只掐读取端，已经发生的动作不由它决定。 */
+let inflight: AbortController | null = null
+
+function stopStream(): void {
+  if (!streaming.value) return
+  inflight?.abort()
+}
+
 async function send(): Promise<void> {
   const text = draft.value.trim()
   const request = {
@@ -96,11 +104,13 @@ async function send(): Promise<void> {
   }
   streaming.value = true
   streamError.value = ''
+  const controller = new AbortController()
+  inflight = controller
   try {
     // 用户那句话要跟这一轮绑在一起记：等到第一帧落地才记——
     // 一发出去就记的话，零帧的失败请求会让这句话冒充一轮，把尾对齐全盘错位。
     let recorded = false
-    for await (const frame of assistantApi.chat(request)) {
+    for await (const frame of assistantApi.chat(request, { signal: controller.signal })) {
       if (frame.type === 'meta') sessionId.value = frame.session_id
       frames.value.push(frame)
       if (!recorded) {
@@ -108,14 +118,18 @@ async function send(): Promise<void> {
         recorded = true
       }
     }
-    draft.value = ''
+    // 流式期间输入框可能已经换上新草稿：只在还是这一句时清空，别吞掉刚打的字
+    if (draft.value.trim() === text) draft.value = ''
     pendingSend = null
   } catch (error) {
-    if (isAssistantUnavailable(error)) streamError.value = `语义交互服务未装配：${error instanceof Error ? error.message : String(error)}`
+    if (isAbortError(error)) {
+      streamError.value = '已停止接收这一轮：已经发生的动作仍以对话记录与动作台账为准，不会因为停止而撤回。'
+    } else if (isAssistantUnavailable(error)) streamError.value = `语义交互服务未装配：${error instanceof Error ? error.message : String(error)}`
     else if (isAssistantDisabled(error)) streamError.value = '助手出口未启用（路由整段没挂载）：这一轮请求没有发出，页面上没有新事实。'
     else streamError.value = error instanceof Error ? `对话中断：${error.message}` : '对话中断'
   } finally {
     streaming.value = false
+    if (inflight === controller) inflight = null
   }
 }
 
@@ -125,7 +139,11 @@ async function send(): Promise<void> {
  * 否则两轮回答会织进同一条时间线，会话号也说不清是哪一轮的。
  */
 function onMessageKeydown(event: KeyboardEvent): void {
-  if (event.shiftKey) return
+  // 输入法合成中（含选词的 Enter）不是发送意图；这里一拦，拼音和候选就没了。
+  // keyCode 229 是旧 Safari 在合成期给的同一个信号。
+  if (event.isComposing || event.keyCode === 229) return
+  // 只有 Enter 才是"发送"：以前这里漏了键名判断，打字/退格都会被 preventDefault 并触发一轮发送
+  if (event.key !== 'Enter' || event.shiftKey) return
   event.preventDefault()
   if (streaming.value) {
     streamError.value = '上一轮还在进行中，等它回来再发下一条（要先换行用 Shift+Enter）。'
@@ -374,6 +392,7 @@ onMounted(() => void loadCapabilities())
           />
           <div class="composer__actions">
             <a-button type="primary" :loading="streaming" data-testid="send" @click="send">发送</a-button>
+            <a-button v-if="streaming" danger size="small" data-testid="stop" @click="stopStream">停止</a-button>
             <a-button size="small" type="text" data-testid="clear" @click="clearTimeline">清空</a-button>
           </div>
         </div>

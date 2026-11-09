@@ -48,6 +48,23 @@ describe('AssistantDock 的开合与容器契约', () => {
     wrapper.unmount()
   })
 
+  /**
+   * 抽屉收起只是 CSS 平移，若面板照样挂载，全站每页都会在后台拉
+   * capabilities / alerts / spaces——用户一次没点过助手也照拉。
+   */
+  it('没打开过就不挂载会话面板；打开后收起也保持挂载（时间线不丢）', async () => {
+    const wrapper = render()
+    expect(wrapper.find('.panel-stub').exists()).toBe(false)
+
+    await clickDock(wrapper)
+    expect(wrapper.find('.panel-stub').exists()).toBe(true)
+
+    await clickDock(wrapper)
+    expect(wrapper.find('[data-testid="assistant-drawer"]').classes()).not.toContain('is-open')
+    expect(wrapper.find('.panel-stub').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('开抽屉时给根元素挂上让位类，关掉就摘掉', async () => {
     const wrapper = render()
     await clickDock(wrapper)
@@ -80,6 +97,7 @@ describe('AssistantDock 的开合与容器契约', () => {
     const second = render()
     await second.vm.$nextTick()
     expect(second.find('[data-testid="assistant-drawer"]').classes()).toContain('is-open')
+    expect(second.find('.panel-stub').exists()).toBe(true)
     second.unmount()
   })
 

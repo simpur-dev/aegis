@@ -18,6 +18,7 @@ import {
   CHAT_LIMITS,
   capabilitiesShape,
   createAssistantApiClient,
+  isAbortError,
   preflightChat,
   streamChat,
   type ChatResponseLike,
@@ -159,6 +160,43 @@ describe('非 2xx 的原因还原', () => {
       .catch((caught: unknown) => caught as AssistantApiError)
     expect(error?.code).toBe('')
     expect(error?.status).toBe(404)
+  })
+})
+
+/**
+ * 主动停止不是网络故障：面板据此说"已停止接收这一轮"而不是"对话中断"。
+ * fetch 与 reader 两条拒绝路径都必须是原样的 AbortError。
+ */
+describe('主动停止的语义', () => {
+  it('fetch 因 AbortSignal 拒绝时原样上抛，不翻成"请求未发出"', async () => {
+    const abortError = new DOMException('The user aborted a request.', 'AbortError')
+    const failing = streamChat(
+      { message: '查预警' },
+      {
+        fetchImpl: async () => {
+          throw abortError
+        },
+      },
+    )
+    await expect(failing.next()).rejects.toBe(abortError)
+    expect(isAbortError(abortError)).toBe(true)
+  })
+
+  it('读流中途被中止：AbortError 从 reader 直接穿出', async () => {
+    const abortError = new DOMException('aborted', 'AbortError')
+    const body = {
+      getReader: () => ({
+        read: async (): Promise<{ done: boolean; value?: Uint8Array }> => {
+          throw abortError
+        },
+        cancel: async () => undefined,
+      }),
+    }
+    const failing = streamChat(
+      { message: '查预警' },
+      { fetchImpl: async () => ({ ...responseOf(200, null), body }) },
+    )
+    await expect(failing.next()).rejects.toBe(abortError)
   })
 })
 

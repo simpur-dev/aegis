@@ -45,7 +45,6 @@ const ASSISTANT_FIELD_LABELS: Record<string, string> = {
   session_id: '会话号',
   reporter: '上报人名义',
   region_code: '区划代码',
-  hazard_hint: '灾种提示',
   idempotency_key: '幂等键',
   action_id: '动作号',
   actor: '确认人名义',
@@ -82,6 +81,11 @@ export class AssistantApiError extends Error {
 /** 语义腿没装配（503 + E_ASSISTANT_UNAVAILABLE）：上层按"这条腿没接上"渲染。 */
 export function isAssistantUnavailable(error: unknown): boolean {
   return error instanceof AssistantApiError && (error.status === 503 || error.code === 'E_ASSISTANT_UNAVAILABLE')
+}
+
+/** 用户主动停止这一轮：调用方要认出来单独措辞，不能翻成"对话中断"。 */
+export function isAbortError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'AbortError'
 }
 
 /**
@@ -524,6 +528,8 @@ export async function* streamChat(
     body: JSON.stringify(toChatBody(request)),
     signal: options.signal,
   }).catch((error: unknown) => {
+    // 主动停止时 fetch 也会拒绝：它不是"请求没发出"，原样上抛让 UI 按停止来措辞
+    if (isAbortError(error)) throw error
     throw new AssistantApiError(0, `对话请求未发出：${error instanceof Error ? error.message : String(error)}`)
   })
 

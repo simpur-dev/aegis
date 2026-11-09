@@ -29,6 +29,11 @@ const STORAGE_KEY = 'aegis.assistant.dock'
 
 const dockEl = ref<HTMLButtonElement | null>(null)
 const open = ref(false)
+/**
+ * 首次打开前不挂载会话面板：抽屉收起只是 CSS 隐藏，挂了就会在每页后台拉
+ * capabilities / alerts / spaces。打开过一次后保持挂载，时间线与会话号不因收起而丢。
+ */
+const panelMounted = ref(false)
 const dragging = ref(false)
 const resizing = ref(false)
 const top = ref(0)
@@ -241,6 +246,7 @@ watch(
   open,
   (value) => {
     document.documentElement.classList.toggle('assistant-drawer-open', value)
+    if (value) panelMounted.value = true
   },
   { immediate: true },
 )
@@ -307,7 +313,7 @@ onBeforeUnmount(() => {
       <button type="button" class="assistant-drawer__close" aria-label="收起助手" @click="close">×</button>
     </header>
     <div class="assistant-drawer__body">
-      <AssistantPanel mode="dock" />
+      <AssistantPanel v-if="panelMounted" mode="dock" />
     </div>
   </aside>
 </template>
