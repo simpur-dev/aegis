@@ -117,7 +117,6 @@ class ActionContext:
     space_id: str | None = None
     approved: bool = False
     idempotency_key: str | None = None
-    last_target: str | None = None
     now: float = field(default_factory=time.monotonic)
 
 

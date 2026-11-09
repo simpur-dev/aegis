@@ -27,6 +27,7 @@ from aegis.services.assistant.base import (
     ImpactPreview,
     ResolvedTargets,
 )
+from aegis.services.assistant.guard import MAX_TARGETS, FailureBreaker
 from aegis.services.assistant.review import ReviewPolicy
 from aegis.storage.store import SupportsControlActions
 
@@ -40,6 +41,7 @@ ERROR_STATUS: dict[str, int] = {
     "E_ACTION_REVIEW_FORBIDDEN": 403,
     "E_ACTION_DUPLICATE_REVIEW": 409,
     "E_ACTION_RATE_LIMITED": 429,
+    "E_ACTION_TOO_MANY_TARGETS": 422,
     "E_TARGET_NOT_FOUND": 404,
     "E_TARGET_AMBIGUOUS": 409,
     "E_OPERATOR_REQUIRED": 401,
@@ -87,11 +89,14 @@ class Executor:
         repo: SupportsControlActions | None = None,
         confirm_ttl_seconds: int = 300,
         review_policy: ReviewPolicy | None = None,
+        breaker: FailureBreaker | None = None,
     ) -> None:
         self._repo = repo
         # 下限压到 1 秒：生产默认 300，测试要能在秒级验证"过期确认不生效"
         self._ttl = max(1, int(confirm_ttl_seconds))
         self._reviews = review_policy or ReviewPolicy(enabled=False)
+        # 连续失败熔断：按动作名记，成功一次即清零（设计 §4.8）
+        self._breaker = breaker or FailureBreaker()
         # 审计（第 8 步）：与动作台账同一个 repo——audit_ops 与 control_actions 同库同事务才有意义
         self._audit = AuditTrail(repo)
 
@@ -101,6 +106,9 @@ class Executor:
         targets = await action.resolve(params, ctx)
         try:
             self._authorize(action, ctx)
+            # 批量上限与熔断都在提案/确认之前判，且放在 try 内：写动作被这两条拦下也要留审计行
+            self._enforce_targets(action, targets)
+            self._ensure_closed(action)
         except ActionError as exc:
             # 越权也留一行（§9：越权各一次）；匿名尝试记 operator_id=unknown。
             if action.spec.writes:
@@ -197,7 +205,9 @@ class Executor:
         try:
             params = self._parse(action, dict(record.get("resolved_args") or {}))
             self._authorize(action, ctx)
+            self._ensure_closed(action)
             targets = await action.resolve(params, ctx)
+            self._enforce_targets(action, targets)
         except ActionError as exc:
             # 越权/参数/目标失败也要留痕：有台账时 intent 行已随提案落库，这里补一行 rejected 凑成对。
             await self._audit.write(
@@ -336,13 +346,32 @@ class Executor:
             )
 
     @staticmethod
-    async def _execute(action: Action, targets: ResolvedTargets, params: Any, ctx: ActionContext) -> ActionResult:
+    def _enforce_targets(action: Action, targets: ResolvedTargets) -> None:
+        if len(targets.items) > MAX_TARGETS:
+            raise ActionError(
+                "E_ACTION_TOO_MANY_TARGETS",
+                f"「{action.spec.title}」一次解析出 {len(targets.items)} 个对象，超过 {MAX_TARGETS} 个上限：请拆分后重试",
+            )
+
+    def _ensure_closed(self, action: Action) -> None:
+        remaining = self._breaker.remaining(action.spec.name)
+        if remaining > 0:
+            raise ActionError(
+                "E_ACTION_RATE_LIMITED",
+                f"「{action.spec.title}」连续失败后已熔断，约 {remaining:.0f} 秒后恢复；读动作不受影响",
+            )
+
+    async def _execute(self, action: Action, targets: ResolvedTargets, params: Any, ctx: ActionContext) -> ActionResult:
         try:
-            return await action.execute(targets, params, ctx)
+            result = await action.execute(targets, params, ctx)
         except ActionError:
+            # 业务拒绝是确定性的（目标不存在、参数不合法），不参与熔断——否则重试永远开不了门
             raise
         except Exception as exc:
+            self._breaker.record_failure(action.spec.name)
             raise ActionError(
                 "E_ACTION_EXECUTION_FAILED",
                 f"{type(exc).__name__}: {str(exc)[:200]}",
             ) from exc
+        self._breaker.record_success(action.spec.name)
+        return result

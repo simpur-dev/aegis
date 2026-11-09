@@ -546,6 +546,32 @@ async def test_同一幂等键重发不会多出第二张待确认卡片() -> No
     assert len(await store.list_actions(limit=50)) == 2
 
 
+@pytest.mark.asyncio
+async def test_同一会话第十一次写动作被频控拦住而读动作不受影响() -> None:
+    store = PlatformStore()
+    service = build_service(store=store)
+    first = await collect(service, "发起一次演练", operator=DUTY)
+    session_id = str(next(event for event in first if event.type == "meta").data["session_id"])
+    for _ in range(9):
+        await collect(service, "发起一次演练", session_id=session_id, operator=DUTY)
+
+    blocked = await collect(service, "发起一次演练", session_id=session_id, operator=DUTY)
+    error = next(event for event in blocked if event.type == "error")
+    assert error.data["code"] == "E_ACTION_RATE_LIMITED"
+    assert not any(event.type == "proposal" for event in blocked)
+    assert len(await store.list_actions(limit=50)) == 10, "被限流的那次不该落提案"
+
+    read = await collect(service, "最近发布了哪些预警", session_id=session_id, operator=DUTY)
+    assert not any(event.type == "error" for event in read), "读动作不该被写动作频控牵连"
+
+    rows = [
+        row
+        for row in store.audit_snapshot()
+        if row["action"] == "drill.start" and (row["after"] or {}).get("rejected") == "E_ACTION_RATE_LIMITED"
+    ]
+    assert rows, "频控拒绝没有落 audit_ops"
+
+
 # ---------- 四类任务的通路 ----------
 
 

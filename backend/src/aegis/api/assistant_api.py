@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Response
@@ -43,7 +43,6 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, pattern=_SESSION_PATTERN)
     reporter: str | None = Field(default=None, min_length=2, max_length=64)
     region_code: str | None = Field(default=None, pattern=r"^[0-9A-Z]{6,24}$")
-    hazard_hint: str | None = Field(default=None, max_length=64)
     # 同一次用户意图的重复提交（断线重发、双击）靠它命中同一行台账，不重复生成提案
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=64)
 
@@ -167,7 +166,6 @@ def build_router() -> APIRouter:
             operator=operator,
             reporter=payload.reporter,
             region_code=payload.region_code,
-            hazard_hint=payload.hazard_hint,
             idempotency_key=payload.idempotency_key,
         )
 
@@ -183,7 +181,10 @@ def build_router() -> APIRouter:
             finally:
                 await stream.aclose()
 
-        return StreamingResponse(_keepalive(_gen(), stopping=ctn.stopping, request=request), media_type="text/event-stream")
+        return StreamingResponse(
+            _keepalive(_gen(), stopping=lambda: ctn.stopping, request=request),
+            media_type="text/event-stream",
+        )
 
     # ---------- 动作资源（`/confirm` 已退役：动作有自己的号，不再靠 session 定位） ----------
 
@@ -277,10 +278,13 @@ def _http_error(exc: ActionError) -> HTTPException:
 async def _keepalive(
     source: AsyncIterator[str],
     *,
-    stopping: bool,
+    stopping: Callable[[], bool],
     request: Request,
 ) -> AsyncIterator[str]:
     """把"没有新事件"与"客户端还在等"分开：空闲到点补注释帧，停服或断连立刻收摊。
+
+    `stopping` 必须是 callable 而不是布尔值：长连接开着的时候进程才开始关停，
+    捕获成静态布尔就永远读到 False，优雅退出要陪等满 keep-alive 窗口。
 
     `shield` 是必需的：`wait_for` 超时若直接取消 `__anext__()`，那一帧回答就丢了——
     对话半途消失比慢一点糟得多。
@@ -293,7 +297,7 @@ async def _keepalive(
             try:
                 frame = await asyncio.wait_for(asyncio.shield(pending), timeout=_DISCONNECT_POLL_SECONDS)
             except TimeoutError:
-                if stopping or await request.is_disconnected():
+                if stopping() or await request.is_disconnected():
                     return
                 idle += _DISCONNECT_POLL_SECONDS
                 if idle >= _SSE_KEEPALIVE_SECONDS:

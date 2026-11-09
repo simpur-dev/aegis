@@ -21,6 +21,7 @@ from aegis.observability.tracer import Tracer
 from aegis.services.assistant.audit import AuditTrail
 from aegis.services.assistant.base import Action, ActionContext, ActionError, ResolvedTargets
 from aegis.services.assistant.executor import Executor
+from aegis.services.assistant.guard import WriteRateLimiter
 from aegis.services.assistant.intent import Intent, IntentClassifier, bulk_scope_without_target, out_of_scope_action
 from aegis.services.assistant.narrate import narrate_result
 from aegis.services.assistant.registry import ActionRegistry
@@ -90,6 +91,8 @@ class AssistantService:
             confirm_ttl_seconds=int(self._settings.assistant_confirm_ttl_seconds),
             review_policy=self._review_policy,
         )
+        # 单会话写动作频控（设计 §4.8）：读动作不占额度，写动作 10 次/分钟
+        self._writes = WriteRateLimiter()
         self._tracer = tracer or Tracer()
         self._sessions: dict[str, AssistantSession] = {}
         self._order: deque[str] = deque(maxlen=_MAX_SESSIONS)
@@ -123,7 +126,6 @@ class AssistantService:
         operator: Operator | None = None,
         reporter: str | None = None,
         region_code: str | None = None,
-        hazard_hint: str | None = None,
         idempotency_key: str | None = None,
     ) -> AsyncGenerator[AssistantEvent, None]:
         started = time.perf_counter()
@@ -193,7 +195,7 @@ class AssistantService:
                 )
                 return
 
-        intent = await self._classifier.classify_async(body, region_code=region_code, hazard_hint=hazard_hint, reporter=reporter)
+        intent = await self._classifier.classify_async(body, region_code=region_code, reporter=reporter)
         yield AssistantEvent("intent", intent.as_dict())
         session.history.append({"role": "user", "text": body[:500]})
 
@@ -562,6 +564,24 @@ class AssistantService:
             yield AssistantEvent("answer", {"text": self._capability_hint(intent.note)})
             return
         action = self._registry.require(intent.action)
+        # 单会话写动作频控：提示等待而不是静默排队，读动作不占额度。
+        # 拒绝也要落 audit_ops——频控是"这次不执行"的决定，必须可查。
+        if action.spec.writes and not self._writes.allow(session.session_id):
+            reason = "本会话一分钟内的写动作已达 10 次，请稍后再试；读动作不受影响"
+            self._reject(session, action=intent.action, reason=reason, detail={"code": "E_ACTION_RATE_LIMITED"})
+            if self._audit.available:
+                await self._audit.write(
+                    self._audit.rejected(
+                        action_id=None,
+                        action=action,
+                        operator=operator,
+                        error=ActionError("E_ACTION_RATE_LIMITED", reason),
+                        utterance=body[:500],
+                    )
+                )
+            yield AssistantEvent("error", {"code": "E_ACTION_RATE_LIMITED", "message": reason})
+            yield AssistantEvent("answer", {"text": reason})
+            return
         ctx = ActionContext(
             session_id=session.session_id,
             utterance=body[:500],
@@ -672,12 +692,14 @@ class AssistantService:
             oldest = self._order.popleft()
             if oldest != sid:
                 self._sessions.pop(oldest, None)
+                self._writes.forget(oldest)
         return session
 
     def _evict_expired(self, now: float) -> None:
         stale = [sid for sid, session in self._sessions.items() if now - session.updated_at > self._ttl]
         for sid in stale:
             self._sessions.pop(sid, None)
+            self._writes.forget(sid)
             if sid in self._order:
                 self._order.remove(sid)
 
