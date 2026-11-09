@@ -3697,7 +3697,9 @@ CI 覆盖率 job 已扩到 8 个模块、321 条相关用例，并纳入 `test_w
 ## 外部交付智能体模块并入主线（2026-11-09）
 
 > 一份外部交付的多智能体模块（LangGraph 实现，六 agent）并入本仓，落在 `backend/src/aegis/agents_ext/`，
-> 经适配层走**同一份 `AgentMessage v1` 契约**。决策记录见 `docs/adr/0011`。
+> 按**同一份 `AgentMessage v1` 契约**接入。决策记录见 `docs/adr/0011`。
+> **同日收口**：并入时的三层适配层（`adapter.py`/`contract_face.py`/`levels.py`）已删除，
+> 两端改为共用 `aegis.domain` 的 `assess.v1` DTO，见下方「契约统一与去适配层」与 `docs/adr/0012`。
 > 本节只记**实测到的**与**明确没测到的**。
 
 ### 落地形态
@@ -3707,9 +3709,9 @@ CI 覆盖率 job 已扩到 8 个模块、321 条相关用例，并纳入 `test_w
 | 实现规模 | `backend/src/aegis/agents_ext/` 共 132 个 Python 文件（六个 agent + prompts + 灾种注册表 + LLM 工厂） |
 | 依赖形态 | 独立可选 extra `agents_ext`（langgraph / langchain-core / langchain-openai / langgraph-checkpoint-sqlite）；平台镜像与 CI 都装 |
 | 运行模式 | `AEGIS_AGENT_IMPL=builtin\|ext`，**默认 builtin 不变**；ext 未装依赖时如实退回 builtin 并记 warning |
-| 分层 | `adapter.py`（契约壳样板 + 动作分派）/ `contract_face.py`（语义翻译）/ `levels.py`（灾种·等级·状态口径） |
+| 分层（并入时 → 收口后） | 并入时三层：`adapter.py` 契约壳 / `contract_face.py` 语义翻译 / `levels.py` 口径对照；**收口后三层全部删除**（ADR-0012），`risk_agent/agent.py` 直接继承 `AgentKit` 解析 `AssessRequest`、产出 `AssessResponse` |
 | 存档 | `archive/external_agents_source_20261109/`（外部原始物料，密钥已抹除）+ `archive/agents_delivery_placeholders_20261109/`（本仓占位 README 原貌）；archive 不进主线构建 |
-| 可复现 | `bash backend/scripts/import_external_agents_all.sh <外部仓库路径>` 一条命令重跑搬入/后处理/类型修正 |
+| 可复现 | 搬入脚本已移到 `archive/external_agents_source_20261109/scripts/`——**仅保留原始交付快照，不再作为更新入口**；模块现在树维护 |
 
 ### 门禁实测（本机，2026-11-09）
 
@@ -3722,16 +3724,25 @@ CI 覆盖率 job 已扩到 8 个模块、321 条相关用例，并纳入 `test_w
 | 契约一致性门禁 | `pytest tests/contract -q` | **87 passed**（其中新增外部实现 27 条：过同一套 7 项门禁） |
 | 边界守卫 | `pytest tests/unit/test_agents_ext_boundaries.py -q` | **269 passed**（按文件参数化） |
 
+> **收口后复跑（2026-11-09，ADR-0012 落地后）**：上表是并入时口径；契约统一与去适配层之后重跑，
+> 全量 `uv run pytest -q` **4095 tests / 0 failed / 0 errors / 119 skipped**（498.7s，junit `backend/reports/full.xml`；
+> 跳过全部来自 `tests/integration` 的无 PG 分支，14 条实跑；`tests/perf` 21 条单列不进本口径）。
+> 与上表同口径的 unit + api + contract + e2e = **3941 passed / 0 skipped**（3598 + 240 + 85 + 18）；
+> `ruff check` + `format --check` **558 文件全绿**、`mypy src` **353 文件全绿**。
+> 内存真栈演练（`agent_runtime=real` + `agent_impl=ext`，seed=99，LLM 断网）：`540121` 走 `mode=agent`、
+> 等级 3、confidence 0.52、provenance `factor_engine_mock`/`is_mock=True`、人工核签 true、零降级；
+> `540221` / `540321` 因 P 覆盖率 0% / T 覆盖率 50% 低于 60% 门控**如实降级到本地规则轨**（不是"无风险"）。
+
 ### 并入过程中定位并修掉的真缺陷（都有用例钉住）
 
 | 缺陷 | 现象 | 修法 |
 | --- | --- | --- |
-| 灾种键无映射 | 平台 `avalanche` / `lake_outburst` 与外部 `ice_rock_snow_avalanche` / `glacial_lake_outburst` 不同名 → 外部结论 100% 被丢弃（`HazardType` 抛 ValueError → 静默回落规则引擎） | `levels.py` 一张双向对照表 |
+| 灾种键无映射 | 平台 `avalanche` / `lake_outburst` 与外部 `ice_rock_snow_avalanche` / `glacial_lake_outburst` 不同名 → 外部结论 100% 被丢弃（`HazardType` 抛 ValueError → 静默回落规则引擎） | 并入时用 `levels.py` 对照表；收口后**键本身统一为平台值**，旧串只留在 `hazard_registry.HAZARD_ALIAS` 作兼容别名 |
 | "算不出来"写成"没有风险" | 外部档位认不出一律映射成平台 5（无风险） | 认不出返回 `None` → **不产定级**；外部的 `unknown` 不进映射表 |
-| 置信度恒 0 却被采纳 | 外部无 `confidence` 字段，适配层填 0.0，平台的范围检查放行 → 一条"置信度 0、理由为空、来源 Mock"的结论被当成有效研判 | 取不到真值就**不产结论**（走 error → 平台回落规则轨） |
+| 置信度恒 0 却被采纳 | 外部无 `confidence` 字段，适配层填 0.0，平台的范围检查放行 → 一条"置信度 0、理由为空、来源 Mock"的结论被当成有效研判 | 并入时取不到真值就不产结论；收口后由生产方按确定性策略自产（含 `confidence_basis`，MOCK 封顶 0.60），平台只校验不代填 |
 | 失败被记成协同成功 | 错误塞在 response 的嵌套 dict 里，网关当成功记账（`outcome=ok`） | 失败一律抛 `ExternalAgentError` → `kind=error` → 网关记 error |
 | 外部异常被静默吞掉 | 适配层零日志，外部崩溃只表现为"不合契约" | 异常路径落 warning（带异常链） |
-| 错误码超长过不了 schema | `E_EXTERNAL_HAZARD_UNSUPPORTED`（24 字符）过不了 `^E[A-Z0-9_]{3,20}$` → 网关以 `E_SCHEMA_INVALID` 拒收 | 全部错误码从 `levels.py` 一张表取 |
+| 错误码超长过不了 schema | `E_EXTERNAL_HAZARD_UNSUPPORTED`（24 字符）过不了 `^E[A-Z0-9_]{3,20}$` → 网关以 `E_SCHEMA_INVALID` 拒收 | 并入时全部错误码从 `levels.py` 一张表取；收口后统一为 `E_ASSESS_*`（`aegis.domain.assess.AssessErrorCode`） |
 | 感知段接线形状不对 | 平台 PERCEIVE 段要 `trigger_hits`，外部的研判翻译给不了 → 平台"判不合再回落"，看着像降级其实是接线失败 | 装配层标 `wired=False` → 类型化错误拒绝 |
 | 凭据双口径 | `llm.py` 认 `ZHIPUAI_API_KEY`，配置面登记 `AEGIS_EXT_LLM_API_KEY` | 平台口径优先，旧名只作兼容 |
 | 提示串指向源码 | 占位 Key 提示写"paste into config.py" → 照做等于把凭据写回源码 | 改成"设置环境变量，凭据不得写进源码" |
@@ -3739,12 +3750,13 @@ CI 覆盖率 job 已扩到 8 个模块、321 条相关用例，并纳入 `test_w
 
 ### 明确**没有**证到的事（这一批不声称）
 
-- **外部研判在当前平台形态下交不出结论**：平台研判请求给的是**规则命中**（hits），
-  外部因子引擎要的是**观测事件**（含 `rainfall_mm_h` 等灾种因子字段），两者不是一回事；
-  且外部 `risk_result` 没有契约要求的 `confidence`。因此 ext 档的研判段会**诚实降级**到平台规则轨。
-  要真正接通需平台在研判请求里带原始观测（外部经数据 API 取数，见接入规范 §4），本期未做。
-- **只接线了研判段**：`plan.stu` / `execute.warn` / `feedback.attribute` 与感知段都**明确不接线**
-  （类型化错误拒绝）。外部最有价值的"全局调度"（manager 编排）能力未接入。
+- ~~**外部研判在当前平台形态下交不出结论**：平台研判请求给的是**规则命中**（hits），
+  外部因子引擎要的是**观测事件**，两者不是一回事；且外部 `risk_result` 没有契约要求的 `confidence`。~~
+  **已关闭（ADR-0012）**：平台现在构造 `assess.v1` 证据包随请求推送（窗口观测 + 区域 `site_profiles`），
+  外部按因子名取用；`confidence` 由实现自产并带 `confidence_basis`。**仍未证到的**：冰湖溃决的
+  三个事件标志当前**没有遥测来源**，该灾种会诚实返回 `E_ASSESS_INSUFFICIENT`，不是"无风险"。
+- **只接线了研判段**：`plan.stu` / `execute.warn` / `feedback.*` 与感知段**不注册**（网关记 `no_agent`，
+  不是 error）；外部最有价值的"全局调度"（manager 编排）能力未接入。
 - **外部 LLM 绕开平台网关**：不经 `llm_gateway`、不经提示注入围栏（`fence_untrusted`）、不进平台模型台账。
 - **共享记忆未打通**：外部反馈记忆写自己的 JSON 文件，不进平台共享命名空间。
 - **线程里的图取消不掉**：`AgentKit` 的 deadline 只取消协程，超时后那张 LangGraph 图仍在跑

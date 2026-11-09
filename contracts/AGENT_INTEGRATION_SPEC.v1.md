@@ -56,7 +56,7 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 |---|---|---|---|---|
 | `perceive.anomaly` | perceive | out→event | `station_id`,`metric`,`value`,`observed_at`,`anomaly_score` | 弱信号/越限标注上报 |
 | `perceive.trigger_hit` | perceive | out→event | `rule_id`,`hazard_type`,`region_code`,`evidence_refs` | 触发条件命中（指标1 溯源依据） |
-| `assess.hazard` | platform→perceive/assess | in→request | `region_code`,`window`,`candidate_hazards` | 请求灾种识别。perceive 侧可附 `readings`（本批读数）；应答为 `trigger_hits`；assess 侧应答为 `assess.risk_level` |
+| `assess.hazard` | platform→perceive/assess | in→request | `region_code`,`window`,`hazard_type`（assess 侧必填） | 请求灾种识别。perceive 侧可附 `readings`（本批读数）；应答为 `trigger_hits`；assess 侧 payload 为 `assess.v1` 请求（见 §9），应答为 `assess.risk_level` / `assess.v1` 响应 |
 | `assess.risk_level` | assess | out→response | `hazard_type`,`region_code`,`risk_level`(1-5),`confidence`,`rationale`,`evidence_refs` | 定级结论 |
 | `plan.stu` | platform→plan | in→request | `event_id`,`risk`,`objective`,`constraints` | 请求任务拆解 |
 | `plan.stu_result` | plan | out→response | `task_units`(STU 数组，须过 stu.v1 校验) | 返回标准化任务单元集 |
@@ -77,7 +77,9 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 
 智能体取数只能走平台数据 API（只读，服务令牌鉴权）：
 
-- `GET /api/v1/telemetry` — 时序查询（站点、指标、时间窗）
+- `GET /api/v1/telemetry` — 时序查询（站点、指标、时间窗，支持 `since`/`until`；缺时区或逆序窗返回 422 `E_BAD_WINDOW`，响应形状见 OpenAPI 的 422 声明）
+- `GET /api/v1/assess/evidence?region_code=&window_minutes=` — 研判证据包（`assess.v1` `AssessEvidence`，与推送腿同构）
+- `GET /api/v1/site-profiles` / `GET /api/v1/site-profiles/{region_code}` — 区域级静态孕灾画像
 - `GET /api/v1/graph/entities` / `POST /api/v1/graph/search` — 灾情知识图谱与 GraphRAG 检索
 - `GET /api/v1/cases` — 历史案例库
 - `GET /api/v1/warnings` / `GET /api/v1/tasks` — 预警与任务单元
@@ -97,6 +99,8 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 | `E_DUPLICATE` | msg_id 重复（幂等保护，正常丢弃） | 否 |
 
 超时判定权在**平台网关**：到期未收到 response 即记 `E_TIMEOUT` 并触发 STU 的 `fallback_policy`。智能体不得自行判定平台超时。
+
+上表是总线级错误码；研判段（`assess.hazard`）的业务拒绝走 `E_ASSESS_*`，见 §9.4。
 
 ## 6. 生命周期
 
@@ -136,7 +140,101 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 
 指标量测全部落在平台侧，与智能体实现质量解耦，可按 `agent_id` 归因输出给智能体方作为性能反馈。
 
-## 9. 版本演进
+## 9. 研判契约 `assess.v1`
+
+`assess.hazard` 的 payload 是 `assess.v1` 的 `AssessRequest`，应答是 `AssessResponse`；
+平台自建（builtin）、契约门禁对照（mock）与外部实现（`agents_ext`）**共用同一套 DTO**
+（Python 镜像 `aegis.domain.assess`，全部 `extra="forbid"`）。平台不认识任何"外部结果形状"。
+
+### 9.1 请求 `AssessRequest`
+
+| 字段 | 必填 | 约束 | 语义 |
+|---|---|---|---|
+| `contract_version` | 否 | 固定 `assess.v1` | 契约版本 |
+| `region_code` | 是 | `^[0-9A-Z]{6,24}$` | 区域编码 |
+| `window` | 是 | `^\d{1,4}(m\|h)$` | 证据窗口（如 `60m`） |
+| `hazard_type` | assess 侧是 | 平台灾种枚举 | 主灾种（平台按 hits 最高分选定） |
+| `candidate_hazards` | 否 | ≤7 | 候选灾种；`hazard_type` 必须属于其中 |
+| `hits` | 否 | ≤64 | 规则引擎命中（`TriggerHit`），用于溯源与兜底 |
+| `rule_level` | 否 | 1–5 | 规则引擎定级，供实现参考 |
+| `intake` | 否 | `telemetry`/`report` | 数据来路 |
+| `evidence` | 否 | `AssessEvidence` | **推送腿**：平台构造的窗口证据包 |
+| `data_refs` | 否 | ≤32 | 证据快照引用；实现可据此走**拉取腿** |
+| `requested_at` | 否 | ISO 时间 | 默认当前时刻 |
+
+### 9.2 证据 `AssessEvidence`
+
+`region_code`、`window`、`generated_at` 必填；`observations`（≤48 条 `FactorObservation`）、
+`site_profile`（区域静态画像）、`provenance`（`DataProvenance`）、`unmapped_metrics`（≤24，
+显式"不映射"及原因）、`notes`（≤16）、`truncated`。
+
+`FactorObservation` 字段：`factor`（`^[a-z][a-z0-9_]*$`）、`unit`、`samples`（1..100000）、
+`min_value`/`max_value`/`mean_value`/`class_value`（数值与类别**至少其一**，数值必须有限，
+`min<=max`）、`observed_at`、`station_ids`、`quality`（`ok`/`partial`/`site`）、`sources`、`derivation`。
+平台侧按**声明式派生表**生成（见 ADR-0012 §2.1）；无合法派生口径的遥测进 `unmapped_metrics`，禁止近似。
+
+推送/拉取同构：`GET /api/v1/assess/evidence` 返回的对象必须能被 `AssessEvidence.model_validate`
+直接解析；实现处理顺序为 **请求内 evidence → `data_refs` 拉取 → 都没有则拒绝**（`E_ASSESS_INSUFFICIENT`）。
+
+### 9.3 响应 `AssessResponse`
+
+| 字段 | 必填 | 约束 | 语义 |
+|---|---|---|---|
+| `contract_version` | 否 | 固定 `assess.v1` | 契约版本 |
+| `hazard_type` / `region_code` | 是 | 枚举 / 区域 pattern | 必须与请求一致 |
+| `risk_level` | 是 | 1–5（红/橙/黄/蓝/无） | 统一分级口径 |
+| `confidence` | 是 | 0.0–1.0（有限值） | **证据强度**，见 §9.5 |
+| `confidence_basis` | 是 | 1–200 字符 | 置信度的可解释依据，空串即拒绝 |
+| `rationale` | 否 | ≤1000 | 结论理由 |
+| `evidence_refs` | 否 | ≤32 | 结论引用的证据 |
+| `assessed_at` / `assessed_by` | 是/是 | ISO / ≤64 | 产出时刻与实现标识 |
+| `human_review_suggested` | 否 | bool | 建议人工核签 |
+| `double_blind` / `double_blind_mode` | 否 | ≤32 / ≤16 | 双盲（不适用填 `not_applicable`/`""`） |
+| `source` | 是 | ≤64 | 实现来源（如 `agents_ext_mock`） |
+| `data_provenance` | 否 | `DataProvenance` | 数据出处 |
+| `assessment` | 否 | 自由对象 | 实现内部信封（版本/因子/覆盖率等），平台只透传 |
+
+### 9.4 错误码
+
+| 码 | 含义 | 可重试 |
+|---|---|---|
+| `E_ASSESS_INSUFFICIENT` | 证据/因子不足，拒绝给出等级（**不得**降级成"无风险"） | 否 |
+| `E_ASSESS_UNCERTAIN` | 实现内部状态不确定 | 是 |
+| `E_ASSESS_FAILED` | 内部执行失败 | 是 |
+| `E_ASSESS_HAZARD_UNSUP` | 灾种不在实现支持范围内 | 否 |
+| `E_ASSESS_BAD_LEVEL` | 产出的等级超出 1–5 | 否 |
+| `E_ASSESS_CONF_MISSING` | 响应缺 `confidence`（含空依据） | 否 |
+| `E_ASSESS_BAD_INPUT` | 请求畸形 / region·hazard 与请求不一致 | 否 |
+
+全部错误码满足 AgentMessage schema 的 `^E[A-Z0-9_]{3,20}$`；旧 `E_EXT_*` 已随适配层删除。
+
+### 9.5 置信度语义与数据出处
+
+**`confidence` 是证据强度，不是概率。** 平台只校验范围与 `confidence_basis` 非空，**不代填**——
+生产方说不出依据的置信度就是伪证。外部实现用确定性策略自产：
+`min(0.60, 0.15 + 0.40×coverage + 0.05×validation)`，`basis` 写明覆盖率、验证结果、方法与封顶值；
+MOCK 权重与原型公式封顶 0.60，并恒置 `human_review_suggested=True`。
+
+`DataProvenance`（响应与 verdict/API/台账一等字段）：
+
+| 字段 | 取值 | 语义 |
+|---|---|---|
+| `data_kind` | `observed`/`derived`/`reported`/`mock`/`demo`/`mixed`/`unknown` | 数据性质；混合含 mock 时 `is_mock=True` |
+| `sources` | `platform.telemetry:<source>`、`site_profile:<source>` 等 ≤16 | 出处清单 |
+| `method` | `telemetry_rule`/`factor_engine_mock`/`llm`/`report_parse`/`mock_agent`/`unknown` | 产出方法 |
+| `method_version` | ≤64 | 方法版本（如 `FACTOR-ENGINE-v0.1`） |
+| `is_mock` | bool | 是否含模拟/演示数据 |
+| `disclaimer` | ≤500 | 使用限制（如"禁止用于实际预警决策"） |
+
+平台把这些字段随 `RiskVerdict.as_payload()` 写入 API 响应与 `chain_runs.risk`，前端与台账都可见。
+
+### 9.6 灾种键
+
+`hazard_type` 一律使用平台枚举值（`landslide`/`rockfall`/`debris_flow`/`avalanche`/
+`lake_outburst`/`quake_triggered`）。外部实现的历史串 `ice_rock_snow_avalanche`、
+`glacial_lake_outburst` 仅作为别名接受，归一化到平台值；未知灾种（如 `earthquake`）拒绝。
+
+## 10. 版本演进
 
 - v1 冻结后：**只增可选字段，不改语义**；枚举扩展（灾种、动作）走小版本 + 注册表更新；
 - 破坏性变更 → `contracts/agent_message.v2.schema.json` + `agent.<type>.in.v2`，网关支持双栈并行；

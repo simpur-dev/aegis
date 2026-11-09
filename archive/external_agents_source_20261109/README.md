@@ -3,6 +3,8 @@
 > **本目录不进主线**：不在 `backend/src/` 里、不进 wheel、不进镜像、不被 mypy/ruff/pytest 扫描。
 > 它的唯一作用是**溯源与复核**——"那份并进来的代码，原仓库里还剩些什么没并进来、为什么"。
 > 改代码请改 `backend/src/aegis/agents_ext/`（主线实现），**不要**在这里改。
+> **`scripts/` 子目录仅保留原始交付快照，不再作为更新入口**——外部模块已转为在树维护，
+> 不要再用这些搬入/后处理脚本覆盖主线实现（2026-11-09 收口，见 `docs/adr/0012`）。
 
 ## 来源
 
@@ -22,6 +24,7 @@
 | `runtime_artifacts/manager_checkpoints.sqlite` | Manager 的 SQLite checkpoint | **运行时产物**。主线里 checkpoint 路径由配置给（`AEGIS_EXT_CHECKPOINT_DB`），不进仓 |
 | `runtime_artifacts/feedback_memory.json` | 反馈记忆的 JSON 存储 | 同上：主线里是可配置路径的运行时文件，且**会被测试写**（写进仓会每次跑测试都产生 diff） |
 | `config_original_WITH_SECRET.py` | 原仓库的配置面 | ⚠️ **原文件里是明文 API Key，已在本副本中抹除**（`ZHIPUAI_API_KEY = ""`）。主线版本见 `backend/src/aegis/agents_ext/config.py`，只读环境变量 |
+| `scripts/import_external_agents*.py` / `postprocess_external_agents*.py` / `import_external_agents_all.sh` | 并入时的搬入/测试迁移/后处理/类型修正脚本 | **已退役**：模块现在树维护，这些脚本再跑会覆盖主线实现（且搬入时曾把密钥带回来过一次）。只作原始交付的复原快照 |
 
 ## 两件必须记下来的事
 

@@ -10,7 +10,7 @@
 | L0 领域内核 | 枚举、契约镜像（与 `contracts/*.schema.json` 严格同构）、**定级结论 `RiskVerdict`**、**链路产物 `ChainResult` 族**、契约校验器、错误码、配置——**不 import 任何上层包**，所有人都可依赖它 | `domain/`、`contracts.py`、`errors.py`、`config.py` |
 | L1 感知接入 | 多源采集、协议适配、时空归一、质量标记、**人工上报（群防群治）** | `connectors/`、`api/routers/drill.py`（`POST /api/v1/reports`）、`pipeline/report_intake.py`（`ReportIntake.submit`） |
 | L2 数据层 | 遥测/预警/任务/链路运行态存储；图谱与向量检索（M2 接入 Neo4j+Graphiti）；**预警规则库（版本化三态）** | `backend/src/aegis/storage/`、`persistence/sql/005_trigger_rules.sql`、`persistence/rulebook.py` |
-| L3 智能层 | 五大智能体（**外部实现**，经契约接入）；**两套并存**：平台自建内环 + 外部交付模块（经适配层走同一契约，`AEGIS_AGENT_IMPL=builtin\|ext` 选择，默认 builtin；外部那一侧**当前只接通了研判段**） | `contracts/`、`agents/`（交付落点索引）、`backend/src/aegis/agents/`（自建内环 + 契约壳 `agentkit.py`）、`backend/src/aegis/agents_ext/`（外部交付模块 + 适配三层：`adapter.py` 契约壳 / `contract_face.py` 语义翻译 / `levels.py` 口径对照） |
+| L3 智能层 | 五大智能体（**外部实现**，经契约接入）；**两套并存**：平台自建内环 + 外部交付模块（**两端共用 `assess.v1` 契约，无适配层**，`AEGIS_AGENT_IMPL=builtin\|ext` 选择，默认 builtin；外部那一侧**当前只接通了研判段**） | `contracts/`、`agents/`（交付落点索引）、`backend/src/aegis/agents/`（自建内环 + 契约壳 `agentkit.py`）、`backend/src/aegis/agents_ext/`（外部交付模块，`risk_agent/agent.py` 直接实现 `AgentKit` + `aegis.domain.assess`） |
 | L4 服务层 | 触发规则、定级、任务拆解、**三路融合解析（规则/检索佐证/LLM）**、预警生成、靶向触达（mock + **真实 HTTP 通道**）、**语义交互（白名单动作 + 认知镜像）**、**阈值标定闭环**、链路编排、HTTP API | `services/`、`pipeline/`、`api/` |
 | L5 应用层 | 纯 Web：态势总览 / 一张图 / 监测预警 / 预警发布 / 流程编排 / 指标量测 / **智能助手**（Vue3 + Vite + TS + AntD + ECharts） | `frontend/src/views/` |
 | 基座 | 总线、能力注册、时延账本、指标导出、配置与日志 | `bus/`、`observability/`、`config.py`、`logging.py` |
@@ -45,46 +45,51 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 - 网关职责：Schema 校验 → 动作白名单 → msg_id 幂等去重 → TTL 丢弃 → 协同事务台账 → 共享同步时延埋点
 - 能力注册中心：能力声明 + 心跳失联摘除 + 按负载路由；**容量饱和时快速失败**（由上层降级/重调度显式处理，不做无界排队）
 
-### 3.1 两套智能体实现（2026-11-09 起）
+### 3.1 两套智能体实现（2026-11-09 起；同日收口为统一契约）
 
 L3 现在有**两套并存**的实现，都经同一份 `AgentMessage v1` 契约对外服务，由 `AEGIS_AGENT_IMPL` 选择：
 
 | | 平台自建内环 | 外部交付模块 |
 | --- | --- | --- |
 | 代码 | `backend/src/aegis/agents/` | `backend/src/aegis/agents_ext/` |
-| 形态 | 直接实现 `AgentKit.handle(AgentMessage)` | LangGraph 图编排，经 `agents_ext/adapter.py` **适配成** `AgentKit.handle` |
+| 形态 | 直接实现 `AgentKit.handle(AgentMessage)` | `risk_agent/agent.py` **直接继承 `AgentKit`**；LangGraph 图只做内部编排 |
+| 契约 | `aegis.domain.assess` 的 `assess.v1` DTO | **同一套 DTO**（没有适配层、没有第二套词汇） |
 | 依赖 | 平台既有依赖 | 独立 extra `agents_ext`（langgraph / langchain） |
-| 数据面 | 接平台真实数据（数据 API / MCP 工具 / 共享记忆） | **内存 Mock 源**（响应带 `source=agents_ext_mock`） |
-| 门禁 | 契约 7 项一致性测试 | 109 条迁入用例 + 边界守卫（不直连库 / 不依赖平台内部 / 不改 sys.path / 无明文密钥） |
+| 数据面 | 平台真实数据（数据 API / MCP 工具 / 共享记忆） | **平台推送的证据包**（窗口观测 + 区域 `site_profiles`）；出进程部署可经 `GET /api/v1/assess/evidence` 拉取 |
+| 门禁 | 契约 7 项一致性测试 | 迁入用例 + 边界守卫 + `assess.v1` 契约门禁（不直连库 / 不依赖平台内部 / 不改 sys.path / 无明文密钥） |
 
-**外部模块那一侧是三层分工**（不是一个文件包办）：
+**统一契约**：`AssessRequest` / `AssessEvidence` / `AssessResponse` 住在 `aegis.domain.assess`，
+builtin、mock、ext 三个实现共用；平台只校验响应，不认识任何"外部结果形状"。
+外部实现内部的等级字符串（high/medium/low/none）在**它自己的权威入口** `run_risk_agent` 里
+一次性转成契约等级与响应，这是实现的"契约发射"，不是平台侧翻译。
 
-| 层 | 位置 | 职责 |
-| --- | --- | --- |
-| 契约壳 | `agents_ext/adapter.py` | `AgentKit.handle` 样板（订阅/心跳/幂等/deadline/错误回执）+ 动作分派 |
-| 语义翻译 | `agents_ext/contract_face.py` | 契约 payload ↔ 外部入口参数、外部结果 ↔ 契约响应 |
-| 口径对照 | `agents_ext/levels.py` | 灾种键、风险等级、状态四态的双向对照 |
+**数据面**：平台在研判段构造 `AssessEvidence`（遥测按声明式派生表转成 `FactorObservation`、
+区域静态属性来自 site_profiles、出处汇总成 `DataProvenance`），随请求推送；同时暴露
+`GET /api/v1/assess/evidence` 与 `GET /api/v1/site-profiles` 供拉取。无合法派生口径的遥测
+进 `unmapped_metrics` 并写原因，禁止近似。证据包自限 48 条观测 / 48KB，超限置 `truncated=True`。
 
-**当前接通范围（2026-11-09）**：外部实现**只接了研判段的 `assess.hazard` 一个动作**。
+**出处与置信度**：`data_provenance` / `confidence_basis` / `assessment` 是 `RiskVerdict` 一等字段，
+随 API 与 `chain_runs.risk` 落台账。`confidence` 由生产方自产（平台不代填）：外部实现用
+`min(0.60, 0.15 + 0.40×coverage + 0.05×validation)`，并恒置 `human_review_suggested=True`。
+
+**当前接通范围（2026-11-09）**：外部实现**只注册研判段的 `assess.hazard` 一个动作**。
 感知段（平台也发 `assess.hazard`，但要的是 `trigger_hits`）、决策段 `plan.stu`、
-执行段 `execute.warn`、反馈段 `feedback.attribute` **明确不接线**——
-请求被类型化错误 `E_EXT_ACTION_UNSUP` 拒绝：走 error 通道、事务记 error、**不计协同成功**。
+执行段 `execute.warn`、反馈段 `feedback.attribute` **不注册**——网关记 `no_agent`（不是 error），
+平台按既有本地降级轨走。
 
-**为什么并存而不是替换**：外部模块的实现形态（单进程图编排）与平台契约（总线上的独立服务）不同模型，
-直接拼接会破坏契约；用适配层包起来之后，它就成了一组合法的平台实现，而平台自建内环
-（接真实数据、已过契约门禁）继续服役。选择权在部署方（默认 `builtin`，行为不变）。
+**为什么并存而不是替换**：两套实现的数据面与成熟度不同；统一契约后，选择权在部署方
+（默认 `builtin`，行为不变），切换不改变平台侧代码路径。
 
 **边界守在哪里**：`backend/tests/unit/test_agents_ext_boundaries.py`（AST 读源码）钉住三条
 最容易被改坏的边界——外部模块不得直连数据库/存储层、不得依赖平台内部实现（否则不再是独立服务）、
 不得改全局 `sys.path`；另加"不写死绝对路径"与"不残留明文密钥"两条。
 
-**已知限制**（详版见 `docs/adr/0011` 的"已知限制"节）：
+**已知限制**（详版见 `docs/adr/0011`、`docs/adr/0012` 的"已知限制"节）：
 
-- **数据面缺口**：平台研判请求给的是**规则命中**（`hits`），外部因子引擎要的是**观测事件**
-  （含 `rainfall_mm_h` 等灾种因子字段）。适配层把 `hits` 转成事件骨架，因子字段缺失 →
-  外部按自己的门控判数据不足 → **外部研判在当前形态下交不出结论**，会诚实降级回平台规则轨。
-- **外部结果没有 `confidence` 字段**（契约要求）→ 适配层不产结论（`E_EXT_NO_CONFIDENCE`），
-  不填 `0.0` 冒充一条有效研判。
+- **MOCK 权重不因接线而变真**：外部因子权重是 MOCK、公式是原型候选，输出恒标 `is_mock=true`、
+  `source=agents_ext_mock`、`human_review_suggested=true`，置信度封顶 0.60。
+- **冰湖溃决可能长期"数据不足"**：它的三个事件标志当前没有遥测来源，会诚实返回
+  `E_ASSESS_INSUFFICIENT`（不是"无风险"）；补齐事件标志遥测后才能得分。
 - **线程里的图取消不掉**：外部入口是同步函数，放在 `asyncio.to_thread` 里跑；
   `AgentKit` 的 deadline 只取消协程，超时后那张图仍在跑（内部还有重试环），继续烧 CPU 与模型调用。
 - **外部的 LLM 绕开平台网关**：自建 `ChatOpenAI` 直连，**不经 `services/llm/llm_gateway.py`**
@@ -169,12 +174,12 @@ L3 现在有**两套并存**的实现，都经同一份 `AgentMessage v1` 契约
   含离线与底图守卫的前端测试。
 - **弱网链路（P1 POC）**：Eclipse Zenoh 站端↔网关通道，边缘有界缓冲 + 按序重放 +
   重放前可查（store/query at edge）；真运行时用例见 `tests/integration/test_edge_zenoh_live.py`。
-- **外部交付智能体模块并入（2026-11-09，ADR-0011）**：一份外部交付的 LangGraph 多智能体实现
-  并入 `backend/src/aegis/agents_ext/`（在 `aegis` 包内，随 wheel/镜像发布），经三层适配
-  （`adapter.py` 契约壳 / `contract_face.py` 语义翻译 / `levels.py` 口径对照）走同一份 `AgentMessage v1` 契约；
+- **外部交付智能体模块并入（2026-11-09，ADR-0011；同日 ADR-0012 收口）**：一份外部交付的
+  LangGraph 多智能体实现并入 `backend/src/aegis/agents_ext/`（在 `aegis` 包内，随 wheel/镜像发布），
+  **两端共用 `aegis.domain` 的 `assess.v1` 契约**（无适配层；并入时的三层适配已删除）；
   `AEGIS_AGENT_IMPL=builtin|ext` 选择，**默认 builtin 不变**，缺可选依赖时如实退回 builtin 并记 warning。
-  **当前只接通了研判段的 `assess.hazard`**，其余动作明确不接线（走 error 通道、事务记 error）；
-  已知限制（数据面缺口、无 confidence、图取消不掉、LLM 绕开平台网关、共享记忆未打通等）见 §3.1。
+  **当前只注册了研判段的 `assess.hazard`**，其余动作不注册（网关记 `no_agent`，平台走本地降级轨）；
+  外部结论为 demo 级（MOCK 权重、`is_mock=true`、置信度封顶 0.6），已知限制见 §3.1。
 
 未完成或待取证（诚实标注，完整清单以 `docs/REPORT.md` 的"还没测到的"为准）：
 

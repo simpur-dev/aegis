@@ -2,6 +2,9 @@
 
 - 状态：已采纳（2026-11-09）
 - 日期：2026-11-09
+- 后续：**ADR-0012（同日）删除了本文 §2 的三层适配层，改为两端共用 `assess.v1`；
+  数据面缺口与 `confidence` 缺口已关闭。** 本文保留并入当时的决策原貌，
+  §2 / §3 / "已知限制" 中与 ADR-0012 冲突的描述以 ADR-0012 为准。
 - 相关：ADR-0001（契约先行边界）、ADR-0002（智能体优先平台降级）、ADR-0007（LLM 智能体化升级）、
   ADR-0008（模块边界与 AST 守卫的做法）、`contracts/AGENT_INTEGRATION_SPEC.v1.md`、
   `docs/architecture.md` §3.1、`archive/external_agents_source_20261109/README.md`
@@ -42,6 +45,10 @@ langgraph-checkpoint-sqlite。没装这层时平台**一律退回自建内环**�
 
 ### 2. 接口统一：三层分工，把"契约壳"与"语义翻译"分开
 
+> **已被 ADR-0012 取代。** 三层适配层（`adapter.py` / `contract_face.py` / `levels.py`）
+> 已删除；外部实现直接继承 `AgentKit` 并解析 `AssessRequest`、产出 `AssessResponse`。
+> 下面记的是并入当时的做法，保留用于溯源。
+
 平台的 `AgentMessage` 请求 → 她的入口参数，她的返回 dict → `Reply(payload=...)`——
 这条翻译**不放在一个文件里**，拆成三层：
 
@@ -77,6 +84,10 @@ langgraph-checkpoint-sqlite。没装这层时平台**一律退回自建内环**�
 决策段 `plan.stu`、执行段 `execute.warn`、反馈段 `feedback.attribute`
 **明确不接线**——请求被类型化错误（`E_EXT_ACTION_UNSUP`）拒绝：走 error 通道、
 事务记 error、**不计协同成功**。
+
+> **ADR-0012 后的口径**：错误码改为 `E_ASSESS_*`；且四个未接线的动作**不再注册**——
+> 网关记 `no_agent`，平台按既有本地降级轨走。上面的 `E_EXT_ACTION_UNSUP`
+> 是并入当时"注册了但不承接"的做法，已随适配层删除。
 
 **为什么"明确不接线"而不是"接了再说"**：接了之后回一个形状不对的载荷，平台侧会
 "判不合契约再回落"——看着像降级，其实是接线失败，那会把一条没通的链路记成"外部实现跑过"。
@@ -115,6 +126,8 @@ langgraph-checkpoint-sqlite。没装这层时平台**一律退回自建内环**�
 （`import_external_agents.py` + `import_external_agents_tests.py` + `postprocess_external_agents*.py`），
 一条命令 `import_external_agents_all.sh` 可完整重跑。理由是踩过的坑：
 手工改过的文件在重跑搬入时会被冲掉——密钥就是这样重新进过一次仓。
+（2026-11-09 收口后这批脚本已移到 `archive/external_agents_source_20261109/scripts/`，
+仅保留原始交付快照、不再作为更新入口；模块转为在树维护，见 ADR-0012。）
 
 ### 6. 边界用门禁钉住，不靠 review
 
@@ -129,6 +142,10 @@ langgraph-checkpoint-sqlite。没装这层时平台**一律退回自建内环**�
 这节记的是**并入之后当下仍然成立的事实**。每条都对应代码里的一处具体行为，不是展望。
 
 ### 1. 数据面缺口：平台给的是"规则命中"，外部要的是"观测事件"
+
+> **已关闭（ADR-0012）**：平台现在构造 `assess.v1` 证据包（遥测派生因子 + 区域画像）
+> 随请求推送，并开 `GET /api/v1/assess/evidence` 供出进程拉取；
+> 静态属性由 `site_profiles` 数据面提供。下面记的是关闭前的状态。
 
 平台的研判请求带的是 `hits`（`rule_id` / `hazard_type` / `score` / `observed_at`），
 外部因子引擎要的是**观测事件**（`processed_data.events`，含 `rainfall_mm_h` 这类灾种因子字段）。
@@ -145,6 +162,9 @@ langgraph-checkpoint-sqlite。没装这层时平台**一律退回自建内环**�
 
 ### 2. 外部结果没有 `confidence` 字段
 
+> **已关闭（ADR-0012）**：外部实现按确定性策略自产 `confidence` 与 `confidence_basis`
+> （证据强度口径，封顶 0.60），平台只校验不代填。下面记的是关闭前的状态。
+
 契约要求 `confidence`（平台会校验 0..1），外部的 risk_result 没有这一格。
 适配层的处理是**不产结论**（`E_EXT_NO_CONFIDENCE`），而不是填 `0.0` 冒充——
 填了会被平台当成一条有效研判采纳。
@@ -158,8 +178,10 @@ langgraph-checkpoint-sqlite。没装这层时平台**一律退回自建内环**�
 
 ### 4. 只有研判段接线
 
-见 §3。感知段要的 `trigger_hits` 形状、决策/执行/反馈三段的动作翻译都还没写；
-`contract_face.py` 里目前只有 `assess_face` 一条翻译函数。
+见 §3。感知段要的 `trigger_hits` 形状、决策/执行/反馈三段的动作都还没实现；
+ADR-0012 后这四段**不注册**（网关记 `no_agent`），不再有"注册了但接不了"的本体。
+MOCK 权重与原型候选公式**不因接线而变真**——外部结论仍标 `is_mock=True`、
+`human_review_suggested=True`、置信度封顶 0.6。
 
 ### 5. 外部的 LLM 绕开平台网关
 
