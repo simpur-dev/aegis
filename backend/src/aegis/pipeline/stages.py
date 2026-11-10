@@ -597,6 +597,12 @@ class HazardStages:
         if isinstance(main_reply, BaseException):
             message = getattr(main_reply, "message", None) or str(main_reply)
             result.degradations.append(f"研判降级: {message}")
+            # 主腿失败不等于因子腿没跑：它若成功，结论照常进台账——
+            # 降级文本旁边躺着一份可用的交叉验证结论，比"什么都不留"有用得多。
+            if not isinstance(factor_reply, BaseException) and factor_reply is not None:
+                factor = self._parse_factor_assessment(factor_reply.payload)
+                if factor is not None:
+                    result.stage_notes["assess.factor_risk"] = factor
             return _AssessOutcome(local, False)
         response = main_reply
 
@@ -975,6 +981,8 @@ class HazardStages:
         used_agent = False
         if self._agent_ready(AgentType.EXECUTE, "warn_publish", result, stage="执行"):
             content_ready = self._agent_ready(AgentType.EXECUTE, "warn_content", result, stage="执行")
+            # 事实池算一次、两条腿共用：_copy_facts 是纯拼接，同参重复调只是白费
+            content_refs = self._copy_facts(record, verdict)
             warn_task = self._gateway.dispatch(
                 AgentType.EXECUTE,
                 Action.EXECUTE_WARN,
@@ -987,7 +995,7 @@ class HazardStages:
                     "channels": record.channels,
                     # 文案里的数字必须有出处可查：把预警事实的引用交给智能体，
                     # 回收时再拿同一批事实做防幻觉闸（§3.4 护栏）。
-                    "content_refs": self._copy_facts(record, verdict),
+                    "content_refs": content_refs,
                 },
                 trace_id=trace,
                 capability="warn_publish",
@@ -1009,7 +1017,7 @@ class HazardStages:
                         # `assessment_status=scored` 为前提（"数据门控已过、风险已评分"），
                         # 那个信封只有因子引擎给得出——研判段的因子腿是这两段之间唯一的桥。
                         "risk_result": self._material_risk_result(verdict, result),
-                        "content_refs": self._copy_facts(record, verdict),
+                        "content_refs": content_refs,
                     },
                     trace_id=trace,
                     capability="warn_content",
@@ -1026,7 +1034,9 @@ class HazardStages:
                 else:
                     response, content_reply = await warn_task, None
                 if isinstance(response, BaseException):
-                    raise AegisError(getattr(response, "message", None) or str(response))
+                    # 原样重抛（NoCapableAgentError / 超期……各自的错误码与判别信息都在），
+                    # 不压平成泛化 AegisError——那会把 no_agent/timeout 在台账里抹成 INTERNAL。
+                    raise response
                 used_agent = True
                 pre_adopt = record
                 record = self._adopt_agent_copy(record, response.payload, result, verdict=verdict)

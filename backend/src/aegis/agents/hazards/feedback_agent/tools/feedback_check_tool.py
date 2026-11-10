@@ -27,6 +27,7 @@ Feedback Agent 确定性检查工具（全项目结构化质量检查引擎）
            evidence, confidence, requires_human_review}
 """
 
+import logging
 import re
 from datetime import UTC, datetime
 
@@ -35,6 +36,8 @@ from aegis.agents.hazards.hazard_registry import (
     SUPPORTED_HAZARDS,
     normalize_hazard_type,
 )
+
+log = logging.getLogger(__name__)
 
 # ------------------------------------------------------------
 # 常量口径（与各 Agent 输出 Schema 对齐）
@@ -725,8 +728,10 @@ def _check_simulation_block(seq, issues, hazard_key, simulation_result):
                         confidence=0.85,
                     )
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        # 审计少报比多报更糟：跳过的核查分支必须可见，否则台账显示"跑完了"
+        # 而实际只查了一半。
+        log.warning("链内审计分支跳过", extra={"err": f"{type(exc).__name__}: {exc}"[:200]})
 
     # 状态与执行事实一致性
     routing = (simulation_result.get("validation") or {}).get("routing") or {}
@@ -878,8 +883,9 @@ def _check_warning_block(seq, issues, hazard_key, warning_result, risk_result, d
                         confidence=0.9,
                     )
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            # 同上：审计少报比多报更糟，跳过的分支必须可见。
+            log.warning("链内审计分支跳过", extra={"err": f"{type(exc).__name__}: {exc}"[:200]})
 
         # 区域一致性（预警目标区域 vs 观测区域）
         events = (data_result.get("processed_data") or {}).get("events") or []

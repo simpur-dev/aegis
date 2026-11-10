@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from aegis.api.deps import get_container
 from aegis.container import PlatformContainer
+from aegis.domain.chain import ChainResult
 from aegis.domain.messages import TelemetryReading
 
 
@@ -78,7 +79,12 @@ def build_router() -> APIRouter:
         results = await ctn.chain.process_many(grouped)
         return {
             "ingest": report.as_dict(),
-            "chains": [r.as_dict() for r in results],
+            # 失败的区域以失败行进响应，而不是让整个端点 500——
+            # 演练要的就是"哪些区域、什么结果"，一区域失败不该抹掉其余区域的结果。
+            "chains": [
+                r.as_dict() if isinstance(r, ChainResult) else {"ok": False, "errors": [f"链路异常: {r}"], "degradations": [], "stages": []}
+                for r in results
+            ],
             "regions": len(grouped),
         }
 

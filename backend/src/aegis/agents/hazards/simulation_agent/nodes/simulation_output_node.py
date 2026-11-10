@@ -22,7 +22,11 @@ SimulationOutput 节点 —— 最终结构化输出
   8. 其余                                          → success
 """
 
+import logging
+
 from aegis.agents.hazards.simulation_agent.tools.hazard_model_router import get_model_requirements
+
+log = logging.getLogger(__name__)
 
 
 def simulation_output_node(state: dict) -> dict:
@@ -88,8 +92,10 @@ def simulation_output_node(state: dict) -> dict:
                 "real_model_note": req["real_model_note"],
             }
         )
-    except Exception:
-        pass  # 灾种不支持路径：保持 routing_result 里的空值与失败原因
+    except Exception as exc:
+        # 灾种不支持路径：保持 routing_result 里的空值与失败原因。但"为什么没摘要"
+        # 必须可见——静默跳过会让仿真产物看起来像"本来就没有这节"，排查时无从下手。
+        log.warning("仿真输出摘要跳过（灾种不支持或数据缺失）", extra={"err": f"{type(exc).__name__}: {exc}"[:200]})
 
     # ---------- 4) 逐情景摘要（成功 ok / 执行失败 failed / 校验跳过 skipped）----------
     scenarios_summary = []

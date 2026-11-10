@@ -35,6 +35,8 @@ Simulation Agent 的 LangGraph 图构建
     # 提供给全局 workflow / Manager 调用（风格对齐 create_risk_agent）
 """
 
+from functools import lru_cache
+
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -172,6 +174,13 @@ def build_simulation_agent_graph() -> CompiledStateGraph:
     return graph.compile()
 
 
-def create_simulation_agent():
-    """便捷函数：创建并返回编译好的 Simulation Agent 图。>>> 给 Manager 用"""
+@lru_cache(maxsize=1)
+def create_simulation_agent() -> CompiledStateGraph:
+    """返回共享的已编译图：构建 + 编译只做一次（给 Manager 与直调用）。
+
+    与 `risk_agent.create_risk_agent` 同一模式：LangGraph 的编译开销每次重建都要付
+    （实测 p50 11.5ms 量级），mock/规则路径上它是主要成本；节点在执行期才取 LLM 工厂，
+    缓存图不会锁死模型实例；LangGraph 的 `invoke` 每次新建运行态，同一编译图可被
+    多线程并发调用。
+    """
     return build_simulation_agent_graph()

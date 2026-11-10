@@ -10,6 +10,8 @@ Manager Agent 图装配（LangGraph 原生 StateGraph，中心化 Supervisor 拓
   不传则为普通内存执行（测试/单次运行）。
 """
 
+from functools import lru_cache
+
 from langgraph.graph import END, START, StateGraph
 
 from aegis.agents.hazards.manager_agent.nodes.dispatch_node import dispatch_node
@@ -50,6 +52,23 @@ def build_manager_graph() -> StateGraph:
     return g
 
 
+@lru_cache(maxsize=1)
+def _compiled_manager_graph():
+    """无 checkpointer 的共享编译图（构建 + 编译只做一次）。
+
+    与 `risk_agent.create_risk_agent` 同一模式：LangGraph 的编译开销每次重建都要付
+    （实测 p50 11.5ms 量级）。LangGraph 的 `invoke` 每次新建运行态，同一编译图可被
+    多线程并发调用。
+    """
+    return build_manager_graph().compile()
+
+
 def create_manager_graph(checkpointer=None):
-    """编译 Manager 全局图（workflow/graph.py 薄再导出同一入口）。"""
+    """编译 Manager 全局图。
+
+    checkpointer 为空（生产路径常态）时返回共享单例；带 checkpointer 的图因绑定了
+    持久化状态不能共享，每次现编。
+    """
+    if checkpointer is None:
+        return _compiled_manager_graph()
     return build_manager_graph().compile(checkpointer=checkpointer)

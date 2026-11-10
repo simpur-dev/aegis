@@ -14,6 +14,7 @@ parity 用例逐项对齐两者的可观测物，全绿之后固定顺序那份�
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -27,6 +28,8 @@ from aegis.workflow.engine import WorkflowEngine
 
 #: 标准五段模板名（定义在 `workflow/templates.py` 的 `standard_chain_template`）。
 STANDARD_CHAIN_TEMPLATE = "标准五段处置链路"
+
+log = logging.getLogger("aegis.pipeline.workflow_chain")
 
 
 def stage_branch(stage: str, board: ChainBoard) -> str:
@@ -152,9 +155,25 @@ class WorkflowChain:
 
         return await run_under_root(trace, body, region=region, reading_count=len(readings), intake=intake)
 
-    async def process_many(self, grouped: dict[str, list[TelemetryReading]]) -> list[ChainResult]:
-        """多区域并发：一区域一个实例、一盘，互不阻塞（与固定顺序版同语义）。"""
-        return list(await asyncio.gather(*(self.process(readings, region_code=region) for region, readings in grouped.items())))
+    async def process_many(self, grouped: dict[str, list[TelemetryReading]]) -> list[ChainResult | BaseException]:
+        """多区域并发：一区域一个实例、一盘，互不阻塞（与固定顺序版同语义）。
+
+        `return_exceptions=True`：一个区域的链路抛异常时，其余区域的链路**照样跑完**
+        并交回结果——不带这个参数的 gather 会立刻上抛，剩下的任务成了没人收结果的
+        孤儿（还在后台跑、异常可能 never retrieved）。失败的区域以异常形式留在返回
+        列表的原位置，调用方按 `isinstance(item, Exception)` 处置。
+        """
+        outcomes = await asyncio.gather(
+            *(self.process(readings, region_code=region) for region, readings in grouped.items()),
+            return_exceptions=True,
+        )
+        failures = [(index, outcome) for index, outcome in enumerate(outcomes) if isinstance(outcome, BaseException)]
+        if failures:
+            log.error(
+                "多区域链路有区域失败",
+                extra={"failed": [str(outcome) for _, outcome in failures]},
+            )
+        return list(outcomes)
 
 
 def _absorb_instance(result: ChainResult, detail: dict[str, Any]) -> None:

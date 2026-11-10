@@ -1057,7 +1057,13 @@ def _build_assistant_registry(
         for reading in store.telemetry.query(region_code=region_code or None, limit=1_000):
             grouped.setdefault(reading.region_code, []).append(reading)
         results = await container.chain.process_many(grouped)
-        return {"ingest": rounds, "regions": len(grouped), "chains": [row.as_dict() for row in results]}
+        chains = [
+            row.as_dict()
+            if isinstance(row, ChainResult)
+            else {"ok": False, "errors": [f"链路异常: {row}"], "degradations": [], "stages": []}
+            for row in results
+        ]
+        return {"ingest": rounds, "regions": len(grouped), "chains": chains}
 
     actions: list[Action] = [
         WarningList(store.warnings),

@@ -16,7 +16,7 @@ Data Agent 运行入口（面向西藏五类山地地质灾害）
 import json
 import sys
 
-from aegis.agents.hazards.data_agent.graph import build_data_agent_graph
+from aegis.agents.hazards.data_agent.graph import create_data_agent
 from aegis.agents.hazards.data_agent.state import DataAgentState
 
 
@@ -33,7 +33,7 @@ def run_data_agent(task: str, hazard_type: str) -> dict:
     """
 
     # 1. 构建图
-    agent_graph = build_data_agent_graph()
+    agent_graph = create_data_agent()
 
     # 2. 初始化 State
     initial_state: DataAgentState = {
