@@ -28,8 +28,8 @@
 ## 参考
 
 - 行为样板：`backend/src/aegis/agents/mock.py`（assess 部分）
-- 门禁与接入流程：见 [`agents/README.md`](../README.md)
-- 完整规范：[`contracts/AGENT_INTEGRATION_SPEC.v1.md`](../../contracts/AGENT_INTEGRATION_SPEC.v1.md)
+- 门禁与接入流程：见 [`docs/agents/README.md`](../README.md)
+- 完整规范：[`contracts/AGENT_INTEGRATION_SPEC.v1.md`](../../../contracts/AGENT_INTEGRATION_SPEC.v1.md)
 
 ## 交付记录（交付时填写）
 

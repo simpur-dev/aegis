@@ -9,7 +9,7 @@
 - 应用形态：**纯 Web 平台**（响应式，不含原生移动端）
 - 分工边界：**平台侧**（L1 接入 / L2 数据 / L4 服务 / L5 应用 / 基座）与 **L3 五大智能体本体**
   均由本仓库承载——智能体自建于 `backend/src/aegis/agents/`（agentkit 契约壳 + LLM 内环），
-  按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入总线；外部团队的实现按同一契约接入，`agents/` 是交付落点
+  按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入总线；外部团队的实现按同一契约接入，`docs/agents/` 是交付落点与接入指引
 - **L3 现在有两套并存实现**（2026-11-09 起）：平台自建内环（`backend/src/aegis/agents/`，接真实数据面）
   与一份外部交付模块（`backend/src/aegis/agents_ext/`，LangGraph 图编排）。**两端共用同一套
   `assess.v1` 契约**（`AssessRequest`/`AssessEvidence`/`AssessResponse`，住在 `aegis.domain`），
@@ -34,8 +34,6 @@ aegis/
 │   ├── agent_message.v1.schema.json
 │   ├── stu.v1.schema.json
 │   └── AGENT_INTEGRATION_SPEC.v1.md
-├── agents/                    # L3 智能体的交付落点与接入指引（外部实现按契约接入；自建本体在 backend/src/aegis/agents/；
-│                              #   已并入的外部实现落在 backend/src/aegis/agents_ext/，本目录是索引）
 ├── archive/                   # 存档区（不进主线构建）：外部模块并入前的原始物料与占位说明的溯源副本
 ├── backend/
 │   ├── src/aegis/
@@ -69,6 +67,8 @@ aegis/
 ├── docs/                      # 现行文档：实现态架构、架构升级方案、ADR、实测记录、进度看板、选型与许可证清单
 │   ├── archive/               # 归档只读留痕：一次性任务书、立项前调研（见下方"文档地图"）
 │   ├── adr/                   # 决策记录（不可变，被取代的也保留）
+│   ├── agents/                # L3 智能体的接入指引与交付落点索引（外部实现按契约接入；
+│   │                          #   自建本体在 backend/src/aegis/agents/，已并入的外部实现在 backend/src/aegis/agents_ext/）
 │   └── audit/                 # 第三方迁移与合规盘点
 └── scripts/                   # 检索权重预置脚本（内网/离线部署前跑一次）
 ```
@@ -79,7 +79,9 @@ aegis/
 > `UI_UX_REDESIGN_BRIEF.md`（历史台账，仍被源码注释与颜色棘轮门禁引用，故保留在主目录）、
 > `智能助手升级方案.md`（助手的需求与设计基线，含代码链路与验收判据）、
 > `智能助手_Agent框架选型调研.md`（是否引入开源 Agent 框架的调研与决策）、
-> `智能助手_设计文档.md`（动作注册表、统一执行器、接口改造与死代码清单）、`adr/`、`audit/`。
+> `智能助手_设计文档.md`（动作注册表、统一执行器、接口改造与死代码清单）、
+> `agents/`（五段智能体的接入指引与交付落点索引，外部团队按契约接入时读这一份）、`adr/`、`audit/`。
+> （`docs/agents/` 由仓库根的 `agents/` 于 2026-11-10 移入：它只有文档、不含代码，放在 `docs/` 下才归位。）
 > **归档判据** = 一次性 / 阶段性输入材料 + 结论已被现行文档取代 + 全仓零引用；已归档
 > `docs/archive/PROMPT_dashboard_spike.md`（10-17 spike 任务书）与
 > `docs/archive/课题6_类似项目架构调研报告.md`（9-20 前期调研），原文保留、仅顶部加归档说明。

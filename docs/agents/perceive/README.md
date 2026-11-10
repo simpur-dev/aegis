@@ -27,8 +27,8 @@
 
 - 行为样板：`backend/src/aegis/agents/mock.py`（perceive 部分）
 - 门禁：`backend/tests/contract/test_agent_conformance.py`
-- 完整规范：[`contracts/AGENT_INTEGRATION_SPEC.v1.md`](../../contracts/AGENT_INTEGRATION_SPEC.v1.md)
-- 接入流程与环境：[`agents/README.md`](../README.md)
+- 完整规范：[`contracts/AGENT_INTEGRATION_SPEC.v1.md`](../../../contracts/AGENT_INTEGRATION_SPEC.v1.md)
+- 接入流程与环境：[`docs/agents/README.md`](../README.md)
 
 ## 交付记录（交付时填写）
 

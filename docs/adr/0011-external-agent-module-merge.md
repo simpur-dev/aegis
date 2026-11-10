@@ -35,7 +35,7 @@
 
 ### 1. 落位：`backend/src/aegis/agents_ext/`，在 `aegis` 包内
 
-**为什么不在仓库根的 `agents/`**：那个目录不在包路径上，代码不会进 wheel、不进镜像，
+**为什么不在仓库根的 `agents/`**（该目录 2026-11-10 已作为纯文档移入 `docs/agents/`，理由不变）：那个目录不在包路径上，代码不会进 wheel、不进镜像，
 部署时就没有它。它保留为**交付落点的索引**（README + 状态表），实现另置。
 
 **依赖独立成可选 extra `agents_ext`**：langgraph / langchain-core / langchain-openai /
@@ -97,7 +97,7 @@ langgraph-checkpoint-sqlite。没装这层时平台**一律退回自建内环**�
 
 - `archive/external_agents_source_20261109/`：外部仓库里不适合进主线的原始物料
   （18MB 灾害数据集 zip、三份 docx、运行产物、**抹除了密钥的**原 config.py）；
-- `archive/agents_delivery_placeholders_20261109/`：我们自己的 `agents/` 五个占位 README 的
+- `archive/agents_delivery_placeholders_20261109/`：我们自己的 `agents/`（现 `docs/agents/`）五个占位 README 的
   并入前原貌——不删、不改写历史。
 
 `archive/` 不在包路径上，不进 wheel/镜像，不被 mypy/ruff/pytest 扫描，只作溯源与复核。

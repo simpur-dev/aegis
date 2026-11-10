@@ -10,7 +10,7 @@
 | L0 领域内核 | 枚举、契约镜像（与 `contracts/*.schema.json` 严格同构）、**定级结论 `RiskVerdict`**、**链路产物 `ChainResult` 族**、契约校验器、错误码、配置——**不 import 任何上层包**，所有人都可依赖它 | `domain/`、`contracts.py`、`errors.py`、`config.py` |
 | L1 感知接入 | 多源采集、协议适配、时空归一、质量标记、**人工上报（群防群治）** | `connectors/`、`api/routers/drill.py`（`POST /api/v1/reports`）、`pipeline/report_intake.py`（`ReportIntake.submit`） |
 | L2 数据层 | 遥测/预警/任务/链路运行态存储；图谱与向量检索（M2 接入 Neo4j+Graphiti）；**预警规则库（版本化三态）** | `backend/src/aegis/storage/`、`persistence/sql/005_trigger_rules.sql`、`persistence/rulebook.py` |
-| L3 智能层 | 五大智能体（**外部实现**，经契约接入）；**两套并存**：平台自建内环 + 外部交付模块（**两端共用 `assess.v1` 契约，无适配层**，`AEGIS_AGENT_IMPL=builtin\|ext` 选择，默认 builtin；外部那一侧**当前只接通了研判段**） | `contracts/`、`agents/`（交付落点索引）、`backend/src/aegis/agents/`（自建内环 + 契约壳 `agentkit.py`）、`backend/src/aegis/agents_ext/`（外部交付模块，`risk_agent/agent.py` 直接实现 `AgentKit` + `aegis.domain.assess`） |
+| L3 智能层 | 五大智能体（**外部实现**，经契约接入）；**两套并存**：平台自建内环 + 外部交付模块（**两端共用 `assess.v1` 契约，无适配层**，`AEGIS_AGENT_IMPL=builtin\|ext` 选择，默认 builtin；外部那一侧**当前只接通了研判段**） | `contracts/`、`docs/agents/`（交付落点索引与接入指引）、`backend/src/aegis/agents/`（自建内环 + 契约壳 `agentkit.py`）、`backend/src/aegis/agents_ext/`（外部交付模块，`risk_agent/agent.py` 直接实现 `AgentKit` + `aegis.domain.assess`） |
 | L4 服务层 | 触发规则、定级、任务拆解、**三路融合解析（规则/检索佐证/LLM）**、预警生成、靶向触达（mock + **真实 HTTP 通道**）、**语义交互（白名单动作 + 认知镜像）**、**阈值标定闭环**、链路编排、HTTP API | `services/`、`pipeline/`、`api/` |
 | L5 应用层 | 纯 Web：态势总览 / 一张图 / 监测预警 / 预警发布 / 流程编排 / 指标量测 / **智能助手**（Vue3 + Vite + TS + AntD + ECharts） | `frontend/src/views/` |
 | 基座 | 总线、能力注册、时延账本、指标导出、配置与日志 | `bus/`、`observability/`、`config.py`、`logging.py` |
@@ -219,7 +219,7 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
 | 阶段项 | 状态 | 证据 / 缺什么 |
 | --- | --- | --- |
 | §4.1 LLM 网关 v2（路由/结构化输出/用量账本/Prompt 注册表） | 已落地 | `services/llm/llm_gateway.py`、`services/llm/prompt_registry.py`；prompt 版本进 `model_info`，并由链路**逐段转记**到 `chain_runs.stages[].model_info`（2026-10-12 补齐：此前凭证只活在总线信封里，全仓 0 处读取，README 那句"随结论入库"是空的）。口径：智能体不声明就没有这个键（`exclude_none`，平台不代填 "unknown"），execute 段只在【文案真的进了预警】时记——被数字闸全拦回的那一程产出的是平台模板。读面：`GET /api/v1/audit/chain/{trace_id}` 直读库，实测重启后 `/api/v1/events` 读 0 条而它仍 `found=true` |
-| §3 五智能体上总线（agentkit + 三态运行时） | 已落地 | `agents/`、`AEGIS_AGENT_RUNTIME=mock\|real\|off`，real 与 mock 互斥 |
+| §3 五智能体上总线（agentkit + 三态运行时） | 已落地 | `backend/src/aegis/agents/`、`AEGIS_AGENT_RUNTIME=mock\|real\|off`，real 与 mock 互斥 |
 | §5 验收口径分档（调度档 / LLM 档 / 端到端） | 已落地 | `sla_agent_txn_ms`，报表带 `口径档` 列；数见 REPORT |
 | §4.5 D9 数据飞轮（采集侧） | 部分落地 | `human_review` 一条已通（核签→真值行，真库验过）；**助手确认、演练两条没接** |
 | §4.3 D5 记忆服务 | 部分落地（四类门面于 2026-10-16 接上线并有了读者） | 共享命名空间已接生产（`007_agent_memory.sql` + 装配 + 治理端点）；四类记忆现在**两头都不空**：装配点把情景=案例知识腿、语义=混合检索腿接进门面，知识那一类**只在真配了 Graphiti 时**才接（拿案例库冒充图谱命中是这一节最容易被糊过去的地方），读者是 `GET /api/v1/memory/categories`——它把"这条腿没接"与"接了但这次没命中"分成两个字段回，而旧契约里两者都是一个 `[]`。**仍欠**：真图谱形态未取证（知识那一类只在真配了 Graphiti 时才有腿可读）；工具面那一条已于 2026-10-16 补上（`memory.categories`，`connected`/`items`/`note` 三态原样带出，见 §4.2 那一行） |

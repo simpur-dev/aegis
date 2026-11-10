@@ -7,7 +7,7 @@
 ## 存档缘由（2026-11-09）
 
 仓库根的 `agents/` 目录是架构文档规定的 **L3 五大智能体交付落点**（见 `docs/architecture.md`
-的 L3 行与 `agents/README.md` 的定位说明）。并入外部智能体模块之前，该目录下五个子目录
+的 L3 行与 `docs/agents/README.md` 的定位说明）。并入外部智能体模块之前，该目录下五个子目录
 （`perceive/` `assess/` `plan/` `execute/` `feedback/`）**各只有一份 README 占位**，
 状态一律是「未交付」。
 
@@ -24,12 +24,12 @@
 
 | 文件 | 原位置 | 说明 |
 | --- | --- | --- |
-| `README_root.md` | `agents/README.md` | 交付落点的总说明（并入前的版本，状态表全为「未交付」） |
-| `perceive/README.md` | `agents/perceive/README.md` | 感知智能体的接入占位说明 |
-| `assess/README.md` | `agents/assess/README.md` | 研判智能体的接入占位说明 |
-| `plan/README.md` | `agents/plan/README.md` | 决策智能体的接入占位说明 |
-| `execute/README.md` | `agents/execute/README.md` | 执行智能体的接入占位说明 |
-| `feedback/README.md` | `agents/feedback/README.md` | 反馈智能体的接入占位说明 |
+| `README_root.md` | `docs/agents/README.md` | 交付落点的总说明（并入前的版本，状态表全为「未交付」） |
+| `perceive/README.md` | `docs/agents/perceive/README.md` | 感知智能体的接入占位说明 |
+| `assess/README.md` | `docs/agents/assess/README.md` | 研判智能体的接入占位说明 |
+| `plan/README.md` | `docs/agents/plan/README.md` | 决策智能体的接入占位说明 |
+| `execute/README.md` | `docs/agents/execute/README.md` | 执行智能体的接入占位说明 |
+| `feedback/README.md` | `docs/agents/feedback/README.md` | 反馈智能体的接入占位说明 |
 
 ## 一条必须记住的分工（并存，不是替换）
 

@@ -9,10 +9,10 @@
 > 实现代码不在这里（这个目录不在包路径上，代码不进 wheel/镜像）。
 > `backend/src/aegis/agents/mock.py` 是契约门禁的对照源，不是产品。
 >
-> 唯一接口契约：[`contracts/AGENT_INTEGRATION_SPEC.v1.md`](../contracts/AGENT_INTEGRATION_SPEC.v1.md)
+> 唯一接口契约：[`contracts/AGENT_INTEGRATION_SPEC.v1.md`](../../contracts/AGENT_INTEGRATION_SPEC.v1.md)
 > 消息 Schema：`contracts/agent_message.v1.schema.json`、`contracts/stu.v1.schema.json`
 > 外部交付未落地期间的**自建方案**（LLM 化改造、框架选型、验收重测，含平台侧配套）：
-> [`docs/课题6_架构升级方案.md`](../docs/课题6_架构升级方案.md)（决策记录：ADR-0007）
+> [`docs/课题6_架构升级方案.md`](../课题6_架构升级方案.md)（决策记录：ADR-0007）
 
 ## 已并入的外部实现（2026-11-09 并入；2026-11-09 晚收口）
 
@@ -24,7 +24,7 @@
 直接产出 `AssessResponse`——两端共用 `aegis.domain.assess` 里同一套 DTO。
 （并入当时曾有 `adapter.py` / `contract_face.py` / `levels.py` 三层，同日收口时全部删除；
 现在若这三个模块存在反而是缺陷，`tests/contract/test_agents_ext_conformance.py` 用
-`ModuleNotFoundError` 钉住了这一点。决策见 [`docs/adr/0012`](../docs/adr/0012-assess-contract-unification.md)。）
+`ModuleNotFoundError` 钉住了这一点。决策见 [`docs/adr/0012`](../adr/0012-assess-contract-unification.md)。）
 
 实现与它的六类 agent 一一对应：
 
@@ -48,16 +48,16 @@
 `confidence`（`0.15 + 0.40×coverage + 0.05×validation`，封顶 0.60）并返回 `AssessResponse`。
 真栈实测：`540121` 走 `mode=agent`、等级 3、confidence 0.52；`540221`/`540321` 因因子覆盖率
 不足如实返回"数据不足"并本地降级——**不会把"算不出"写成"无风险"**。
-（并入当时"交不出结论"的缺口已由 [`docs/adr/0012`](../docs/adr/0012-assess-contract-unification.md) 关闭。）
+（并入当时"交不出结论"的缺口已由 [`docs/adr/0012`](../adr/0012-assess-contract-unification.md) 关闭。）
 
 其余已知限制（线程里的图取消不掉、外部的 LLM 绕开平台网关、共享记忆未打通等）
-详见 [`docs/architecture.md` §3.1](../docs/architecture.md) 的"已知限制"一节。
+详见 [`docs/architecture.md` §3.1](../architecture.md) 的"已知限制"一节。
 `docs/adr/0011` 记的是**并入当时**的决策原貌，其中三层适配层与"交不出结论"两条已被 ADR-0012 取代，
 文件头有横幅，不要按它实现接线。
 
-它的 LLM 调用自带熔断（[`docs/adr/0013`](../docs/adr/0013-ext-llm-breaker-and-client-reuse.md)）：
+它的 LLM 调用自带熔断（[`docs/adr/0013`](../adr/0013-ext-llm-breaker-and-client-reuse.md)）：
 连续失败达阈值后在冷却窗口内直接跳过 LLM，研判走确定性兜底——上游不可用时
-单次研判 **2952 ms → 4.14 ms**（同口径实测，见 [`docs/REPORT.md`](../docs/REPORT.md)）。
+单次研判 **2952 ms → 4.14 ms**（同口径实测，见 [`docs/REPORT.md`](../REPORT.md)）。
 
 ## 目录
 
