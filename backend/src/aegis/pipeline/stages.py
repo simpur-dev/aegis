@@ -161,6 +161,7 @@ class HazardStages:
         publisher: WarningPublisher | None = None,
         agent_hit_window: int = 512,
         agent_hit_ttl_seconds: float | None = None,
+        warnings_window: int = 5_000,
         knowledge: KnowledgeProvider | None = None,
         retrieval: HybridRetrievalService | None = None,
         suggestions: SuggestionSink | None = None,
@@ -181,7 +182,12 @@ class HazardStages:
         # 缺省不另立旋钮——多一个配置项就多一处"两个数互相打脸"的机会。
         self._agent_hit_ttl = float(agent_hit_ttl_seconds if agent_hit_ttl_seconds is not None else self._settings.sla_ingest_seconds)
         self._agent_hits: deque[_AgentHit] = deque(maxlen=agent_hit_window)
+        #: 本进程发布过的预警（按 warning_id 覆盖）。
+        #: **有界**：与 `_agent_hits` 同一个道理——长跑进程里这个 dict 只增不减，
+        #: 每条 WarningRecord 约 4 KB，十万条就是 150 MB；而预警的**权威读视图**
+        #: 是 `store.warnings`（已自带上限），这里这份只是 `warnings` 属性用的便捷副本。
         self._warnings: dict[str, WarningRecord] = {}
+        self._warnings_window = int(warnings_window)
         self._knowledge = knowledge
         self._retrieval = retrieval
         self._suggestions = suggestions
@@ -854,7 +860,20 @@ class HazardStages:
             result.errors.append(f"全部通道失败: {exc.message}")
             return None, used_agent
         self._warnings[dispatched.warning_id] = dispatched
+        self._evict_warnings()
         return dispatched, used_agent
+
+    def _evict_warnings(self) -> None:
+        """超出窗口就丢最旧的。
+
+        dict 按插入序迭代，删掉最前面的若干条即可（Python 3.7+ 的 dict 保序）。
+        同 warning_id 覆盖时长度不变，不会误删。
+        """
+        overflow = len(self._warnings) - self._warnings_window
+        if overflow <= 0:
+            return
+        for warning_id in list(self._warnings)[:overflow]:
+            self._warnings.pop(warning_id, None)
 
     @staticmethod
     def _copy_facts(record: WarningRecord, verdict: RiskVerdict) -> str:

@@ -201,6 +201,18 @@ class AssessAgent(AgentKit):
             return first, None, f"failed_arbitration:{type(exc).__name__}"
         return arb, True, "arbitrated"
 
+    async def stop(self) -> None:
+        """停机时关掉取数门面自建的 HTTP 客户端。
+
+        `RestAssessContext` 复用 client（否则每次请求都要重载 CA 证书包，实测 11 ms/次
+        且阻塞事件循环），复用就意味着它有连接池要关——**谁建谁关**。
+        MCP 门面没有可关的东西（会话按次开合），故用"有 aclose 才关"的口径。
+        """
+        await super().stop()
+        close = getattr(self.context, "aclose", None)
+        if close is not None:
+            await close()
+
     async def handle(self, request: AgentMessage) -> Reply:
         if self.llm is None:
             raise RuntimeError("assess 内环需要 LLM 网关（缺位由平台规则降级轨接管）")
