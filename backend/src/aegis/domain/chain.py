@@ -60,6 +60,13 @@ class ChainResult:
     #: 各段应答携带的模型凭证（段名 → 凭证）。三段的生产者是三个 helper，而段的记账在主流程里，
     #: 两者之间要有明确中转，而不是让 helper 去改 stages。
     stage_models: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: 各段的**补充产物**（段名 → 内容）：证据质量判据、因子交叉验证结论、预警文案素材、
+    #: 链内审计结论。
+    #:
+    #: 为什么单独一个字段而不是塞进 `degradations`：降级记的是"没走到哪一步"，补充产物记的是
+    #: "走到了，还带回了什么"。两件事混在一处，值班员看到一条记录时分不清该查哪边。
+    #: 它们也**不进发布产物**——发布权与事实口径由平台自己的段负责，补充产物只做可见性。
+    stage_notes: dict[str, Any] = field(default_factory=dict)
     #: 承载这条链路的**工作流实例**终态（succeeded/failed/waiting/aborted）。
     #: 段账只记"跑过的段"，实例被 abort 或卡在人工节点时可能只剩成功的前几段——
     #: 只看段就会把"图没跑完"报成成功。空串表示没有实例可看（离线构造的结果）。
@@ -101,6 +108,9 @@ class ChainResult:
         # 只在有实例时出现：离线构造的结果不该被写成 `instance_status: ""` 让读的人猜是"没实例"还是"漏填"。
         if self.instance_status:
             data["instance_status"] = self.instance_status
+        # 补充产物同理：没有就不出现，空字典不代表"产物是空的"，只代表"这段没带回东西"。
+        if self.stage_notes:
+            data["stage_notes"] = self.stage_notes
         return data
 
 

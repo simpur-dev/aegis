@@ -33,6 +33,7 @@ from aegis.api.routers import (
     audit,
     data,
     drill,
+    hazards,
     knowledge,
     memory,
     notifications,
@@ -137,6 +138,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
     app.include_router(knowledge.build_router())
     app.include_router(rules.build_router())
     app.include_router(drill.build_router())
+    app.include_router(hazards.build_router())
     app.include_router(warnings.build_router())
     app.include_router(agents.build_router())
     app.include_router(memory.build_router())

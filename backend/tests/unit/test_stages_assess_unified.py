@@ -14,7 +14,7 @@ import pytest
 
 from aegis.config import Settings
 from aegis.domain.chain import ChainResult
-from aegis.domain.enums import AgentType, HazardType, RiskLevel
+from aegis.domain.enums import Action, AgentType, HazardType, RiskLevel
 from aegis.domain.messages import TelemetryReading, TriggerHit, make_request, make_response, new_event_id, now_iso
 from aegis.domain.verdict import RiskVerdict
 from aegis.pipeline.assess_input import AssessEvidenceBuilder
@@ -49,13 +49,38 @@ ASSESS_PAYLOAD: dict[str, Any] = {
 }
 
 
+#: 研判段现在有三条腿：证据质量门、主研判、因子交叉验证。替身按动作分别应答——
+#: 一律回同一份载荷的话，门的应答会被当成主结论，测的就不是真实链路了。
+DATA_QUALITY_PAYLOAD: dict[str, Any] = {
+    "is_valid": True,
+    "completeness_ratio": 1.0,
+    "validation_reason": "证据完整",
+    "sufficient": True,
+    "reason": "证据完整",
+    "missing_data": [],
+}
+
+FACTOR_PAYLOAD: dict[str, Any] = {
+    "hazard_type": HazardType.DEBRIS_FLOW.value,
+    "region_code": REGION,
+    "risk_level": int(RiskLevel.ORANGE),
+    "confidence": 0.4,
+    "rationale": "因子引擎：覆盖度 0.75",
+    "source": "hazard.factor_engine",
+    "assessed_by": "assess.factor01",
+    "human_review_suggested": True,
+}
+
+
 class _Gateway:
     def __init__(self, payload: dict[str, Any] | None = None) -> None:
         self.payload = dict(ASSESS_PAYLOAD if payload is None else payload)
         self.calls: list[dict[str, Any]] = []
+        self.actions: list[str] = []
 
     async def dispatch(self, agent_type: AgentType, action: Any, payload: dict[str, Any], **kwargs: Any) -> Any:
         self.calls.append(payload)
+        self.actions.append(str(getattr(action, "value", action)))
         request = make_request(
             source="platform.t01",
             target="assess.stub",
@@ -64,7 +89,20 @@ class _Gateway:
             trace_id=TRACE,
             reply_to="reply.t01.inbox",
         )
-        return make_response(request, source="assess.stub", payload=self.payload)
+        if str(getattr(action, "value", action)) == Action.ASSESS_DATA_QUALITY.value:
+            body = DATA_QUALITY_PAYLOAD
+        elif str(getattr(action, "value", action)) == Action.ASSESS_FACTOR_RISK.value:
+            body = FACTOR_PAYLOAD
+        else:
+            body = self.payload
+        return make_response(request, source="assess.stub", payload=body)
+
+    def assess_call(self) -> dict[str, Any]:
+        """主研判那一跳的载荷（研判段现在还有证据门与因子腿两条别的跳）。"""
+        for action, payload in zip(self.actions, self.calls, strict=True):
+            if action == Action.ASSESS_HAZARD.value:
+                return payload
+        raise AssertionError(f"没有研判请求：{self.actions}")
 
     async def publish_to(self, subject: str, message: Any) -> None: ...
 
@@ -149,8 +187,12 @@ class TestRequestShape:
         stage = await stages.run_stage("assess", board)
 
         assert stage.mode == "agent"
-        assert len(gateway.calls) == 1
-        payload = gateway.calls[0]
+        # 三条腿：证据质量门 → 主研判 → 因子交叉验证（后两条并行）
+        assert len(gateway.calls) == 3
+        assert Action.ASSESS_DATA_QUALITY.value in gateway.actions
+        assert Action.ASSESS_HAZARD.value in gateway.actions
+        assert Action.ASSESS_FACTOR_RISK.value in gateway.actions
+        payload = gateway.assess_call()
         assert payload["contract_version"] == "assess.v1"
         assert payload["region_code"] == REGION
         assert payload["window"] == "60m"
@@ -175,7 +217,7 @@ class TestRequestShape:
 
         await stages.run_stage("assess", _board(hits))
 
-        payload = gateway.calls[0]
+        payload = gateway.assess_call()
         assert payload["hazard_type"] == HazardType.DEBRIS_FLOW.value
         assert payload["candidate_hazards"] == [HazardType.LANDSLIDE.value, HazardType.DEBRIS_FLOW.value]
 
@@ -191,7 +233,7 @@ class TestRequestShape:
 
         # 两条命中同分同级时本地引擎取命中顺序里的第一条；派单必须跟它一致，
         # 不能另按 `HazardType` 声明顺序再选一次——那样降级文本与台账会各说一个灾种。
-        assert gateway.calls[0]["hazard_type"] == HazardType.DEBRIS_FLOW.value
+        assert gateway.assess_call()["hazard_type"] == HazardType.DEBRIS_FLOW.value
 
     async def test_未注入builder时窗口取配置(self, settings: Settings) -> None:
         gateway = _Gateway()
@@ -246,7 +288,7 @@ class TestRequestHazard:
 
         await stages.run_stage("assess", board)
 
-        assert gateway.calls[0]["hazard_type"] == HazardType.DEBRIS_FLOW.value
+        assert gateway.assess_call()["hazard_type"] == HazardType.DEBRIS_FLOW.value
 
     def test_无命中候选时请求灾种取本地结论(self) -> None:
         preset = RiskVerdict(

@@ -80,6 +80,9 @@ CAPABILITY_MATRIX: tuple[CapabilitySpec, ...] = (
         agent_type=AgentType.ASSESS,
         action=Action.ASSESS_SCENARIO_SIM,
         owner="assess.sim01",
+        # 闭环内腿：只被灾种闭环调用（BUS_LEGS），不进平台热路径——
+        # 它的输入是闭环上游的原生交付物，平台链路给不齐，硬喂就是制造假输入。
+        dispatched=False,
     ),
     # ---------- 决策 ----------
     CapabilitySpec(
@@ -119,6 +122,10 @@ CAPABILITY_MATRIX: tuple[CapabilitySpec, ...] = (
         agent_type=AgentType.FEEDBACK,
         action=Action.FEEDBACK_CHAIN_AUDIT,
         owner="feedback.audit01",
+        # 闭环内腿：审计的是闭环五腿交付物之间的自洽性，输入只有闭环才产得齐
+        # （缺 data_result 会被审计工具记成 major 问题——那是假告警）。平台链路的
+        # 一致性由各段的契约校验把守，不需要也不应该再花一次热路径预算。
+        dispatched=False,
     ),
 )
 

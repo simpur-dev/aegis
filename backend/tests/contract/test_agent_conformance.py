@@ -296,7 +296,8 @@ class TestFullMockSet:
         await asyncio.sleep(0.02)
         await bus.idle()
 
-        assert registry.online_count == 5
+        # 一项能力一个替身（与生产拓扑同构）：五类 × 各自的能力数 = 12 个本体
+        assert registry.online_count == 12
         assert registry.get("perceive.mock01") is not None
         assert registry.get("feedback.mock01") is not None
         for agent in agents:

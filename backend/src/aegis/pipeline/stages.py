@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import deque
@@ -543,22 +544,61 @@ class HazardStages:
             evidence=evidence,
             data_refs=[f"evidence:{region}:{window}"],
         )
-        try:
-            response = await self._gateway.dispatch(
+        payload = request.model_dump(mode="json")
+        # ① 证据质量门：数据不够研判就别花 LLM 预算。门只判"够不够"，不碰等级——
+        #    定级仍然只有主研判一个出处（§3.2）。
+        #    门只服务**遥测**路径：上报型请求（intake="report"）的证据本来就是文本，
+        #    遥测观测为零是常态，拿遥测完备度去判它等于类别错误——上报腿会被自己的门误杀。
+        gate = await self._check_data_quality(payload, result, trace) if request.intake == "telemetry" else None
+        if gate is not None and not gate.get("sufficient", True):
+            result.degradations.append(f"研判证据质量不足（{gate.get('reason') or gate.get('validation_reason')}），回落本地规则轨")
+            result.stage_notes["assess.data_quality"] = gate
+            return _AssessOutcome(local, False)
+
+        # ② 主研判与因子引擎**并行**：两条腿引擎不同源（LLM 主结论 vs 确定性因子），
+        #    比对才有意义；并行则不为交叉验证多付一个往返的时延。
+        factor_ready = self._agent_ready(AgentType.ASSESS, "factor_risk_assess", result, stage="研判")
+        main_task = self._gateway.dispatch(
+            AgentType.ASSESS,
+            Action.ASSESS_HAZARD,
+            payload,
+            trace_id=trace,
+            capability="risk_assess",
+            # 事务预算 = LLM 档（§5 A 案）：与 `stage_*_ms` 同档同钟；
+            # 不再用 `llm_timeout_seconds`（单次 HTTP 超时），也不蹭 ≤10s 调度档。
+            deadline_ms=self.agent_txn_ms,
+            ttl_ms=self.agent_txn_ttl_ms,
+            priority=1,
+        )
+        factor_task = (
+            self._gateway.dispatch(
                 AgentType.ASSESS,
-                Action.ASSESS_HAZARD,
-                request.model_dump(mode="json"),
+                Action.ASSESS_FACTOR_RISK,
+                payload,
                 trace_id=trace,
-                capability="risk_assess",
-                # 事务预算 = LLM 档（§5 A 案）：与 `stage_*_ms` 同档同钟；
-                # 不再用 `llm_timeout_seconds`（单次 HTTP 超时），也不蹭 ≤10s 调度档。
+                capability="factor_risk_assess",
                 deadline_ms=self.agent_txn_ms,
                 ttl_ms=self.agent_txn_ttl_ms,
-                priority=1,
+                priority=2,
             )
+            if factor_ready
+            else None
+        )
+        try:
+            if factor_task is not None:
+                main_reply, factor_reply = await asyncio.gather(main_task, factor_task, return_exceptions=True)
+            else:
+                # factor 腿缺席时同样走 try：主腿超期/报错的 AegisError 必须落进降级轨，
+                # 不能因为重构丢了 except 而让异常穿出段落（那会炸掉整条链路的研判段）。
+                main_reply, factor_reply = await main_task, None
         except AegisError as exc:
             result.degradations.append(f"研判降级: {exc.message}")
             return _AssessOutcome(local, False)
+        if isinstance(main_reply, BaseException):
+            message = getattr(main_reply, "message", None) or str(main_reply)
+            result.degradations.append(f"研判降级: {message}")
+            return _AssessOutcome(local, False)
+        response = main_reply
 
         try:
             assessed = AssessResponse.model_validate(response.payload)
@@ -575,6 +615,22 @@ class HazardStages:
         verdict = assessed.to_verdict(hits=hits)
         if (receipt := model_receipt(response)) is not None:
             result.stage_models["assess"] = receipt
+        # 因子交叉验证：与主结论**并列**记录，不改主结论（仲裁权在主研判手里，§3.2）。
+        # 分歧要看得见——两套引擎给出不同等级时，人得有机会看一眼。
+        if isinstance(factor_reply, BaseException):
+            message = getattr(factor_reply, "message", None) or str(factor_reply)
+            result.degradations.append(f"因子交叉验证降级: {message}")
+        elif factor_reply is not None:
+            factor = self._parse_factor_assessment(factor_reply.payload)
+            if factor is None:
+                result.degradations.append("因子交叉验证结论不合契约，不作交叉参考")
+            else:
+                result.stage_notes["assess.factor_risk"] = factor
+                if int(factor.get("risk_level") or 0) != int(assessed.risk_level):
+                    result.degradations.append(
+                        f"因子引擎与主研判分歧：主研判 {int(assessed.risk_level)} 级、因子引擎 "
+                        f"{int(factor.get('risk_level') or 0)} 级，留待人工复核"
+                    )
         # 双盲是增强腿：它失败时主结论照用第一遍，但这件事必须落在台账上——
         # 不落的后果是"双盲没做成"被读成"双盲做成了且一致"（铁律 7：降级要看得见）。
         blind = assessed.double_blind
@@ -587,6 +643,100 @@ class HazardStages:
             disagreement=response.disagreement,
             blind_mode=assessed.double_blind_mode,
         )
+
+    async def _check_data_quality(
+        self,
+        payload: dict[str, Any],
+        result: ChainResult,
+        trace: str,
+    ) -> dict[str, Any] | None:
+        """证据质量门：这份证据够不够支撑一次研判。
+
+        门只判"够不够"（`sufficient`），不判等级——定级仍然只有主研判一个出处。
+        门不可用或应答不合契约时返回 None：调用方据此**继续**走主研判，不把门的缺席
+        变成研判的缺席。
+        """
+        if not self._agent_ready(AgentType.ASSESS, "data_quality", result, stage="研判"):
+            return None
+        try:
+            response = await self._gateway.dispatch(
+                AgentType.ASSESS,
+                Action.ASSESS_DATA_QUALITY,
+                payload,
+                trace_id=trace,
+                capability="data_quality",
+                deadline_ms=self.agent_txn_ms,
+                ttl_ms=self.agent_txn_ttl_ms,
+                priority=2,
+            )
+        except AegisError as exc:
+            result.degradations.append(f"证据质量门降级: {exc.message}")
+            return None
+        verdict = self._parse_data_quality(response.payload)
+        if verdict is None:
+            result.degradations.append("证据质量门结论不合契约，按未设门处理")
+            return None
+        return verdict
+
+    @staticmethod
+    def _parse_data_quality(payload: dict[str, Any]) -> dict[str, Any] | None:
+        """回收证据质量门应答：六个判据字段缺一不可，`sufficient` 必须是布尔。"""
+        if not isinstance(payload, dict):
+            return None
+        required = ("is_valid", "completeness_ratio", "sufficient")
+        if any(key not in payload for key in required):
+            return None
+        if not isinstance(payload.get("sufficient"), bool):
+            return None
+        try:
+            ratio = float(payload.get("completeness_ratio") or 0.0)
+        except (TypeError, ValueError):
+            return None
+        if not 0.0 <= ratio <= 1.0:
+            return None
+        return {
+            "is_valid": bool(payload.get("is_valid")),
+            "completeness_ratio": ratio,
+            "validation_reason": str(payload.get("validation_reason") or ""),
+            "sufficient": bool(payload.get("sufficient")),
+            "reason": str(payload.get("reason") or ""),
+            "missing_data": list(payload.get("missing_data") or [])[:32],
+        }
+
+    @staticmethod
+    def _parse_factor_assessment(payload: dict[str, Any]) -> dict[str, Any] | None:
+        """回收因子引擎应答：定级相关的字段缺一不可。
+
+        这条腿的应答**不是** `assess.v1`（它有自己的动作），所以不拿 `AssessResponse`
+        去校验——那份 DTO 是主研判的契约，套上来会逼这条腿去扮演另一个角色。
+        """
+        if not isinstance(payload, dict):
+            return None
+        for key in ("hazard_type", "region_code", "risk_level", "confidence"):
+            if key not in payload:
+                return None
+        try:
+            level = int(payload["risk_level"])
+            confidence = float(payload["confidence"])
+        except (TypeError, ValueError):
+            return None
+        if not 1 <= level <= 5:
+            return None
+        if not 0.0 <= confidence <= 1.0:
+            return None
+        return {
+            "hazard_type": str(payload.get("hazard_type") or ""),
+            "region_code": str(payload.get("region_code") or ""),
+            "risk_level": level,
+            "confidence": confidence,
+            "rationale": str(payload.get("rationale") or "")[:1000],
+            "source": str(payload.get("source") or ""),
+            "assessed_by": str(payload.get("assessed_by") or ""),
+            "human_review_suggested": bool(payload.get("human_review_suggested")),
+            # 因子信封原样带出：执行段的预警素材腿以 `assessment_status=scored` 为前提，
+            # 而这个信封只有因子引擎给得出——它是研判段与执行段之间唯一的桥。
+            "assessment": payload.get("assessment") if isinstance(payload.get("assessment"), dict) else {},
+        }
 
     @classmethod
     def _request_hazard(cls, local: RiskVerdict | None, hits: list[TriggerHit], candidates: list[HazardType]) -> HazardType | None:
@@ -824,27 +974,59 @@ class HazardStages:
         record = draft.record
         used_agent = False
         if self._agent_ready(AgentType.EXECUTE, "warn_publish", result, stage="执行"):
-            try:
-                response = await self._gateway.dispatch(
+            content_ready = self._agent_ready(AgentType.EXECUTE, "warn_content", result, stage="执行")
+            warn_task = self._gateway.dispatch(
+                AgentType.EXECUTE,
+                Action.EXECUTE_WARN,
+                {
+                    "warning_id": record.warning_id,
+                    "level": int(record.risk_level),
+                    "regions": record.region_codes,
+                    "audiences": record.audiences,
+                    "content": {"zh": record.body_zh, "bo": record.body_bo},
+                    "channels": record.channels,
+                    # 文案里的数字必须有出处可查：把预警事实的引用交给智能体，
+                    # 回收时再拿同一批事实做防幻觉闸（§3.4 护栏）。
+                    "content_refs": self._copy_facts(record, verdict),
+                },
+                trace_id=trace,
+                capability="warn_publish",
+                deadline_ms=self.agent_txn_ms,
+                ttl_ms=self.agent_txn_ttl_ms,
+                priority=1,
+            )
+            content_task = (
+                self._gateway.dispatch(
                     AgentType.EXECUTE,
-                    Action.EXECUTE_WARN,
+                    Action.EXECUTE_WARN_CONTENT,
                     {
                         "warning_id": record.warning_id,
                         "level": int(record.risk_level),
                         "regions": record.region_codes,
                         "audiences": record.audiences,
-                        "content": {"zh": record.body_zh, "bo": record.body_bo},
-                        "channels": record.channels,
-                        # 文案里的数字必须有出处可查：把预警事实的引用交给智能体，
-                        # 回收时再拿同一批事实做防幻觉闸（§3.4 护栏）。
+                        "hazard_type": verdict.hazard_type.value,
+                        # 风险结论：平台口径 + 因子引擎的信封。预警素材腿以
+                        # `assessment_status=scored` 为前提（"数据门控已过、风险已评分"），
+                        # 那个信封只有因子引擎给得出——研判段的因子腿是这两段之间唯一的桥。
+                        "risk_result": self._material_risk_result(verdict, result),
                         "content_refs": self._copy_facts(record, verdict),
                     },
                     trace_id=trace,
-                    capability="warn_publish",
+                    capability="warn_content",
                     deadline_ms=self.agent_txn_ms,
                     ttl_ms=self.agent_txn_ttl_ms,
-                    priority=1,
+                    priority=2,
                 )
+                if content_ready
+                else None
+            )
+            try:
+                if content_task is not None:
+                    response, content_reply = await asyncio.gather(warn_task, content_task, return_exceptions=True)
+                else:
+                    response, content_reply = await warn_task, None
+                if isinstance(response, BaseException):
+                    raise AegisError(getattr(response, "message", None) or str(response))
                 used_agent = True
                 pre_adopt = record
                 record = self._adopt_agent_copy(record, response.payload, result, verdict=verdict)
@@ -852,6 +1034,17 @@ class HazardStages:
                     # 只有智能体写的文字真的进了这条预警才记凭证：文案全被数字闸拦回、保留平台模板的那一程，
                     # 记上模型名字等于把模板产出的东西算到某个模型头上（与规划段同一条判据）。
                     result.stage_models["execute"] = receipt
+                # 预警素材腿：只产素材（CAP 报文 / 建议动作 / 解释文本），**不持发布权**。
+                # 素材进台账（stage_notes），不进这条预警的正文——发布口径仍由平台执行内环负责。
+                if isinstance(content_reply, BaseException):
+                    message = getattr(content_reply, "message", None) or str(content_reply)
+                    result.degradations.append(f"预警素材腿降级: {message}")
+                elif content_reply is not None:
+                    material = self._parse_warn_content(content_reply.payload)
+                    if material is None:
+                        result.degradations.append("预警素材不合契约，不作素材采用")
+                    else:
+                        result.stage_notes["execute.warn_content"] = material
             except AegisError as exc:
                 result.degradations.append(f"执行智能体失败，文案回落平台模板: {exc.message}")
         try:
@@ -894,6 +1087,47 @@ class HazardStages:
                 *refs,
             ]
         )
+
+    @staticmethod
+    def _material_risk_result(verdict: RiskVerdict, result: ChainResult) -> dict[str, Any]:
+        """给预警素材腿的风险结论：平台口径 + 因子引擎的信封。
+
+        因子信封（`assessment`）来自研判段的因子交叉验证腿——它是"数据门控已过、风险已
+        评分"的唯一出处，平台自己的 RiskVerdict 没有这层。没有信封时素材腿会判"条件不
+        满足"并给出空素材：那是**如实**，不是失败。
+        """
+        payload = dict(verdict.as_payload())
+        payload["status"] = "success"
+        factor = result.stage_notes.get("assess.factor_risk") or {}
+        envelope = factor.get("assessment") if isinstance(factor, dict) else {}
+        payload["assessment"] = envelope if isinstance(envelope, dict) else {}
+        return payload
+
+    @staticmethod
+    def _parse_warn_content(payload: dict[str, Any]) -> dict[str, Any] | None:
+        """回收预警素材应答。
+
+        **只认素材**：应答里没有"已发布"、没有通道回执、没有官方等级——发布权在平台
+        执行内环，触达证据只认平台交付腿的真回执（铁律 7）。这里若读到这些字段，说明
+        契约被改了，宁可弃用整份素材。
+        """
+        if not isinstance(payload, dict):
+            return None
+        if not payload.get("content_only"):
+            return None
+        for banned in ("alert_status", "official_grade", "channel_results"):
+            if payload.get(banned):
+                return None
+        return {
+            "explanation_text": str(payload.get("explanation_text") or "")[:2000],
+            "suggested_actions": list(payload.get("suggested_actions") or [])[:16],
+            "cap_xml": str(payload.get("cap_xml") or "")[:20000],
+            "cap_dict": payload.get("cap_dict") if isinstance(payload.get("cap_dict"), dict) else {},
+            "based_on": list(payload.get("based_on") or [])[:16],
+            "warning_level": str(payload.get("warning_level") or "")[:32],
+            "target_region": str(payload.get("target_region") or "")[:64],
+            "is_mock": bool(payload.get("is_mock")),
+        }
 
     @staticmethod
     def _adopt_agent_copy(record: WarningRecord, payload: dict[str, Any], result: ChainResult, *, verdict: RiskVerdict) -> WarningRecord:

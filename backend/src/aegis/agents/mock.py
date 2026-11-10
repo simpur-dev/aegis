@@ -285,17 +285,22 @@ class MockAgent:
     # ---------- 灾种链的六条腿 ----------
 
     def _data_quality(self, request: AgentMessage) -> dict[str, Any]:
-        """证据质量门：替身给一份"合格"的判据，让研判段的下游路径能被完整走到。"""
+        """证据质量门：替身与真门同一套语义——零观测就是不足。
+
+        平台只对遥测路径派门（上报型的证据是文本，没有观测是常态）；所以这里
+        "没观测"就是真的没数据，替身不替它圆场——否则门在 mock 档永远绿灯，
+        等于没测。
+        """
         payload = request.payload or {}
         observations = (payload.get("evidence") or {}).get("observations") or []
         total = len(observations)
         return data_quality_response(
             {
-                "is_valid": True,
+                "is_valid": total > 0,
                 "completeness_ratio": 1.0 if total else 0.0,
-                "validation_reason": "mock 替身：证据质量合格",
-                "sufficient": bool(total) or not payload.get("evidence"),
-                "reason": "mock 替身：证据质量合格",
+                "validation_reason": "mock 替身：证据质量合格" if total else "mock 替身：证据包没有观测",
+                "sufficient": total > 0,
+                "reason": "mock 替身：证据质量合格" if total else "mock 替身：证据包没有观测",
                 "missing_data": [],
             }
         )
@@ -442,25 +447,38 @@ async def start_mock_agents(
     misbehavior: dict[AgentType, str] | None = None,
     heartbeat_interval: float = 0.5,
 ) -> list[MockAgent]:
-    """拉起五类智能体的 Mock 实例。注意：响应回投递需 request.reply_to，见 MockAgent._on_request。"""
+    """拉起 mock 替身集。注意：响应回投递需 request.reply_to，见 MockAgent._on_request。
+
+    拓扑与生产**同构**：能力矩阵里每一项能力一个本体（`assess.mock01` 承接
+    `risk_assess`，`assess.mock02` 承接 `data_quality`……编号按矩阵顺序，所以
+    每类的主能力仍落在 `.mock01`，既有断言不受影响）。
+
+    为什么不一个替身挂多项能力：一项能力一个本体，`max_concurrency` 的并发预算才
+    按"一个逻辑智能体一份"记账。否则一段链路并行派主腿与增强腿时，两单挤进同一个
+    替身的并发预算，3 个区域并发就能把自己挤到饱和——生产拓扑（各能力独立本体）
+    根本不存在这个失败模式，mock 拓扑却天天撞上，测出来的"饱和降级"是拓扑伪影
+    而不是链路行为。
+    """
     misbehavior = misbehavior or {}
-    # 能力表取自能力矩阵：替身要覆盖矩阵里该阶段的**全部**能力，否则矩阵里的某项能力
-    # 在 mock 档就没人接——而 mock 档正是 CI 与演练跑得最多的形态。
-    specs = [(agent_type, list(capabilities_for(agent_type))) for agent_type in AgentType]
+    specs = [
+        (agent_type, capability, f"{agent_type.value}.mock{index:02d}")
+        for agent_type in AgentType
+        for index, capability in enumerate(capabilities_for(agent_type), start=1)
+    ]
     agents = [
         MockAgent(
             transport=transport,
             agent_type=agent_type,
-            agent_id=f"{agent_type.value}.mock01",
-            capabilities=caps,
+            agent_id=agent_id,
+            capabilities=[capability],
             latency_ms=latency_ms,
             fail_rate=fail_rate,
             misbehavior=misbehavior.get(agent_type, Misbehavior.NONE),
             # 种子必须与进程无关：`hash()` 受 PYTHONHASHSEED 支配，同一个提交在两台机器上会给出
             # 不同的延迟分布——演练数字就成了机器巧合。crc32 是稳定映射。
-            seed=zlib.crc32(agent_type.value.encode()) % 65_536,
+            seed=zlib.crc32(agent_id.encode()) % 65_536,
         )
-        for agent_type, caps in specs
+        for agent_type, capability, agent_id in specs
     ]
     for agent in agents:
         await agent.start(heartbeat_interval=heartbeat_interval)

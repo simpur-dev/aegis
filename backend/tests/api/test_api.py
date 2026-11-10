@@ -182,7 +182,8 @@ class TestOpsEndpoints:
         await container.transport.idle()
         try:
             body = (await client.get("/readyz")).json()
-            assert body["agents_online"] == 5
+            # 一项能力一个替身（与生产拓扑同构）：5 类共 12 个本体
+            assert body["agents_online"] == 12
             assert body["agents_degraded"] is False
         finally:
             for agent in agents:
@@ -336,7 +337,8 @@ class TestAgentEndpoints:
         await container.transport.idle()
         try:
             body = (await client.get("/api/v1/agents")).json()
-            assert body["online"] == 5
+            # 一项能力一个替身（与生产拓扑同构）：5 类共 12 个本体
+            assert body["online"] == 12
             assert {"perceive.mock01", "assess.mock01", "plan.mock01"} <= {a["agent_id"] for a in body["items"]}
         finally:
             for agent in agents:
@@ -614,3 +616,54 @@ class TestAssessDataApi:
         missing = await client.get("/api/v1/site-profiles/999999")
         assert missing.status_code == 404
         assert missing.json()["detail"]["code"] == "E_SITE_PROFILE_NOT_FOUND"
+
+
+class TestHazardWorkflowEndpoint:
+    """灾种闭环入口：闭环本体在册时交回报告；不在册时 503 如实拒绝。"""
+
+    async def test_workflow_returns_loop_report(self, client: httpx.AsyncClient, container: PlatformContainer) -> None:
+        from aegis.agents.mock import start_mock_agents
+
+        agents = await start_mock_agents(container.transport, latency_ms=2.0, heartbeat_interval=0.05)
+        try:
+            await container.transport.idle()
+            response = await client.post(
+                "/api/v1/hazards/workflow",
+                json={"hazard_type": "debris_flow", "region": "540121", "event_id": "evt_" + "a" * 12},
+            )
+        finally:
+            for agent in agents:
+                await agent.stop()
+        assert response.status_code == 200, response.text
+        body = response.json()
+        # mock 替身交回的是闭环报告的形状，不是异常
+        assert body["hazard_type"] == "debris_flow"
+        assert body["task_status"] in {"completed", "partially_completed", "insufficient_data", "failed", "need_clarification"}
+        assert isinstance(body["agent_status"], dict) and body["agent_status"]
+        assert isinstance(body["final_report"], dict)
+
+    async def test_workflow_rejects_missing_hazard_type(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/api/v1/hazards/workflow", json={"region": "540121"})
+        assert response.status_code == 422
+
+    async def test_workflow_rejects_bad_event_id(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/api/v1/hazards/workflow", json={"hazard_type": "debris_flow", "event_id": "not-an-event"})
+        assert response.status_code == 422
+
+    async def test_workflow_timeout_clamped_to_contract_ceiling(self, client: httpx.AsyncClient) -> None:
+        response = await client.post("/api/v1/hazards/workflow", json={"hazard_type": "debris_flow", "timeout_ms": 10_000_000})
+        assert response.status_code == 422
+
+    async def test_workflow_without_loop_agent_is_503(self, settings: Settings) -> None:
+        """灾种模块不在册（runtime=off 没有智能体）时，端点必须如实 503，而不是编一份空报告。"""
+        ctn = create_container(settings.model_copy(update={"agent_runtime": "off"}), with_simulator=False)
+        await ctn.start()
+        try:
+            app = create_app(ctn.settings, container=ctn)
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url=BASE) as client:
+                response = await client.post("/api/v1/hazards/workflow", json={"hazard_type": "debris_flow"})
+            assert response.status_code == 503, response.text
+            assert response.json()["detail"]["code"] == "E_NO_CAPABLE_AGENT"
+        finally:
+            await ctn.shutdown()
