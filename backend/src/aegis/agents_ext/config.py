@@ -39,6 +39,21 @@ ZHIPU_MODEL = os.environ.get("AEGIS_EXT_LLM_MODEL", "glm-4-flash").strip()
 #: 智谱 OpenAI 兼容接口地址（ChatOpenAI 用 base_url 直连，无需换 SDK）
 ZHIPU_BASE_URL = os.environ.get("AEGIS_EXT_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/").strip()
 
+#: SDK 盲重试次数（openai SDK 默认 2）。
+#: 这里默认 **0**：SDK 的重试带指数退避（0.5s/1.0s），上游持续 5xx 时
+#: 一次逻辑调用变成三次 HTTP 往返——2026-11-10 实测它占 ext 研判时延的 81%（26.3s / 32.5s）。
+#: 上游已坏时重试同样的请求只会推迟降级；韧性由 LLM 熔断承担（见 `llm_breaker.py`）。
+ZHIPU_MAX_RETRIES = int(os.environ.get("AEGIS_EXT_LLM_MAX_RETRIES", "0"))
+
+#: LLM 熔断阈值：连续多少次"服务不可用"后打开熔断。
+#: 缺省 3 与平台网关同口径（`aegis.config.Settings.llm_breaker_fail_threshold`）。
+LLM_BREAKER_THRESHOLD = int(os.environ.get("AEGIS_EXT_LLM_BREAKER_THRESHOLD", "3"))
+
+#: LLM 熔断冷却窗口（秒）：窗口内直接跳过 LLM 调用，让节点走确定性兜底。
+#: 平台网关的熔断**没有**恢复窗口（靠 fallback 模型接力）；外部实现只有一个模型，
+#: 必须自带冷却，否则上游恢复了也永远用不上。
+LLM_BREAKER_COOLDOWN_SECONDS = float(os.environ.get("AEGIS_EXT_LLM_BREAKER_COOLDOWN_SECONDS", "60"))
+
 # ============================================================
 # Manager Agent 配置（全局调度中心）
 # ============================================================
