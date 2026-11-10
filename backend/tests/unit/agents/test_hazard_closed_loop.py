@@ -24,7 +24,7 @@ from aegis.agents.hazards.bus_context import BusContext, SiblingRef
 from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway
 from aegis.bus.inmemory import InMemoryBus
-from aegis.domain.enums import AgentType, MessageKind
+from aegis.domain.enums import Action, AgentType, MessageKind
 
 TRACE = "trc_" + "c" * 16
 
@@ -197,3 +197,131 @@ async def test_闭环五步都经总线派单(
         for agent in agents:
             await agent.stop()
         await gateway.close()
+
+
+# ============================================================
+# 生产路径回归：HazardWorkflowAgent.handle（专用执行器 + 共享腿池）
+# ============================================================
+
+
+async def test_生产路径闭环在容量1的腿池上不死锁(
+    monkeypatch: pytest.MonkeyPatch,
+    bus: InMemoryBus,
+    gateway: AgentGateway,
+) -> None:
+    """闭环编排与五条腿的执行器**物理隔离**：腿池容量 1 也必须能跑完整条闭环。
+
+    历史缺陷：编排器曾与腿共用共享池——容量 1 时编排器占住唯一 worker、腿永远
+    排队，闭环 100% 全腿超时（确定性复现，不是竞态）。现在编排器用自带的专用
+    执行器（HazardWorkflowAgent.workflow_workers），腿池再小也不互相饿死。
+    这条用例走的就是生产路径（`agent.handle` → `run_blocking_on(专用执行器)`），
+    不再绕道 `asyncio.to_thread`。
+    """
+    from aegis.agents.hazards.manager_agent.agent import HazardWorkflowAgent
+    from aegis.agents.hazards.pool import configure_pool
+    from aegis.domain.messages import make_request
+
+    data_main = importlib.import_module("aegis.agents.hazards.data_agent.main")
+    monkeypatch.setattr(
+        data_main,
+        "run_data_agent",
+        lambda task, hazard_type: _complete_data_state(task, hazard_type),
+    )
+
+    configure_pool(1)  # 腿池最小容量：历史缺陷在此配置下必然死锁
+    await gateway.start()
+    agents = build_hazard_agents(bus)
+    loop_agent = next(a for a in agents if isinstance(a, HazardWorkflowAgent))
+    for agent in agents:
+        await agent.start(heartbeat_interval=0.05)
+    await bus.idle()
+    await asyncio.sleep(0.05)
+    await bus.idle()
+
+    seen = await _collect_bus_requests(bus, list(_SIBLINGS.values()))
+    request = make_request(
+        source="platform.gateway",
+        target=loop_agent.agent_id,
+        action=Action.PLAN_HAZARD_WORKFLOW.value,
+        payload={"hazard_type": "debris_flow", "task_type": "full_analysis", "region": "540121", "require_simulation": True},
+        trace_id=TRACE,
+        reply_to="reply.gwloop.inbox",
+        deadline_ms=120_000,
+    )
+    try:
+        reply = await loop_agent.handle(request)
+        report = reply.payload
+        assert report["task_status"] in {"completed", "partially_completed"}, report["error_message"]
+        request_targets = {message.target for message in seen if message.kind is MessageKind.REQUEST and message.target != "*"}
+        # _SIBLINGS 的值是 (agent_type, agent_id) 对，取 id 比对
+        assert {agent_id for _, agent_id in _SIBLINGS.values()} <= request_targets, sorted(request_targets)
+    finally:
+        for agent in agents:
+            await agent.stop()
+        await gateway.close()
+
+
+class TestBudgetPropagation:
+    """外层 deadline 是整条闭环的总预算：单腿预算随剩余预算收缩、耗尽即快速失败。"""
+
+    def _context(self, outer: int | None) -> Any:
+        from aegis.agents.hazards.bus_context import BusContext
+
+        class _T:
+            name = "null"
+
+        return BusContext(
+            transport=_T(),  # type: ignore[arg-type]
+            caller_id="plan.loop01",
+            siblings={},
+            deadline_ms=60_000,
+            outer_deadline_ms=outer,
+        )
+
+    def test_无外层约束时用单腿默认预算(self) -> None:
+        assert self._context(None).leg_budget_ms() == 60_000
+
+    def test_单腿预算随外层预算按五腿拆分(self) -> None:
+        assert self._context(50_000).leg_budget_ms() == 10_000
+        assert self._context(10_000).leg_budget_ms() == 2_000
+        assert self._context(2_000).leg_budget_ms() == 1_000, "拆到最低也有 1s：低于这个数的腿连失败的机会都没有"
+
+    async def test_预算耗尽快速失败而不是磨满超时(self) -> None:
+        from aegis.agents.hazards.bus_context import BusContext
+
+        class _T:
+            name = "null"
+
+        context = BusContext(
+            transport=_T(),  # type: ignore[arg-type]
+            caller_id="plan.loop01",
+            siblings={},
+            deadline_ms=60_000,
+            outer_deadline_ms=300,
+        )
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(Exception, match="预算已耗尽"):
+            context.ensure_budget()
+        # 快速失败：不许真的等 300ms
+        assert asyncio.get_running_loop().time() - started < 0.2
+
+    async def test_循环线程内调用同步入口被守卫拒绝(self) -> None:
+        """重入守卫：request_sync 在平台事件循环线程内被调用时当场拒绝。
+
+        `future.result` 会堵死循环、协程永远得不到调度——必然挂死到超时。
+        守卫把"挂 65 秒后假死"变成"立刻报错"。"""
+        from aegis.agents.hazards.bus_context import BusContext
+
+        class _T:
+            name = "null"
+
+        context = BusContext(
+            transport=_T(),  # type: ignore[arg-type]
+            caller_id="plan.loop01",
+            siblings={},
+            deadline_ms=60_000,
+            loop=asyncio.get_running_loop(),
+            outer_deadline_ms=100,
+        )
+        with pytest.raises(Exception, match="事件循环线程内被调用"):
+            context.request_sync("data_quality", Action.ASSESS_DATA_QUALITY, {}, trace_id=TRACE)

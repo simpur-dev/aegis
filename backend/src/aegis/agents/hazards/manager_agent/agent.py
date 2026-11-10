@@ -13,6 +13,16 @@
 不是进程内函数直调：直调会绕过消息信封、deadline、幂等与错误分类，等于在自己包里
 私开一套接线——那样"接了总线"就只是一句口号。
 
+【专用执行器，与腿池隔离】
+闭环图是同步的，要占一个线程**等**五条腿回来；每条腿都要向共享腿池要线程。编排器若
+也用共享腿池，池容量 1 时它占住唯一的 worker、腿永远排队——闭环 100% 全腿超时；
+并发闭环数达到池容量时整批自饿。所以本体的 `workflow_workers` 是**自带专用执行器**
+的容量，与腿池（`AEGIS_HAZARD_POOL_WORKERS`）物理隔离，随本体停机关（谁建谁关）。
+
+【预算传导】
+外层请求的 `deadline_ms` 是整条闭环的总预算：每条腿的预算 = min(单腿上限,
+剩余预算/5)，预算耗尽快速失败——重试再多也不许超过外层承诺（详见 `bus_context`）。
+
 【它不做什么】
 - 不发布预警：闭环产出的预警是**草稿**，`alert_status` 恒为 draft、通道全未实现；
 - 不持有触达证据：触达证据只认平台交付腿的真回执；
@@ -23,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,12 +41,16 @@ from aegis.agents.agentkit import AgentKit, Reply
 from aegis.agents.hazards.bus_context import BusContext
 from aegis.agents.hazards.contracts import hazard_workflow_request
 from aegis.agents.hazards.errors import HazardRejected
-from aegis.agents.hazards.pool import run_blocking
+from aegis.agents.hazards.pool import run_blocking_on
 from aegis.domain.enums import Action
 from aegis.domain.messages import AgentMessage
 from aegis.errors import ErrorCode
 
 log = logging.getLogger("aegis.agents.hazards.manager_agent.agent")
+
+#: 单腿预算默认值：与 `bus_context._LEG_BUDGET_DEFAULT_MS` 同口径（这里只做构造默认，
+#: 实际预算由外层剩余预算收缩）。
+_INNER_DEADLINE_DEFAULT_MS = 60_000
 
 
 @dataclass
@@ -44,8 +59,22 @@ class HazardWorkflowAgent(AgentKit):
 
     #: 兄弟本体地址（capability → 寻址信息）。装配层注入——"我该找谁"是装配事实。
     siblings: dict[str, Any] = field(default_factory=dict)
-    #: 闭环内部派单的事务预算（毫秒）。
-    inner_deadline_ms: int = 60_000
+    #: 闭环内部派单的单腿预算上限（毫秒）；实际预算取它与外层剩余预算的较小者。
+    inner_deadline_ms: int = _INNER_DEADLINE_DEFAULT_MS
+    #: 专用执行器容量（同时能跑几条闭环图）。与共享腿池隔离，见模块 docstring。
+    workflow_workers: int = 2
+    _loop_pool: ThreadPoolExecutor = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.workflow_workers < 1:
+            raise ValueError(f"闭环专用执行器容量必须 ≥1，收到 {self.workflow_workers}")
+        self._loop_pool = ThreadPoolExecutor(max_workers=self.workflow_workers, thread_name_prefix="aegis-hazard-loop")
+
+    async def stop(self) -> None:
+        await super().stop()
+        # 谁建谁关：专用执行器随本体停机。取消还没开始的排队任务；在跑的闭环图取消不掉
+        # （executor future 语义），由外层 wait_for 判超时、请求方按超时处置。
+        self._loop_pool.shutdown(wait=False, cancel_futures=True)
 
     async def handle(self, request: AgentMessage) -> Reply:
         if request.action != Action.PLAN_HAZARD_WORKFLOW.value:
@@ -80,9 +109,12 @@ class HazardWorkflowAgent(AgentKit):
             # 闭环图是同步的（LangGraph 节点在 executor 线程里跑），总线请求必须回到
             # 平台自己的事件循环上发——总线与循环是绑定的。
             loop=asyncio.get_running_loop(),
+            # 外层预算传导：请求带多少 deadline，闭环就只有多少总预算。
+            outer_deadline_ms=int(request.deadline_ms or 0) or None,
         )
         try:
-            report = await run_blocking(
+            report = await run_blocking_on(
+                self._loop_pool,
                 run_manager_agent,
                 hazard_type=contract["hazard_type"],
                 task_type=contract["task_type"],

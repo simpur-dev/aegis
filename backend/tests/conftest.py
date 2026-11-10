@@ -78,6 +78,19 @@ async def chain_entry(
     return WorkflowChain(stages, engine, stations=stations, on_result=on_result)
 
 
+@pytest.fixture(autouse=True)
+def _restore_hazard_pool_capacity():
+    """灾种腿池容量是模块级全局：有用例改小它做隔离验证（configure_pool(1)），
+    用例结束后必须恢复默认——否则排在后面的用例继承一个 1 容量的池，
+    "并发腿排队"就会伪装成"链路偶发超时"。"""
+    yield
+    try:
+        from aegis.agents.hazards.pool import DEFAULT_POOL_SIZE, configure_pool
+    except ImportError:  # pragma: no cover - 灾种 extra 未装时无可恢复
+        return
+    configure_pool(DEFAULT_POOL_SIZE)
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(

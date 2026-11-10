@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from aegis.agents.agentkit import AgentKit
+from aegis.agents.hazards.pool import shutdown_hazard_pool
 from aegis.agents.mock import MockAgent, start_mock_agents
 from aegis.agents.runtime import build_agent_runtime, resolve_context_face
 from aegis.bus import subjects
@@ -560,6 +561,9 @@ class PlatformContainer:
         await self.registry.stop_sweeper()
         # 图谱腿自己揣着 Neo4j 驱动与 LLM 客户端，此前没人关；关不掉只留一行原因，不打断后面的停服步骤
         self._knowledge_close_error = await close_knowledge(self.knowledge)
+        # 灾种腿的共享执行器是模块级全局：谁装配谁负责收（本体停机不关它——某个本体先停
+        # 就关池会连累还在跑的兄弟，见 hazards/pool.py）。
+        shutdown_hazard_pool()
         await self.gateway.close()
         await self.transport.close()
         # 旁路最后关：分析缓冲要先把已受理的行排空，落库可以晚到，不能凭空消失。

@@ -25,6 +25,7 @@ from aegis.agents.hazards.manager_agent.state import (
     ERROR_AGENT_EXECUTION,
     ERROR_AGENT_TIMEOUT,
 )
+from aegis.errors import AegisError, ErrorCode
 
 
 def _attempt_no(state: dict, agent: str) -> int:
@@ -67,7 +68,10 @@ def dispatch_node(state: dict) -> dict:
             output = dispatcher.dispatch(agent, state)
     except Exception as e:
         elapsed = round(time.monotonic() - t0, 2)
-        err_type = ERROR_AGENT_TIMEOUT if "timeout" in str(e).lower() else ERROR_AGENT_EXECUTION
+        # 超时判据用平台错误分类（`LoopDispatchTimeout` 的 code=E_TIMEOUT），
+        # 不猜消息文本——总线路径的超时消息是中文，按子串猜必然落成执行错误。
+        timed_out = isinstance(e, AegisError) and e.code is ErrorCode.TIMEOUT
+        err_type = ERROR_AGENT_TIMEOUT if timed_out or "timeout" in str(e).lower() else ERROR_AGENT_EXECUTION
         updates["agent_call_log"].append(
             {"agent": agent, "attempt": attempt, "status": "exception", "error": str(e)[:300], "elapsed_s": elapsed}
         )
