@@ -170,6 +170,8 @@ cd .. && npm run dev              # API http://127.0.0.1:8001/docs ｜ Web http:
 #    ext 需要装可选依赖：uv sync --extra dev --extra agents_ext（平台镜像里已带）；
 #    没装则装配点如实退回 builtin 并记 warning，平台照常起来，不会因为一个可选依赖起不来。
 #    ext 的模型凭据只从环境变量读：AEGIS_EXT_LLM_API_KEY（留空则它的 LLM 腿降级为确定性模板）。
+#    ext 的 LLM 自带熔断（AEGIS_EXT_LLM_BREAKER_THRESHOLD=3 / _COOLDOWN_SECONDS=60）：
+#    连续失败达阈值后在冷却窗口内直接跳过 LLM，研判走确定性兜底（毫秒级，不是每次白等三秒）。
 #    外部结论目前是 demo 级：因子权重是 MOCK、公式是原型候选，输出带 source=agents_ext_mock、
 #    is_mock=true、human_review_suggested=true，置信度封顶 0.60——不冒充平台实测结论。
 #    ext 当前只注册研判段的 assess.hazard；plan/execute/feedback/perceive 不注册，
@@ -177,7 +179,7 @@ cd .. && npm run dev              # API http://127.0.0.1:8001/docs ｜ Web http:
 #    数据面：平台把窗口观测 + 区域 site_profiles 组成证据包随请求推送；
 #    也可以 GET /api/v1/assess/evidence 拉取（出进程部署时配 AEGIS_EXT_DATA_API_URL/_TOKEN）。
 #    已知限制（图取消不掉、LLM 绕开平台网关、共享记忆未打通、冰湖事件标志暂无遥测来源等）
-#    见 docs/adr/0011、docs/adr/0012 的"已知限制"一节与 docs/architecture.md §3.1。
+#    见 docs/adr/0011、docs/adr/0012、docs/adr/0013 的"已知限制"一节与 docs/architecture.md §3.1。
 ```
 
 跑起来后按这几条自查（都不需要额外工具）：

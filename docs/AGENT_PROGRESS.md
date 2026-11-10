@@ -274,3 +274,13 @@
   **验收补证**：五受支持灾种只有"合法响应 / `E_ASSESS_INSUFFICIENT`"两种结局（用例逐个钉住）；`GET /api/v1/assess/evidence` 返回体可被 `AssessEvidence.model_validate` 直接解析；演示导入 dry-run `{"status":"validated","rows":3,"attributes":15,"demo_rows":3}`；前端 `npm run typecheck` 通过；`AgentMessage` 信封与 `contracts/agent_message.v1.schema.json` 未改。
   **仍未做（不声称）**：只接 `assess.hazard`（plan/execute/feedback/perceive 无 agent）；ext 的 LLM 仍绕开平台网关（不进模型台账、不经提示注入围栏）；LangGraph 线程超时不可强杀；`manager` / `data_agent` 仍在 `run_risk_agent_legacy` 兼容轨（仅未接线 manager 使用，平台路径禁止引用，ADR-0012 记待退役）；MOCK 权重与原型公式未升级为真实预警。
   **脚本退役**：`import_external_agents*.py/sh` 与两个 postprocess 脚本移到 `archive/external_agents_source_20261109/scripts/`，仅保留原始交付快照，不再作为更新入口——模块现在树维护。
+
+- 2026-11-10｜**外部实现 LLM 的熔断与客户端复用（把"上游坏了"从三秒等待变成毫秒级降级）**｜决策记录 `docs/adr/0013`，实现落 `backend/src/aegis/agents_ext/llm.py`、`agents_ext/llm_breaker.py`、`agents_ext/config.py`。
+  **先量后改**：cProfile 量到 ext 研判单次 2952 ms 里 **26.3 s / 32.5 s（81%）** 是 openai SDK 的指数退避 `time.sleep`（`_sleep_for_retry`，0.5s/1.0s 两级），根因是 SDK 默认 `max_retries=2` 对上游 5xx 盲重试——一次逻辑调用变成三次 HTTP 往返，而节点早就有确定性兜底在等着。纯 CPU 计算不到 0.5%。
+  **改了三件**：① 关掉 SDK 盲重试（`AEGIS_EXT_LLM_MAX_RETRIES`，默认 0）；② 加熔断 `agents_ext/llm_breaker.py`（纯逻辑、无 IO、可直接单测；只记"服务不可用"——连接错误/超时/5xx/429，**4xx 与语义错误不记**，否则 Key 错、提示词问题会被一段冷却期糊过去；半开只放行一次试探）；③ 客户端进程级复用（凭据用 SHA-256 指纹入键，明文 Key 不落缓存键）。
+  **熔断口径有意不同于平台网关**：平台网关的熔断**没有恢复窗口**（模型失败就跳过，靠 fallback 模型接力），外部实现只有一个模型，照抄会让熔断永久失效（上游恢复了也永远用不上），所以外部这一侧自带冷却窗口（默认 60 s）。
+  **最容易做错的一处**：熔断检查点在 `_generate`（client 的薄适配层）而**不在** LLM 工厂——`risk_assess_node` / `risk_validate_node` 里 `get_risk_llm()` 是在 `try` 块**之外**调用的，在工厂里抛错会冲掉节点既有的"模板兜底"契约（节点整个失败而不是降级出模板说明），那是比慢更糟的语义回归。放 `_generate` 则异常落在节点 try 内，**兜底行为逐字不变**。
+  **前后对比（同一脚本、同一负载、同一机器；上游为真实智谱端点且当前返回 5xx）**：研判中位 **2952.18 ms → 4.14 ms（713×）**，吞吐 0.3 → **241.4 次/秒**。上游健康那一档也量了（`scripts/bench_assess_llm_healthy.py` 起本地假 OpenAI 兼容端点，四变体同负载）：11.08 → **9.34 ms（1.19×）**，客户端复用贡献 1.23×。
+  **一处被实测推翻的假设（如实记，避免被后来的人照抄回去）**：原以为"每次新建 client → 每次新建 httpx 连接池 → 每次 TLS 握手"。**实测不是**——langchain 的 `_get_default_httpx_client` 按 `(base_url, timeout, socket_options)` 缓存并共享 httpx 客户端（两个独立 client 的 `root_client._client` 是同一对象）。复用的真实收益是**省构造开销（0.26 ms/次）+ 让熔断账能跨调用累积**，不是省握手。代码注释已按实测改正。
+  **门禁（2026-11-10 本机）**：`pytest tests/unit tests/api tests/contract tests/e2e` **4023 tests / 0 failures / 0 errors / 0 skipped**（junit 计数）；`ruff check src tests scripts` 与 `ruff format --check` 本次改动 6 文件全绿；`mypy src/aegis` 355 文件全绿。新增用例 26 条（熔断状态机 11、记账口径 9 参数化、客户端复用 3、语义不变 2、端到端熔断 1）。
+  **仍未做（不声称）**：ext 的 LLM 仍绕开平台网关（不进模型台账、不经提示注入围栏）——改走网关是 async 契约而 ext 是同步调用，且边界守卫禁止外部模块依赖 `aegis.services`，另立一项；熔断状态是进程内的，多副本各自计数（跨副本共享另立一项）；节点兜底逻辑本身一个字未改。

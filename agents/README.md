@@ -53,6 +53,10 @@
 详见 [`docs/adr/0011`](../docs/adr/0011-external-agent-module-merge.md) 的"已知限制"一节
 与 [`docs/architecture.md` §3.1](../docs/architecture.md)。
 
+它的 LLM 调用自带熔断（[`docs/adr/0013`](../docs/adr/0013-ext-llm-breaker-and-client-reuse.md)）：
+连续失败达阈值后在冷却窗口内直接跳过 LLM，研判走确定性兜底——上游不可用时
+单次研判 **2952 ms → 4.14 ms**（同口径实测，见 [`docs/REPORT.md`](../docs/REPORT.md)）。
+
 ## 目录
 
 | 目录 | 智能体 | 契约动作（出向） | 状态 |
