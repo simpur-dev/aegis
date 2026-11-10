@@ -52,6 +52,11 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 
 未注册动作默认被网关拒绝（`E_UNREGISTERED_ACTION`）。
 
+> **两种"没人接"要分清**：动作**登记在契约里但没有智能体声明承接** → 网关记 `no_agent`
+> （不是 error，平台按本地降级轨走）；动作**根本不在上面的注册表里** → `E_UNREGISTERED_ACTION`
+> （这是实现缺陷，会进 error 通道）。例：外部交付实现当前只注册 `assess.hazard`，
+> 其余四段记 `no_agent`，不是故障。
+
 | 动作 | 发起方 | 方向 | payload 必填字段 | 说明 |
 |---|---|---|---|---|
 | `perceive.anomaly` | perceive | out→event | `station_id`,`metric`,`value`,`observed_at`,`anomaly_score` | 弱信号/越限标注上报 |
@@ -63,8 +68,15 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 | `plan.reschedule` | platform→plan | in→request | `workflow_instance_id`,`anomaly`,`current_topology` | 异常工况重调度建议（≤10s） |
 | `execute.warn` | platform→execute | in→request | `warning_id`,`level`,`regions`,`audiences`,`content_refs` | 预警发布指令 |
 | `execute.ack` | execute | out→response | `warning_id`,`channel_results`(每通道 delivered/pending/failed) | 发布结果回执 |
-| `feedback.status` | feedback | out→event | `warning_id`,`reach_stats`,`response_state`,`effect_score` | 响应/触达/效果反馈 |
+| `feedback.status` | feedback | out→event | `warning_id`,`reach_stats`,`response_state`,`effect_score` | 响应/触达/效果反馈（**只广播、不应答**；要应答的是下面那个） |
+| `feedback.attribute` | platform→feedback | in→request | `warning_id`,`region_code`,`reach_stats`,`response_state` | 链路汇总触达回执后的**归因请求**（要应答）。与 `feedback.status` 分开口径：前者要回执、后者只是广播——混用一个动作会让"谁该回这条"没有判据 |
+| `agent.register` | 智能体 → 平台 | out→event | `agent_id`,`registration` | 注册与能力声明（生命周期，见 §4） |
+| `agent.heartbeat` | 智能体 → 平台 | out→event | `agent_id` | 心跳（生命周期，见 §4） |
 | `error.raise` | 双向 | out→error | `code`,`message`,`retryable` | 失败回执（见 §5） |
+
+**关于 `feedback.attribute` / `agent.register` / `agent.heartbeat`**：这三个动作自 v1 起就存在于
+`aegis.domain.enums.Action` 并在真链路上派发，只是这张表此前漏记（2026-11-10 补）。
+**这是文档补齐，不是契约变更**——冻结集以 `Action` 枚举为准，表是它的可读镜像。
 
 **风险等级统一口径**：`risk_level` 1-5 对应红/橙/黄/蓝/无（1 最高），所有智能体与平台共用，禁止自定义分级。
 

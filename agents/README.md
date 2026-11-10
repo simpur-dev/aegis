@@ -14,44 +14,46 @@
 > 外部交付未落地期间的**自建方案**（LLM 化改造、框架选型、验收重测，含平台侧配套）：
 > [`docs/课题6_架构升级方案.md`](../docs/课题6_架构升级方案.md)（决策记录：ADR-0007）
 
-## 已并入的外部实现（2026-11-09）
+## 已并入的外部实现（2026-11-09 并入；2026-11-09 晚收口）
 
 一份外部交付的智能体模块（LangGraph 多智能体实现）已经并入主线，落在
-**`backend/src/aegis/agents_ext/`**，经**三层适配**走**同一份 `AgentMessage v1` 契约**，
-与平台自建内环**并存**（`AEGIS_AGENT_IMPL=builtin|ext`，默认 `builtin` 不变）：
+**`backend/src/aegis/agents_ext/`**，与平台自建内环**并存**
+（`AEGIS_AGENT_IMPL=builtin|ext`，默认 `builtin` 不变）。
 
-| 层 | 文件 | 职责 |
-| --- | --- | --- |
-| 契约壳 | `agents_ext/adapter.py` | `AgentKit.handle` 样板（订阅/心跳/幂等/deadline/错误回执）+ 动作分派 |
-| 语义翻译 | `agents_ext/contract_face.py` | 契约 payload ↔ 外部入口参数、外部结果 ↔ 契约响应 |
-| 口径对照 | `agents_ext/levels.py` | 灾种键、风险等级、状态四态的双向对照 |
+**它没有适配层**：`risk_agent/agent.py` 直接继承 `AgentKit`、直接解析 `AssessRequest`、
+直接产出 `AssessResponse`——两端共用 `aegis.domain.assess` 里同一套 DTO。
+（并入当时曾有 `adapter.py` / `contract_face.py` / `levels.py` 三层，同日收口时全部删除；
+现在若这三个模块存在反而是缺陷，`tests/contract/test_agents_ext_conformance.py` 用
+`ModuleNotFoundError` 钉住了这一点。决策见 [`docs/adr/0012`](../docs/adr/0012-assess-contract-unification.md)。）
 
 实现与它的六类 agent 一一对应：
 
-| 本目录 | 外部实现里的对应物 | 契约动作（出向） |
+| 本目录 | 外部实现里的对应物 | 该段在平台侧的动作（出向） |
 | --- | --- | --- |
 | `perceive/` | `agents_ext/data_agent/`（数据获取与质量校验） | `perceive.anomaly`、`perceive.trigger_hit` |
-| `assess/` | `agents_ext/risk_agent/`（五灾种因子引擎） | `assess.risk_level` |
-| `plan/` | `agents_ext/manager_agent/`（全局调度图，平台侧取其任务拆解） | `plan.stu_result` |
-| `execute/` | `agents_ext/warning_agent/`（预警文案与 CAP 结构） | `execute.ack` |
-| `feedback/` | `agents_ext/feedback_agent/`（反馈闭环与建议） | `feedback.status` |
+| `assess/` | `agents_ext/risk_agent/`（五灾种因子引擎） | `assess.hazard` |
+| `plan/` | `agents_ext/manager_agent/`（全局调度图，平台侧取其任务拆解） | `plan.stu`、`plan.reschedule` |
+| `execute/` | `agents_ext/warning_agent/`（预警文案与 CAP 结构） | `execute.warn`、`execute.ack` |
+| `feedback/` | `agents_ext/feedback_agent/`（反馈闭环与建议） | `feedback.attribute`、`feedback.status` |
 
-**当前接通范围（2026-11-09）**：外部实现**只接通了研判段的 `assess.hazard` 一个动作**。
-感知段（平台也发 `assess.hazard`，但要的是 `trigger_hits`）、决策段 `plan.stu`、
-执行段 `execute.warn`、反馈段 `feedback.attribute` **明确不接线**——
-请求被类型化错误 `E_EXT_ACTION_UNSUP` 拒绝：走 error 通道、事务记 error、**不计协同成功**。
+**当前接通范围**：外部实现**只注册研判段的 `assess.hazard` 一个动作**（见
+`agents_ext/runtime.py`）。感知段、决策段、执行段、反馈段**不注册**——
+网关查不到承接方时记 `no_agent`（**不是 error**），平台按既有本地降级轨走本地结论。
 "在仓里"不等于"接通了"，下表按这个口径写。
 
 三条要说清的事实：① 它的数据工具目前是**内存 Mock 源**，结论带 `source=agents_ext_mock` 标记，
-不冒充平台实测数据；② 它的凭据只从环境变量读（`AEGIS_EXT_LLM_API_KEY`），
-源码里没有密钥；③ **外部研判当前形态下交不出结论**——平台研判请求给的是规则命中（`hits`），
-外部因子引擎要的是观测事件（含 `rainfall_mm_h` 等灾种因子字段），字段缺失会让它判数据不足，
-于是诚实降级回平台规则轨；外部的 risk_result 也**没有 `confidence` 字段**（契约要求），
-适配层不产结论而不是填 `0.0` 冒充。
+不冒充平台实测数据；② 它的凭据只从环境变量读（`AEGIS_EXT_LLM_API_KEY`），源码里没有密钥；
+③ **它能交结论**——平台把窗口观测 + 区域画像组成 `AssessEvidence` 随请求推送
+（出进程部署也可经 `GET /api/v1/assess/evidence` 拉取），外部实现按确定性策略自产
+`confidence`（`0.15 + 0.40×coverage + 0.05×validation`，封顶 0.60）并返回 `AssessResponse`。
+真栈实测：`540121` 走 `mode=agent`、等级 3、confidence 0.52；`540221`/`540321` 因因子覆盖率
+不足如实返回"数据不足"并本地降级——**不会把"算不出"写成"无风险"**。
+（并入当时"交不出结论"的缺口已由 [`docs/adr/0012`](../docs/adr/0012-assess-contract-unification.md) 关闭。）
 
 其余已知限制（线程里的图取消不掉、外部的 LLM 绕开平台网关、共享记忆未打通等）
-详见 [`docs/adr/0011`](../docs/adr/0011-external-agent-module-merge.md) 的"已知限制"一节
-与 [`docs/architecture.md` §3.1](../docs/architecture.md)。
+详见 [`docs/architecture.md` §3.1](../docs/architecture.md) 的"已知限制"一节。
+`docs/adr/0011` 记的是**并入当时**的决策原貌，其中三层适配层与"交不出结论"两条已被 ADR-0012 取代，
+文件头有横幅，不要按它实现接线。
 
 它的 LLM 调用自带熔断（[`docs/adr/0013`](../docs/adr/0013-ext-llm-breaker-and-client-reuse.md)）：
 连续失败达阈值后在冷却窗口内直接跳过 LLM，研判走确定性兜底——上游不可用时

@@ -106,7 +106,7 @@ SDK 的盲重试已关（`max_retries=0`，默认盲重试 2 次的指数退避�
 - **外部的 LLM 绕开平台网关**：自建 `ChatOpenAI` 直连，**不经 `services/llm/llm_gateway.py`**
   ——不经提示注入围栏、不进平台模型台账（用量、模型、prompt 版本、首过率都统计不到）。
 - **共享记忆未打通**：平台 `services/memory/` 与外部自己那份反馈记忆 JSON 是两套，互不可见。
-- **131 处 `print()` 噪声**：外部实现的过程输出直接打 stdout，不进平台结构化日志、不带 trace_id。
+- **113 处 `print()` 噪声**（34 个文件）：外部实现的过程输出直接打 stdout，不进平台结构化日志、不带 trace_id。研判三节点 live 路径的 9 处已改为 `logging`，其余多在 legacy/demo/CLI 路径。
 - **外部的 manager 编排能力未接入**：manager（全局调度图、重试与反馈返工闭环）在包里但没接上，
   平台侧目前只用了它的 risk_agent。
 
@@ -148,7 +148,7 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
 | 重调度 ≤10s | `collab_txn`（事务口径，M2 补 `reschedule` 专项） | 网关 |
 | 接入 ≤5min | `ingest_end_to_end_seconds` | 摄取服务 |
 | 人工上报接入 ≤5min | `report_intake_seconds` | `pipeline/report_intake.py`（`ReportIntake.submit`：文本→三路解析→同一条链路） |
-| 语义交互一轮 | `assistant_reply_ms` | `services/interpret/assistant.py` |
+| 语义交互一轮 | `assistant_reply_ms` | `services/assistant/service.py`（P1 拆包后；原 `services/interpret/assistant.py` 已删） |
 | 预警生成 ≤3min | `warning_generation_ms` | 预警服务 |
 | 靶向触达 ≤20min | `warning_reach_ms` | 触达/链路 |
 
@@ -176,10 +176,12 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
   NexusMind 干预库），其性质与逐条出处随 `/api/v1/integrations` 与每条召回命中一起外显。
 - **分析旁路**：ClickHouse 分钟级物化与 DuckDB 边缘单文件离线分析（write-behind，热路径不等 OLAP）。
 - **可观测**：OpenTelemetry 链路（应用生命周期装配）+ 自研时延账本 + Prometheus 规则求值 +
-  Alertmanager 分发与抑制；`GET /api/v1/integrations` 把九条腿
-  （store/analytics/knowledge/retrieval/mqtt/weather/outbound/delivery/tracing）的启用与降级事实对外报出。
-- **语义交互与人工上报（批次 B）**：`services/interpret/assistant.py` 四类任务（查询 / 预案问答 / 演练 / 上报）
-  走白名单动作，执行类必须经 `/api/v1/assistant/confirm` 人工确认（一次性、带期、限本会话）；
+  Alertmanager 分发与抑制；`GET /api/v1/integrations` 把十一条腿
+  （store/analytics/knowledge/retrieval/mqtt/weather/outbound/delivery/tracing/memory/mcp）的启用与降级事实对外报出
+  （`mcp` 行在未开启时也保留，用来区分"没有工具面"和"有但没开"）。
+- **语义交互与人工上报（批次 B）**：`services/assistant/` 四类任务（查询 / 预案问答 / 演练 / 上报）
+  走白名单动作注册表，执行类必须经 `POST /api/v1/assistant/actions/{id}/confirm` 人工确认
+  （一次性、带期、限本会话；`/assistant/chat` 只出提案，不执行）。
   认知镜像复用 `rationale`/`degradations`/通道回执，LLM 只改措辞且**冒出事实之外的数字就整段弃用**。
   `POST /api/v1/reports` 与助手"帮我上报"共用 `ReportIntake.submit` 这一个入口，
   解析后进入的是**同一条链路**（同一 trace、同一量测、同一降级留痕）。
@@ -228,10 +230,10 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
 | §3.6/§4.4 推演沙盒 | 部分落地（2026-10-16 接上角色内环、汇聚器、DAG 节点与报告页） | `services/simulation.py` 的 K×T/概率矩阵/超限降 K 口径不变；角色侧搬到新包 `simulation/roles.py`：四个 ephemeral 角色（指挥员/救援队/受影响群众/监测员）每轮各出一票，`RoleAction` **只有档位与理由、没有数值字段**（结构上不能发明数字，这比在提示词里恳求"别编数"可靠），白名单逐字写进提示词（assess/plan 都栽过"只说取其一"结果模型回中文描述）；`RulePolicy` 是默认档（离线可复算），`LlmRolePolicy` 要 `AEGIS_SIMULATION_ROLES_LLM=true` 且网关在位，单次抖动只塌那一轮并记一次 `fallbacks`、不把整份报告拖成 503，出口回来的东西再过一次 schema；`aggregate_actions` 把四票折成本轮生效预案（多数票、平票取缓解更高的一档、白名单外的票丢弃）——票只决定"用表里哪一行冻结系数"，不决定系数本身。报告新增 `roles` 一格（policy / 在场角色与立场 / 应问·实问·回落 / 漏接时自带 note），DAG 节点 `situation_simulate` 经装配点注入的 `sandbox_runner` 带出 `output.sandbox`（未注入或失败只降级那一格并写明原因，画布参数逐个夹进区间），前端 `/simulation` 报告页把矩阵/时间线（每个在场角色一列）/预案对比/角色档摊开，并在边界上拒绝缺键报告。验收口径仍是 §3.6 那句"矩阵正确性抽查、演示非 SLA"，概率/缓解系数为未实测初值。**仍欠**：真 LLM 档只量到 T=2（8 次调用、6.62 s、零回落、`task=simulation` 首过率 1.0；同参数下规则档 0.0135 s，
 同一泥位上两档给出 0.1029 与 0.1821 两个触发率——票改表、模型不改数），T=5 与 K 拉满的墙钟/成本未量；
 这一页未纳入 `e2e/ui-overlap` 的逐页版式门禁（真机点验 21 项只覆盖浅色主题一屏） |
-| §4.7 assistant 意图解构 | 部分落地 | 多步分解在 `/assistant/plan`；`/chat` 仍是词表优先，前端没调 plan |
+| §4.7 assistant 意图解构 | 已落地（P1 收口） | 意图解构在 `services/assistant/intent.py` + 动作注册表；`/assistant/plan` 已退役（多步分解改由助手的规划动作承接），`/assistant/chat` 只出提案、执行一律走 `/actions/{id}/confirm` |
 | §4.8.1 服务令牌 | 已落地（默认关是配置项，不是缺口） | 数据 API 与 MCP 工具面共用同一个 `_presented_token`，认 `X-Aegis-Token` 与 `Authorization: Bearer` 两种头（头名不一致曾让"配了令牌"与"真的在拦"脱钩，那正是这一节的原始事故）；**智能体真在请求的读端点也进了闸**（`/api/v1/cases/recall`、`/api/v1/retrieval/search`、`/api/v1/memory/shared` 读写删、新增的审计直读面）；闸的形状已从"11 条路由手工挂 `dependencies=`"改成一条 HTTP 中间件，口径只有"路径在 `/api/` 下就要凭据"（`/healthz`、`/readyz`、`/metrics`、`/docs` 不吃闸，`/mcp/` 自成一闸、共用同一枚令牌），判据跟着从路由表取 28 条业务路径逐条指认——新增端点默认被覆盖，"漏挂"这件事结构上不可能再发生；2 条变异（闸一律放行 / 闸永远拒绝）各红一条用例。**Web 端凭据也已接上**：每页内容底部的"服务令牌"一行粘贴一次（存本机 localStorage），6 个 api 模块的 axios 拦截器与两处 `fetch`（事件流、助手 SSE）都带 `X-Aegis-Token`，被 401 时那一行红着提示重填；5 条前端变异（漏装拦截器 / 两处 fetch 不带凭据头 / 存了令牌却不发头 / 401 不吭声）各红一条用例。代价说死：令牌明文存在这台浏览器的 localStorage 里，共用机器上别拿它当账号体系用 |
 | §4.5 评测服务与金标集 | 部分落地 | 门禁与出口在（`scripts/quality_gate.py`，`ci.yml` 跑）；表已加第五列**结构化输出首过率**并用真 DeepSeek 实测入基线（0.7838，按 task 分开看才是能行动的那张表）；**另三列仍为 null**：无 `eval/judge.py`、无金标数据 |
-| §4.6 D7 编排归一（chain 退役） | **已落地（四步走完，2026-10-16 收口）** | 段的判定与段的记账一起收进 `pipeline/stages.py`（575 → 756 行，编排的唯一入口是 `run_stage(段名, 盘面)`），根跨度收进 `pipeline/span.py`，跨段中转收进 `pipeline/board.py`，产物形状收进当时的 `pipeline/result.py`（2026-10-16 结构重构 P1 已下沉为 `domain/chain.py`，理由见那一行）；工作流侧新增 `chain_stage` 节点（内部原语：引擎注册 17 类、面板可拖 16 类）与"标准五段处置链路"模板（节点超时与 `sla_agent_txn_ms` 同源），`pipeline/workflow_chain.py` 用 DAG 跑同一条链；`chain.py` 859 行（D7 立项实测）→ 321（第一拍）→ 91（第三拍）→ 删除（本拍），只剩"按顺序调段 + 根跨度 + 收盘"。**parity harness 10 条全绿**：同一容器、同一个 `HazardStages`，固定顺序与 DAG 逐项对齐段序/mode/note、定级、任务单元、预警内容、降级与故障清单、D10 凭证落段、以及五段 `stage_*_ms` 各加一次；变异检查打在**单侧**（parity 比的是两条路径的差，改共享实现两边一起变、它本就不该红）——DAG 丢早退红 1 条、DAG 不补 skipped 红 1 条、固定顺序少跑反馈段红 3 条。**第 4 步（本拍）**：`pipeline/chain.py` 已删，`container.chain` 就是 `WorkflowChain`，原有 6 个调用点（`api/app.py` 1、`container.py` 3、`scripts/drill.py` 与 `scripts/metrics_report.py` 各 1）一行没改——"退役不改口径"靠的是形状沿用，不是承诺。护栏换了形式：parity 用例退役成 `tests/unit/test_chain_orchestration_contract.py`（12 条），把当初两路径对齐时量出来的可观测物写成**字面基线**（段序/mode/note、定级、任务单元、预警正文、降级与故障清单、五段样本各 +1、多区域只多一条感知样本），5 个直构链路的测试文件改用一个 `conftest.chain_entry`（真引擎 + 真模板，刻意不留"单测专用的简化路径"）。真栈取证（退役后复跑）：NATS JetStream + Postgres 上跑一条链路，从 `chain_runs` 读回的五段（名/mode/ok/note）与定级五元组逐项等于那份字面基线，引擎留底里五个节点都是 `chain_stage` 且 succeeded，跑完盘面归零；反向对照（故意把基线改一处）当场报"不等"并退出 1。`/readyz` 新增 `chain` 一块（`open_boards`/`traces`/`held`/`capacity`/`evicted`），盘面漏收当场可见。8 条变异全部有牙（三条第一轮是空转或外壳在骗人，换判据/换锚点后才红，过程记在 REPORT）。**仍欠**（该批时的状态）：工作流实例账本本身仍未落库（`save_workflow_instance` 零调用方，ADR-0003 的既定后置项 → 任务 #53）。**已于 2026-10-31 补齐**：定义与实例检查点写穿 PostgreSQL（迁移 009、`aegis.workflow.persistence` 端口 + `persistence/workflow_store.py` 适配器），启动恢复 `waiting` 续跑、`running` 显式中断，细节见 REPORT 的智能体调度修复一节；草稿/预览/版式快照仍属 #53 剩余部分 |
+| §4.6 D7 编排归一（chain 退役） | **已落地（四步走完，2026-10-16 收口）** | 段的判定与段的记账一起收进 `pipeline/stages.py`（575 → 756 行，编排的唯一入口是 `run_stage(段名, 盘面)`），根跨度收进 `pipeline/span.py`，跨段中转收进 `pipeline/board.py`，产物形状收进当时的 `pipeline/result.py`（2026-10-16 结构重构 P1 已下沉为 `domain/chain.py`，理由见那一行）；工作流侧新增 `chain_stage` 节点（内部原语：当时引擎注册 17 类、面板可拖 16 类；2026-11 已增至 **19/18**）与"标准五段处置链路"模板（节点超时与 `sla_agent_txn_ms` 同源），`pipeline/workflow_chain.py` 用 DAG 跑同一条链；`chain.py` 859 行（D7 立项实测）→ 321（第一拍）→ 91（第三拍）→ 删除（本拍），只剩"按顺序调段 + 根跨度 + 收盘"。**parity harness 10 条全绿**：同一容器、同一个 `HazardStages`，固定顺序与 DAG 逐项对齐段序/mode/note、定级、任务单元、预警内容、降级与故障清单、D10 凭证落段、以及五段 `stage_*_ms` 各加一次；变异检查打在**单侧**（parity 比的是两条路径的差，改共享实现两边一起变、它本就不该红）——DAG 丢早退红 1 条、DAG 不补 skipped 红 1 条、固定顺序少跑反馈段红 3 条。**第 4 步（本拍）**：`pipeline/chain.py` 已删，`container.chain` 就是 `WorkflowChain`，原有 6 个调用点（`api/app.py` 1、`container.py` 3、`scripts/drill.py` 与 `scripts/metrics_report.py` 各 1）一行没改——"退役不改口径"靠的是形状沿用，不是承诺。护栏换了形式：parity 用例退役成 `tests/unit/test_chain_orchestration_contract.py`（12 条），把当初两路径对齐时量出来的可观测物写成**字面基线**（段序/mode/note、定级、任务单元、预警正文、降级与故障清单、五段样本各 +1、多区域只多一条感知样本），5 个直构链路的测试文件改用一个 `conftest.chain_entry`（真引擎 + 真模板，刻意不留"单测专用的简化路径"）。真栈取证（退役后复跑）：NATS JetStream + Postgres 上跑一条链路，从 `chain_runs` 读回的五段（名/mode/ok/note）与定级五元组逐项等于那份字面基线，引擎留底里五个节点都是 `chain_stage` 且 succeeded，跑完盘面归零；反向对照（故意把基线改一处）当场报"不等"并退出 1。`/readyz` 新增 `chain` 一块（`open_boards`/`traces`/`held`/`capacity`/`evicted`），盘面漏收当场可见。8 条变异全部有牙（三条第一轮是空转或外壳在骗人，换判据/换锚点后才红，过程记在 REPORT）。**仍欠**（该批时的状态）：工作流实例账本本身仍未落库（`save_workflow_instance` 零调用方，ADR-0003 的既定后置项 → 任务 #53）。**已于 2026-10-31 补齐**：定义与实例检查点写穿 PostgreSQL（迁移 009、`aegis.workflow.persistence` 端口 + `persistence/workflow_store.py` 适配器），启动恢复 `waiting` 续跑、`running` 显式中断，细节见 REPORT 的智能体调度修复一节；草稿/预览/版式快照仍属 #53 剩余部分 |
 | MC 模型线（QLoRA/GPTQ/训练集导出/对照实验/论文专利） | 未开工 | 无任何落点 |
 
 一句话（口径与上表逐行对齐，不另算一套）：**MA 已收口**（欠的那个"结构化输出首过率"于 2026-10-12 实测补齐，
