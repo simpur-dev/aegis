@@ -49,17 +49,6 @@ def _module_assignments(tree: ast.Module) -> dict[str, ast.expr]:
     return out
 
 
-def _names_used(node: ast.AST) -> list[str]:
-    """表达式里出现的属性名与字符串字面量：阈值检查要抓 `settings.sla_schedule_ms` 这种属性引用。"""
-    out: list[str] = []
-    for item in ast.walk(node):
-        if isinstance(item, ast.Attribute):
-            out.append(item.attr)
-        elif isinstance(item, ast.Constant) and isinstance(item.value, str):
-            out.append(item.value)
-    return out
-
-
 def test_file_parses_and_exposes_two_user_classes(tree: ast.Module) -> None:
     names = _class_names(tree)
     assert "AegisReadUser" in names and "AegisDrillUser" in names, names

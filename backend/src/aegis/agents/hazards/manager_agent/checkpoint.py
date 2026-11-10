@@ -17,22 +17,28 @@ Manager 工作流 Checkpoint 持久化（SQLite / SqliteSaver —— 第十一�
 """
 
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+
+
+@lru_cache(maxsize=1)
+def _shared_checkpointer(db_path: str) -> SqliteSaver:
+    path = Path(db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path), check_same_thread=False)
+    saver = SqliteSaver(conn)
+    saver.setup()
+    return saver
 
 
 def get_checkpointer(db_path: str | None = None) -> SqliteSaver:
     """打开（或创建）Manager 专用 SQLite 检查点库。
 
     db_path 缺省取 config.MANAGER_CHECKPOINT_DB（data/manager_checkpoints.sqlite）。
-    返回的 SqliteSaver 与连接同生命周期；进程内复用即可，无需显式关闭。
+    进程内按路径复用同一连接：每请求新建 SQLite 连接是纯开销（saver 无需显式关闭）。
     """
     from aegis.agents.hazards.config import MANAGER_CHECKPOINT_DB
 
-    path = Path(db_path or MANAGER_CHECKPOINT_DB)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
-    saver = SqliteSaver(conn)
-    saver.setup()
-    return saver
+    return _shared_checkpointer(db_path or MANAGER_CHECKPOINT_DB)

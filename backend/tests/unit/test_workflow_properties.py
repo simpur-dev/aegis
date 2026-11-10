@@ -14,8 +14,6 @@ from hypothesis import strategies as st
 
 from aegis.workflow.model import EdgeDef, NodeDef, WorkflowDef, topological_levels
 
-NODE_ID_RE = r"^[a-z][a-z0-9_-]{0,31}$"
-
 
 def node(index: int) -> NodeDef:
     return NodeDef(node_id=f"n{index}", type="assess_risk")

@@ -121,9 +121,3 @@ def rework_closure(target_agent: str, original_plan: list) -> list:
     work_set = {a for a in original_plan if a in AGENT_ORDER} | {target_agent}
     start = AGENT_ORDER.index(target_agent)
     return [a for a in AGENT_ORDER[start:] if a in work_set]
-
-
-def downstream_of(target_agent: str, original_plan: list) -> list:
-    """目标 Agent 的下游（不含自身），用于返工前的结果失效管理。"""
-    rw = rework_closure(target_agent, original_plan)
-    return rw[1:]

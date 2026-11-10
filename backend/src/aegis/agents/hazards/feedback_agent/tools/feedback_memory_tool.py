@@ -28,8 +28,13 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-MEMORY_DIR = Path(__file__).resolve().parents[1] / "memory"
-STORAGE_PATH = MEMORY_DIR / "feedback_memory.json"
+from aegis.agents.hazards.config import FEEDBACK_MEMORY_FILE
+
+# 存储路径走配置面（`config.FEEDBACK_MEMORY_FILE`，环境变量 AEGIS_EXT_FEEDBACK_MEMORY
+# 可改）：原实现写死在**包内目录**——运行时数据写进源码树，装进 wheel/镜像后就写到镜像层。
+# 主文件与外显反馈文件同目录，同名不同缀。
+MEMORY_DIR = Path(FEEDBACK_MEMORY_FILE).parent
+STORAGE_PATH = Path(FEEDBACK_MEMORY_FILE)
 EXTERNAL_STORAGE_PATH = MEMORY_DIR / "external_feedback.json"
 
 # 外部反馈记录的必备字段与枚举口径（接口契约，第一版不接入真实观测源）

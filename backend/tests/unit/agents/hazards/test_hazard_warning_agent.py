@@ -87,11 +87,6 @@ def _risk_result(hazard, risk_status="success", overrides=None, drop_R=False, ob
     return out
 
 
-def complete_ok(hazard, events):
-    """占位函数（保持与旧结构兼容的钩子，恒真）。"""
-    return True
-
-
 def _decision_state(hazard, risk_result, simulation_result=None, data_result=None):
     return {
         "hazard_type": hazard,

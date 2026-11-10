@@ -92,16 +92,6 @@ ERROR_FEEDBACK_REVIEW = "FEEDBACK_REVIEW_FAILURE"
 ERROR_MAX_RETRIES = "MAX_RETRIES_EXCEEDED"
 ERROR_MISSING_DEPENDENCY = "MISSING_DEPENDENCY"
 
-# retry_decision 的受控动作集合
-RETRY_ACTIONS = [
-    "retry_current_agent",
-    "call_next_agent",
-    "skip_optional_agent",
-    "stop_with_insufficient_data",
-    "stop_with_error",
-    "require_human_review",
-]
-
 
 class ManagerState(TypedDict, total=False):
     """Manager 全局调度状态（节点返回值按键局部合并）。

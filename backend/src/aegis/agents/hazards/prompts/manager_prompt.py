@@ -103,24 +103,6 @@ MANAGER_FINAL_REPORT_PROMPT = (
 # ============================================================
 # 用户消息构建函数
 # ============================================================
-
-
-def build_analyze_user_prompt(user_request: str, hazard_hint: str, supported_text: str) -> str:
-    return f"用户请求：{user_request}\n调用方显式给出的灾种字段：{hazard_hint or '(未提供)'}\n系统支持灾种：{supported_text}"
-
-
-def build_plan_user_prompt(task_type: str, plan: list, results_overview: dict) -> str:
-    return f"任务类型：{task_type}\n确定性规划结果：{plan}\n已有交付物概况：{results_overview}"
-
-
-def build_error_analysis_user_prompt(error_record: dict) -> str:
-    return f"错误记录：{error_record}"
-
-
-def build_feedback_review_user_prompt(feedback_summary: dict, manager_actions: list) -> str:
-    return f"Feedback 摘要：{feedback_summary}\nmanager_actions：{manager_actions}"
-
-
 def build_final_report_user_prompt(final_report: dict) -> str:
     keys = (
         "event_id",

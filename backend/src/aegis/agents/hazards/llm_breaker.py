@@ -82,14 +82,6 @@ class LlmBreaker:
     # ---------- 只读视图 ----------
 
     @property
-    def threshold(self) -> int:
-        return self._threshold
-
-    @property
-    def cooldown_seconds(self) -> float:
-        return self._cooldown
-
-    @property
     def failures(self) -> int:
         with self._lock:
             return self._failures

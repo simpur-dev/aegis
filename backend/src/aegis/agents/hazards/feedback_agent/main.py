@@ -92,6 +92,44 @@ def run_feedback_agent(
     return final_state.get("feedback_result", {})
 
 
+def _demo_pipeline_results(hazard_type: str) -> dict:
+    """离线演示用的最小一致交付物（原 test_data_builder，已迁往 tests/）。"""
+    events = [
+        {
+            "event_id": f"E-{i}",
+            "time": "2024-07-08T03:00:00Z",
+            "latitude": 29.6,
+            "longitude": 95.3,
+            "region": "西藏林芝",
+            "hazard_type": hazard_type,
+            "source": "mock",
+        }
+        for i in range(1, 3)
+    ]
+    data_result = {
+        "hazard_type": hazard_type,
+        "processed_data": {"events": events, "data_source": "mock", "is_mock": True},
+        "data_quality": {"is_valid": True, "completeness_ratio": 1.0, "validation_reason": "demo"},
+        "data_sufficiency": {"sufficient": True, "reason": "demo"},
+        "status": "success",
+    }
+    risk_result = {
+        "hazard_type": hazard_type,
+        "status": "success",
+        "risk_level": "medium",
+        "confidence": 0.55,
+        "assessment": {"assessment_status": "scored", "engine_version": "FACTOR-ENGINE-v0.1"},
+        "data_provenance": {"is_mock": True},
+    }
+    warning_result = {
+        "hazard_type": hazard_type,
+        "status": "draft",
+        "alert": {"warning_level": "yellow", "target_region": "西藏林芝", "mock_only": True},
+        "cap": {"status": "Exercise", "mapping_version": "MOCK-v0.1"},
+    }
+    return {"data_result": data_result, "risk_result": risk_result, "warning_result": warning_result}
+
+
 if __name__ == "__main__":
     # Windows 控制台中文输出保障
     # 【并入主线时的改动】`sys.stdout` 的静态类型是 TextIO，而 `reconfigure` 是 TextIOWrapper 的方法；
@@ -103,10 +141,9 @@ if __name__ == "__main__":
         except Exception:
             pass
 
-    from aegis.agents.hazards.feedback_agent.test_data_builder import build_consistent_pipeline_results
-
+    demo = _demo_pipeline_results
     # ---------- 用例1：泥石流正常链路 → 无虚假问题 ----------
-    blocks = build_consistent_pipeline_results("debris_flow", event_id="EVT-DEMO-1")
+    blocks = demo("debris_flow")
     fb1 = run_feedback_agent("反馈检查：波密泥石流完整链路", hazard_type="debris_flow", event_id="EVT-DEMO-1", **blocks)
     print("\n【用例1 正常链路】status =", fb1.get("status"), "| 问题数 =", fb1.get("summary", {}).get("issue_count"))
 
@@ -120,7 +157,7 @@ if __name__ == "__main__":
     )
 
     # ---------- 用例3：Warning 与上游 Risk 不一致 → 检出问题 ----------
-    blocks3 = build_consistent_pipeline_results("landslide", event_id="EVT-DEMO-3")
+    blocks3 = demo("landslide")
     alert = blocks3["warning_result"]["alert"]
     alert["based_on"]["risk_level"] = "high（被人为改动的示例）"
     fb3 = run_feedback_agent("反馈检查：制造不一致", hazard_type="landslide", event_id="EVT-DEMO-3", **blocks3)

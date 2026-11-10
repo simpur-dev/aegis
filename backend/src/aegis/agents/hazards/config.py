@@ -91,8 +91,11 @@ def _runtime_path(env_name: str, default_name: str) -> Path:
     return (Path.cwd() / "data" / default_name).resolve()
 
 
-#: Checkpoint（工作流执行状态持久化，与 Feedback Memory 是两套机制）
+#: Checkpoint（工作流执行状态持久化，与 Feedback Memory 是两套机制）。
+#: 显式配置了 AEGIS_EXT_CHECKPOINT_DB 才启用断点恢复——默认关闭，不为没要求的能力
+#: 引入每请求一次的 SQLite 开销。
 MANAGER_CHECKPOINT_DB = str(_runtime_path("AEGIS_EXT_CHECKPOINT_DB", "manager_checkpoints.sqlite"))
+MANAGER_CHECKPOINT_ENABLED = bool(os.environ.get("AEGIS_EXT_CHECKPOINT_DB", "").strip())
 
 #: Feedback 记忆的 JSON 存储：原实现固定写在包内（会进代码仓、且被测试写）。
 #: 这里默认落到工作目录的 `data/`，可用环境变量改。

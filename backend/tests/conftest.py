@@ -187,19 +187,6 @@ def registration(agent_type: AgentType, capability: str, *, agent_id: str | None
     }
 
 
-def risk_payload(level: RiskLevel = RiskLevel.ORANGE, **overrides: Any) -> dict[str, Any]:
-    payload = {
-        "hazard_type": HazardType.DEBRIS_FLOW.value,
-        "region_code": REGION,
-        "risk_level": int(level),
-        "confidence": 0.8,
-        "rationale": "fixture 定级",
-        "evidence_refs": ["R-DEBRIS-RAIN-1"],
-    }
-    payload.update(overrides)
-    return payload
-
-
 def sample_verdict(level: RiskLevel = RiskLevel.RED, hazard: HazardType = HazardType.DEBRIS_FLOW) -> Any:
     from aegis.domain.messages import TriggerHit
     from aegis.domain.verdict import RiskVerdict

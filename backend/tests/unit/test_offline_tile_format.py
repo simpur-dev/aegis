@@ -29,7 +29,6 @@ CESIUM_SOURCE = REPO_ROOT / "frontend" / "node_modules" / "@cesium" / "engine" /
 PMTILES_SOURCE = REPO_ROOT / "frontend" / "node_modules" / "pmtiles" / "src" / "index.ts"
 
 MAX_SHORT = 32767
-PMTILES_HEADER_BYTES = 127
 
 
 def load_builder():

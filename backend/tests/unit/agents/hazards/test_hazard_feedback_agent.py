@@ -26,10 +26,11 @@ feedback_llm_setup.get_feedback_llm = _no_llm
 # 节点内部为延迟导入（from aegis.agents.hazards.feedback_agent.llm_setup import get_feedback_llm），
 # 调用时取模块属性，因此上面的替换对节点生效。
 
-from aegis.agents.hazards.feedback_agent.main import run_feedback_agent  # noqa: E402
-from aegis.agents.hazards.feedback_agent.test_data_builder import (  # noqa: E402
+from tests.unit.agents.hazards.hazard_pipeline_fixtures import (  # noqa: E402
     build_consistent_pipeline_results,
 )
+
+from aegis.agents.hazards.feedback_agent.main import run_feedback_agent  # noqa: E402
 from aegis.agents.hazards.feedback_agent.tools.feedback_memory_tool import (  # noqa: E402
     STORAGE_PATH,
     load_feedback_records,

@@ -39,6 +39,7 @@ from typing import Any
 
 from aegis.agents.agentkit import AgentKit, Reply
 from aegis.agents.hazards.bus_context import BusContext
+from aegis.agents.hazards.config import MANAGER_CHECKPOINT_ENABLED
 from aegis.agents.hazards.contracts import hazard_workflow_request
 from aegis.agents.hazards.errors import HazardRejected
 from aegis.agents.hazards.pool import run_blocking_on
@@ -112,6 +113,13 @@ class HazardWorkflowAgent(AgentKit):
             # 外层预算传导：请求带多少 deadline，闭环就只有多少总预算。
             outer_deadline_ms=int(request.deadline_ms or 0) or None,
         )
+        # 断点恢复是显式启用档（AEGIS_EXT_CHECKPOINT_DB 配了才开）：thread_id=event_id，
+        # 一个任务一条线程；未配置时零 SQLite 开销。
+        checkpointer = None
+        if MANAGER_CHECKPOINT_ENABLED:
+            from aegis.agents.hazards.manager_agent.checkpoint import get_checkpointer
+
+            checkpointer = get_checkpointer()
         try:
             report = await run_blocking_on(
                 self._loop_pool,
@@ -124,6 +132,7 @@ class HazardWorkflowAgent(AgentKit):
                 event_id=contract["event_id"],
                 require_simulation=contract["require_simulation"],
                 preset_scenario_configs=contract["preset_scenario_configs"] or None,
+                checkpointer=checkpointer,
                 bus=bus,
                 trace_id=request.trace_id,
             )
