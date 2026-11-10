@@ -142,7 +142,7 @@ class TestDeploymentEnvKeys:
         declared = set(re.findall(r"^([a-z0-9_]+) = \[", pyproject, re.MULTILINE))
         # seekdb 也在内：`.env.example` 把 AEGIS_RETRIEVAL_INDEX_BACKEND 的 seekdb 档交给部署面去选，
         # 没有 pymysql 驱动时那是一个"打开即抛"的开关，而不是一个可选项。
-        server_side = {"postgres", "iot", "analytics", "graph", "retrieval", "seekdb", "mcp", "agents_ext"}
+        server_side = {"postgres", "iot", "analytics", "graph", "retrieval", "seekdb", "mcp", "agents"}
         assert server_side <= installed, f"Dockerfile 未安装: {sorted(server_side - installed)}"
         # 边缘与压测用的 extra 不该进**生产**镜像：它们会把 1GB 级依赖带到服务端。
         # 判据只扫生产 stage——测试 stage 装 dev 是它存在的理由。

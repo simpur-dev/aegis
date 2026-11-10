@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-agents-ext = [
+agents = [
     { name = "langchain-core" },
     { name = "langchain-openai" },
     { name = "langgraph" },
@@ -96,10 +96,10 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.168" },
     { name = "jsonschema", specifier = ">=4.23" },
-    { name = "langchain-core", marker = "extra == 'agents-ext'", specifier = ">=0.3" },
-    { name = "langchain-openai", marker = "extra == 'agents-ext'", specifier = ">=0.2" },
-    { name = "langgraph", marker = "extra == 'agents-ext'", specifier = ">=0.2" },
-    { name = "langgraph-checkpoint-sqlite", marker = "extra == 'agents-ext'", specifier = ">=2.0" },
+    { name = "langchain-core", marker = "extra == 'agents'", specifier = ">=0.3" },
+    { name = "langchain-openai", marker = "extra == 'agents'", specifier = ">=0.2" },
+    { name = "langgraph", marker = "extra == 'agents'", specifier = ">=0.2" },
+    { name = "langgraph-checkpoint-sqlite", marker = "extra == 'agents'", specifier = ">=2.0" },
     { name = "locust", marker = "extra == 'perf'", specifier = ">=2.30" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.3" },
     { name = "minio", marker = "extra == 'objectstore'", specifier = ">=7.2" },
@@ -128,7 +128,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'perf'", specifier = ">=0.21" },
 ]
-provides-extras = ["perf", "postgres", "analytics", "edge", "retrieval", "iot", "graph", "objectstore", "agents-ext", "mcp", "dev", "seekdb"]
+provides-extras = ["perf", "postgres", "analytics", "edge", "retrieval", "iot", "graph", "objectstore", "agents", "mcp", "dev", "seekdb"]
 
 [[package]]
 name = "aiomqtt"

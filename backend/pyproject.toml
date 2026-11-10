@@ -32,11 +32,10 @@ retrieval = ["onnxruntime>=1.30", "tokenizers>=0.21", "numpy>=1.26"]
 iot = ["aiomqtt>=2.2"]
 graph = ["neo4j>=5.26", "graphiti-core>=0.30"]
 objectstore = ["minio>=7.2"]
-# 外部交付智能体模块（`aegis.agents_ext`，2026-11-09 并入自 hazard-landslide-agent）：
-# LangGraph 图编排 + OpenAI 兼容客户端 + 结构化输出。**可选腿**：没装这层时平台一律退回
-# 自建内环（`aegis.agents`），语义不变——装不装只改变 `AEGIS_AGENT_IMPL` 选中的那一套实现，
-# 不改变任何一条链路的动作注册表与降级轨。
-agents_ext = [
+# 灾种闭环模块（`aegis.agents.hazards`，2026-11-09 并入自 hazard-landslide-agent）：
+# LangGraph 图编排 + OpenAI 兼容客户端 + 结构化输出。**可选腿**：没装这层时灾种那六个本体
+# 装配不上（平台如实留痕跳过），平台自建五段内环不受影响。
+agents = [
     "langgraph>=0.2",
     # langgraph 1.x 把 SQLite checkpoint 拆成了独立包（`langgraph.checkpoint.sqlite` 不再随主包提供），
     # 而外部模块的 Manager 断点恢复正用它。装主包不带它 → 4 条 checkpoint 用例在 import 期就红。
@@ -102,7 +101,7 @@ ignore = ["B008", "RUF001", "RUF002", "RUF003"]
 #   SIM105 —— try/except/pass（她的确定性兜底写法）。
 # **缺陷类规则一条不放行**：F（未使用/重定义）、E/W（行宽与空白）、B（bugbear）、
 # C4（冗余推导）、RUF 其余规则、SIM 其余规则照常生效。
-# 另有一条独立门禁守"外部实现不许直连数据库"（见 tests/unit/test_agents_ext_boundaries.py）。
+# 另有一条独立门禁守"灾种模块不许直连数据库"（见 tests/unit/test_hazards_boundaries.py）。
 "src/aegis/agents/hazards/**" = ["RUF012", "SIM105"]
 # 迁入的外部测试用同一组口径（它们进本仓 CI，门禁就该一样）。
 "tests/unit/agents/hazards/**" = ["RUF012", "SIM105"]

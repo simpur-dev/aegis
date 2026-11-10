@@ -11,7 +11,7 @@
   均由本仓库承载——智能体自建于 `backend/src/aegis/agents/`（agentkit 契约壳 + LLM 内环），
   按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入总线；外部团队的实现按同一契约接入，`docs/agents/` 是交付落点与接入指引
 - **L3 现在有两套并存实现**（2026-11-09 起）：平台自建内环（`backend/src/aegis/agents/`，接真实数据面）
-  与一份外部交付模块（`backend/src/aegis/agents_ext/`，LangGraph 图编排）。**两端共用同一套
+  与一份灾种闭环模块（`backend/src/aegis/agents/hazards/`，LangGraph 图编排）。**两端共用同一套
   `assess.v1` 契约**（`AssessRequest`/`AssessEvidence`/`AssessResponse`，住在 `aegis.domain`），
   没有适配层；由 `AEGIS_AGENT_IMPL=builtin|ext` 选择，**默认 builtin 不变**。
   **外部那一侧当前只接通了研判段的 `assess.hazard`**，其余动作不注册（网关记 `no_agent`，平台走本地降级轨）。
@@ -57,18 +57,18 @@ aegis/
 │   │   ├── edge/              # 站端↔网关弱网链路（Eclipse Zenoh POC：有界缓冲 + 按序重放）
 │   │   ├── observability/     # 时延账本、OpenTelemetry 埋点与导出、Prometheus 导出
 │   │   ├── agents/            # 五大智能体本体（自建）：agentkit 契约壳 + LLM 内环 + 三态运行时（real 与 mock 互斥）；mock 留作契约门禁对照
-│   │   ├── agents_ext/       # 外部交付的智能体模块（并入自 hazard-landslide-agent，LangGraph 图编排）：直接实现 aegis.domain 的 assess.v1 契约（无适配层）；AEGIS_AGENT_IMPL=ext 时启用（默认 builtin；当前只接通了研判段 assess.hazard）
+│   │   ├── hazards/          # 灾种闭环模块（并入自 hazard-landslide-agent，LangGraph 图编排）：直接实现 aegis.domain 的 assess.v1 契约（无适配层）；AEGIS_AGENT_IMPL=ext 时启用（默认 builtin；当前只接通了研判段 assess.hazard）
 │   │   └── api/               # FastAPI HTTP/SSE 接口：`app.py` 只做装配（闸/lifespan/异常/MCP 挂载），端点在 `routers/` 按资源分文件；另有工作流接口与语义交互（助手 SSE + 人工确认）
 │   ├── scripts/               # drill / metrics_report / accuracy_replay / eval_report_parsing / quality_gate / emit_model_cards / load_curve / zenoh_poc / import_stations / import_site_profiles / ingest_cases
 │   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
-│   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / agents_ext / mcp / objectstore / seekdb / perf / dev
+│   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / agents / mcp / objectstore / seekdb / perf / dev
 ├── frontend/                  # Vue 3 + Vite；Cesium 一张图、Vue Flow 编排画布
 ├── deploy/                    # docker-compose（含 profile）、镜像构建、Prometheus/Alertmanager 配置
 ├── docs/                      # 现行文档：实现态架构、架构升级方案、ADR、实测记录、进度看板、选型与许可证清单
 │   ├── archive/               # 归档只读留痕：一次性任务书、立项前调研（见下方"文档地图"）
 │   ├── adr/                   # 决策记录（不可变，被取代的也保留）
 │   ├── agents/                # L3 智能体的接入指引与交付落点索引（外部实现按契约接入；
-│   │                          #   自建本体在 backend/src/aegis/agents/，已并入的外部实现在 backend/src/aegis/agents_ext/）
+│   │                          #   自建本体在 backend/src/aegis/agents/，灾种闭环模块在 backend/src/aegis/agents/hazards/）
 │   └── audit/                 # 第三方迁移与合规盘点
 └── scripts/                   # 检索权重预置脚本（内网/离线部署前跑一次）
 ```
@@ -168,9 +168,9 @@ cd .. && npm run dev              # API http://127.0.0.1:8001/docs ｜ Web http:
 #    与调度档 ≤2s/≤10s（工作流量测点，禁入 LLM）分档并报表，见《课题6_架构升级方案》§5。
 #
 # 7) 智能体走哪一套实现：AEGIS_AGENT_IMPL = builtin（默认；平台自建内环，接真实数据面）| ext
-#    （外部交付模块 backend/src/aegis/agents_ext/，LangGraph 图编排）。两套并存，不是替换；
+#    （灾种闭环模块 backend/src/aegis/agents/hazards/，LangGraph 图编排）。两套并存，不是替换；
 #    两端共用同一套 assess.v1 契约（DTO 在 aegis.domain，无适配层）。
-#    ext 需要装可选依赖：uv sync --extra dev --extra agents_ext（平台镜像里已带）；
+#    ext 需要装可选依赖：uv sync --extra dev --extra agents（平台镜像里已带）；
 #    没装则装配点如实退回 builtin 并记 warning，平台照常起来，不会因为一个可选依赖起不来。
 #    ext 的模型凭据只从环境变量读：AEGIS_EXT_LLM_API_KEY（留空则它的 LLM 腿降级为确定性模板）。
 #    ext 的 LLM 自带熔断（AEGIS_EXT_LLM_BREAKER_THRESHOLD=3 / _COOLDOWN_SECONDS=60）：
