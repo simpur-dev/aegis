@@ -159,7 +159,7 @@ def build_router() -> APIRouter:
         x_operator_key: OperatorKeyHeader = None,
     ) -> Response:
         service = _assistant(ctn)
-        operator, _ = await _identity(ctn, x_operator, x_operator_key)
+        operator, identity_kind = await _identity(ctn, x_operator, x_operator_key)
         stream = service.respond(
             payload.message,
             session_id=payload.session_id,
@@ -167,6 +167,7 @@ def build_router() -> APIRouter:
             reporter=payload.reporter,
             region_code=payload.region_code,
             idempotency_key=payload.idempotency_key,
+            identity_kind=identity_kind,
         )
 
         async def _gen() -> AsyncIterator[str]:

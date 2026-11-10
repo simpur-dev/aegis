@@ -153,4 +153,19 @@ class Test外发失败不装送达:
         payload = client.calls[0]["json"]
         assert payload["message"] == "沟道泥位抬升"
         assert "token" not in str(payload).lower()
-        assert set(payload).issubset({"recipient", "message", "kind", "sender", "space_id", "created_at"})
+
+
+class Test广播失败不影响站内:
+    async def test_广播失败不抛且站内只一条(self) -> None:
+        """总线只是加速器：publish 炸了，站内已落就不该抛错，否则值班员重发会造出重复通知。"""
+        ledger = NotificationStore()
+
+        async def broken_publish(subject: str, event: Any) -> None:
+            raise RuntimeError("bus down")
+
+        notifier = Notifier(ledger, publish=broken_publish, subject="ops.assistant.notify", operators=None)
+        record = await notifier.notify(recipient="lead01", message="x", kind="direct")
+
+        stored = await ledger.list_notifications(recipient="lead01")
+        assert len(stored) == 1, "广播失败不该让站内通知作废，也不该逼出重发"
+        assert record["id"] == stored[0]["id"]

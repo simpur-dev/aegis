@@ -3,9 +3,8 @@
 这两个动作是"执行类必须人工确认"的最小闭环：`preview` 说清会影响什么，`execute` 复用
 平台既有服务（`IngestService` / `ReportIntake`），助手不复制任何业务逻辑。
 
-注意它们**不直接落 `control_actions`**：P1 的确认仍由 `AssistantService` 的内存 pending 承担，
-落库在 P2 接 `control_actions` 时统一改。这里只保证"动作实现只有一份"——对话路径与确认路径
-调的是同一个 `execute`。
+确认与落库由执行器经 `control_actions` 统一承担，这里只保证"动作实现只有一份"——对话路径与
+确认路径调的是同一个 `execute`，助手不复制任何业务逻辑。
 """
 
 from __future__ import annotations

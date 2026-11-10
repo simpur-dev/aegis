@@ -22,11 +22,17 @@ from aegis.services.assistant.audit import AuditTrail
 from aegis.services.assistant.base import Action, ActionContext, ActionError, ResolvedTargets
 from aegis.services.assistant.executor import Executor
 from aegis.services.assistant.guard import WriteRateLimiter
-from aegis.services.assistant.intent import Intent, IntentClassifier, bulk_scope_without_target, out_of_scope_action
+from aegis.services.assistant.intent import (
+    Intent,
+    IntentClassifier,
+    bulk_scope_without_target,
+    out_of_scope_action,
+    resolve_coreference,
+)
 from aegis.services.assistant.narrate import narrate_result
 from aegis.services.assistant.registry import ActionRegistry
 from aegis.services.assistant.review import DualReview, ReviewPolicy
-from aegis.services.interpret.text_guard import number_tokens
+from aegis.services.interpret.text_guard import invented_numbers
 from aegis.services.operator_auth import OperatorKeyError
 from aegis.storage.store import SupportsControlActions
 
@@ -127,6 +133,7 @@ class AssistantService:
         reporter: str | None = None,
         region_code: str | None = None,
         idempotency_key: str | None = None,
+        identity_kind: str = "declared",
     ) -> AsyncGenerator[AssistantEvent, None]:
         started = time.perf_counter()
         body = str(text or "").strip()[:2_000]
@@ -195,7 +202,9 @@ class AssistantService:
                 )
                 return
 
-        intent = await self._classifier.classify_async(body, region_code=region_code, reporter=reporter)
+        # 多轮指代消解在分类前："撤回它"会补上上一轮的编号；utterance 仍保留用户原始输入。
+        effective_text = resolve_coreference(body, session.history)
+        intent = await self._classifier.classify_async(effective_text, region_code=region_code, reporter=reporter)
         yield AssistantEvent("intent", intent.as_dict())
         session.history.append({"role": "user", "text": body[:500]})
 
@@ -208,6 +217,7 @@ class AssistantService:
             reporter=reporter,
             region_code=region_code,
             idempotency_key=idempotency_key,
+            identity_kind=identity_kind,
         ):
             if event.type == "answer":
                 answer_parts.append(str(event.data.get("text", "")))
@@ -546,6 +556,7 @@ class AssistantService:
         reporter: str | None,
         region_code: str | None,
         idempotency_key: str | None,
+        identity_kind: str,
     ) -> AsyncGenerator[AssistantEvent, None]:
         if intent.rejected:
             self._reject(session, action=intent.rejected, reason="建议的动作不在注册表内")
@@ -564,9 +575,28 @@ class AssistantService:
             yield AssistantEvent("answer", {"text": self._capability_hint(intent.note)})
             return
         action = self._registry.require(intent.action)
-        # 单会话写动作频控：提示等待而不是静默排队，读动作不占额度。
+        # 强身份闸（设计 §14.1.1）：强认证开启后，写动作必须带有效令牌（identity_kind='key'），
+        # 仅声明身份在此拒绝、不进频控也不落提案；读动作不会走到这里。
+        if action.spec.writes and self._strong_identity_required(identity_kind):
+            reason = "该操作需要按人令牌：请带上 X-Aegis-Operator-Key（强认证开启后写动作不接受仅声明的席位）"
+            self._reject(session, action=intent.action, reason=reason, detail={"code": "E_OPERATOR_KEY_REQUIRED"})
+            if self._audit.available:
+                await self._audit.write(
+                    self._audit.rejected(
+                        action_id=None,
+                        action=action,
+                        operator=operator,
+                        error=ActionError("E_OPERATOR_KEY_REQUIRED", reason),
+                        utterance=body[:500],
+                    )
+                )
+            yield AssistantEvent("error", {"code": "E_OPERATOR_KEY_REQUIRED", "message": reason})
+            yield AssistantEvent("answer", {"text": reason})
+            return
+        # 写动作频控（按操作者）：提示等待而不是静默排队，读动作不占额度。
+        # 匿名写动作不占频控（它会在执行器处被 E_OPERATOR_REQUIRED 拒绝）。
         # 拒绝也要落 audit_ops——频控是"这次不执行"的决定，必须可查。
-        if action.spec.writes and not self._writes.allow(session.session_id):
+        if action.spec.writes and operator is not None and not self._writes.allow(operator.operator_id):
             reason = "本会话一分钟内的写动作已达 10 次，请稍后再试；读动作不受影响"
             self._reject(session, action=intent.action, reason=reason, detail={"code": "E_ACTION_RATE_LIMITED"})
             if self._audit.available:
@@ -634,6 +664,10 @@ class AssistantService:
             text = narrate_result(intent.action, data)
         yield AssistantEvent("answer", {"text": await self._polish(text, session)})
 
+    def _strong_identity_required(self, identity_kind: str) -> bool:
+        """强认证开启后，写动作必须 identity_kind='key'；口径与 API 层 `_require_strong_identity` 一致。"""
+        return bool(self._settings.operator_key_auth_enabled) and identity_kind != "key"
+
     def _capability_hint(self, note: str) -> str:
         titles = "、".join(action.spec.title for action in self._registry.actions)
         prefix = "没听懂这句，" if not note else f"{note}，"
@@ -670,7 +704,7 @@ class AssistantService:
         except Exception as exc:
             self._reject(session, action="llm.polish", reason=f"措辞润色降级 {type(exc).__name__}")
             return facts[:_ANSWER_LIMIT]
-        invented = number_tokens(polished) - number_tokens(facts)
+        invented = invented_numbers(polished, facts)
         if invented:
             self._reject(session, action="llm.polish", reason="润色引入新数字，整段弃用", detail={"invented": sorted(invented)[:8]})
             return facts[:_ANSWER_LIMIT]
@@ -692,14 +726,12 @@ class AssistantService:
             oldest = self._order.popleft()
             if oldest != sid:
                 self._sessions.pop(oldest, None)
-                self._writes.forget(oldest)
         return session
 
     def _evict_expired(self, now: float) -> None:
         stale = [sid for sid, session in self._sessions.items() if now - session.updated_at > self._ttl]
         for sid in stale:
             self._sessions.pop(sid, None)
-            self._writes.forget(sid)
             if sid in self._order:
                 self._order.remove(sid)
 

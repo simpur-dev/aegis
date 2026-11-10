@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -101,8 +102,14 @@ _IMPERATIVE_PREFIX = re.compile(r"^(把|请|帮我|我们|立即|马上|现在|�
 #: 问句一律不当指令：带"吗/为什么/是否/怎么"的句子是在问事实，不是让人去执行。
 #: 少了这道闸，`wrn_xxx 发布了吗`会命中"发布"动词，被当成一次发布指令送进确认闸。
 _QUESTION_RE = re.compile(r"[?？]|吗|呢|为什么|为何|是否|怎么|怎样|如何|什么|哪[个些条]|多少|能不能|可不可以|要不要")
+#: 多轮指代："它/这条/这个"要落到上一轮点名过的具体编号。
+_COREF_RE = re.compile(r"它|这条|这个|该条|该预警")
 #: 紧贴动词前面的否定/完成副词：「已发布的预警」是名词短语，不是"去发布"。
 _VERB_OBJECT_MARKERS = "已未刚被"
+
+#: 规则命中给高置信但非满分：规则是强信号，仍保留"非绝对"的余地；LLM 兜底更低。
+_RULE_CONFIDENCE = 0.9
+_LLM_CONFIDENCE = 0.6
 
 #: 写动作动词 → 目标动作名。命中的动作若已注册，就按正常意图继续解析参数；
 #: 未注册时才由 `AssistantService.respond` 明确回"该动作未开放"，而不是含糊地接一份清单。
@@ -206,6 +213,23 @@ def bulk_scope_without_target(text: str) -> bool:
     return bool(_BULK_SCOPE_RE.search(body)) and not bool(_TARGET_ID_RE.search(body))
 
 
+def resolve_coreference(text: str, history: Iterable[dict[str, str]]) -> str:
+    """多轮指代消解：把"它/这条/这个"补上上一轮用户点名过的具体编号。
+
+    历史里没有任何编号时原样返回（不臆造对象）；编号取最近一条用户消息，符合"就近指代"。
+    """
+    body = str(text or "").strip()
+    if not _COREF_RE.search(body):
+        return body
+    for entry in reversed(list(history)):
+        if entry.get("role") != "user":
+            continue
+        found = _TARGET_ID_RE.search(entry.get("text", ""))
+        if found:
+            return f"{body} {found.group()}"
+    return body
+
+
 class IntentClassifier:
     """规则 + LLM 的意图判定器。`registry` 只用来校验"这个动作存不存在"。"""
 
@@ -227,9 +251,17 @@ class IntentClassifier:
     ) -> Intent:
         body = str(text or "").strip()
         matched = self._match(body)
-        if matched is not None:
-            return self._build(matched, body, region_code=region_code, hazard_hint=hazard_hint, reporter=reporter, decided_by="rule")
-        return Intent(action=None, confidence=0.0, decided_by="none", note="未能识别意图")
+        if matched is None:
+            return Intent(action=None, confidence=0.0, decided_by="none", note="未能识别意图")
+        if self._is_questioned_write(matched, body):
+            # 问句里的写动作只是在咨询（"上报流程是什么"），不是要执行：转预案问答，不制造写提案。
+            matched = "plan.ask"
+        return self._build(matched, body, region_code=region_code, hazard_hint=hazard_hint, reporter=reporter, decided_by="rule")
+
+    def _is_questioned_write(self, action_name: str, body: str) -> bool:
+        action = self._registry.get(action_name)
+        spec = getattr(action, "spec", None)
+        return bool(spec is not None and getattr(spec, "writes", False) and _QUESTION_RE.search(body))
 
     async def classify_async(
         self,
@@ -272,10 +304,24 @@ class IntentClassifier:
             if verb is not None and verb[0].startswith("task.") and self._registry.get(verb[0]) is not None:
                 return verb[0]
             return "task.get"
+        return self._match_rule(lowered)
+
+    @staticmethod
+    def _match_rule(lowered: str) -> str | None:
+        """无编号的句子：多个规则同时命中时，取命中关键词起始位置最靠后的那个。
+
+        中文动宾结构里动词通常靠后（"请把演练情况上报"的"上报"在句末），固定顺序+子串会
+        让排在前面的"演练"误抢，因此按命中位置而非规则表顺序裁决。
+        """
+        best_action: str | None = None
+        best_at = -1
         for action, keywords in _INTENT_RULES:
-            if any(keyword in lowered for keyword in keywords):
-                return action
-        return None
+            positions = (lowered.find(keyword) for keyword in keywords)
+            hit_at = min((pos for pos in positions if pos >= 0), default=-1)
+            if hit_at > best_at:
+                best_action = action
+                best_at = hit_at
+        return best_action
 
     def _build(
         self,
@@ -379,7 +425,7 @@ class IntentClassifier:
             args["reporter"] = (reporter or "web-assistant")[:64]
             args["hazard_type"] = None if hazard is None else hazard.value
             args["region_code"] = extract_region(text, default=region_code) or region_code or ""
-        confidence = 1.0 if decided_by == "rule" else 0.6
+        confidence = _RULE_CONFIDENCE if decided_by == "rule" else _LLM_CONFIDENCE
         missing = _missing_target(action, args)
         if missing is not None:
             # 缺 ID 不是"执行失败"而是"没法执行"：直接给出这个 ID 在哪个页面读得到，

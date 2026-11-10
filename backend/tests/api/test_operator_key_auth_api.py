@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -215,5 +216,63 @@ class Test读动作不受影响:
             async with _client(ctn) as client:
                 response = await client.get("/api/v1/assistant/capabilities", headers={"X-Aegis-Operator": "duty-01"})
             assert response.status_code == 200
+        finally:
+            await ctn.shutdown()
+
+
+def _frames(body: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for line in body.splitlines():
+        if line.startswith("data: "):
+            rows.append(json.loads(line[len("data: ") :]))
+    return rows
+
+
+class TestChat路径写动作也要令牌:
+    async def test_只带席位头经chat发写动作被拒且不产生提案(self) -> None:
+        """P0 复现：/chat 漏了强身份闸，仅声明身份就能落一张提案（脏数据），
+        而 /actions、/confirm、/revoke 三个写端点都有强身份闸。修复后应是 error 帧、无提案。"""
+        ctn, _ = await _build(key_auth=True)
+        try:
+            async with _client(ctn) as client:
+                response = await client.post(
+                    "/api/v1/assistant/chat",
+                    json={"message": "演练一次"},
+                    headers={"X-Aegis-Operator": "duty-01"},
+                )
+                frames = _frames(response.text)
+            assert not any(frame.get("type") == "proposal" for frame in frames), frames
+            error = next(frame for frame in frames if frame.get("type") == "error")
+            assert error["code"] == "E_OPERATOR_KEY_REQUIRED"
+        finally:
+            await ctn.shutdown()
+
+    async def test_带有效令牌经chat发写动作正常产生提案(self) -> None:
+        """对照：带有效令牌时 chat 写动作不被误杀，正常落提案。"""
+        ctn, plaintext = await _build(key_auth=True)
+        try:
+            async with _client(ctn) as client:
+                response = await client.post(
+                    "/api/v1/assistant/chat",
+                    json={"message": "演练一次"},
+                    headers={"X-Aegis-Operator": "duty-01", "X-Aegis-Operator-Key": plaintext},
+                )
+                frames = _frames(response.text)
+            assert any(frame.get("type") == "proposal" for frame in frames), frames
+        finally:
+            await ctn.shutdown()
+
+    async def test_强认证开启时匿名经chat读动作仍可用(self) -> None:
+        """读动作不受强身份闸影响：匿名 chat 查询照常。"""
+        ctn, _ = await _build(key_auth=True)
+        try:
+            async with _client(ctn) as client:
+                response = await client.post(
+                    "/api/v1/assistant/chat",
+                    json={"message": "在线智能体有几个"},
+                )
+                frames = _frames(response.text)
+            assert any(frame.get("type") == "result" for frame in frames), frames
+            assert not any(frame.get("type") == "error" for frame in frames), frames
         finally:
             await ctn.shutdown()

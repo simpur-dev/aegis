@@ -4,8 +4,9 @@
 分支里，新增一个动作要在四处加 if。现在每一步只有一种失败语义、一个错误码（见 `_ERROR_STATUS`），
 动作自己只管 `execute()`。
 
-写动作的**确认与落库不在这里**：执行器只回答"这个动作现在能不能直接跑"（`needs_confirm`），
-把"用内存 pending 还是 control_actions"留给编排层——P1 仍是内存，P2 接库时只改编排层。
+写动作的**确认闸与落库经 `repo`（control_actions）**：执行器负责判断"这个动作现在能不能直接跑"
+（`needs_confirm`），有台账时提案/确认/审计都在这条路径上；台账缺席则写动作明确拒绝，
+不退回"重启就丢"的内存 pending。
 """
 
 from __future__ import annotations
@@ -95,7 +96,7 @@ class Executor:
         # 下限压到 1 秒：生产默认 300，测试要能在秒级验证"过期确认不生效"
         self._ttl = max(1, int(confirm_ttl_seconds))
         self._reviews = review_policy or ReviewPolicy(enabled=False)
-        # 连续失败熔断：按动作名记，成功一次即清零（设计 §4.8）
+        # 连续失败熔断：按"操作者+动作"记，成功一次即清零（设计 §4.8）
         self._breaker = breaker or FailureBreaker()
         # 审计（第 8 步）：与动作台账同一个 repo——audit_ops 与 control_actions 同库同事务才有意义
         self._audit = AuditTrail(repo)
@@ -108,7 +109,7 @@ class Executor:
             self._authorize(action, ctx)
             # 批量上限与熔断都在提案/确认之前判，且放在 try 内：写动作被这两条拦下也要留审计行
             self._enforce_targets(action, targets)
-            self._ensure_closed(action)
+            self._ensure_closed(action, ctx)
         except ActionError as exc:
             # 越权也留一行（§9：越权各一次）；匿名尝试记 operator_id=unknown。
             if action.spec.writes:
@@ -205,7 +206,7 @@ class Executor:
         try:
             params = self._parse(action, dict(record.get("resolved_args") or {}))
             self._authorize(action, ctx)
-            self._ensure_closed(action)
+            self._ensure_closed(action, ctx)
             targets = await action.resolve(params, ctx)
             self._enforce_targets(action, targets)
         except ActionError as exc:
@@ -353,8 +354,14 @@ class Executor:
                 f"「{action.spec.title}」一次解析出 {len(targets.items)} 个对象，超过 {MAX_TARGETS} 个上限：请拆分后重试",
             )
 
-    def _ensure_closed(self, action: Action) -> None:
-        remaining = self._breaker.remaining(action.spec.name)
+    @staticmethod
+    def _breaker_key(action: Action, ctx: ActionContext) -> str:
+        """熔断按操作者隔离：同一动作，不同操作者各有独立熔断桶，互不误伤。"""
+        actor = "anonymous" if ctx.operator is None else ctx.operator.operator_id
+        return f"{actor}:{action.spec.name}"
+
+    def _ensure_closed(self, action: Action, ctx: ActionContext) -> None:
+        remaining = self._breaker.remaining(self._breaker_key(action, ctx))
         if remaining > 0:
             raise ActionError(
                 "E_ACTION_RATE_LIMITED",
@@ -362,16 +369,17 @@ class Executor:
             )
 
     async def _execute(self, action: Action, targets: ResolvedTargets, params: Any, ctx: ActionContext) -> ActionResult:
+        breaker_key = self._breaker_key(action, ctx)
         try:
             result = await action.execute(targets, params, ctx)
         except ActionError:
             # 业务拒绝是确定性的（目标不存在、参数不合法），不参与熔断——否则重试永远开不了门
             raise
         except Exception as exc:
-            self._breaker.record_failure(action.spec.name)
+            self._breaker.record_failure(breaker_key)
             raise ActionError(
                 "E_ACTION_EXECUTION_FAILED",
                 f"{type(exc).__name__}: {str(exc)[:200]}",
             ) from exc
-        self._breaker.record_success(action.spec.name)
+        self._breaker.record_success(breaker_key)
         return result

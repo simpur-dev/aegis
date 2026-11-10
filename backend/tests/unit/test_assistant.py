@@ -572,6 +572,32 @@ async def test_同一会话第十一次写动作被频控拦住而读动作不�
     assert rows, "频控拒绝没有落 audit_ops"
 
 
+@pytest.mark.asyncio
+async def test_同一操作者换会话不能绕过写频控() -> None:
+    """频控必须按人：session_id 由客户端控制，每次换一个新会话不能把写动作计数清零。"""
+    store = PlatformStore()
+    service = build_service(store=store)
+    for index in range(10):
+        events = await collect(service, "发起一次演练", session_id=f"as_fr{index:04d}", operator=DUTY)
+        assert not any(event.type == "error" for event in events), index
+    blocked = await collect(service, "发起一次演练", session_id="as_fr_overflow", operator=DUTY)
+    error = next(event for event in blocked if event.type == "error")
+    assert error.data["code"] == "E_ACTION_RATE_LIMITED"
+    assert len(await store.list_actions(limit=50)) == 10, "被限流的那次不该落提案"
+
+
+@pytest.mark.asyncio
+async def test_多轮指代让第二轮识别上一轮的预警() -> None:
+    """service 接入指代消解：第二轮"这个是什么"不带编号，也能落到上一轮的那条预警。"""
+    service = build_service(store=PlatformStore())
+    first = await collect(service, f"解释 {WARNING_ROW['warning_id']}", session_id="as_coref", operator=DUTY)
+    assert not any(event.type == "error" for event in first)
+    second = await collect(service, "这个是什么", session_id="as_coref", operator=DUTY)
+    intent = next(event for event in second if event.type == "intent")
+    assert intent.data["action"] == "warning.explain"
+    assert intent.data["args"]["warning_id"] == WARNING_ROW["warning_id"]
+
+
 # ---------- 四类任务的通路 ----------
 
 

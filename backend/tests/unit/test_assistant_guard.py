@@ -10,7 +10,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from aegis.api.assistant_api import _keepalive
-from aegis.domain.operator import OperatorRole
+from aegis.domain.operator import Operator, OperatorRole
 from aegis.services.assistant.base import (
     Action,
     ActionContext,
@@ -34,6 +34,10 @@ class FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+
+DUTY_A = Operator(operator_id="duty-01", display_name="值班员甲", role=OperatorRole.DUTY)
+DUTY_B = Operator(operator_id="duty-02", display_name="值班员乙", role=OperatorRole.DUTY)
 
 
 def test_写动作频控每分钟十次且按会话隔离() -> None:
@@ -164,6 +168,26 @@ async def test_业务拒绝不参与熔断() -> None:
     with pytest.raises(ActionError):
         await executor.run(action, {}, ctx)
     assert action.calls == 4
+
+
+@pytest.mark.asyncio
+async def test_一个操作者触发熔断不影响其他操作者() -> None:
+    """熔断必须按操作者：A 连续失败熔断后，B 调同一动作不应被 A 的熔断状态误伤。"""
+    clock = FakeClock()
+    executor = Executor(breaker=FailureBreaker(clock=clock))
+    failing = _BulkRead(1, error=RuntimeError("腿断了"))
+    ctx_a = ActionContext(session_id="s", operator=DUTY_A)
+    for _ in range(3):
+        with pytest.raises(ActionError) as caught:
+            await executor.run(failing, {}, ctx_a)
+        assert caught.value.code == "E_ACTION_EXECUTION_FAILED"
+    with pytest.raises(ActionError) as caught:
+        await executor.run(failing, {}, ctx_a)
+    assert caught.value.code == "E_ACTION_RATE_LIMITED", "A 自己应已熔断"
+
+    ctx_b = ActionContext(session_id="s", operator=DUTY_B)
+    outcome = await executor.run(_BulkRead(1), {}, ctx_b)
+    assert outcome.status == "executed", "B 不应被 A 的熔断牵连"
 
 
 class _NeverDisconnected:
