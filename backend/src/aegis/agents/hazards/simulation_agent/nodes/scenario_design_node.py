@@ -18,6 +18,7 @@ ScenarioDesign 节点 —— 情景设计
 """
 
 import json
+import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -33,6 +34,8 @@ from aegis.agents.hazards.simulation_agent.tools.hazard_model_router import (
     list_supported_hazards,
     normalize_hazard_type,
 )
+
+log = logging.getLogger("aegis.agents.hazards.simulation_agent.nodes.scenario_design_node")
 
 # 支持灾种的可读清单文本（模块级，一次性生成）
 SUPPORTED_LIST_TEXT = "、".join(f"{h['hazard_type_cn']}({h['hazard_type']})" for h in list_supported_hazards())
@@ -179,7 +182,7 @@ def scenario_design_node(state: dict) -> dict:
     hazard_raw = state.get("hazard_type", "") or ""
     presets = state.get("preset_scenario_configs", []) or []
 
-    print(f"[ScenarioDesign] 任务={task[:40]}... 灾种输入={hazard_raw!r} 直传情景数={len(presets)}")
+    log.info(f"[ScenarioDesign] 任务={task[:40]}... 灾种输入={hazard_raw!r} 直传情景数={len(presets)}")
 
     # ---------- 前置检查 1：灾种（缺失 / 无法识别 → fail-fast）----------
     if not str(hazard_raw).strip():
@@ -241,10 +244,10 @@ def scenario_design_node(state: dict) -> dict:
             uncertainties = list(plan.uncertainties or [])
             used_llm = True
             source = "llm"
-            print(f"[ScenarioDesign] LLM 设计了 {len(configs)} 个情景")
+            log.info(f"[ScenarioDesign] LLM 设计了 {len(configs)} 个情景")
         except Exception as e:
             # LLM 不可用 → 确定性默认情景兜底，流程不崩
-            print(f"[ScenarioDesign] LLM 设计失败，使用确定性默认情景兜底: {e}")
+            log.info(f"[ScenarioDesign] LLM 设计失败，使用确定性默认情景兜底: {e}")
             configs = build_default_scenarios_tool(normalized)
             assumptions = ["LLM 不可用，情景为确定性默认模板（MOCK 兜底），非专家设计"]
             uncertainties = ["情景设计走了确定性兜底，未经 LLM 审查"]

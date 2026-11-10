@@ -14,6 +14,7 @@ result_check_node：对刚完成的专业 Agent 交付物做结构化核验（�
   预警等级的唯一决定来源是 Warning Agent 规则引擎。
 """
 
+import logging
 from datetime import UTC, datetime
 
 from aegis.agents.hazards.manager_agent.state import (
@@ -34,6 +35,8 @@ from aegis.agents.hazards.manager_agent.state import (
     PARTIAL_STATUSES,
     SUCCESS_STATUSES,
 )
+
+log = logging.getLogger("aegis.agents.hazards.manager_agent.nodes.result_check_node")
 
 # 各 Agent "成功交付物"必须包含的关键键（下游实际消费字段，以真实代码为准）
 REQUIRED_KEYS = {
@@ -207,7 +210,7 @@ def result_check_node(state: dict) -> dict:
         "fatal": fatal,
         "status": status,
     }
-    print(
+    log.info(
         f"[Manager/Check] {agent}: status={status} → verdict={verdict}" + (f"（{error_type}: {message[:80]}）" if verdict != "ok" else "")
     )
     return updates

@@ -16,10 +16,13 @@ Suggestion 节点（改进建议生成）
 """
 
 import json
+import logging
 from typing import Any
 
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
 from aegis.agents.hazards.hazard_registry import normalize_hazard_type
+
+log = logging.getLogger("aegis.agents.hazards.feedback_agent.nodes.suggestion_node")
 
 VALID_TARGET_AGENTS = {"data", "risk", "simulation", "warning", "manager"}
 
@@ -150,7 +153,7 @@ def suggestion_node(state: FeedbackAgentState) -> dict[str, Any]:
                 merged.append(s)
             suggestions, used_llm = merged, True
         except Exception as e:
-            print(f"[Suggestion] LLM 不可用，使用确定性模板建议: {e}")
+            log.info(f"[Suggestion] LLM 不可用，使用确定性模板建议: {e}")
 
     # 反思回环请求：正常流程不请求额外轮次；测试钩子可强制请求，
     # 以验证 graph 的有界回环（受 max_iterations 限界）
@@ -159,7 +162,7 @@ def suggestion_node(state: FeedbackAgentState) -> dict[str, Any]:
     max_iter = state.get("max_iterations", 2)
     needs_another_round = bool(hooks.get("force_needs_another_round")) and iteration < max_iter
 
-    print(f"[Suggestion] 建议数={len(suggestions)} used_llm={used_llm} needs_another_round={needs_another_round}")
+    log.info(f"[Suggestion] 建议数={len(suggestions)} used_llm={used_llm} needs_another_round={needs_another_round}")
 
     return {
         "improvement_suggestions": suggestions,

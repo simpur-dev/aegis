@@ -178,7 +178,7 @@ def simulation_output_node(state: dict) -> dict:
         },
     }
 
-    print(f"[SimulationOutput] status={status} 灾种={hazard} 情景摘要数={len(scenarios_summary)}")
+    log.info(f"[SimulationOutput] status={status} 灾种={hazard} 情景摘要数={len(scenarios_summary)}")
 
     return {
         "simulation_result": final_output,  # >>> 覆盖为最终交付物，给 Warning / Manager

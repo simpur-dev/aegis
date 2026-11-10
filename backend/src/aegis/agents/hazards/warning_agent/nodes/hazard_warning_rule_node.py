@@ -15,11 +15,14 @@ HazardWarningRule 节点（灾种预警等级映射）
   不输出红/橙/黄/蓝官方等级（official_grade 恒为 pending_review）。
 """
 
+import logging
 from typing import Any
 
 from aegis.agents.hazards.hazard_registry import UnsupportedHazardError, normalize_hazard_type
 from aegis.agents.hazards.warning_agent.state import WarningAgentState
 from aegis.agents.hazards.warning_agent.tools.hazard_warning_rule_registry import get_hazard_warning_rules
+
+log = logging.getLogger("aegis.agents.hazards.warning_agent.nodes.hazard_warning_rule_node")
 
 
 def hazard_warning_rule_node(state: WarningAgentState) -> dict[str, Any]:
@@ -101,7 +104,7 @@ def hazard_warning_rule_node(state: WarningAgentState) -> dict[str, Any]:
         "disclaimer": rules["disclaimer"],
     }
 
-    print(f"[HazardWarningRule] {hazard_key} risk_level={risk_level} R={R} → warning_level={warning_level}（升级={escalation_applied}）")
+    log.info(f"[HazardWarningRule] {hazard_key} risk_level={risk_level} R={R} → warning_level={warning_level}（升级={escalation_applied}）")
 
     return {
         "warning_rule_result": warning_rule_result,

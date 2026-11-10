@@ -9,6 +9,7 @@ LLMExplanation 节点（预警文本解释）
 """
 
 import json
+import logging
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -21,6 +22,8 @@ from aegis.agents.hazards.prompts.warning_prompt import (
 )
 from aegis.agents.hazards.warning_agent.llm_setup import get_warning_llm
 from aegis.agents.hazards.warning_agent.state import WarningAgentState
+
+log = logging.getLogger("aegis.agents.hazards.warning_agent.nodes.llm_explanation_node")
 
 
 class AlertExplanation(BaseModel):
@@ -68,7 +71,7 @@ def llm_explanation_node(state: WarningAgentState) -> dict[str, Any]:
             "used_llm": True,
         }
     except Exception as e:
-        print(f"[LLMExplanation] LLM 解释失败，模板兜底: {e}")
+        log.info(f"[LLMExplanation] LLM 解释失败，模板兜底: {e}")
         cn = alert.get("hazard_type_cn", "")
         explanation = {
             "text": (
@@ -84,7 +87,7 @@ def llm_explanation_node(state: WarningAgentState) -> dict[str, Any]:
             "used_llm": False,
         }
 
-    print(f"[LLMExplanation] used_llm={explanation['used_llm']}")
+    log.info(f"[LLMExplanation] used_llm={explanation['used_llm']}")
 
     return {
         "explanation": explanation,

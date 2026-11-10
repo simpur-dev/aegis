@@ -29,6 +29,8 @@ feedback_review_node：解读 Feedback Agent 结构化反馈，制定最小返�
   Manager 不修改、不修补任何交付物内容，也不替 Feedback 判断业务对错。
 """
 
+import logging
+
 from aegis.agents.hazards.manager_agent import planner
 from aegis.agents.hazards.manager_agent.state import (
     AGENT_DATA,
@@ -40,6 +42,8 @@ from aegis.agents.hazards.manager_agent.state import (
     AGENT_WARNING,
     ERROR_FEEDBACK_REVIEW,
 )
+
+log = logging.getLogger("aegis.agents.hazards.manager_agent.nodes.feedback_review_node")
 
 # Feedback 交付物短名 → Manager 标准 Agent 名
 _SHORT_TO_AGENT = {
@@ -89,7 +93,7 @@ def feedback_review_node(state: dict) -> dict:
     # ---------- 通过：无问题 ----------
     if status == "no_issues":
         decisions.append(_decision(state, "pass", "Feedback 复核未发现问题，正常收尾"))
-        print("[Manager/FeedbackReview] no_issues → 通过，进入收尾")
+        log.info("[Manager/FeedbackReview] no_issues → 通过，进入收尾")
         return {"rerun_plan": [], "feedback_decisions": decisions}
 
     # ---------- 证据不足 / 须人工 / 自身失败：不返工，转人工（上游保留）----------
@@ -97,7 +101,7 @@ def feedback_review_node(state: dict) -> dict:
         decisions.append(
             _decision(state, "human_review", f"Feedback status={status}：证据不足或复核未完成，不自动返工，已有结果保留并转人工复核")
         )
-        print(f"[Manager/FeedbackReview] {status} → 不返工，转人工复核")
+        log.info(f"[Manager/FeedbackReview] {status} → 不返工，转人工复核")
         return {"rerun_plan": [], "feedback_decisions": decisions, "human_review_required": True}
 
     # ---------- issues_found：按 manager_actions 决定返工 / 人工 ----------
@@ -119,14 +123,14 @@ def feedback_review_node(state: dict) -> dict:
             else "issues_found 但无可识别的重跑目标，转人工复核"
         )
         decisions.append(_decision(state, "human_review", reason, review_actions=[a.get("recommended_action") for a in review_only]))
-        print(f"[Manager/FeedbackReview] issues_found → 不返工：{reason}")
+        log.info(f"[Manager/FeedbackReview] issues_found → 不返工：{reason}")
         return {"rerun_plan": [], "feedback_decisions": decisions, "human_review_required": True}
 
     # ---------- 达最大反馈循环上限：停止返工 ----------
     if loop >= _max_loops():
         msg = f"Feedback 建议返工 {rerun_targets}，但反馈循环已达上限（{loop}/{_max_loops()}），停止自动返工并转人工复核"
         decisions.append(_decision(state, "loop_limit_stop", msg, rerun_targets=rerun_targets))
-        print(f"[Manager/FeedbackReview] {msg}")
+        log.info(f"[Manager/FeedbackReview] {msg}")
         return {
             "rerun_plan": [],
             "feedback_decisions": decisions,
@@ -166,5 +170,5 @@ def feedback_review_node(state: dict) -> dict:
     # 不在返工范围的结果原样保留 —— 不整体重跑，也不静默沿用旧结果
     for a in rerun:
         updates[AGENT_RESULT_KEY[a]] = {}
-    print(f"[Manager/FeedbackReview] issues_found → 最小返工 {rerun}（第 {loop + 1}/{_max_loops()} 轮，目标 {rerun_targets}）")
+    log.info(f"[Manager/FeedbackReview] issues_found → 最小返工 {rerun}（第 {loop + 1}/{_max_loops()} 轮，目标 {rerun_targets}）")
     return updates

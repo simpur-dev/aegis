@@ -15,6 +15,7 @@ MemoryStore 节点（反馈经验存档）
   写入：memory_result / next
 """
 
+import logging
 from typing import Any
 
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
@@ -24,6 +25,8 @@ from aegis.agents.hazards.feedback_agent.tools.feedback_memory_tool import (
     save_feedback_records,
     validate_external_feedback,
 )
+
+log = logging.getLogger("aegis.agents.hazards.feedback_agent.nodes.memory_store_node")
 
 
 def memory_store_node(state: FeedbackAgentState) -> dict[str, Any]:
@@ -75,7 +78,7 @@ def memory_store_node(state: FeedbackAgentState) -> dict[str, Any]:
                 external_saved.append(save_external_feedback(rec if isinstance(rec, dict) else {"raw": str(rec)}))
     memory_result["external_feedback_saved"] = external_saved
 
-    print(f"[MemoryStore] 入库经验记录数={memory_result.get('saved_count', 0)} 外部反馈存档数={len(external_saved)}")
+    log.info(f"[MemoryStore] 入库经验记录数={memory_result.get('saved_count', 0)} 外部反馈存档数={len(external_saved)}")
 
     return {
         "memory_result": memory_result,

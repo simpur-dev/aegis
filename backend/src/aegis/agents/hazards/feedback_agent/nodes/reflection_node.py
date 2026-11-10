@@ -19,9 +19,12 @@ Reflection 节点（借鉴 Reflexion：问题定位 → 候选原因 → 证据�
 """
 
 import json
+import logging
 from typing import Any
 
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
+
+log = logging.getLogger("aegis.agents.hazards.feedback_agent.nodes.reflection_node")
 
 # 问题类别 → 环节定位 与 候选原因假设（确定性兜底用；措辞均为"候选/待验证"，
 # 不构成结论；类别口径与 feedback_check_tool 一致）
@@ -116,7 +119,7 @@ def reflection_node(state: FeedbackAgentState) -> dict[str, Any]:
             reflections.append(merged)
         overall, used_llm = r.overall_analysis, True
     except Exception as e:
-        print(f"[Reflection] LLM 不可用，走确定性兜底反思: {e}")
+        log.info(f"[Reflection] LLM 不可用，走确定性兜底反思: {e}")
         reflections = _deterministic_reflection(items)
         overall = "确定性兜底反思：仅完成环节定位与候选原因假设，证据不足的条目已标注待补充数据，未给出成因结论。"
         used_llm = False
@@ -134,7 +137,7 @@ def reflection_node(state: FeedbackAgentState) -> dict[str, Any]:
         "note": "反思是系统内部的归因参考，不构成专业地质灾害验证；evidence_sufficient=false 的条目不得作为重跑上游的充分依据",
     }
 
-    print(f"[Reflection] 第 {iteration} 轮，条目数={len(reflections)} used_llm={used_llm} 重复问题类型={repeat_types}")
+    log.info(f"[Reflection] 第 {iteration} 轮，条目数={len(reflections)} used_llm={used_llm} 重复问题类型={repeat_types}")
 
     return {
         "reflection_result": reflection_result,

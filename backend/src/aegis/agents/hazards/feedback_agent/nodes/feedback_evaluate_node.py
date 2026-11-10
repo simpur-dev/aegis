@@ -20,6 +20,7 @@ FeedbackEvaluate 节点（问题分类与影响评估）
   写入：feedback_items / evaluation_result / historical_feedback / next
 """
 
+import logging
 from typing import Any
 
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
@@ -30,6 +31,8 @@ from aegis.agents.hazards.feedback_agent.tools.feedback_check_tool import (
 from aegis.agents.hazards.feedback_agent.tools.feedback_memory_tool import (
     load_feedback_records,
 )
+
+log = logging.getLogger("aegis.agents.hazards.feedback_agent.nodes.feedback_evaluate_node")
 
 _SEVERITY_ORDER = {"info": 0, "minor": 1, "major": 2, "critical": 3}
 
@@ -97,7 +100,7 @@ def feedback_evaluate_node(state: FeedbackAgentState) -> dict[str, Any]:
     # ---------- 5) 检索同灾种历史反馈经验（只读参考） ----------
     historical = load_feedback_records(hazard_type=hazard_key, limit=5) if hazard_key else []
 
-    print(
+    log.info(
         f"[FeedbackEvaluate] 问题数={len(feedback_items)} "
         f"可行动={len(actionable)} 高置信={len(confident)} "
         f"路由建议={recommendation} 历史经验={len(historical)} 条"

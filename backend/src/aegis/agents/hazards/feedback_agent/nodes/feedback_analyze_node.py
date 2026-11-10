@@ -16,12 +16,15 @@ FeedbackAnalyze 节点（确定性检查 + LLM 解释）
 """
 
 import json
+import logging
 from typing import Any
 
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
 from aegis.agents.hazards.feedback_agent.tools.feedback_check_tool import (
     run_deterministic_checks,
 )
+
+log = logging.getLogger("aegis.agents.hazards.feedback_agent.nodes.feedback_analyze_node")
 
 
 def _llm_commentary(state, issues) -> dict:
@@ -54,7 +57,7 @@ def _llm_commentary(state, issues) -> dict:
         )
         return {"commentary": r.commentary, "manager_attention": list(r.manager_attention or []), "used_llm": True}
     except Exception as e:
-        print(f"[FeedbackAnalyze] LLM 解释不可用，跳过（确定性结果不受影响）: {e}")
+        log.info(f"[FeedbackAnalyze] LLM 解释不可用，跳过（确定性结果不受影响）: {e}")
         return {"commentary": "", "used_llm": False, "llm_error": str(e)}
 
 
@@ -72,7 +75,9 @@ def feedback_analyze_node(state: FeedbackAgentState) -> dict[str, Any]:
 
     analysis_notes = _llm_commentary(state, issues)
 
-    print(f"[FeedbackAnalyze] 确定性检查发现问题数={len(issues)} 严重度分布={{" + ", ".join(sorted({i["severity"] for i in issues})) + "}")
+    log.info(
+        f"[FeedbackAnalyze] 确定性检查发现问题数={len(issues)} 严重度分布={{" + ", ".join(sorted({i["severity"] for i in issues})) + "}"
+    )
 
     return {
         "detected_issues": issues,

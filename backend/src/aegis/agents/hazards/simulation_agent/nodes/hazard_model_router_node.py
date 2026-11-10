@@ -18,11 +18,15 @@ HazardModelRouter 节点 —— 灾种模型路由
   本节点只做"选哪个模型"的判定与记录（对齐任务 §四"模型路由"职责）。
 """
 
+import logging
+
 from aegis.agents.hazards.simulation_agent.tools.hazard_model_router import (
     get_model_requirements,
     normalize_hazard_type,
     supported_hazards_text,
 )
+
+log = logging.getLogger("aegis.agents.hazards.simulation_agent.nodes.hazard_model_router_node")
 
 
 def hazard_model_router_node(state: dict) -> dict:
@@ -34,7 +38,7 @@ def hazard_model_router_node(state: dict) -> dict:
     normalized = normalize_hazard_type(hazard_raw)
     if not normalized:
         reason = f"灾种'{hazard_raw}'无法识别。当前支持：{supported_hazards_text()}"
-        print(f"[HazardModelRouter] {reason}")
+        log.info(f"[HazardModelRouter] {reason}")
         return {
             "hazard_type": hazard_raw,  # 识别失败保持原值（输出节点会透传原因）
             "routing_result": {
@@ -64,7 +68,7 @@ def hazard_model_router_node(state: dict) -> dict:
     # ---------- 3) 模型元信息（supported → 不会抛异常）----------
     req = get_model_requirements(normalized)
 
-    print(f"[HazardModelRouter] 灾种={normalized}（{req['hazard_type_cn']}） 模型={req['model_version']} inputs_ok={inputs_ok}")
+    log.info(f"[HazardModelRouter] 灾种={normalized}（{req['hazard_type_cn']}） 模型={req['model_version']} inputs_ok={inputs_ok}")
 
     return {
         "hazard_type": normalized,  # >>> ★ 权威写回标准键

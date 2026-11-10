@@ -13,10 +13,13 @@ WarningValidator 节点（预警消息校验）
   写入：validation_result / retry_count（retry 时自增）/ next
 """
 
+import logging
 from typing import Any
 
 from aegis.agents.hazards.prompts.warning_prompt import LEVEL_KEYWORDS
 from aegis.agents.hazards.warning_agent.state import WarningAgentState
+
+log = logging.getLogger("aegis.agents.hazards.warning_agent.nodes.warning_validator_node")
 
 # 官方分级措辞（正式等级未确认前，解释文本中禁止出现）
 _FORBIDDEN_OFFICIAL_GRADES = ["红色预警", "橙色预警", "黄色预警", "蓝色预警", "一级预警", "二级预警", "三级预警", "四级预警"]
@@ -90,7 +93,7 @@ def warning_validator_node(state: WarningAgentState) -> dict[str, Any]:
         },
     }
 
-    print(f"[WarningValidator] is_valid={is_valid} recommendation={recommendation} 问题={issues}")
+    log.info(f"[WarningValidator] is_valid={is_valid} recommendation={recommendation} 问题={issues}")
 
     return {
         "validation_result": validation_result,

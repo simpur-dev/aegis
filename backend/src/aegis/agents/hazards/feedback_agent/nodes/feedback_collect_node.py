@@ -11,11 +11,14 @@ FeedbackCollect 节点（上游结果收集）
   写入：collected_context / next
 """
 
+import logging
 import uuid
 from typing import Any
 
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
 from aegis.agents.hazards.hazard_registry import normalize_hazard_type
+
+log = logging.getLogger("aegis.agents.hazards.feedback_agent.nodes.feedback_collect_node")
 
 
 def _digest_data(data_result: dict) -> dict:
@@ -109,7 +112,7 @@ def feedback_collect_node(state: FeedbackAgentState) -> dict[str, Any]:
         "collected_at_note": "本快照为只读摘要，未对任何上游结果做修改",
     }
 
-    print(
+    log.info(
         f"[FeedbackCollect] event_id={event_id} hazard={hazard_key or hazard_raw!r} "
         f"data={collected_context['agents']['data']['present']} "
         f"risk={collected_context['agents']['risk']['present']} "

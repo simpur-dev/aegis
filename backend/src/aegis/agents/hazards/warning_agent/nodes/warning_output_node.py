@@ -12,6 +12,7 @@ WarningOutput 节点（最终结构化预警输出）
   不存在"已发布"语义。
 """
 
+import logging
 from typing import Any
 
 from aegis.agents.hazards.hazard_registry import HAZARD_CN_NAME, normalize_hazard_type
@@ -22,6 +23,8 @@ from aegis.agents.hazards.warning_agent.tools.cap_format_tool import (
     serialize_cap_xml,
     validate_cap_dict,
 )
+
+log = logging.getLogger("aegis.agents.hazards.warning_agent.nodes.warning_output_node")
 
 
 def _build_cap(alert: dict, explanation_text: str) -> dict:
@@ -108,7 +111,7 @@ def warning_output_node(state: WarningAgentState) -> dict[str, Any]:
             },
         }
 
-    print(f"[WarningOutput] status={status} hazard_type={hazard_type}")
+    log.info(f"[WarningOutput] status={status} hazard_type={hazard_type}")
 
     return {
         "warning_result": warning_result,  # >>> 最终交付物

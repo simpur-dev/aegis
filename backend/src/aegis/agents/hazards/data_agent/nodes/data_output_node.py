@@ -11,9 +11,12 @@ DataOutput 节点（面向西藏五类山地地质灾害）
   下游 Agent 自行决定如何使用这些数据。
 """
 
+import logging
 from typing import Any
 
 from aegis.agents.hazards.data_agent.state import DataAgentState
+
+log = logging.getLogger("aegis.agents.hazards.data_agent.nodes.data_output_node")
 
 
 def data_output_node(state: DataAgentState) -> dict[str, Any]:
@@ -55,7 +58,7 @@ def data_output_node(state: DataAgentState) -> dict[str, Any]:
     processed_data_out["hazard_type"] = hazard_type
     processed_data_out["is_mock"] = processed_data_out.get("data_source") == "mock"
 
-    print(f"[DataOutput] status={status} hazard_type={hazard_type} sufficient={data_sufficiency['sufficient']}")
+    log.info(f"[DataOutput] status={status} hazard_type={hazard_type} sufficient={data_sufficiency['sufficient']}")
 
     return {
         "hazard_type": hazard_type,  # >>> 归一化标准键透传给下游 Risk Agent

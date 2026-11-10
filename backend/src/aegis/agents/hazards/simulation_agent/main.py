@@ -22,10 +22,13 @@ Simulation Agent 入口 / 独立测试
 """
 
 import json
+import logging
 import sys
 
 from aegis.agents.hazards.simulation_agent.graph import create_simulation_agent
 from aegis.agents.hazards.simulation_agent.state import SimulationAgentState
+
+log = logging.getLogger("aegis.agents.hazards.simulation_agent.main")
 
 # ============================================================
 # 入口函数
@@ -88,10 +91,10 @@ def run_simulation_agent(
         "simulation_result": {},
     }
 
-    print("=" * 60)
-    print(f"[Simulation Agent] 任务: {task}")
-    print(f"[Simulation Agent] 灾种: {hazard_type} | 直传情景数: {len(preset_scenario_configs or [])}")
-    print("=" * 60)
+    log.info("=" * 60)
+    log.info(f"[Simulation Agent] 任务: {task}")
+    log.info(f"[Simulation Agent] 灾种: {hazard_type} | 直传情景数: {len(preset_scenario_configs or [])}")
+    log.info("=" * 60)
 
     final_state = agent.invoke(initial_state)
     return final_state.get("simulation_result", {})

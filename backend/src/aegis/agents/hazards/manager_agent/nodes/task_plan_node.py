@@ -8,6 +8,8 @@ task_plan_node：根据任务目标与依赖关系生成结构化执行计划（
   - 外部直供的交付物只登记为 "provided"，Manager 不修改其内容。
 """
 
+import logging
+
 from aegis.agents.hazards.manager_agent import planner
 from aegis.agents.hazards.manager_agent.state import (
     AGENT_ORDER,
@@ -15,6 +17,8 @@ from aegis.agents.hazards.manager_agent.state import (
     ERROR_MISSING_DEPENDENCY,
     TASK_INSUFFICIENT_DATA,
 )
+
+log = logging.getLogger("aegis.agents.hazards.manager_agent.nodes.task_plan_node")
 
 
 def task_plan_node(state: dict) -> dict:
@@ -31,7 +35,7 @@ def task_plan_node(state: dict) -> dict:
         updates["error_message"] = f"任务'{task_type}'缺少合格前置结果：{reasons}"
         updates["error_history"].append({"agent": "manager", "error_type": ERROR_MISSING_DEPENDENCY, "message": reasons, "attempt": 0})
         updates["check_result"] = {"verdict": "missing_dependency", "missing": missing}
-        print(f"[Manager/Plan] 依赖不满足 → {TASK_INSUFFICIENT_DATA}：{reasons}")
+        log.info(f"[Manager/Plan] 依赖不满足 → {TASK_INSUFFICIENT_DATA}：{reasons}")
         return updates
 
     updates["execution_plan"] = plan
@@ -43,5 +47,5 @@ def task_plan_node(state: dict) -> dict:
         agent_status.setdefault(a, "provided")
     updates["agent_status"] = agent_status
 
-    print(f"[Manager/Plan] task_type={task_type} → 执行计划={plan}" + (f" | 直供上游={provided}" if provided else ""))
+    log.info(f"[Manager/Plan] task_type={task_type} → 执行计划={plan}" + (f" | 直供上游={provided}" if provided else ""))
     return updates

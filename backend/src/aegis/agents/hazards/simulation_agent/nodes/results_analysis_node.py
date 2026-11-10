@@ -20,6 +20,7 @@ ResultsAnalysis 节点 —— 结果比较与分析
 """
 
 import json
+import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -32,6 +33,8 @@ from aegis.agents.hazards.simulation_agent.llm_setup import get_simulation_llm
 from aegis.agents.hazards.simulation_agent.tools.completeness_check_tool import check_results_completeness_tool
 from aegis.agents.hazards.simulation_agent.tools.hazard_model_router import get_model_requirements
 from aegis.agents.hazards.simulation_agent.tools.scenario_comparison_tool import compare_scenarios_tool
+
+log = logging.getLogger("aegis.agents.hazards.simulation_agent.nodes.results_analysis_node")
 
 # 公共 MOCK 局限（追加进 uncertainties，去重后写入）
 _MOCK_UNCERTAINTY = "所有分析基于 MOCK 玩具模型的归一化合成指标（mock_hazard_index 等），不是真实地质灾害预测，不能用于实际预警决策"
@@ -157,7 +160,7 @@ def results_analysis_node(state: dict) -> dict:
         analysis_uncertainties = list(analysis.uncertainties or [])
         llm_used = True
     except Exception as e:
-        print(f"[ResultsAnalysis] LLM 分析不可用，使用确定性工具兜底: {e}")
+        log.info(f"[ResultsAnalysis] LLM 分析不可用，使用确定性工具兜底: {e}")
 
     # ---------- 3) 组装 comparison_result（completeness 先占位）----------
     comparison_result = {
@@ -197,7 +200,7 @@ def results_analysis_node(state: dict) -> dict:
         )
     uncertainties = _append_unique(state.get("uncertainties", []), extra_uncertainties)
 
-    print(
+    log.info(
         f"[ResultsAnalysis] llm_used={llm_used} "
         f"complete={completeness['is_complete']} fixable={completeness['fixable']} "
         f"retry_count={new_retry_count}/{max_retries}"

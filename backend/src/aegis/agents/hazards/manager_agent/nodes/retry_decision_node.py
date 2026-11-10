@@ -17,6 +17,8 @@ retry_decision_node：异常分类与有限重试决策（全确定性处置矩�
   Manager 不伪造/修补交付物；每次决策都保留错误记录，不静默覆盖。
 """
 
+import logging
+
 from aegis.agents.hazards.manager_agent.state import (
     AGENT_DATA,
     AGENT_FEEDBACK,
@@ -26,6 +28,8 @@ from aegis.agents.hazards.manager_agent.state import (
     ERROR_SIMULATION_FAILURE,
     TASK_INSUFFICIENT_DATA,
 )
+
+log = logging.getLogger("aegis.agents.hazards.manager_agent.nodes.retry_decision_node")
 
 # 允许重试的错误类型（重新调用有可能得到不同结果）
 RETRYABLE_ERRORS = {
@@ -132,7 +136,7 @@ def retry_decision_node(state: dict) -> dict:
         updates["failed_agents"].append(agent)
         updates["agent_status"][agent] = "failed"
 
-    print(f"[Manager/Retry] {agent}（{error_type}）→ {action}｜{reason}")
+    log.info(f"[Manager/Retry] {agent}（{error_type}）→ {action}｜{reason}")
     updates["check_result"] = {**check, "retry_action": action, "retry_reason": reason}
     updates["error_message"] = check.get("message", "") or reason
     return updates

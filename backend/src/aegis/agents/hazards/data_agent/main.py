@@ -14,10 +14,13 @@ Data Agent 运行入口（面向西藏五类山地地质灾害）
 """
 
 import json
+import logging
 import sys
 
 from aegis.agents.hazards.data_agent.graph import create_data_agent
 from aegis.agents.hazards.data_agent.state import DataAgentState
+
+log = logging.getLogger("aegis.agents.hazards.data_agent.main")
 
 
 def run_data_agent(task: str, hazard_type: str) -> dict:
@@ -53,23 +56,23 @@ def run_data_agent(task: str, hazard_type: str) -> dict:
     }
 
     # 3. 执行图
-    print("=" * 60)
-    print(f"[Data Agent] 开始执行任务: {task}")
-    print(f"[Data Agent] 灾种: {hazard_type}")
-    print("=" * 60)
+    log.info("=" * 60)
+    log.info(f"[Data Agent] 开始执行任务: {task}")
+    log.info(f"[Data Agent] 灾种: {hazard_type}")
+    log.info("=" * 60)
 
     final_state = agent_graph.invoke(initial_state)
 
     # 4. 输出结果
-    print("\n" + "=" * 60)
-    print("[Data Agent] 执行完成")
-    print(f"  状态: {final_state.get('status')}")
-    print(f"  灾种: {final_state.get('hazard_type')}")
-    print(f"  数据质量: {final_state.get('data_quality', {}).get('validation_reason', 'N/A')}")
-    print(f"  缺失数据: {final_state.get('missing_data', [])}")
-    print(f"  数据充分性: {final_state.get('data_sufficiency', {})}")
-    print(f"  重试次数: {final_state.get('retry_count', 0)}")
-    print("=" * 60)
+    log.info("\n" + "=" * 60)
+    log.info("[Data Agent] 执行完成")
+    log.info(f"  状态: {final_state.get('status')}")
+    log.info(f"  灾种: {final_state.get('hazard_type')}")
+    log.info(f"  数据质量: {final_state.get('data_quality', {}).get('validation_reason', 'N/A')}")
+    log.info(f"  缺失数据: {final_state.get('missing_data', [])}")
+    log.info(f"  数据充分性: {final_state.get('data_sufficiency', {})}")
+    log.info(f"  重试次数: {final_state.get('retry_count', 0)}")
+    log.info("=" * 60)
 
     return final_state
 

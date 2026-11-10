@@ -18,11 +18,14 @@ FeedbackOutput 节点（统一结构化反馈输出，交给 Manager）
   写入：feedback_result / status / next
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
+
+log = logging.getLogger("aegis.agents.hazards.feedback_agent.nodes.feedback_output_node")
 
 
 def _manager_actions(evaluation: dict, items: list, suggestions: list) -> list:
@@ -149,7 +152,7 @@ def feedback_output_node(state: FeedbackAgentState) -> dict[str, Any]:
         },
     }
 
-    print(
+    log.info(
         f"[FeedbackOutput] status={status} 问题数={len(items)} "
         f"可行动={len(actionable)} 建议数={len(suggestions)} "
         f"反思轮次={state.get('iteration_count', 0)}"

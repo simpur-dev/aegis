@@ -14,6 +14,7 @@ Manager Agent 入口 / 独立测试（多智能体全局调度中心）
   .venv\\Scripts\\python.exe -m agents.manager_agent.main --real     # 真实五 Agent 串联（需 LLM/网络）
 """
 
+import logging
 import sys
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,8 @@ from aegis.agents.hazards.manager_agent.state import (
     AGENT_RESULT_KEY,
     ManagerState,
 )
+
+log = logging.getLogger("aegis.agents.hazards.manager_agent.main")
 
 if TYPE_CHECKING:
     from aegis.agents.hazards.bus_context import BusContext
@@ -163,7 +166,7 @@ def resume_manager_task(event_id: str, checkpointer=None, db_path: str | None = 
         }
     # invoke(None)：只补执行中断点之后的环节，不重放已完成节点
     final_state = agent.invoke(None, config)
-    print(f"[Manager/Resume] 线程 {tid} 恢复执行完成 → {final_state.get('task_status', '')}")
+    log.info(f"[Manager/Resume] 线程 {tid} 恢复执行完成 → {final_state.get('task_status', '')}")
     return _build_payload(final_state)
 
 

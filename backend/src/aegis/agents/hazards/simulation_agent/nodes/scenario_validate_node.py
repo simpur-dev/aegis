@@ -18,6 +18,7 @@ ScenarioValidate 节点 —— 情景与参数校验
 """
 
 import json
+import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -28,6 +29,8 @@ from aegis.agents.hazards.prompts.simulation_prompt import (
 )
 from aegis.agents.hazards.simulation_agent.llm_setup import get_simulation_llm
 from aegis.agents.hazards.simulation_agent.tools.scenario_validate_tool import validate_scenarios_tool
+
+log = logging.getLogger("aegis.agents.hazards.simulation_agent.nodes.scenario_validate_node")
 
 
 class ScenarioReview(BaseModel):
@@ -48,7 +51,7 @@ def scenario_validate_node(state: dict) -> dict:
     report = validate_scenarios_tool(configs, hazard_raw)
     valid = report["valid_scenarios"]
     invalid = report["invalid_details"]
-    print(f"[ScenarioValidate] 确定性校验：总数={report['total']} 通过={report['valid_count']} 不通过={len(invalid)}")
+    log.info(f"[ScenarioValidate] 确定性校验：总数={report['total']} 通过={report['valid_count']} 不通过={len(invalid)}")
 
     issues: list[str] = []
     review_dict = None
@@ -86,12 +89,12 @@ def scenario_validate_node(state: dict) -> dict:
             if review.recommendation in ("retry", "fail"):
                 recommendation = review.recommendation
         except Exception as e:
-            print(f"[ScenarioValidate] LLM 审查不可用，仅依据确定性校验: {e}")
+            log.info(f"[ScenarioValidate] LLM 审查不可用，仅依据确定性校验: {e}")
 
     # ---------- 3) 重试预算：retry 判定与自增原子绑定 ----------
     new_retry_count = retry_count + 1 if recommendation == "retry" else retry_count
 
-    print(f"[ScenarioValidate] 建议={recommendation} 问题数={len(issues)} retry_count={new_retry_count}")
+    log.info(f"[ScenarioValidate] 建议={recommendation} 问题数={len(issues)} retry_count={new_retry_count}")
 
     return {
         "validated_scenarios": valid,

@@ -21,10 +21,13 @@ Feedback Agent 入口 / 独立测试（面向西藏五类山地地质灾害）
   .venv\\Scripts\\python.exe -m agents.feedback_agent.main
 """
 
+import logging
 import sys
 
 from aegis.agents.hazards.feedback_agent.graph import create_feedback_agent
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
+
+log = logging.getLogger("aegis.agents.hazards.feedback_agent.main")
 
 
 def run_feedback_agent(
@@ -83,10 +86,10 @@ def run_feedback_agent(
         "test_hooks": test_hooks or {},
     }
 
-    print("=" * 60)
-    print(f"[Feedback Agent] 任务: {task}")
-    print(f"[Feedback Agent] 灾种: {hazard_type} | 事件: {event_id or '(自动生成)'}")
-    print("=" * 60)
+    log.info("=" * 60)
+    log.info(f"[Feedback Agent] 任务: {task}")
+    log.info(f"[Feedback Agent] 灾种: {hazard_type} | 事件: {event_id or '(自动生成)'}")
+    log.info("=" * 60)
 
     final_state = agent.invoke(initial_state)
     return final_state.get("feedback_result", {})

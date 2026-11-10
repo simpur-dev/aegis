@@ -13,6 +13,7 @@ finalize_node：汇总已有结果，输出最终任务报告（全确定性；�
   的能力限制必须写入报告；报告只汇总，不新增任何专业结论。
 """
 
+import logging
 from datetime import UTC, datetime
 
 from aegis.agents.hazards.manager_agent.state import (
@@ -26,6 +27,8 @@ from aegis.agents.hazards.manager_agent.state import (
     TASK_PARTIALLY_COMPLETED,
     TASK_UNSUPPORTED_HAZARD,
 )
+
+log = logging.getLogger("aegis.agents.hazards.manager_agent.nodes.finalize_node")
 
 _TERMINAL_SET = {TASK_NEED_CLARIFICATION, TASK_UNSUPPORTED_HAZARD, TASK_INSUFFICIENT_DATA}
 
@@ -126,7 +129,7 @@ def finalize_node(state: dict) -> dict:
     if state.get("llm_polish"):
         report["llm_summary"], report["llm_summary_used_llm"] = _llm_polish(report)
 
-    print(
+    log.info(
         f"[Manager/Finalize] task_status={task_status} | "
         f"完成={report['execution_summary']['completed_agents']} | "
         f"失败={report['execution_summary']['failed_agents']} | "
@@ -152,7 +155,7 @@ def _llm_polish(report: dict) -> tuple:
         text = (getattr(resp, "content", "") or "").strip()
         return (text or fallback[0], bool(text))
     except Exception as e:
-        print(f"[Manager/Finalize] LLM 润色不可用（{type(e).__name__}），使用确定性摘要")
+        log.info(f"[Manager/Finalize] LLM 润色不可用（{type(e).__name__}），使用确定性摘要")
         return fallback
 
 

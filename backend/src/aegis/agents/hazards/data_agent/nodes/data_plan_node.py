@@ -12,6 +12,7 @@ DataPlan 节点（面向西藏五类山地地质灾害）
 """
 
 import json
+import logging
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -27,6 +28,8 @@ from aegis.agents.hazards.hazard_registry import UnsupportedHazardError, require
 # 项目根目录入 sys.path（hazard_registry 位于根目录）
 from aegis.agents.hazards.llm import get_llm
 from aegis.agents.hazards.prompts.data_prompt import PLAN_SYSTEM_PROMPT, build_plan_user_prompt
+
+log = logging.getLogger("aegis.agents.hazards.data_agent.nodes.data_plan_node")
 
 # ============================================================
 # LLM 输出的任务理解（灾种无关的通用骨架；具体参数由动态菜单模型约束）
@@ -57,7 +60,7 @@ def data_plan_node(state: DataAgentState) -> dict[str, Any]:
     try:
         hazard_key = require_hazard(hazard_raw)
     except UnsupportedHazardError as e:
-        print(f"[DataPlan] 灾种无效，fail-fast: {e}")
+        log.info(f"[DataPlan] 灾种无效，fail-fast: {e}")
         return {
             "hazard_type": hazard_raw,  # 识别失败保持原值，由输出节点透传原因
             "data_requirement": {},  # 置空 → route_after_plan 直送 data_output
@@ -70,7 +73,7 @@ def data_plan_node(state: DataAgentState) -> dict[str, Any]:
     # ========== 步骤2：注册表取数据需求与参数菜单 ==========
     req = get_hazard_data_requirements(hazard_key)
     menu = req["query_param_menu"]
-    print(f"[DataPlan] 灾种={hazard_key}（{req['hazard_type_cn']}） 必需字段={req['required_fields']}")
+    log.info(f"[DataPlan] 灾种={hazard_key}（{req['hazard_type_cn']}） 必需字段={req['required_fields']}")
 
     # ========== 步骤3：LLM 解析菜单内参数（失败按菜单默认值兜底）==========
     params = {}
@@ -104,7 +107,7 @@ def data_plan_node(state: DataAgentState) -> dict[str, Any]:
         )
     except Exception as e:
         # 兜底：LLM 不可用时按菜单默认值组织参数，流程不崩
-        print(f"[DataPlan] LLM 解析失败，按菜单默认值兜底: {e}")
+        log.info(f"[DataPlan] LLM 解析失败，按菜单默认值兜底: {e}")
         params = {p["name"]: p["default"] for p in menu}
         processing_plan = f"默认处理计划：获取{req['hazard_type_cn']}观测数据（Mock）→ 清洗 → 标准化 → 验证 → 输出"
 
@@ -126,7 +129,7 @@ def data_plan_node(state: DataAgentState) -> dict[str, Any]:
         "is_mock": True,  # 当前数据源为 Mock 构造器
     }
 
-    print(f"[DataPlan] 解析结果:\n{json.dumps(data_requirement, ensure_ascii=False, indent=2)}\n[DataPlan] used_llm={used_llm}")
+    log.info(f"[DataPlan] 解析结果:\n{json.dumps(data_requirement, ensure_ascii=False, indent=2)}\n[DataPlan] used_llm={used_llm}")
 
     return {
         "hazard_type": hazard_key,  # >>> 归一化标准键写回

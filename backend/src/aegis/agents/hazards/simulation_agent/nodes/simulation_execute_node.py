@@ -19,12 +19,15 @@ SimulationExecute 节点 —— 仿真执行
   语义与 Data Agent 的循环一致：整个执行环节最多执行 max_retries 次。
 """
 
+import logging
 import time
 
 from aegis.agents.hazards.simulation_agent.tools.hazard_model_router import get_model
 from aegis.agents.hazards.simulation_agent.tools.simulation_executor import (
     execute_scenario_with_timeout,
 )
+
+log = logging.getLogger("aegis.agents.hazards.simulation_agent.nodes.simulation_execute_node")
 
 
 def _short_data_summary(state: dict) -> str:
@@ -103,7 +106,7 @@ def simulation_execute_node(state: dict) -> dict:
         "timeout_seconds": timeout_seconds,
     }
 
-    print(
+    log.info(
         f"[SimulationExecute] attempt={attempt} ok={ok} "
         f"成功情景={len(results)} 失败={len(failures)} "
         f"retry_count={new_retry_count}/{max_retries}"

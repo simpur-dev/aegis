@@ -13,6 +13,7 @@ AlertBuilder 节点（结构化预警对象构建）
   第一版不接入任何真实通知渠道。
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,6 +24,8 @@ from aegis.agents.hazards.warning_agent.tools.hazard_warning_rule_registry impor
     get_hazard_warning_rules,
     get_suggested_actions,
 )
+
+log = logging.getLogger("aegis.agents.hazards.warning_agent.nodes.alert_builder_node")
 
 
 def _now_iso() -> str:
@@ -115,7 +118,7 @@ def alert_builder_node(state: WarningAgentState) -> dict[str, Any]:
         "cap": {"status": "not_implemented"},
     }
 
-    print(f"[AlertBuilder] alert_id={alert_object['alert_id']} level={warning_level} region={alert_object['target_region']}")
+    log.info(f"[AlertBuilder] alert_id={alert_object['alert_id']} level={warning_level} region={alert_object['target_region']}")
 
     return {
         "alert_object": alert_object,

@@ -16,6 +16,7 @@ dispatch_node：调度枢纽（hub）—— 弹出调度队列队首，执行对
 【红线】对交付物只存不改 —— 风险分数、预警等级、Mock 标识原样透传。
 """
 
+import logging
 import time
 
 from aegis.agents.hazards.bus_context import current_bus_context
@@ -26,6 +27,8 @@ from aegis.agents.hazards.manager_agent.state import (
     ERROR_AGENT_TIMEOUT,
 )
 from aegis.errors import AegisError, ErrorCode
+
+log = logging.getLogger("aegis.agents.hazards.manager_agent.nodes.dispatch_node")
 
 
 def _attempt_no(state: dict, agent: str) -> int:
@@ -50,7 +53,7 @@ def dispatch_node(state: dict) -> dict:
         "retry_counts": dict(state.get("retry_counts") or {}),
     }
 
-    print(f"[Manager/Dispatch] >>> {agent}（第 {attempt} 次调用）")
+    log.info(f"[Manager/Dispatch] >>> {agent}（第 {attempt} 次调用）")
     try:
         bus = current_bus_context()
         if bus is not None:
@@ -85,7 +88,7 @@ def dispatch_node(state: dict) -> dict:
             "message": str(e)[:300],
             "from_dispatch_exception": True,
         }
-        print(f"[Manager/Dispatch] <<< {agent} 调用异常: {err_type}: {str(e)[:120]}")
+        log.info(f"[Manager/Dispatch] <<< {agent} 调用异常: {err_type}: {str(e)[:120]}")
         return updates
 
     elapsed = round(time.monotonic() - t0, 2)
@@ -98,5 +101,5 @@ def dispatch_node(state: dict) -> dict:
     updates["check_result"] = {"verdict": "pending", "agent": agent}
 
     # 注意：是否"成功"留给 result_check 判定，这里只做结构落地
-    print(f"[Manager/Dispatch] <<< {agent} 返回 status={status}（{elapsed}s）")
+    log.info(f"[Manager/Dispatch] <<< {agent} 返回 status={status}（{elapsed}s）")
     return updates

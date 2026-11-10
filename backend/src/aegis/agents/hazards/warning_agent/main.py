@@ -16,10 +16,13 @@ Warning Agent 入口 / 独立测试（面向西藏五类山地地质灾害）
   .venv\\Scripts\\python.exe -m agents.warning_agent.main
 """
 
+import logging
 import sys
 
 from aegis.agents.hazards.warning_agent.graph import create_warning_agent
 from aegis.agents.hazards.warning_agent.state import WarningAgentState
+
+log = logging.getLogger("aegis.agents.hazards.warning_agent.main")
 
 
 def run_warning_agent(
@@ -52,10 +55,10 @@ def run_warning_agent(
         "warning_result": {},
     }
 
-    print("=" * 60)
-    print(f"[Warning Agent] 任务: {task}")
-    print(f"[Warning Agent] 灾种: {hazard_type}")
-    print("=" * 60)
+    log.info("=" * 60)
+    log.info(f"[Warning Agent] 任务: {task}")
+    log.info(f"[Warning Agent] 灾种: {hazard_type}")
+    log.info("=" * 60)
 
     final_state = agent.invoke(initial_state)
     return final_state.get("warning_result", {})

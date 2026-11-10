@@ -9,6 +9,7 @@ task_analyze_node：任务解析与灾种识别（全确定性，LLM 不参与�
   - task_type 缺失按 full_analysis；非法取值 → need_clarification。
 """
 
+import logging
 import re
 from datetime import UTC, datetime
 
@@ -20,6 +21,8 @@ from aegis.agents.hazards.manager_agent.state import (
     TASK_TYPES,
     TASK_UNSUPPORTED_HAZARD,
 )
+
+log = logging.getLogger("aegis.agents.hazards.manager_agent.nodes.task_analyze_node")
 
 _TERMINAL = (TASK_NEED_CLARIFICATION, TASK_UNSUPPORTED_HAZARD)
 
@@ -66,7 +69,7 @@ def task_analyze_node(state: dict) -> dict:
     if "task_status" not in updates:
         updates["event_id"] = event_id or _gen_event_id(hazard_key)
 
-    print(
+    log.info(
         f"[Manager/Analyze] 灾种={updates.get('hazard_type', hazard_key or '(无效)')} "
         f"| 任务类型={updates.get('task_type', task_type)} "
         f"| event_id={updates.get('event_id', event_id)} "

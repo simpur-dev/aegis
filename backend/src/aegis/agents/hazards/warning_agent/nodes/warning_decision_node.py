@@ -18,10 +18,13 @@ WarningDecision 节点（预警条件判定）
   写入：hazard_type（归一化写回）/ decision_result / error_message / next
 """
 
+import logging
 from typing import Any
 
 from aegis.agents.hazards.hazard_registry import normalize_hazard_type
 from aegis.agents.hazards.warning_agent.state import WarningAgentState
+
+log = logging.getLogger("aegis.agents.hazards.warning_agent.nodes.warning_decision_node")
 
 
 def warning_decision_node(state: WarningAgentState) -> dict[str, Any]:
@@ -101,7 +104,7 @@ def warning_decision_node(state: WarningAgentState) -> dict[str, Any]:
         "decided_by": "deterministic_rules (no LLM)",
     }
 
-    print(f"[WarningDecision] can_warn={can_warn} 原因={reasons if reasons else '全部检查通过'}")
+    log.info(f"[WarningDecision] can_warn={can_warn} 原因={reasons if reasons else '全部检查通过'}")
 
     return {
         "hazard_type": hazard_key if hazard_key else hazard_raw,
