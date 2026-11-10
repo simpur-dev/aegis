@@ -304,7 +304,7 @@ def test_graph_normal_per_hazard() -> None:
         assert out["data_provenance"]["method"] == "factor_engine_mock"
         assert out["data_provenance"]["is_mock"] is True
         assert out["human_review_suggested"] is True
-        assert out["source"] == "agents_ext_mock"
+        assert out["source"] == "hazard.factor_engine"
         assert out["assessment"]["formula"]["status"] == "prototype_candidate"
         assert out["assessment"]["R"] is not None, f"{key} 正常数据应有 R 值"
         assert out["assessment"]["sample_count"] > 0

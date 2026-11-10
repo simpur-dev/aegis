@@ -65,18 +65,30 @@ class Action(StrEnum):
     # 研判
     ASSESS_HAZARD = "assess.hazard"
     ASSESS_RISK_LEVEL = "assess.risk_level"
+    #: 证据质量门（灾种链）：拿平台推送的证据包判"够不够研判"，不够就别花 LLM 预算。
+    ASSESS_DATA_QUALITY = "assess.data_quality"
+    #: 因子引擎交叉验证（灾种链）：与主研判**并行**跑的异构第二意见，确定性、不烧 LLM。
+    ASSESS_FACTOR_RISK = "assess.factor_risk"
+    #: 情景仿真（灾种链）：只跑在闭环/演练路径，产出全程带 mock 标记，不进生产预警文案。
+    ASSESS_SCENARIO_SIM = "assess.scenario_sim"
     # 决策
     PLAN_STU = "plan.stu"
     PLAN_STU_RESULT = "plan.stu_result"
     PLAN_RESCHEDULE = "plan.reschedule"
+    #: 灾种闭环入口：一次完整的 取数→研判→仿真→预警→审计 编排。
+    PLAN_HAZARD_WORKFLOW = "plan.hazard_workflow"
     # 执行
     EXECUTE_WARN = "execute.warn"
     EXECUTE_ACK = "execute.ack"
+    #: 预警文案素材（灾种链）：只产 CAP XML / 建议动作 / 解释文本，**不持发布权**。
+    EXECUTE_WARN_CONTENT = "execute.warn_content"
     # 反馈
     FEEDBACK_STATUS = "feedback.status"
     #: 链路 → 反馈智能体的归因请求（回执汇总后发一次）。与 `feedback.status`（平台往 ops 流归档的
     #: 状态事件）分开口径：前者要应答、后者只是广播，混用一个动作会让"谁该回这条"没有判据。
     FEEDBACK_ATTRIBUTE = "feedback.attribute"
+    #: 链内一致性审计（灾种链）：审计多智能体链自己有没有自相矛盾，与触达归因是两件事。
+    FEEDBACK_CHAIN_AUDIT = "feedback.chain_audit"
     # 框架
     ERROR_RAISE = "error.raise"
     AGENT_REGISTER = "agent.register"

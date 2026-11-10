@@ -229,7 +229,7 @@ class Settings(BaseSettings):
     # 真实智能体走**哪一套实现**（2026-11-09 并入外部交付模块后新增）：
     #   builtin = 平台自建内环（`aegis.agents`，已过契约 7 项一致性门禁；默认）
     #   ext     = 外部交付模块（`aegis.agents.hazards`，LangGraph 实现，直接实现 assess.v1 契约）
-    # 两套**并存**，不是替换：外部实现的数据工具是内存 Mock 源（其响应带 `source=agents_ext_mock`），
+    # 两套**并存**，不是替换：外部实现的数据工具是内存 Mock 源（其响应带 `source=hazard.factor_engine`），
     # 平台自建内环接真实数据面。选哪套由部署方定，默认不变。
     # `ext` 需要装了可选 extra `agents_ext`；没装则装配点如实退回 builtin 并记 warning。
     agent_impl: Literal["builtin", "ext"] = "builtin"

@@ -34,8 +34,8 @@ ASSESS_PAYLOAD: dict[str, Any] = {
     "confidence_basis": "coverage=0.75;validation=pass;method=factor_engine_mock;cap=0.60",
     "rationale": "10 分钟雨强折算 7.2mm/h，沟道纵比降大",
     "evidence_refs": [f"evidence:{REGION}:60m"],
-    "assessed_by": "assess.agents_ext",
-    "source": "agents_ext_mock",
+    "assessed_by": "assess.factor01",
+    "source": "hazard.factor_engine",
     "human_review_suggested": True,
     "data_provenance": {
         "data_kind": "mock",

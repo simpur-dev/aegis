@@ -68,7 +68,7 @@ def _agent(*, pool_workers: int = 1) -> RiskAssessAgent:
     return RiskAssessAgent(
         transport=_NullTransport(),  # type: ignore[arg-type]
         agent_type=AgentType.ASSESS,
-        agent_id="assess.agents_ext",
+        agent_id="assess.factor01",
         capabilities=["risk_assess"],
         pool_workers=pool_workers,
     )
@@ -81,8 +81,8 @@ def _ok_response(request: AssessRequest) -> AssessResponse:
         risk_level=RiskLevel.YELLOW,
         confidence=0.4,
         confidence_basis="coverage=0.60;validation=pass;method=factor_engine_mock;cap=0.60",
-        source="agents_ext_mock",
-        assessed_by="assess.agents_ext",
+        source="hazard.factor_engine",
+        assessed_by="assess.factor01",
     )
 
 
@@ -122,7 +122,7 @@ def _request(
     payload: dict[str, Any] | None = None,
     *,
     action: str = Action.ASSESS_HAZARD.value,
-    target: str = "assess.agents_ext",
+    target: str = "assess.factor01",
 ) -> Any:
     return make_request(
         source="platform.gateway",
@@ -156,7 +156,7 @@ async def test_happy_path_returns_contract_response() -> None:
     response = AssessResponse.model_validate(reply.payload)
     assert response.region_code == REGION
     assert response.hazard_type == HazardType.DEBRIS_FLOW
-    assert response.source == "agents_ext_mock"
+    assert response.source == "hazard.factor_engine"
     assert response.data_provenance.method == "factor_engine_mock"
     assert response.data_provenance.is_mock is True
     assert 0 < response.confidence <= 0.60
@@ -281,8 +281,8 @@ async def test_runner_region_mismatch_rejected(monkeypatch: pytest.MonkeyPatch) 
             risk_level=RiskLevel.YELLOW,
             confidence=0.4,
             confidence_basis="coverage=0.60;validation=pass;method=factor_engine_mock;cap=0.60",
-            source="agents_ext_mock",
-            assessed_by="assess.agents_ext",
+            source="hazard.factor_engine",
+            assessed_by="assess.factor01",
         )
 
     monkeypatch.setattr(agent_module, "run_risk_agent", wrong_region)

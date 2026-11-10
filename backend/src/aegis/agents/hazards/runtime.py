@@ -38,7 +38,7 @@ def build_hazard_agents(transport: BusTransport, llm: object | None = None, *, p
         RiskAssessAgent(
             transport=transport,
             agent_type=AgentType.ASSESS,
-            agent_id="assess.agents_ext",
+            agent_id="assess.factor01",
             capabilities=["risk_assess"],
             hazard_types=list(SUPPORTED_HAZARDS),
             version="agents-ext-1.0.0",

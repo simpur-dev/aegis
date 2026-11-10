@@ -54,22 +54,33 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 
 > **两种"没人接"要分清**：动作**登记在契约里但没有智能体声明承接** → 网关记 `no_agent`
 > （不是 error，平台按本地降级轨走）；动作**根本不在上面的注册表里** → `E_UNREGISTERED_ACTION`
-> （这是实现缺陷，会进 error 通道）。例：外部交付实现当前只注册 `assess.hazard`，
-> 其余四段记 `no_agent`，不是故障。
+> （这是实现缺陷，会进 error 通道）。
+
+> **路由键是 capability，不是 action。** 网关按 `(agent_type, capability)` 选本体
+> （见 `bus/registry.py`），action 只表达语义。同一项 capability 由**恰好一个**本体承接：
+> 两个本体都声明它，`pick()` 会在两者之间按负载取舍，"谁应答"就变成不可复现的随机数。
+> 完整对照表见 `backend/src/aegis/agents/capabilities.py`，机器门禁在
+> `backend/tests/unit/agents/test_capability_matrix.py`。
 
 | 动作 | 发起方 | 方向 | payload 必填字段 | 说明 |
 |---|---|---|---|---|
 | `perceive.anomaly` | perceive | out→event | `station_id`,`metric`,`value`,`observed_at`,`anomaly_score` | 弱信号/越限标注上报 |
 | `perceive.trigger_hit` | perceive | out→event | `rule_id`,`hazard_type`,`region_code`,`evidence_refs` | 触发条件命中（指标1 溯源依据） |
 | `assess.hazard` | platform→perceive/assess | in→request | `region_code`,`window`,`hazard_type`（assess 侧必填） | 请求灾种识别。perceive 侧可附 `readings`（本批读数）；应答为 `trigger_hits`；assess 侧 payload 为 `assess.v1` 请求（见 §9），应答为 `assess.risk_level` / `assess.v1` 响应 |
-| `assess.risk_level` | assess | out→response | `hazard_type`,`region_code`,`risk_level`(1-5),`confidence`,`rationale`,`evidence_refs` | 定级结论 |
+| `assess.risk_level` | assess | out→response | `hazard_type`,`region_code`,`risk_level`(1-5),`confidence`,`rationale`,`evidence_refs` | 定级结论（**形状说明**：目前没有独立的派发点，定级结论由 `assess.hazard` / `assess.factor_risk` 的应答承载） |
+| `assess.data_quality` | platform→assess | in→request | `region_code`,`window`,`evidence` | 证据质量门：拿平台推送的证据包判"够不够研判"（不够就别花 LLM 预算）。应答 `{is_valid,completeness_ratio,validation_reason,sufficient,reason,missing_data[]}` |
+| `assess.factor_risk` | platform→assess | in→request | `region_code`,`window`,`hazard_type`,`evidence` | 因子引擎的**异构第二意见**：与主研判并行跑的确定性定级，不烧 LLM。应答同 `assess.v1` 响应 |
+| `assess.scenario_sim` | assess→assess | in→request | `hazard_type`,`task`,`data_result`,`risk_result` | 情景仿真（灾种链）。**只跑在闭环/演练路径**，产出全程带 mock 标记，不进生产预警文案 |
 | `plan.stu` | platform→plan | in→request | `event_id`,`risk`,`objective`,`constraints` | 请求任务拆解 |
 | `plan.stu_result` | plan | out→response | `task_units`(STU 数组，须过 stu.v1 校验) | 返回标准化任务单元集 |
 | `plan.reschedule` | platform→plan | in→request | `workflow_instance_id`,`anomaly`,`current_topology` | 异常工况重调度建议（≤10s） |
+| `plan.hazard_workflow` | platform→plan | in→request | `hazard_type`,`task_type`,`region` | 灾种闭环入口：一次完整的 取数→研判→仿真→预警→审计 编排。应答 `final_report`,`agent_status`,`execution_plan` |
 | `execute.warn` | platform→execute | in→request | `warning_id`,`level`,`regions`,`audiences`,`content_refs` | 预警发布指令 |
 | `execute.ack` | execute | out→response | `warning_id`,`channel_results`(每通道 delivered/pending/failed) | 发布结果回执 |
+| `execute.warn_content` | platform→execute | in→request | `warning_id`,`level`,`regions`,`content_refs` | 预警文案**素材**（CAP XML / 建议动作 / 解释文本）。**不持发布权**：发布权与受众分群、防幻觉数字闸仍在平台执行内环 |
 | `feedback.status` | feedback | out→event | `warning_id`,`reach_stats`,`response_state`,`effect_score` | 响应/触达/效果反馈（**只广播、不应答**；要应答的是下面那个） |
 | `feedback.attribute` | platform→feedback | in→request | `warning_id`,`region_code`,`reach_stats`,`response_state` | 链路汇总触达回执后的**归因请求**（要应答）。与 `feedback.status` 分开口径：前者要回执、后者只是广播——混用一个动作会让"谁该回这条"没有判据 |
+| `feedback.chain_audit` | platform→feedback | in→request | `warning_id`,`agent_status`,`deliverables` | 链内一致性**审计**（要应答）：审计多智能体链自己有没有自相矛盾。与 `feedback.attribute` 是两件事——一个查触达效果，一个查链路质量 |
 | `agent.register` | 智能体 → 平台 | out→event | `agent_id`,`registration` | 注册与能力声明（生命周期，见 §4） |
 | `agent.heartbeat` | 智能体 → 平台 | out→event | `agent_id` | 心跳（生命周期，见 §4） |
 | `error.raise` | 双向 | out→error | `code`,`message`,`retryable` | 失败回执（见 §5） |
@@ -155,7 +166,7 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 ## 9. 研判契约 `assess.v1`
 
 `assess.hazard` 的 payload 是 `assess.v1` 的 `AssessRequest`，应答是 `AssessResponse`；
-平台自建（builtin）、契约门禁对照（mock）与外部实现（`agents_ext`）**共用同一套 DTO**
+平台自建内环、契约门禁对照（mock）与灾种闭环模块（`aegis.agents.hazards`）**共用同一套 DTO**
 （Python 镜像 `aegis.domain.assess`，全部 `extra="forbid"`）。平台不认识任何"外部结果形状"。
 
 ### 9.1 请求 `AssessRequest`
@@ -202,8 +213,8 @@ Stream 配置约定：`DATA`（subjects `data.>`，max_age 7d）、`AGENT_IN`、
 | `assessed_at` / `assessed_by` | 是/是 | ISO / ≤64 | 产出时刻与实现标识 |
 | `human_review_suggested` | 否 | bool | 建议人工核签 |
 | `double_blind` / `double_blind_mode` | 否 | ≤32 / ≤16 | 双盲（不适用填 `not_applicable`/`""`） |
-| `source` | 是 | ≤64 | 实现来源（如 `agents_ext_mock`） |
-| `data_provenance` | 否 | `DataProvenance` | 数据出处 |
+| `source` | 是 | ≤64 | **实现身份**（谁算的，如 `platform.builtin` / `hazard.factor_engine`） |
+| `data_provenance` | 否 | `DataProvenance` | 数据出处（`is_mock` 说的是**方法面成色**，与 `source` 分开：输入证据可以是真数据，原型权重仍然是原型） |
 | `assessment` | 否 | 自由对象 | 实现内部信封（版本/因子/覆盖率等），平台只透传 |
 
 ### 9.4 错误码

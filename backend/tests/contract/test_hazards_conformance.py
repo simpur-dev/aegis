@@ -135,9 +135,9 @@ def _valid_response(request: AssessRequest) -> AssessResponse:
         confidence_basis="coverage=0.60;validation=pass;method=factor_engine_mock;cap=0.60",
         rationale="门禁桩：因子引擎输出 P/T/R",
         evidence_refs=["factor:rainfall_mm_h"],
-        assessed_by="assess.agents_ext",
+        assessed_by="assess.factor01",
         human_review_suggested=True,
-        source="agents_ext_mock",
+        source="hazard.factor_engine",
         data_provenance={
             "data_kind": "observed",
             "sources": ["platform.telemetry:mqtt"],
@@ -218,7 +218,7 @@ class TestGate1SchemaLegality:
         assert reply.trace_id == TRACE
         assert reply.causation_id is not None
         response = AssessResponse.model_validate(reply.payload)
-        assert response.source == "agents_ext_mock"
+        assert response.source == "hazard.factor_engine"
         assert response.hazard_type is HazardType.DEBRIS_FLOW
         assert response.region_code == REGION
         assert 0.0 < response.confidence <= 0.60
@@ -631,7 +631,7 @@ class Test接线真实性:
         agents = build_hazard_agents(bus)
         assert len(agents) == 1
         assert agents[0].agent_type is AgentType.ASSESS
-        assert agents[0].agent_id == "assess.agents_ext"
+        assert agents[0].agent_id == "assess.factor01"
         assert agents[0].capabilities == ["risk_assess"]
         assert agents[0].hazard_types == SUPPORTED_HAZARDS
 

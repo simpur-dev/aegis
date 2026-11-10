@@ -16,6 +16,11 @@ Risk Agent 的**权威入口**：吃统一 `assess.v1` 契约，吐 `AssessRespo
   响应恒带 `data_provenance.is_mock=True`、`human_review_suggested=True`、
   置信度封顶 0.60。输出不是真实地质灾害风险预测。
 
+  `source` 与 `data_provenance.is_mock` 说的是两件事，别混：
+  `source` 是**实现身份**（`hazard.factor_engine`——谁算的），`is_mock` 是**方法面
+  的成色**（权重与公式是原型）。输入证据可以是平台推来的真数据，方法面仍然是原型，
+  所以 `is_mock` 不会因为数据变真而变成 false。
+
 【对外契约】
   run_risk_agent(request, evidence, *, agent_id=..., max_retries=3) -> AssessResponse
   失败抛 `AssessRejected`（由 `agent.py` 转成 error 回执）。
@@ -35,8 +40,9 @@ from aegis.domain.assess import AssessErrorCode, AssessEvidence, AssessRequest, 
 from aegis.domain.enums import HazardType, RiskLevel
 from aegis.domain.messages import now_iso
 
-#: 数据出处标记：外部实现的数据/权重是 Mock 源，读的人一眼能看出。
-SOURCE_MARK = "agents_ext_mock"
+#: 实现身份标记（**谁算的**）。方法面的 mock 成色由 `data_provenance.is_mock` 说，
+#: 两件事分开，口径才不互相污染：数据可以是平台推来的真数据，方法面仍然是原型权重。
+SOURCE_MARK = "hazard.factor_engine"
 
 #: 临时等级（MOCK 阈值）→ 平台 RiskLevel。`none` 是"算出来没风险"；`unknown` 不进表
 #: （那是"算不出来"，不能写成 5=无风险）。
@@ -101,7 +107,7 @@ def run_risk_agent(
     request: AssessRequest,
     evidence: AssessEvidence,
     *,
-    agent_id: str = "assess.agents_ext",
+    agent_id: str = "assess.factor01",
     max_retries: int = 3,
 ) -> AssessResponse:
     """统一契约入口：`AssessRequest` + 证据包 → `AssessResponse`；给不出结论抛 `AssessRejected`。"""

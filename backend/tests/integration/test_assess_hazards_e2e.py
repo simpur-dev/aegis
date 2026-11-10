@@ -87,7 +87,7 @@ async def test_ext_研判段产出带溯源的一等结论(monkeypatch: pytest.M
         assert not any("E_ASSESS" in item for item in result.degradations), result.degradations
 
         payload = result.verdict.as_payload()
-        assert payload["assessed_by"] == "assess.agents_ext"
+        assert payload["assessed_by"] == "assess.factor01"
         provenance = payload["data_provenance"]
         assert isinstance(provenance, dict)
         assert provenance["method"] == "factor_engine_mock"
@@ -152,6 +152,6 @@ async def test_证据构建失败时研判降级且不产无风险结论(monkeyp
         # 本地兜底也必须带出处：证据没建成时是 unknown，不是 observed
         payload = result.verdict.as_payload()
         assert payload["data_provenance"]["data_kind"] == "unknown"
-        assert payload["assessed_by"] != "assess.agents_ext"
+        assert payload["assessed_by"] != "assess.factor01"
     finally:
         await container.shutdown()
