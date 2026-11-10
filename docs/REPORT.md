@@ -3913,6 +3913,50 @@ httpx 客户端（两个独立 client 的 `root_client._client` 是同一对象�
 `ruff check src tests scripts` 与 `ruff format --check` 全绿、
 `mypy src/aegis` 355 文件全绿。
 
+### 取数门面的 HTTP 客户端复用与"便捷副本"有界化（2026-11-10 性能批第二轮）
+
+上一批处理的是"每次要一个汇总数就把整份底表扫一遍"。这一批是另外两处同源的形状：
+**每次要做一次事，就把一份可复用的东西重建一遍**。决策与理由见
+`docs/adr/0015-rest-client-reuse-and-bounded-copies.md`。
+
+**改前先量**：
+
+| 位置 | 形状 | 实测 |
+| --- | --- | --- |
+| `RestAssessContext._get()` | 每次请求新建 `httpx.AsyncClient` | 构造 **11.1 ms/次**（`_ssl._SSLContext.load_verify_locations` 从磁盘重载 CA 证书包） |
+| 同上（事件循环影响） | 构造是同步 CPU | 20 次构造期间，5 ms 周期业务协程最大被推迟 **304 ms** |
+| `HazardStages._warnings` | 便捷副本从不淘汰 | 每条 `WarningRecord` 约 4 KB → 十万条 ≈ **150 MB** |
+
+一次 `corroborate()` 发两个请求（案例 + 检索），于是**每条研判链路付 22 ms 的事件循环卡顿**。
+
+**前后对比**（同一台机器、同一负载，本地假上游）：
+
+| 项 | 改前 | 改后 | |
+| --- | --- | --- | --- |
+| `corroborate()` 全程 | **28.32 ms** | **2.02 ms** | **14×** |
+| 20 次 `corroborate` 期间业务协程最大被推迟 | **304 ms** | **13.4 ms** | 23× |
+| `stages._warnings` 条数 | 无上限 | 默认 5000 条 | 有界 |
+
+**改法**：`RestAssessContext` 持有一个懒建、复用的 client（首次建付一次 11 ms，之后零成本），
+令牌带在**请求**上而非 client 上（client 复用、令牌可能换），新增 `aclose()` 由
+`AssessAgent.stop()` 调用（**谁建谁关**）。`stages._warnings` 按插入序淘汰最旧的，
+同 warning_id 覆盖不误删。
+
+**为什么与 MCP 门面的做法不同**：MCP 那边是**协议级会话**
+（connect / initialize / call / close），开合是协议要求，其 docstring 已写明
+"不做跨请求长连"；REST 这边是纯 HTTP，keep-alive 本来就该用——
+MCP 的顾虑（会话状态、重连语义）在这里不存在。
+
+**复用不改变对外形状**，实测复核过三条：
+`corroborate()` 的返回值与降级原因逐字不变；服务端重启（旧连接已死）后同一个 client
+**自动恢复**（httpx 自己重连），未退化成降级；服务不可达时仍如实记两条降级、不抛异常。
+用例把这三条都钉住了。
+
+门禁（2026-11-10，本机，同上口径）：`pytest tests/unit tests/api tests/contract tests/e2e`
+**4063 tests / 0 failures / 0 errors / 0 skipped**（junit 计数，较上批 +9）、
+`ruff check src tests scripts` 与 `ruff format --check` 全绿、
+`mypy src/aegis` 355 文件全绿。
+
 ### 一件必须由人做的事
 
 外部仓库曾把**明文智谱 API Key** 写进源码并提交进公开仓库。该 Key 已随原仓库公开，
