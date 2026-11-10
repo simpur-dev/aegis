@@ -21,7 +21,8 @@
   模块边界与分层归位（2026-10-16 P1–P6）见决策记录 `docs/adr/0008`
 - 理论框架：MA-RIAEW（多智能体协同赋能的突发事件风险情报感知及预警模式）
 - 所有验收数字与"还没测到的"都记在 `docs/REPORT.md`（含可复跑的取证命令），不写进本文件；REPORT 按批次追加，
-  最新一节是工作流批次 E（E1–E3），11 月的界面改动与未清项见 `docs/AGENT_PROGRESS.md`
+  最新几节是 2026-11-10 的四批性能取证（外部实现 LLM 熔断、后端观测/存储热点两轮、取数门面客户端复用），
+  当前状态与未清项见 `docs/AGENT_PROGRESS.md`
 
 ---
 
@@ -62,7 +63,7 @@ aegis/
 │   │   └── api/               # FastAPI HTTP/SSE 接口：`app.py` 只做装配（闸/lifespan/异常/MCP 挂载），端点在 `routers/` 按资源分文件；另有工作流接口与语义交互（助手 SSE + 人工确认）
 │   ├── scripts/               # drill / metrics_report / accuracy_replay / eval_report_parsing / quality_gate / emit_model_cards / load_curve / zenoh_poc / import_stations / import_site_profiles / ingest_cases
 │   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
-│   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / agents_ext / dev
+│   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / agents_ext / mcp / objectstore / seekdb / perf / dev
 ├── frontend/                  # Vue 3 + Vite；Cesium 一张图、Vue Flow 编排画布
 ├── deploy/                    # docker-compose（含 profile）、镜像构建、Prometheus/Alertmanager 配置
 ├── docs/                      # 现行文档：实现态架构、架构升级方案、ADR、实测记录、进度看板、选型与许可证清单
@@ -323,12 +324,12 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
 6. **权重目录要在 compose 里钉死成挂载点**：`environment`/`env_file` 的优先级高于镜像 `ENV`，
    镜像里的 `AEGIS_RETRIEVAL_MODEL_DIR=/models` 会被 `.env` 的 `./data/models` 盖掉 ⇒ 容器去
    `/app/backend/data/models` 找权重，找不到就把密集腿静默换成词面近似，状态行只剩一个不同的 `driver` 值。
-7. **重启以后列表页是空的，不代表数据丢了**。`store` 这条腿的读模型是进程内视图
-   （`persistence/postgres.py:272`，`self._read = read_model or PlatformStore()`；2026-11-04 复核该行仍在），启动时不从库里回填。
-   实测一次重启后：`GET /api/v1/warnings` 回 `{"count":0,"items":[]}`、按 id 直查回 404，
-   而**同一个库**里 `select count(*) from warnings` 是 86。演示/验收前先跑一轮
-   `scripts.drill` 把数据写进当前进程，或用直查库的那批出口（`psql`、`/api/v1/geo/*`、
-   `scripts.accuracy_replay --from-store`）。这条已经单列为待修缺陷，别把它当部署失败去排查网络。
+7. **重启后列表页能看见最近的历史，但看不全**。`store` 这条腿的读模型仍是进程内视图
+   （`self._read = read_model or PlatformStore()`），但**启动时会把最近 N 条
+   warnings/tasks 从库里回填**（`read_backfill_limit`，默认 500，`container._backfill_read_model`；
+   失败只记日志、不影响读写）。所以重启后 `GET /api/v1/warnings` 能看到最近 500 条，
+   **超出的历史查不到**；`chains` 不回填（没有行反序列化函数），`chain.list` 按需查库。
+   要看全量历史用直查库的那批出口（`psql`、`/api/v1/geo/*`、`scripts.accuracy_replay --from-store`）。
 8. **`/api/v1/agents` 的 `online` 与 `items` 可能各说各话**。本机跑了两小时后读到 `online=0`，
    而 `items` 里 `assess.real01` 等五条仍在册（`healthy=false`、`idle_seconds≈7255`、`served=1`、`failed=1`），
    同时 `gateway_counters.no_agent` 仍是 0——"这副耳朵已经不跳了"与"请求被派给了谁"没对上。
@@ -426,7 +427,7 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 | 腿 | 驱动取值 | 关闭 / 降级时的行为 |
 | --- | --- | --- |
 | `agents` | `mock` \| `real` \| `off` | `real` 需 LLM 网关可用且与 mock 互斥（同一订阅面只挂一副）；智能体缺位/超时/产出不合契约时按段降级规则轨并写入 `degradations`；`off` 时五段全部走平台降级轨 |
-| `store` | `memory` \| `postgres` | 落库失败不换实现：内存读视图照常服务，写侧进有界缓冲重试并按计数暴露。**读视图是进程内的、启动时不从库里回填**，所以重启后列表/详情端点看不见已落库的历史（2026-10-12 实测：列表 `count=0`、按 id 直查 404，而同库 `count(*)=86`）——这条不是"降级可见"而是待修缺陷，见 2.3 第 7 条 |
+| `store` | `memory` \| `postgres` | 落库失败不换实现：内存读视图照常服务，写侧进有界缓冲重试并按计数暴露。读视图是进程内的，但**启动时回填最近 N 条**（`read_backfill_limit`，默认 500）；超出的历史与 `chains` 仍查不到，需走直查库的出口，见 2.3 第 7 条 |
 | `analytics` | `off` \| `clickhouse` \| `duckdb` | `off` 时链路里根本不出现 OLAP 代码路径；启用时只 write-behind 入队，热路径永不等 OLAP |
 | `knowledge` | `in_memory` \| `graphiti` | 图谱缺位时召回自动落到内置预案库（性质与逐条出处随召回结果一起外显），预案生成照旧完成。写入侧有生产调用点：单条 `POST /api/v1/knowledge/cases` 与整批 `scripts.ingest_cases`，两者响应里的 `driver/degraded/reason` 说清这条案例究竟落在图谱还是只在内存；启动期建一次图谱索引（失败作为 `schema_error`），停服期关一次图谱连接（关不上作为 `close_error`），两件事都出现在这一行 |
 | `retrieval` | `off` \| `hybrid` | 权重缺失时稠密腿换确定性词面近似并在 `driver/degraded` 上标出；该分数不得进任何准确率汇报。索引引擎可切 `local`（pgvector + 进程内 BM25）或 `seekdb`（向量 ANN 与 ngram 中文全文同库），切换只改装配，两腿语义与凭证结构不变。**默认是 `local`**：2026-10-02 实测过 seekdb 的几何/约束/LATERAL 能力后，它仍只作为显式 POC 打开，`tests/unit/test_retrieval_wiring.py::TestSeekdbIsNotInTheDefaultShape` 用双向变异把"local 装配去碰 seekdb 代码路径"钉成红 |

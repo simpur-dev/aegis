@@ -5,10 +5,10 @@
 > 选型结论与四问口径见 BRIEF §2/§7：组件库已批 **Arco Design Vue**（先探针实测再迁）；旧视觉已批现在停用；
 > 布局骨架 2026-10-17 拍板并实施为可折叠侧栏，**2026-10-30 已整块退役**，改透明顶栏横排（见下方"现状校准"与决策日志）。
 
-## 现状校准（2026-11-04，读台账前先看）
+## 现状校准（2026-11-10 更新，读台账前先看）
 
-> 本看板最后一次按批次更新是 2026-10-24（D4）；10-25～11-03 的提交没有入账。下表以当前代码为准，
-> 下文里程碑/任务表里与它冲突的条目按此读，**历史工作日志与决策记录保留原样不改**。
+> 本看板的"里程碑/任务表"停在早期批次，**下文历史工作日志与决策记录保留原样不改**；
+> 下表以当前代码为准，与它冲突的条目按此读。
 
 | 看板条目 | 台账写的 | 当前代码 |
 | --- | --- | --- |
@@ -18,16 +18,26 @@
 | T14 /dashboard | 待 T12 组件层收口 | 10-25 `ae32311` 玻璃拟态与 KPI 四球、11-02 `608e8e8` 两行 63/37 对齐已重做；T12（antd→Arco）仍 todo |
 | T27 过期判据 | in_progress | `eb6f1de`（11-01）已删掉随外壳退役的结构判据（127→122）；当前挂账是另 4 项，见下 |
 | M4 智能体状态区 | 已随侧栏落地迷你区 | 迷你区随侧栏一起退役；顶栏状态胶囊与总览的智能体在线板仍在 |
+| 智能助手 P0–P4 | 曾写 in_progress | **已全部完成**（11-04～11-08）：席位/通知/审计/write 动作/强认证/外部通知闭环，见决策日志 11-04～11-08 各条与 `docs/智能助手_设计文档.md` |
 
-**未清项（本次只整理文档，不改动代码，这些账仍在）**
+**当前门禁（2026-11-10 实测，junit 计数）**
+
+- 后端：`pytest tests/unit tests/api tests/contract tests/e2e` **4063 passed / 0 failed / 0 skipped**
+  （`backend/tests` 205 个 `test_*.py`；`backend/src` 355 个 .py / 60,494 行）；
+  `ruff check` + `ruff format --check` 全绿、`mypy src/aegis` 355 文件全绿。
+- 前端：`vitest` 最近一次全量 **87 files / 1278 passed**（11-08 入档）、typecheck 0 error；
+  颜色棘轮基线现役 **106**（`frontend/src/uiTheme.spec.ts` 的 `COLOR_BASELINE`），正文里的 154 / 139 / 104
+  都是历史实量值，别当现行基线读。
+
+**未清项（截至 2026-11-10，这些账仍在）**
 
 - e2e 界面自检 122 项：11-01 `0e1b31e` 按实测对比度修完字色后仍留 4 项——地图后端不可达时浮层互压 2、
   深色换肤读不到半透明卡面 1、monitor 图表换肤取样下限 1；口径未定前先留着。
-- 后端 `store` 读视图启动不从库回填（README §2.3 第 7 条）、`/api/v1/agents` 的 `online`/`items` 口径（第 8 条）
-  仍待修 / 待复测。
-- 10-31 `da621bf`（智能体调度 P0–P2）与批次 E 之后，全量 pytest 计数没有新的入档数字。
-- 前端最新门禁：83 files / 1257 passed、typecheck 0 error（`1367cfc`）；颜色棘轮实量 **104**（10-30 `7c2a8a4`），
-  正文里的 154 是 10-17 旧账。
+- `/api/v1/agents` 的 `online`/`items` 口径不一致（README §2.3 第 8 条）仍待复测。
+- `store` 读视图 **已于 P0 接上启动回填**（`read_backfill_limit`，默认 500 条 warnings/tasks；
+  `chains` 不回填、`chain.list` 按需查库），README 那条已同步改正；**仍欠**超出窗口的历史查询体验。
+- 外部实现只接通研判段 `assess.hazard`；其余四段不注册（网关记 `no_agent`），
+  其 LLM 仍绕开平台网关（不进模型台账、不经提示注入围栏）——见 `docs/architecture.md` §3.1。
 
 ## 里程碑
 
@@ -76,7 +86,7 @@
 | T29 | 推演沙盒并入流程编排页（SimulationView → WorkflowView tab） | todo（前提需重判） | T11（侧栏方案已退役） | 保留全部 data-testid 与门禁判据；旧路由重定向 `/simulation` → `/workflow?tab=simulation` | 合并本身未做，旧入口现为 `nav:false` 深链；推演是演练工具，不占一级导航 |
 | T30 | 智能助手改常驻悬浮抽屉（AssistantView → 全局抽屉） | **done（11-01 / 11-02）** | T11 | 保留原有 data-testid、流式帧与人工确认行为；会话状态本就在 composable 里，换页不丢 | `833fed9`：全站右下 56px 悬浮图标（可竖直拖拽）+ 右侧抽屉，打开时 `.main-content` 让位而非覆盖；`608e8e8`：左缘手柄拖宽 320–480、持久化 `aegis.assistant.dock`、键盘可调。入口 `data-testid="assistant-entry"` 现在顶栏导航末项，侧栏那一行已不存在 |
 | T31 | 指标量测归入"系统"分组 + 腿面板/系统输出归位 | todo（前提需重判） | T11（侧栏方案已退役） | `/metrics` 路由保留（验收取证路径不变）；`/api/v1/integrations` 页底面不改 | 侧栏"系统"区已改为顶栏 `NAV_GROUPS` 的第二个分组，条目本身仍在顶栏；运维/验收取证面不进值班主线 |
-| T32 | 智能助手升级：常驻抽屉 + 主动告警 + 协同处置 + 指令即执行的控制面 | **in_progress（P0/P1/P2/P3/P4 全部完成）** | 需求 `docs/智能助手升级方案.md` + 设计 `docs/智能助手_设计文档.md`（2026-11-04） | 按设计 §12 分 P0–P3；告警与控制相关须有演练注入脚本 | 六条决策见方案 §3；D5 = **指令即执行、助手不放大权限**。**P0 已完成**：010 六表九索引（真库建/回滚/重建）、席位（3 端点 + seed + 6 测试）、读视图回填（warnings/tasks；chains 走库）。**P1 已完成（两批）**：`services/assistant/` 拆包 + 12 动作 + 注册表自洽 + `/plan`、`/sessions/{id}` 退役 + 后端死代码 B1–B11 清零；`AssistantPanel` 抽取 + 抽屉接入 + 前端死代码 F1–F14（F8 复核保留）。**P2 第一批已完成（11-04）**：`control_actions` 持久层、`/assistant/actions` 资源化、`/confirm` 退役、执行器接台账、启动收尾卡死与过期动作。**P2 第二批已完成（11-04，告警面）**：`domain/alert.py` + `persistence/alerts.py`（UNIQUE 去重、原子迁移、UPDATE...RETURNING 升级）+ 内存 `AlertStore` 同一不变量 + `services/alerting/`；`/alerts` 四条端点（ack 幂等、transfer 需 lead、snooze 不改状态）；容器订阅 `platform.alert.>` + 升级定时任务（多副本靠 RETURNING 幂等）；广播 payload 增 `drill`（链路读数全 simulator 即演练，`stages.py::_is_drill`）；`scripts/inject_alert.py`（总线注入 / `--persist-only` 直写台账）；前端 `api/alerts.ts` + `api/operatorSeat.ts`（席位头，声明身份）+ `useAlerts`（分流去重、断线对账、Ⅰ/Ⅱ 紧急集）+ `AlertStack.vue`（在案告警卡 + 三种处置）+ App 顶部条 + 抽屉自动展开；`operators.py` 的 `_require` 提升为公共 `require_operator`（告警与席位同一鉴权口径）。门禁（11-04）：ruff 378 / mypy 189 / 后端 **3304 passed** / 前端 typecheck 0 + vitest **85 files 1265 passed**。**P1/P2 收尾已完成（11-08）**：抽 `pipeline/publisher.py::WarningPublisher`（三条发布入口收敛到 `release()`；落在 `pipeline/` 是因架构铁律禁止 `services/` import `aegis.bus`）、`011_warning_revocation.sql`（`warnings.revoked_at` 派生状态 + `assistant_notifications`，撤销不改写 `released_at`/回执）、`services/collab/tasks.py`（`handling_tasks.version` 乐观锁 + `container.on_result` 幂等建空间/任务）、`services/alerting/notifier.py`、`/notifications` 读面与 SSE 通知条；10 个 L3 控制动作（五个预警 + 五个任务/通知）与 P1 遗留的 `task.claim/ack`、`action.status` 全数落地并注册 `ActionDomain.NOTIFY`；越权闸补「整体批量指令不因动作已注册而放行」（助手只做单条处置、不放大权限）。补测：后端两组单测 42 项 + 通知 API 5 项 + 真库集成 3 项（含 011 迁移/乐观锁/撤销落库）；前端 `useAlerts.spec.ts` 加 4 项。门禁（11-08）：ruff check/format + mypy 201 文件 ✓ / 后端 unit+api+e2e+contract+integration 全绿（真库用例因本机无 PG/未设 `AEGIS_TEST_PG_DSN` 跳过）/ 前端 typecheck 0 + vitest **85 files 1269 passed**。设计文档 §3.3/§7.3/§7.6/§12 已回写代码事实（含三个不存在的 feature flag 口径修正）。**P3 三批已完成（11-08）**：七个 L4 动作与显式参数协议（`ada03d1`）、`/spaces` 协同面 + 双人复核配置项 + `audit_ops` 月分区（`ea3ad4e`）、执行器第 8 步 `audit.write` 接线（`167156a`）。**P4 已完成（11-08，设计 §14 定稿）**：① 强认证——`013_operator_keys.sql`（`operator_keys` 只存 SHA-256 + `operator_key_attempts` 按人计数）、`services/operator_auth.py`（签发/认证/二次认证/锁定；开关 `AEGIS_OPERATOR_KEY_AUTH_ENABLED` 默认关）、`X-Aegis-Operator-Key` 与 `_identity()` 单一解析点（凭证与声称不一致 → 401，不取其一）；写动作在开关打开后强制令牌（只带席位头 → `E_OPERATOR_KEY_REQUIRED`），读动作仍匿名；高危动作二次认证复用 `ActionSpec.dual_review` 那 10 个标记（与双人复核正交：横向两票 vs 纵向再出示），默认关；② 外部通知——`services/alerting/webhook.py`（白名单放行、不跟随重定向、失败不抛）、`Notifier` 改为**站内先行 → 再试外发**、通知行加 `delivery_channel/delivery_status/delivery_error/delivered_at`（`in_app`/`delivered`/`failed`，失败不回退站内那条）；③ 审计读面——`GET /api/v1/audit/ops`（operator/action/phase/space/action_id/时间 + 分页；`duty` 范围强制收成自己、`lead`/`admin` 全量；读面不写审计、不给总数）。令牌管理三条端点：签发（admin，明文只出现一次）/ 列元数据（无摘要无明文）/ 吊销（本人或 admin）。补测 47 条（认证 17 / 通知 11 / 审计 6 / 二次认证 6 / API 强认证门禁 7）。门禁（11-08）：ruff check+format ✓ / mypy 213 文件 ✓ / 后端 unit+api+contract **3400 passed / 0 failed / 0 skipped** / e2e 18 ✓。**仍未做**：账号密码/OAuth（按人令牌是部署方自管凭据）、外发重试与退避、审计导出投递 |
+| T32 | 智能助手升级：常驻抽屉 + 主动告警 + 协同处置 + 指令即执行的控制面 | **done（P0–P4 全部完成，2026-11-08 收口）** | 需求 `docs/智能助手升级方案.md` + 设计 `docs/智能助手_设计文档.md`（2026-11-04） | 按设计 §12 分 P0–P3；告警与控制相关须有演练注入脚本 | 六条决策见方案 §3；D5 = **指令即执行、助手不放大权限**。**P0 已完成**：010 六表九索引（真库建/回滚/重建）、席位（3 端点 + seed + 6 测试）、读视图回填（warnings/tasks；chains 走库）。**P1 已完成（两批）**：`services/assistant/` 拆包 + 12 动作 + 注册表自洽 + `/plan`、`/sessions/{id}` 退役 + 后端死代码 B1–B11 清零；`AssistantPanel` 抽取 + 抽屉接入 + 前端死代码 F1–F14（F8 复核保留）。**P2 第一批已完成（11-04）**：`control_actions` 持久层、`/assistant/actions` 资源化、`/confirm` 退役、执行器接台账、启动收尾卡死与过期动作。**P2 第二批已完成（11-04，告警面）**：`domain/alert.py` + `persistence/alerts.py`（UNIQUE 去重、原子迁移、UPDATE...RETURNING 升级）+ 内存 `AlertStore` 同一不变量 + `services/alerting/`；`/alerts` 四条端点（ack 幂等、transfer 需 lead、snooze 不改状态）；容器订阅 `platform.alert.>` + 升级定时任务（多副本靠 RETURNING 幂等）；广播 payload 增 `drill`（链路读数全 simulator 即演练，`stages.py::_is_drill`）；`scripts/inject_alert.py`（总线注入 / `--persist-only` 直写台账）；前端 `api/alerts.ts` + `api/operatorSeat.ts`（席位头，声明身份）+ `useAlerts`（分流去重、断线对账、Ⅰ/Ⅱ 紧急集）+ `AlertStack.vue`（在案告警卡 + 三种处置）+ App 顶部条 + 抽屉自动展开；`operators.py` 的 `_require` 提升为公共 `require_operator`（告警与席位同一鉴权口径）。门禁（11-04）：ruff 378 / mypy 189 / 后端 **3304 passed** / 前端 typecheck 0 + vitest **85 files 1265 passed**。**P1/P2 收尾已完成（11-08）**：抽 `pipeline/publisher.py::WarningPublisher`（三条发布入口收敛到 `release()`；落在 `pipeline/` 是因架构铁律禁止 `services/` import `aegis.bus`）、`011_warning_revocation.sql`（`warnings.revoked_at` 派生状态 + `assistant_notifications`，撤销不改写 `released_at`/回执）、`services/collab/tasks.py`（`handling_tasks.version` 乐观锁 + `container.on_result` 幂等建空间/任务）、`services/alerting/notifier.py`、`/notifications` 读面与 SSE 通知条；10 个 L3 控制动作（五个预警 + 五个任务/通知）与 P1 遗留的 `task.claim/ack`、`action.status` 全数落地并注册 `ActionDomain.NOTIFY`；越权闸补「整体批量指令不因动作已注册而放行」（助手只做单条处置、不放大权限）。补测：后端两组单测 42 项 + 通知 API 5 项 + 真库集成 3 项（含 011 迁移/乐观锁/撤销落库）；前端 `useAlerts.spec.ts` 加 4 项。门禁（11-08）：ruff check/format + mypy 201 文件 ✓ / 后端 unit+api+e2e+contract+integration 全绿（真库用例因本机无 PG/未设 `AEGIS_TEST_PG_DSN` 跳过）/ 前端 typecheck 0 + vitest **85 files 1269 passed**。设计文档 §3.3/§7.3/§7.6/§12 已回写代码事实（含三个不存在的 feature flag 口径修正）。**P3 三批已完成（11-08）**：七个 L4 动作与显式参数协议（`ada03d1`）、`/spaces` 协同面 + 双人复核配置项 + `audit_ops` 月分区（`ea3ad4e`）、执行器第 8 步 `audit.write` 接线（`167156a`）。**P4 已完成（11-08，设计 §14 定稿）**：① 强认证——`013_operator_keys.sql`（`operator_keys` 只存 SHA-256 + `operator_key_attempts` 按人计数）、`services/operator_auth.py`（签发/认证/二次认证/锁定；开关 `AEGIS_OPERATOR_KEY_AUTH_ENABLED` 默认关）、`X-Aegis-Operator-Key` 与 `_identity()` 单一解析点（凭证与声称不一致 → 401，不取其一）；写动作在开关打开后强制令牌（只带席位头 → `E_OPERATOR_KEY_REQUIRED`），读动作仍匿名；高危动作二次认证复用 `ActionSpec.dual_review` 那 10 个标记（与双人复核正交：横向两票 vs 纵向再出示），默认关；② 外部通知——`services/alerting/webhook.py`（白名单放行、不跟随重定向、失败不抛）、`Notifier` 改为**站内先行 → 再试外发**、通知行加 `delivery_channel/delivery_status/delivery_error/delivered_at`（`in_app`/`delivered`/`failed`，失败不回退站内那条）；③ 审计读面——`GET /api/v1/audit/ops`（operator/action/phase/space/action_id/时间 + 分页；`duty` 范围强制收成自己、`lead`/`admin` 全量；读面不写审计、不给总数）。令牌管理三条端点：签发（admin，明文只出现一次）/ 列元数据（无摘要无明文）/ 吊销（本人或 admin）。补测 47 条（认证 17 / 通知 11 / 审计 6 / 二次认证 6 / API 强认证门禁 7）。门禁（11-08）：ruff check+format ✓ / mypy 213 文件 ✓ / 后端 unit+api+contract **3400 passed / 0 failed / 0 skipped** / e2e 18 ✓。**仍未做**：账号密码/OAuth（按人令牌是部署方自管凭据）、外发重试与退避、审计导出投递 |
 
 ## 阻塞清单
 
@@ -89,7 +99,7 @@
 - 2026-10-07｜组件库走 Arco Design Vue，先探针实测再迁｜用户拍板（BRIEF §7 第 1 问）｜T10 前置、T12 解锁条件
 - 2026-10-07｜旧视觉现在停用，PageHero 改朴素页头｜用户拍板（BRIEF §7 第 2 问）｜T06 已完成，棘轮 228→159
 - 2026-10-07｜令牌层运行时写变量、不生成 tokens.css｜避免第二真源两张皮（BRIEF §8 决策 1）｜所有派生层零 hex，门禁守着
-- 2026-10-07｜颜色收敛用棘轮只减不增｜不打断页面改造也不许新欠（BRIEF §8 决策 2）｜当前基线 139
+- 2026-10-07｜颜色收敛用棘轮只减不增｜不打断页面改造也不许新欠（BRIEF §8 决策 2）｜当时基线 139（现役值见 `uiTheme.spec.ts` 的 `COLOR_BASELINE`）
 - 2026-10-07｜ECharts 换肤=重建实例，画布背景保持透明｜实例无换主题口子；填实色翻转必漏馅（BRIEF §11 决策 7）｜T08/T09 同法
 - 2026-10-07｜顶栏页名全档铺开、退役编号点与页码徽标｜用户拍板"导航留顶部、不要编号点"；页名即标识，序号不表达状态｜T07；§7 第 4 问随之化解
 - 2026-10-17 晚｜**信息架构收并：八页平铺改侧栏分组导航**｜用户反馈"项目杂糅、前端乱、外人不会用"后拍板｜侧栏两组（值班主线：总览/监测预警/一张图/编排；系统：指标量测），助手改常驻悬浮入口；旧入口（warnings/simulation/assistant）标 `nav:false` 保留可访问，合并/抽屉化按 T28–T31 推进；导航真源收敛到 router.ts 的 `NAV_GROUPS`，App.vue 只 import 不抄（uiTheme 对账用例钉住）｜T11 done、M2.5 立
@@ -252,7 +262,7 @@
   **两套并存**：`AEGIS_AGENT_IMPL=builtin|ext`，默认 builtin 不变；ext 走独立可选 extra `agents_ext`（镜像与 CI 都装上，缺依赖时如实退回 builtin 不让平台起不来）。
   **代码链路审查**：逐文件比对原仓库（差异全是机械等价改动）并修了 4 处真缺陷（与 hazard_registry 逐字相同的重复函数、三个死变量、未使用循环变量、except 缺 `from exc`）+类型改造（21 处节点返回值标注、6 处 stdout.reconfigure、图构建返回类型）；mypy 对本模块**精确到错误码**豁免 7 类，不是整模块关掉。
   **安全**：原仓库把**明文智谱 API Key 写死在源码里并提交进公开仓库**——主线版本只从环境变量读；误入分支历史的那一份已重写历史清掉（分支未合入 main）。**那把 Key 必须在供应商侧轮换**。
-  **可复现**：搬入/后处理/类型修正固化为三个脚本 + `import_external_agents_all.sh` 一条命令重跑。
+  **可复现**：搬入/搬测试/后处理/类型修正固化为四个 Python 脚本 + `import_external_agents_all.sh` 一条命令重跑（见下条）。
   **门禁**：ruff ✓、mypy 343 文件 ✓、她的 109 条迁入用例 + 11 条适配层用例 + 265 条边界守卫全绿；CI 的 uv sync 加 `--extra agents_ext`（少它时那些用例会因缺依赖而收集失败——那该红）。
 - 2026-11-09｜**外部交付智能体模块并入主线（补记：接线范围收口、三层分工、已知缺口、门禁复跑）**｜决策记录 `docs/adr/0011`，实现 `backend/src/aegis/agents_ext/`。
   **并入动作**：把一份外部交付的 LangGraph 多智能体实现（`hazard-landslide-agent`：六个 agent data / feedback / manager / risk / simulation / warning，109 条用例）搬进主线，按同一份 `AgentMessage v1` 契约接入——平台侧看不见她的函数签名（并入时经适配层转接；**收口后适配层已删除**，见文件末尾「assess 契约统一」条）。

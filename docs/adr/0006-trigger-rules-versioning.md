@@ -30,7 +30,7 @@
 | 种子 | 迁移 `005_trigger_rules.sql` 的 9 行 `INSERT ... ON CONFLICT DO NOTHING` | 与 `default_rulebook()` 逐字段一致，由 `tests/unit/test_trigger_rules_library.py` 解析 SQL 文本比对钉住 |
 | 装载 | 启动期 `PlatformContainer._load_rulebook()`（唯一读库点） | 存储后端不提供规则库、读失败、或读回来无可装载行 → **沿用内置种子并在 `rulebook_error` 留一行事实**，绝不清空判据 |
 | 换版 | `RuleEngine.reload()`，`RiskEngine` 经 `on_reload` 回调同步等级/权重映射 | 空集、同 id 多版本、混入非 active 一律拒绝装载；换版后 `/api/v1/rules` 与 `/metrics/latency` 的 `rulebook` 同一快照 |
-| 标定 | `services/calibration.py`（纯算式）+ `GET /api/v1/rules/calibration` | 命中次数取自链路台账（实测）；误报精度必须有现场真值，缺就 `status=not_measured`、`precision=null`；**建议恒 `applied=false`**，生效只能由人工把新版本写回库 |
+| 标定 | `services/rules/calibration.py`（纯算式；原写 `services/calibration.py`，2026-11-10 更正——该路径不存在）+ `GET /api/v1/rules/calibration` | 命中次数取自链路台账（实测）；误报精度必须有现场真值，缺就 `status=not_measured`、`precision=null`；**建议恒 `applied=false`**，生效只能由人工把新版本写回库 |
 | 退役 | 退役只改 `status`，不删行 | 回放要能按"当时生效的那一版"复算，删行等于改掉历史 |
 
 `/api/v1/rules/versions`（版本历史）只在 PostgreSQL 形态存在，内存读视图一律 503 并写明
