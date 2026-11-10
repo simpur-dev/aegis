@@ -9,9 +9,7 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -229,22 +227,10 @@ class TestGate5Lifecycle:
 
 
 class TestGate6DataBoundary:
-    def test_agent_side_never_imports_storage_layer(self) -> None:
-        """智能体只能经总线与数据 API 交互：源码级检查禁止直接依赖存储层。"""
-        forbidden = {"sqlalchemy", "aegis.storage", "neo4j", "asyncpg", "redis", "minio"}
-        agents_dir = Path(__file__).resolve().parents[2] / "src" / "aegis" / "agents"
-        offenders: list[str] = []
-        for path in agents_dir.rglob("*.py"):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    names = [alias.name for alias in node.names]
-                elif isinstance(node, ast.ImportFrom):
-                    names = [node.module or ""]
-                else:
-                    continue
-                offenders += [f"{path.name}:{name}" for name in names if name in forbidden or name.startswith("aegis.storage")]
-        assert offenders == [], f"智能体侧不得直接访问平台存储层: {offenders}"
+    # 静态扫描已统一到**唯一真源** `tests/unit/test_hazards_boundaries.py`：
+    # 它的全域档（禁 DB 驱动/存储层）是本文件旧版禁令的超集（多了 psycopg/psycopg2
+    # 与 aegis.persistence 前缀），且同样扫全 `src/aegis/agents/**`。这里只保留
+    # 运行时实例形状断言——同一批文件被两份宽严不一的禁令各扫一遍，早晚会漂移。
 
     def test_agents_have_no_database_client_attributes(self) -> None:
         agent = MockAgent(

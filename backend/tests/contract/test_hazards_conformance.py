@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import importlib
 import inspect
@@ -449,34 +448,9 @@ class TestGate5Lifecycle:
 
 
 class TestGate6DataBoundary:
-    def test_外部实现不直连存储层与服务层(self) -> None:
-        """静态检查：只允许总线路由与契约 DTO 两类平台依赖。"""
-        allowed = {"aegis.agents", "aegis.agents.hazards", "aegis.bus", "aegis.domain", "aegis.errors"}
-        forbidden_roots = {
-            "aegis.storage",
-            "aegis.persistence",
-            "aegis.services",
-            "aegis.pipeline",
-            "aegis.api",
-            "aegis.workflow",
-        }
-        offenders: list[str] = []
-        for path in EXT_PACKAGE.rglob("*.py"):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    names = [alias.name for alias in node.names]
-                elif isinstance(node, ast.ImportFrom):
-                    names = [node.module or ""]
-                else:
-                    continue
-                for name in names:
-                    if not name.startswith("aegis"):
-                        continue
-                    root = ".".join(name.split(".")[:2])
-                    if root in forbidden_roots or root not in allowed:
-                        offenders.append(f"{path.name}:{name}")
-        assert offenders == [], f"外部实现越界引用平台内部模块: {offenders}"
+    # 静态扫描已统一到**唯一真源** `tests/unit/test_hazards_boundaries.py`（白名单制，
+    # 比本文件旧版的黑名单更严）。这里只保留运行时实例形状断言——两处重复扫同一批
+    # 文件只会得到两份会漂移的禁令集合（audit 实锤三方各有一条别人没有的牙）。
 
     def test_服务实例上没有数据库客户端(self, bus: InMemoryBus) -> None:
         agent = build_hazard_agents(bus)[0]

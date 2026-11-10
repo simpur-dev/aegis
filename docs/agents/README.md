@@ -1,12 +1,13 @@
-# agents/ — L3 五大智能体交付落点
+# agents/ — L3 智能体层的接入指引与能力索引
 
-> 定位：感知 / 研判 / 决策 / 执行 / 反馈五类智能体由**智能体方（外部团队）实现**，
-> 本目录是它们的交付落点与联调脚手架。
-> **注意口径已经变了**（2026-11-09 起）：平台侧不再"不实现智能体本体"——
-> 现在是**两套并存**：平台自建内环（`backend/src/aegis/agents/`，接真实数据面）与
-> 已并入主线的外部交付模块（`backend/src/aegis/agents_ext/`），两者走同一份契约，
-> 由 `AEGIS_AGENT_IMPL` 选择（默认 builtin）。本目录仍是**交付落点索引**，
-> 实现代码不在这里（这个目录不在包路径上，代码不进 wheel/镜像）。
+> 定位：本目录是智能体层的**接入指引与能力索引**。实现代码不在这里
+> （这个目录不在包路径上，代码不进 wheel/镜像）。
+> **注意口径已经变了两次**（2026-11-09 并入 → 2026-11-11 统一）：
+> 平台自建五段内环（`backend/src/aegis/agents/` 顶层）与灾种闭环六体
+> （`backend/src/aegis/agents/hazards/`）现在是**一套统一的智能体层**——
+> 11 个本体同挂一条总线，能力与归属的单一真源是
+> `backend/src/aegis/agents/capabilities.py`（每项能力恰好一个主人）。
+> **不存在实现选择开关**（`AEGIS_AGENT_IMPL` 已删）。
 > `backend/src/aegis/agents/mock.py` 是契约门禁的对照源，不是产品。
 >
 > 唯一接口契约：[`contracts/AGENT_INTEGRATION_SPEC.v1.md`](../../contracts/AGENT_INTEGRATION_SPEC.v1.md)
@@ -14,40 +15,35 @@
 > 外部交付未落地期间的**自建方案**（LLM 化改造、框架选型、验收重测，含平台侧配套）：
 > [`docs/课题6_架构升级方案.md`](../课题6_架构升级方案.md)（决策记录：ADR-0007）
 
-## 已并入的外部实现（2026-11-09 并入；2026-11-09 晚收口）
+## 已并入的灾种闭环模块（2026-11-09 并入；2026-11-11 统一进 agents 包）
 
-一份外部交付的智能体模块（LangGraph 多智能体实现）已经并入主线，落在
-**`backend/src/aegis/agents_ext/`**，与平台自建内环**并存**
-（`AEGIS_AGENT_IMPL=builtin|ext`，默认 `builtin` 不变）。
+一份外部交付的智能体模块（LangGraph 多智能体实现）已并入主线，落在
+**`backend/src/aegis/agents/hazards/`**，与平台自建五段**同属一套智能体层**。
 
-**它没有适配层**：`risk_agent/agent.py` 直接继承 `AgentKit`、直接解析 `AssessRequest`、
-直接产出 `AssessResponse`——两端共用 `aegis.domain.assess` 里同一套 DTO。
+**它没有适配层**：本体直接继承 `AgentKit`、直接吃平台 DTO——
 （并入当时曾有 `adapter.py` / `contract_face.py` / `levels.py` 三层，同日收口时全部删除；
-现在若这三个模块存在反而是缺陷，`tests/contract/test_agents_ext_conformance.py` 用
+现在若这三个模块存在反而是缺陷，`tests/contract/test_hazards_conformance.py` 用
 `ModuleNotFoundError` 钉住了这一点。决策见 [`docs/adr/0012`](../adr/0012-assess-contract-unification.md)。）
 
-实现与它的六类 agent 一一对应：
+六个本体各占一项能力（能力矩阵 `backend/src/aegis/agents/capabilities.py`）：
 
-| 本目录 | 外部实现里的对应物 | 该段在平台侧的动作（出向） |
-| --- | --- | --- |
-| `perceive/` | `agents_ext/data_agent/`（数据获取与质量校验） | `perceive.anomaly`、`perceive.trigger_hit` |
-| `assess/` | `agents_ext/risk_agent/`（五灾种因子引擎） | `assess.hazard` |
-| `plan/` | `agents_ext/manager_agent/`（全局调度图，平台侧取其任务拆解） | `plan.stu`、`plan.reschedule` |
-| `execute/` | `agents_ext/warning_agent/`（预警文案与 CAP 结构） | `execute.warn`、`execute.ack` |
-| `feedback/` | `agents_ext/feedback_agent/`（反馈闭环与建议） | `feedback.attribute`、`feedback.status` |
+| 本体（agent_id） | capability | 动作 | 派发点 |
+| --- | --- | --- | --- |
+| `assess.data01` | `data_quality` | `assess.data_quality` | 生产研判段（证据门） |
+| `assess.factor01` | `factor_risk_assess` | `assess.factor_risk` | 生产研判段（并行交叉验证） |
+| `assess.sim01` | `scenario_sim` | `assess.scenario_sim` | 灾种闭环内腿 |
+| `execute.hazard01` | `warn_content` | `execute.warn_content` | 生产执行段（并行素材腿） |
+| `feedback.audit01` | `chain_audit` | `feedback.chain_audit` | 灾种闭环内腿 |
+| `plan.loop01` | `hazard_workflow` | `plan.hazard_workflow` | `POST /api/v1/hazards/workflow` |
 
-**当前接通范围**：外部实现**只注册研判段的 `assess.hazard` 一个动作**（见
-`agents_ext/runtime.py`）。感知段、决策段、执行段、反馈段**不注册**——
-网关查不到承接方时记 `no_agent`（**不是 error**），平台按既有本地降级轨走本地结论。
-"在仓里"不等于"接通了"，下表按这个口径写。
-
-三条要说清的事实：① 它的数据工具目前是**内存 Mock 源**，结论带 `source=agents_ext_mock` 标记，
-不冒充平台实测数据；② 它的凭据只从环境变量读（`AEGIS_EXT_LLM_API_KEY`），源码里没有密钥；
+三条要说清的事实：① 它的数据工具目前是**内存 Mock 源**，结论带
+`source=hazard.factor_engine` 与 `data_provenance.is_mock=true`，不冒充平台实测数据；
+② 它的凭据只从环境变量读（`AEGIS_EXT_LLM_API_KEY`），源码里没有密钥；
 ③ **它能交结论**——平台把窗口观测 + 区域画像组成 `AssessEvidence` 随请求推送
-（出进程部署也可经 `GET /api/v1/assess/evidence` 拉取），外部实现按确定性策略自产
-`confidence`（`0.15 + 0.40×coverage + 0.05×validation`，封顶 0.60）并返回 `AssessResponse`。
-真栈实测：`540121` 走 `mode=agent`、等级 3、confidence 0.52；`540221`/`540321` 因因子覆盖率
-不足如实返回"数据不足"并本地降级——**不会把"算不出"写成"无风险"**。
+（出进程部署也可经 `GET /api/v1/assess/evidence` 拉取），因子引擎按确定性策略自产
+`confidence`（`0.15 + 0.40×coverage + 0.05×validation`，封顶 0.60）并返回定级结论。
+真栈实测：`540121` 因子腿出带溯源的一等结论；覆盖率不足时如实拒绝——
+**不会把"算不出"写成"无风险"**。
 （并入当时"交不出结论"的缺口已由 [`docs/adr/0012`](../adr/0012-assess-contract-unification.md) 关闭。）
 
 其余已知限制（线程里的图取消不掉、外部的 LLM 绕开平台网关、共享记忆未打通等）
@@ -63,16 +59,17 @@
 
 | 目录 | 智能体 | 契约动作（出向） | 状态 |
 | --- | --- | --- | --- |
-| [`perceive/`](perceive/) | 感知 | `perceive.anomaly`、`perceive.trigger_hit` | 未交付；外部实现已并入，**感知段未接线**（明确不接线） |
-| [`assess/`](assess/) | 研判 | `assess.risk_level` | 未交付；外部实现已并入，**研判段已接线**（`assess.hazard`，当前唯一接线的动作） |
-| [`plan/`](plan/) | 决策 | `plan.stu_result` | 未交付；外部实现已并入，**决策段未接线**（明确不接线） |
-| [`execute/`](execute/) | 执行 | `execute.ack` | 未交付；外部实现已并入，**执行段未接线**（明确不接线） |
-| [`feedback/`](feedback/) | 反馈 | `feedback.status` | 未交付；外部实现已并入，**反馈段未接线**（明确不接线） |
+| [`perceive/`](perceive/) | 感知 | `perceive.anomaly`、`perceive.trigger_hit` | 未交付；感知段由平台自建内环承接 |
+| [`assess/`](assess/) | 研判 | `assess.risk_level` | 未交付；平台自建内环 + 灾种因子引擎（`assess.factor_risk`）均已在册 |
+| [`plan/`](plan/) | 决策 | `plan.stu_result` | 未交付；平台自建内环 + 灾种闭环编排（`plan.hazard_workflow`）均已在册 |
+| [`execute/`](execute/) | 执行 | `execute.ack` | 未交付；平台自建内环 + 灾种素材腿（`execute.warn_content`）均已在册 |
+| [`feedback/`](feedback/) | 反馈 | `feedback.status` | 未交付；平台自建内环 + 灾种审计腿（`feedback.chain_audit`）均已在册 |
 
 状态流转：`未交付 → 开发中（本地联调）→ 门禁中 → 已接入（生产总线）`。
 接入证据 = `backend/tests/contract/` 7 项全绿 + 单灾种场景端到端跑通（见下"接入流程"第 5 步）。
-外部实现那一侧另有两组门禁：契约一致性 `backend/tests/contract/test_agents_ext_conformance.py`（27 条）、
-边界守卫 `backend/tests/unit/test_agents_ext_boundaries.py`（按文件参数化，条数随文件数变动）。
+灾种模块那一侧另有两组门禁：契约一致性 `backend/tests/contract/test_hazards_conformance.py`、
+边界守卫 `backend/tests/unit/test_hazards_boundaries.py`（数据边界**唯一真源**，白名单制；
+按文件参数化，条数随文件数变动）。
 
 ## 边界三原则（违反任一条过不了门禁）
 

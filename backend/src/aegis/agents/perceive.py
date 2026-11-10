@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -31,8 +32,11 @@ from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 from aegis.agents.agentkit import AgentKit, Reply
+from aegis.domain.enums import Action
 from aegis.domain.messages import AgentMessage, parse_iso
 from aegis.services.rules.trigger_rules import Rule
+
+log = logging.getLogger("aegis.agents.perceive")
 
 
 @dataclass(slots=True)
@@ -85,6 +89,20 @@ class PerceiveAgent(AgentKit):
         fast_hits = self.detect(list(readings))
         semantic = await self._semantic_leg(request.payload)
         hits = [*fast_hits, *semantic.pop("hits")]
+        # 事件腿（`perceive.trigger_hit`，规范 §3 的出向动作）：每条命中自发一封事件，
+        # 同 trace 的链路会经 `_agent_hits` 板按 rule_id 去重采纳——请求-应答腿之外
+        # 的异步消费方（并发链路的佐证板、追溯台账）靠它才有料。此前只有消费端
+        # （`HazardStages.handle_agent_message`）和它的单测，**生产端没有任何发出点**
+        # ——文档宣称"经 emit_event 发出"，代码里没有那一行。
+        for hit in hits:
+            # 快腿产出 dict、语义腿产出模型：都转成纯数据再上事件。
+            # 事件腿是**旁路**：主证据随应答回去，事件只喂异步消费方——
+            # 发布失败不拖垮感知应答（与 notifier 的"总线只是加速器"同一语义），但必须留痕。
+            payload = hit if isinstance(hit, dict) else hit.model_dump(mode="json")
+            try:
+                await self.emit_event(Action.PERCEIVE_TRIGGER_HIT.value, payload, trace_id=request.trace_id)
+            except Exception as exc:
+                log.warning("perceive.trigger_hit 事件发布失败（主证据不受影响）", extra={"err": f"{type(exc).__name__}: {exc}"[:200]})
         return Reply(payload={"anomaly_count": len(fast_hits), "trigger_hits": hits, "semantic": semantic})
 
     async def _semantic_leg(self, payload: dict[str, Any]) -> dict[str, Any]:

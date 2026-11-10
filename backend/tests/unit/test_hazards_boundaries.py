@@ -1,19 +1,23 @@
-"""智能体层的**边界守卫**（一份规则，两档作用域）。
+"""智能体层的**边界守卫**——数据边界的**唯一真源**（一份规则，两档作用域）。
 
 为什么要有这一组：智能体是"带着自己的依赖进来的第二套实现"，最容易被后来的人改坏的
 三条边界是——① 它开始直连数据库；② 它绕过契约壳直接被平台调用；③ 它变成平台的硬依赖
 （没装可选 extra 就起不来）。这三条一旦破口，"两套并存、按需选择"的设计就悄悄变成了
 "两套耦合、必须都装"。
 
+【本文件是唯一的数据边界守卫】此前 Gate6 的静态扫描散在四处（两份 conformance、
+本文件、architecture_rules），各自禁令集合宽严不一——audit 实锤"三方各有一条别人
+没有的牙"。统一原则：**取更严的那方，集中在这里**。两份 conformance 的 Gate6 只保留
+运行时实例形状断言（静态扫描不再重复）；`test_architecture_rules.py` 管的是分层
+依赖方向（另一件事，不属于数据边界）。
+
 【两档作用域】
 - **全域**（`src/aegis/agents/**`）：不得直连数据库/存储层、不得改 `sys.path`、不得留
   明文凭据。平台自建五段与灾种六体**同一条**纪律。
-- **加严**（`src/aegis/agents/hazards/**`）：额外不得依赖平台内部实现（`aegis.services`
-  / `pipeline` / `api` / `workflow`）与平台自建本体的内部模块。它是"总线上的一条独立
-  服务"，伸手进平台内部就等于不再是独立服务。
-
-门禁与平台侧 `test_architecture_rules.py`（分层依赖方向）、`test_agent_conformance.py`
-（契约 7 项）同族，都是**用 AST 读源码**把纪律钉住，而不是靠 review 时人眼扫。
+- **加严**（`src/aegis/agents/hazards/**`）：白名单制（**默认拒绝**）——对 `aegis.*`
+  的依赖只允许契约面（domain / bus / errors / 契约壳 / 能力矩阵）与它自己的包。
+  黑名单式"禁 services/pipeline/api/workflow"永远在追新名词，白名单让"伸手进平台
+  内部"结构性不可能；它是"总线上的一条独立服务"，这条边界就是它的定义。
 """
 
 from __future__ import annotations
@@ -31,10 +35,6 @@ PACKAGE = AGENTS / "hazards"
 #: 智能体侧不得直连数据库/存储层——取数一律经平台数据 API 或总线。
 FORBIDDEN_IMPORTS = {"sqlalchemy", "asyncpg", "neo4j", "redis", "minio", "psycopg", "psycopg2"}
 FORBIDDEN_PREFIXES = ("aegis.storage", "aegis.persistence")
-
-#: 平台内部包：灾种模块**不应**依赖平台的这些部分——
-#: 它是"总线上的一条独立服务"，依赖平台内部实现就等于不再是独立服务。
-PLATFORM_INTERNAL = ("aegis.services", "aegis.pipeline", "aegis.storage", "aegis.persistence", "aegis.workflow", "aegis.api")
 
 #: 灾种模块允许碰的平台部分：全是**契约面**，不是内部实现。
 #: `aegis.agents.agentkit` 是契约壳（`AgentKit` 基类），`aegis.agents.capabilities` 是
@@ -84,19 +84,17 @@ def test_不直连数据库与存储层(path: Path) -> None:
 
 
 @pytest.mark.parametrize("path", _python_files(PACKAGE), ids=lambda p: p.name)
-def test_不依赖平台内部实现(path: Path) -> None:
-    """契约边界三原则第 1 条：智能体不依赖平台内部实现细节。
+def test_灾种模块的aegis依赖必须在白名单内(path: Path) -> None:
+    """契约边界三原则第 1 条：智能体不依赖平台内部实现细节——**白名单制**。
 
-    允许的只有契约面（`aegis.domain` / `aegis.bus` / `aegis.errors` / 契约壳
-    `aegis.agents.agentkit` / 能力矩阵 `aegis.agents.capabilities`）与它自己的包。
+    对 `aegis.*` 的依赖只允许契约面（`HAZARDS_ALLOWED`），名单之外的 aegis 包
+    一律违规（默认拒绝）。黑名单式禁令（禁 services/pipeline/api/…）每加一层平台
+    包就要追着补一条，漏补即破口；白名单把方向反过来。
     """
     for module in _imported_modules(path):
         if not module.startswith("aegis."):
             continue
-        if module.startswith(HAZARDS_ALLOWED):
-            continue
-        assert not module.startswith(PLATFORM_INTERNAL), f"{path.name} 依赖了平台内部实现 {module}——它就不再是总线上的独立服务"
-        assert not module.startswith("aegis.agents."), f"{path.name} 依赖了平台自建本体的内部模块 {module}"
+        assert module.startswith(HAZARDS_ALLOWED), f"{path.name} 依赖了 {module}——不在灾种模块的白名单内（允许：契约面与它自己的包）"
 
 
 def test_不写死仓库外路径() -> None:

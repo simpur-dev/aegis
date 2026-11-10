@@ -45,22 +45,31 @@ PlatformStore（预警/任务/链路结果）+ LatencyLedger（每段实测时�
 - 网关职责：Schema 校验 → 动作白名单 → msg_id 幂等去重 → TTL 丢弃 → 协同事务台账 → 共享同步时延埋点
 - 能力注册中心：能力声明 + 心跳失联摘除 + 按负载路由；**容量饱和时快速失败**（由上层降级/重调度显式处理，不做无界排队）
 
-### 3.1 两套智能体实现（2026-11-09 起；同日收口为统一契约）
+### 3.1 统一智能体层（2026-11-09 并入 → 2026-11-11 统一）
 
-L3 现在有**两套并存**的实现，都经同一份 `AgentMessage v1` 契约对外服务，由 `AEGIS_AGENT_IMPL` 选择：
+L3 是**一套统一的智能体层**：平台自建五段内环 + 灾种闭环六体，共 **11 个本体**同挂一条总线，
+都经同一份 `AgentMessage v1` 契约对外服务。**不存在实现选择开关**（`AEGIS_AGENT_IMPL` 已删）：
+`AEGIS_AGENT_RUNTIME=real` 时 11 个本体一并装配，灾种 extra `agents` 未装时如实留痕跳过。
 
-| | 平台自建内环 | 外部交付模块 |
+| | 平台自建五段内环 | 灾种闭环六体 |
 | --- | --- | --- |
-| 代码 | `backend/src/aegis/agents/` | `backend/src/aegis/agents_ext/` |
-| 形态 | 直接实现 `AgentKit.handle(AgentMessage)` | `risk_agent/agent.py` **直接继承 `AgentKit`**；LangGraph 图只做内部编排 |
-| 契约 | `aegis.domain.assess` 的 `assess.v1` DTO | **同一套 DTO**（没有适配层、没有第二套词汇） |
-| 依赖 | 平台既有依赖 | 独立 extra `agents_ext`（langgraph / langchain） |
-| 数据面 | 平台真实数据（数据 API / MCP 工具 / 共享记忆） | **平台推送的证据包**（窗口观测 + 区域 `site_profiles`）；出进程部署可经 `GET /api/v1/assess/evidence` 拉取 |
-| 门禁 | 契约 7 项一致性测试 | 迁入用例 + 边界守卫 + `assess.v1` 契约门禁（不直连库 / 不依赖平台内部 / 不改 sys.path / 无明文密钥） |
+| 代码 | `backend/src/aegis/agents/` 顶层 | `backend/src/aegis/agents/hazards/` |
+| 本体 | perceive/assess/plan/execute/feedback（`.real01`） | data01 / factor01 / sim01 / hazard01 / audit01 / loop01 |
+| 能力 | anomaly_detect, risk_assess, task_decompose, warn_publish, reach_track | data_quality, factor_risk_assess, scenario_sim, warn_content, chain_audit, hazard_workflow |
+| 形态 | 直接实现 `AgentKit.handle(AgentMessage)` | 直接继承 `AgentKit`；LangGraph 图只做内部编排 |
+| 契约 | `aegis.domain` 的 DTO（`assess.v1` 等） | **同一套 DTO**（没有适配层、没有第二套词汇） |
+| 依赖 | 平台既有依赖 | 可选 extra `agents`（langgraph / langchain） |
+| 数据面 | 平台真实数据（数据 API / MCP 工具 / 共享记忆） | 研判/执行腿吃**平台推送的证据包**；闭环腿吃它自己链上的交付物 |
+| 门禁 | 契约 7 项一致性测试 | 契约 7 项 + 边界守卫（数据边界**唯一真源**：白名单制）+ 能力矩阵门禁 |
+
+**能力矩阵是单一真源**（`backend/src/aegis/agents/capabilities.py`）：每项能力恰好一个主人
+（两个本体声明同一能力，网关的 pick() 会按负载取舍，"谁应答"变成随机数）；每项能力都必须有
+真实派发点（"接了但接不了"是灾种模块作者自己写下的教训，现在是机器门禁：
+`tests/unit/agents/test_capability_matrix.py`）。
 
 **统一契约**：`AssessRequest` / `AssessEvidence` / `AssessResponse` 住在 `aegis.domain.assess`，
-builtin、mock、ext 三个实现共用；平台只校验响应，不认识任何"外部结果形状"。
-外部实现内部的等级字符串（high/medium/low/none）在**它自己的权威入口** `run_risk_agent` 里
+平台内环、mock、灾种本体共用；平台只校验响应，不认识任何"内部结果形状"。
+因子引擎内部的等级字符串（high/medium/low/none）在**它自己的权威入口** `run_risk_agent` 里
 一次性转成契约等级与响应，这是实现的"契约发射"，不是平台侧翻译。
 
 **数据面**：平台在研判段构造 `AssessEvidence`（遥测按声明式派生表转成 `FactorObservation`、
@@ -72,17 +81,20 @@ builtin、mock、ext 三个实现共用；平台只校验响应，不认识任�
 随 API 与 `chain_runs.risk` 落台账。`confidence` 由生产方自产（平台不代填）：外部实现用
 `min(0.60, 0.15 + 0.40×coverage + 0.05×validation)`，并恒置 `human_review_suggested=True`。
 
-**当前接通范围（2026-11-09）**：外部实现**只注册研判段的 `assess.hazard` 一个动作**。
-感知段（平台也发 `assess.hazard`，但要的是 `trigger_hits`）、决策段 `plan.stu`、
-执行段 `execute.warn`、反馈段 `feedback.attribute` **不注册**——网关记 `no_agent`（不是 error），
-平台按既有本地降级轨走。
+**当前接通范围（2026-11-11）**：六体全部注册、能力互不重叠。生产链路的四条腿——
+证据质量门（研判段，遥测路径专属）、因子引擎交叉验证（与主研判并行，分歧留痕不改主结论）、
+预警素材（与发布腿并行，只产素材不持发布权）、闭环入口（`POST /api/v1/hazards/workflow`）；
+情景仿真与链内审计是**闭环内腿**（输入只有闭环才产得齐，不进热路径）。
+无人承接的能力网关记 `no_agent`（不是 error），平台按既有本地降级轨走。
 
-**为什么并存而不是替换**：两套实现的数据面与成熟度不同；统一契约后，选择权在部署方
-（默认 `builtin`，行为不变），切换不改变平台侧代码路径。
+**为什么统一而不是替换**：两套实现的数据面与成熟度不同——平台内环接真实数据面，
+灾种六体的价值是**异构第二意见与纵深闭环**（因子引擎与 LLM 主研判不同源，结论不一致时
+值得留痕）。统一契约 + 统一总线后，"并存"从配置开关变成能力矩阵里的两行。
 
-**边界守在哪里**：`backend/tests/unit/test_agents_ext_boundaries.py`（AST 读源码）钉住三条
-最容易被改坏的边界——外部模块不得直连数据库/存储层、不得依赖平台内部实现（否则不再是独立服务）、
-不得改全局 `sys.path`；另加"不写死绝对路径"与"不残留明文密钥"两条。
+**边界守在哪里**：`backend/tests/unit/test_hazards_boundaries.py`（AST 读源码，数据边界
+**唯一真源**）钉住三条最容易被改坏的边界——全域（agents/**）不得直连数据库/存储层、
+不得改全局 `sys.path`、不得留明文密钥；灾种子包加严为**白名单制**（对 `aegis.*` 的依赖
+只许契约面与自己的包，默认拒绝）。两份 conformance 的 Gate6 只保留运行时实例断言。
 
 **外部实现的 LLM 韧性**（2026-11-10，`docs/adr/0013`）：外部实现自建 `ChatOpenAI` 直连，
 因此**自带**熔断——`agents_ext/llm_breaker.py`，纯逻辑、无 IO、可直接单测。
@@ -97,8 +109,10 @@ SDK 的盲重试已关（`max_retries=0`，默认盲重试 2 次的指数退避�
 
 **已知限制**（详版见 `docs/adr/0011`、`docs/adr/0012`、`docs/adr/0013` 的"已知限制"节）：
 
-- **MOCK 权重不因接线而变真**：外部因子权重是 MOCK、公式是原型候选，输出恒标 `is_mock=true`、
-  `source=agents_ext_mock`、`human_review_suggested=true`，置信度封顶 0.60。
+- **MOCK 权重不因接线而变真**：因子权重是 MOCK、公式是原型候选，输出恒标 `is_mock=true`、
+  `source=hazard.factor_engine`、`human_review_suggested=true`，置信度封顶 0.60。
+  `source` 说**实现身份**（谁算的），`is_mock` 说**方法面成色**（原型就是原型，
+  不因输入数据变真而洗白）——两件事分开，口径不互相污染。
 - **冰湖溃决可能长期"数据不足"**：它的三个事件标志当前没有遥测来源，会诚实返回
   `E_ASSESS_INSUFFICIENT`（不是"无风险"）；补齐事件标志遥测后才能得分。
 - **线程里的图取消不掉**：外部入口是同步函数，放在 `asyncio.to_thread` 里跑；
@@ -106,9 +120,11 @@ SDK 的盲重试已关（`max_retries=0`，默认盲重试 2 次的指数退避�
 - **外部的 LLM 绕开平台网关**：自建 `ChatOpenAI` 直连，**不经 `services/llm/llm_gateway.py`**
   ——不经提示注入围栏、不进平台模型台账（用量、模型、prompt 版本、首过率都统计不到）。
 - **共享记忆未打通**：平台 `services/memory/` 与外部自己那份反馈记忆 JSON 是两套，互不可见。
-- **113 处 `print()` 噪声**（34 个文件）：外部实现的过程输出直接打 stdout，不进平台结构化日志、不带 trace_id。研判三节点 live 路径的 9 处已改为 `logging`，其余多在 legacy/demo/CLI 路径。
-- **外部的 manager 编排能力未接入**：manager（全局调度图、重试与反馈返工闭环）在包里但没接上，
-  平台侧目前只用了它的 risk_agent。
+- ~~113 处 `print()` 噪声~~（2026-11-11 已解决）：生产可达的 print 全部改走 logging，
+  剩余 print 只在 `__main__` 演示块与演示函数内（CLI 演示的输出本体）。
+- ~~manager 编排能力未接入~~（2026-11-11 已解决）：闭环编排已是总线上的一个本体
+  （`plan.hazard_workflow`，`plan.loop01`），入口 `POST /api/v1/hazards/workflow`；
+  闭环内部对五条腿的派单**同样走总线**（进程内直调会绕过信封/deadline/幂等/错误分类）。
 
 ## 4. 性能设计
 

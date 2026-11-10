@@ -7,15 +7,19 @@
 构建"感知—研判—决策—执行—反馈"全链条协同调控平台。
 
 - 应用形态：**纯 Web 平台**（响应式，不含原生移动端）
-- 分工边界：**平台侧**（L1 接入 / L2 数据 / L4 服务 / L5 应用 / 基座）与 **L3 五大智能体本体**
-  均由本仓库承载——智能体自建于 `backend/src/aegis/agents/`（agentkit 契约壳 + LLM 内环），
-  按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入总线；外部团队的实现按同一契约接入，`docs/agents/` 是交付落点与接入指引
-- **L3 现在有两套并存实现**（2026-11-09 起）：平台自建内环（`backend/src/aegis/agents/`，接真实数据面）
-  与一份灾种闭环模块（`backend/src/aegis/agents/hazards/`，LangGraph 图编排）。**两端共用同一套
-  `assess.v1` 契约**（`AssessRequest`/`AssessEvidence`/`AssessResponse`，住在 `aegis.domain`），
-  没有适配层；由 `AEGIS_AGENT_IMPL=builtin|ext` 选择，**默认 builtin 不变**。
-  **外部那一侧当前只接通了研判段的 `assess.hazard`**，其余动作不注册（网关记 `no_agent`，平台走本地降级轨）。
-  详见 `docs/architecture.md` §3.1 与 `docs/adr/0011`、`docs/adr/0012`
+- 分工边界：**平台侧**（L1 接入 / L2 数据 / L4 服务 / L5 应用 / 基座）与 **L3 智能体层**
+  均由本仓库承载——智能体住在 `backend/src/aegis/agents/`（agentkit 契约壳 + 能力矩阵 + 本体），
+  按 `contracts/AGENT_INTEGRATION_SPEC.v1.md` 接入总线；`docs/agents/` 是接入指引
+- **L3 是一套统一的智能体层**（2026-11-11 起）：平台自建五段内环（感知/研判/决策/执行/反馈）
+  + 灾种闭环六体（数据质量门/因子引擎/情景仿真/预警素材/链内审计/闭环编排，LangGraph 图编排，
+  住在 `agents/hazards/`）**同挂一条总线**，共 **11 个本体**；能力与归属的单一真源是
+  `backend/src/aegis/agents/capabilities.py`（每项能力恰好一个主人），机器门禁在
+  `tests/unit/agents/test_capability_matrix.py` 与 `test_hazards_boundaries.py`。
+  **不存在实现选择开关**——`AEGIS_AGENT_IMPL` 已删，灾种六体随 `AEGIS_AGENT_RUNTIME=real`
+  一并装配（可选 extra `agents` 没装时如实留痕跳过，平台五段不受影响）
+- 灾种结论目前是 demo 级：因子权重 MOCK、公式原型候选，输出带 `source=hazard.factor_engine`、
+  `data_provenance.is_mock=true`、人工核签标记，置信度封顶 0.60——不冒充平台实测结论
+  详见 `docs/architecture.md` §3.1 与 `docs/adr/0011`、`docs/adr/0012`、`docs/adr/0016`
 - 架构依据：五层+一基座（实现态见 `docs/architecture.md`），融合"一张图 + 一总线 + 四预"扩展；
   LLM 智能体化升级（对齐 MA-RIAEW）见 `docs/课题6_架构升级方案.md`，决策记录 `docs/adr/0007`；
   模块边界与分层归位（2026-10-16 P1–P6）见决策记录 `docs/adr/0008`
@@ -57,7 +61,7 @@ aegis/
 │   │   ├── edge/              # 站端↔网关弱网链路（Eclipse Zenoh POC：有界缓冲 + 按序重放）
 │   │   ├── observability/     # 时延账本、OpenTelemetry 埋点与导出、Prometheus 导出
 │   │   ├── agents/            # 五大智能体本体（自建）：agentkit 契约壳 + LLM 内环 + 三态运行时（real 与 mock 互斥）；mock 留作契约门禁对照
-│   │   ├── hazards/          # 灾种闭环模块（并入自 hazard-landslide-agent，LangGraph 图编排）：直接实现 aegis.domain 的 assess.v1 契约（无适配层）；AEGIS_AGENT_IMPL=ext 时启用（默认 builtin；当前只接通了研判段 assess.hazard）
+│   │   ├── hazards/          # 灾种闭环六体（并入自 hazard-landslide-agent，LangGraph 图编排）：数据质量门/因子引擎/情景仿真/预警素材/链内审计/闭环编排，各占一项能力，随 AEGIS_AGENT_RUNTIME=real 与平台五段同装
 │   │   └── api/               # FastAPI HTTP/SSE 接口：`app.py` 只做装配（闸/lifespan/异常/MCP 挂载），端点在 `routers/` 按资源分文件；另有工作流接口与语义交互（助手 SSE + 人工确认）
 │   ├── scripts/               # drill / metrics_report / accuracy_replay / eval_report_parsing / quality_gate / emit_model_cards / load_curve / zenoh_poc / import_stations / import_site_profiles / ingest_cases
 │   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
@@ -167,20 +171,19 @@ cd .. && npm run dev              # API http://127.0.0.1:8001/docs ｜ Web http:
 #    含 LLM 的协同事务走 LLM 档 deadline（AEGIS_SLA_AGENT_TXN_MS，默认 60s），
 #    与调度档 ≤2s/≤10s（工作流量测点，禁入 LLM）分档并报表，见《课题6_架构升级方案》§5。
 #
-# 7) 智能体走哪一套实现：AEGIS_AGENT_IMPL = builtin（默认；平台自建内环，接真实数据面）| ext
-#    （灾种闭环模块 backend/src/aegis/agents/hazards/，LangGraph 图编排）。两套并存，不是替换；
-#    两端共用同一套 assess.v1 契约（DTO 在 aegis.domain，无适配层）。
-#    ext 需要装可选依赖：uv sync --extra dev --extra agents（平台镜像里已带）；
-#    没装则装配点如实退回 builtin 并记 warning，平台照常起来，不会因为一个可选依赖起不来。
-#    ext 的模型凭据只从环境变量读：AEGIS_EXT_LLM_API_KEY（留空则它的 LLM 腿降级为确定性模板）。
-#    ext 的 LLM 自带熔断（AEGIS_EXT_LLM_BREAKER_THRESHOLD=3 / _COOLDOWN_SECONDS=60）：
-#    连续失败达阈值后在冷却窗口内直接跳过 LLM，研判走确定性兜底（毫秒级，不是每次白等三秒）。
-#    外部结论目前是 demo 级：因子权重是 MOCK、公式是原型候选，输出带 source=agents_ext_mock、
-#    is_mock=true、human_review_suggested=true，置信度封顶 0.60——不冒充平台实测结论。
-#    ext 当前只注册研判段的 assess.hazard；plan/execute/feedback/perceive 不注册，
-#    网关记 no_agent（不是 error），平台按既有降级轨走本地结论。
-#    数据面：平台把窗口观测 + 区域 site_profiles 组成证据包随请求推送；
-#    也可以 GET /api/v1/assess/evidence 拉取（出进程部署时配 AEGIS_EXT_DATA_API_URL/_TOKEN）。
+# 7) 灾种闭环六体（backend/src/aegis/agents/hazards/）：随 AEGIS_AGENT_RUNTIME=real 与
+#    平台五段**同时装配**（没有实现选择开关），需要可选依赖 `uv sync --extra agents`（镜像里已带）；
+#    没装则装配点如实留 warning 并只跑平台五段，平台照常起来。
+#    六体各占一项能力（能力矩阵见 backend/src/aegis/agents/capabilities.py）：数据质量门
+#    assess.data_quality / 因子引擎 assess.factor_risk / 情景仿真 assess.scenario_sim（闭环内腿）/
+#    预警素材 execute.warn_content / 链内审计 feedback.chain_audit（闭环内腿）/ 闭环编排
+#    plan.hazard_workflow（入口 POST /api/v1/hazards/workflow）。
+#    它们的模型凭据只从环境变量读：AEGIS_EXT_LLM_API_KEY（留空则 LLM 腿降级为确定性模板）；
+#    LLM 自带熔断（AEGIS_EXT_LLM_BREAKER_THRESHOLD=3 / _COOLDOWN_SECONDS=60）。
+#    结论是 demo 级：因子权重 MOCK、公式原型候选，输出带 source=hazard.factor_engine、
+#    data_provenance.is_mock=true、human_review_suggested=true，置信度封顶 0.60。
+#    数据面：研判段由平台推送证据包（窗口观测 + 区域画像）；出进程部署可配
+#    AEGIS_EXT_DATA_API_URL/_TOKEN 经数据 API 拉取。
 #    已知限制（图取消不掉、LLM 绕开平台网关、共享记忆未打通、冰湖事件标志暂无遥测来源等）
 #    见 docs/adr/0011、docs/adr/0012、docs/adr/0013 的"已知限制"一节与 docs/architecture.md §3.1。
 ```

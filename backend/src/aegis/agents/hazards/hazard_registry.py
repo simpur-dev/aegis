@@ -52,14 +52,10 @@ SUPPORTED_HAZARDS = [
     GLACIAL_LAKE_OUTBURST,
 ]
 
-# 中文名称表（键与 SUPPORTED_HAZARDS 一一对应）
-HAZARD_CN_NAME = {
-    LANDSLIDE: "滑坡",
-    ROCKFALL: "崩塌危岩",
-    DEBRIS_FLOW: "泥石流",
-    ICE_ROCK_SNOW_AVALANCHE: "冰岩雪崩",
-    GLACIAL_LAKE_OUTBURST: "冰湖溃决",
-}
+# 中文名称表（键与 SUPPORTED_HAZARDS 一一对应）。
+# **单一真源**：直接从平台枚举的 `.cn` 派生——此前这里另写一份，avalanche 与平台
+# 的 HAZARD_CN 各说一个名字（冰岩雪崩 vs 冰雪雪崩），同一灾种在台账里会随路径变脸。
+HAZARD_CN_NAME = {hazard: HazardType(hazard).cn for hazard in SUPPORTED_HAZARDS}
 
 # 别名归一化表：中文灾种名 / 英文变体 / 旧交付键 → 规范键。
 # 原则"宁缺毋滥"：歧义词不收录（如"岩崩"），避免误路由。
