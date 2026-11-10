@@ -3854,6 +3854,65 @@ httpx 客户端（两个独立 client 的 `root_client._client` 是同一对象�
 `ruff check src tests scripts` 与 `ruff format --check` 全绿（本次改动 6 个文件）、
 `mypy src/aegis` 355 文件全绿。
 
+### 后端观测与存储链路的热点消除（2026-11-10 性能批）
+
+改的是**平台自身**的观测与存储链路（不是外部实现那一侧）。决策与理由见
+`docs/adr/0014-backend-hotspot-elimination.md`。
+
+**四处是同一形状的缺陷**：每次要一个汇总数，就把整份底表扫一遍。底表随运行时长增长，
+扫描成本随之线性放大，而这些出口的调用频率都很高（Prometheus **每 10 秒**抓一次，
+见 `deploy/prometheus.yml` 的 `scrape_interval: 10s`；指标页每次打开算一次）。
+
+**改前先量**（`scripts/bench_backend_hotspots.py`，同一台机器、同一负载）：
+
+| 位置 | 形状 | 实测 |
+| --- | --- | --- |
+| `LatencyLedger.snapshot()` | 每个指标名各扫一遍全账本 | 12 指标名 × 20 万样本 = **64 ms** |
+| `LatencyLedger.iterate_since()` | 每次增量导出全量扫账本 | 20 万样本 = **7.4 ms/次** |
+| `MetricsExporter.collect()` | 为拿"在线智能体数"这一个整数去算整份网关快照 | 同上 64 ms |
+| `WarningStore` / `TaskStore` | 旁路索引从不淘汰 | put 2 万条（上限 5000）→ 索引留 **2 万条** |
+| `HandlingTaskStore.list_spaces()` | 每个空间全扫一遍任务表（N+1） | 200 空间 × 2 万任务 = **26 ms** |
+| `LlmGateway.first_pass_stats()` | 每个 task 全表过滤一遍 | 12 task × 4 万行 = **20.8 ms** |
+
+**两处代码与自己的注释不一致**（这比"慢"更值得记）：`tasks.py` 的 `list_spaces` 写着
+"内存侧同语义，**不做 N+1**"，而内存侧恰恰在做 N+1；`WarningStore` 的 `get()` 与 `list()`
+对"哪些预警还在"给出**两种答案**（列表已淘汰最旧的，`get()` 却还能捞到它）。
+
+**前后对比**（同一脚本、同一负载、同一机器）：
+
+| 项 | 改前 | 改后 | |
+| --- | --- | --- | --- |
+| 时延账本聚合（20 万样本 / 12 指标名） | **64.4 ms** | **22.5 ms** | 2.7× |
+| 增量导出（同规模） | **8.9 ms** | **0.00 ms** | 成本从"账本全长"降到"新增条数" |
+| 空间任务计数（200 空间 × 2 万任务） | **25.6 ms** | **1.0 ms** | **26×** |
+| LLM 首过率逐 task 拆分（12 task × 4 万行） | **20.8 ms** | **8.9 ms** | 2.3× |
+| 预警索引条数（put 2 万条 / 上限 5000） | 20000 | **5000** | 回到有界 |
+
+**等价性怎么验才算真**（这一批改的是"改了会得出不同的数"的东西）：
+不拿"新代码自己跟自己比"当证据——那只能证明没崩。`scripts/bench_backend_hotspots.py` 把
+**旧算法原样重写一遍**当基准（旧 `stats()`、旧 `snapshot()`、旧 `iterate_since()`），
+新旧输出逐项比对：
+
+- `snapshot()` 逐字一致（12 个指标名 × 3000 样本，含键序）；
+- `stats(name)` 逐字一致（含 `outcome` 过滤口径）；
+- `iterate_since()` 逐条一致（游标取 0 / 1 / 7 / 100 / 1000 / 1999 / 2000 / 5000
+  八种，含"游标比全部样本都新"与"账本滚动后游标指向已被挤掉的样本"两种边界）；
+- 空间计数逐空间一致；LLM 首过率逐 task 一致。
+
+新增用例 32 条（`tests/unit/test_backend_hotspot_fixes.py`），其中"Prometheus 导出不得触发
+全量聚合"那条**用行为判据而非耗时**（打桩统计 `stats_all` 调用次数 = 0）——
+断言耗时会因机器抖动误红，打桩不会。
+
+**一处口径被顺手改掉的后果，如实记**：`WarningStore.get()` / `TaskStore.get()` 对
+**已被淘汰**的记录从此返回 `None`（此前索引留着它，能捞到一条列表里已经不存在的记录）。
+这是把"索引与列表对同一批记录给出不同答案"这个不一致**修掉**的代价；
+只影响内存形态，Postgres 形态不受影响。
+
+门禁（2026-11-10，本机）：`pytest tests/unit tests/api tests/contract tests/e2e`
+**4054 tests / 0 failures / 0 errors / 0 skipped**（junit 计数，较上批 +31）、
+`ruff check src tests scripts` 与 `ruff format --check` 全绿、
+`mypy src/aegis` 355 文件全绿。
+
 ### 一件必须由人做的事
 
 外部仓库曾把**明文智谱 API Key** 写进源码并提交进公开仓库。该 Key 已随原仓库公开，
