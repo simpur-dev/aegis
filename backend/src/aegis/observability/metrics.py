@@ -108,8 +108,9 @@ class MetricsExporter:
             self._spans_dropped.inc(dropped - self._dropped_cursor)
             self._dropped_cursor = dropped
 
-        snapshot = self._gateway.snapshot()
-        self._online.set(int(snapshot["agents_online"]))
+        # 只要"在线智能体数"这一个数，不要为了拿它把整份网关快照算一遍——
+        # 快照里含时延账本的全量统计，而 Prometheus 每 10 秒抓一次（见 deploy/prometheus.yml）。
+        self._online.set(self._gateway.online_count)
         rate = self._gateway.success_rate()
         self._success_rate.set(rate if rate is not None else 0.0)
         return generate_latest(self._registry)

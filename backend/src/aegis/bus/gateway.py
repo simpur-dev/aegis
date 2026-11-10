@@ -154,6 +154,15 @@ class AgentGateway:
     def ledger(self) -> Tracer:
         return self._tracer
 
+    @property
+    def online_count(self) -> int:
+        """在线智能体数。
+
+        单开这个只读出口，是为了让 Prometheus 导出器不必为了这一个整数
+        去调 `snapshot()`——那份快照含时延账本的全量统计，而 Prometheus 每 10 秒抓一次。
+        """
+        return self._registry.online_count
+
     # ---------- 校验与去重 ----------
 
     def validate(self, message: AgentMessage) -> None:
