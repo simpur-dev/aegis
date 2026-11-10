@@ -14,8 +14,14 @@ import random
 import re
 import zlib
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
+from aegis.agents.capabilities import capabilities_for
+from aegis.agents.hazards.contracts import (
+    data_quality_response,
+    factor_risk_response,
+    warn_content_response,
+)
 from aegis.bus import subjects
 from aegis.bus.naming import consumer_name
 from aegis.bus.transport import BusTransport
@@ -185,16 +191,19 @@ class MockAgent:
         await self.transport.publish(subject, message)
 
     def _respond(self, request: AgentMessage) -> dict[str, Any]:
-        if self.agent_type is AgentType.ASSESS:
-            return self._assess(request)
-        if self.agent_type is AgentType.PLAN:
-            return self._plan(request)
-        if self.agent_type is AgentType.EXECUTE:
-            return self._execute(request)
-        if self.agent_type is AgentType.PERCEIVE:
-            # 与 PerceiveAgent 的应答同形：感知段回收的是 trigger_hits，空的含义是"没有新增命中"。
-            return {"anomaly_count": 0, "trigger_hits": []}
+        """按 `(agent_type, action)` 分派。
+
+        同一个阶段下会有多项能力（研判段有主结论、证据门、因子交叉验证、情景仿真四条），
+        只按 agent_type 分派分不出来——请求里带着动作，动作才是"这次要哪条腿"的判据。
+        """
+        handler = self._HANDLERS.get((self.agent_type, request.action))
+        if handler is not None:
+            return handler(self, request)
         return {"status": "ok", "warning_id": request.payload.get("warning_id", "")}
+
+    def _perceive(self, request: AgentMessage) -> dict[str, Any]:
+        """与 PerceiveAgent 的应答同形：感知段回收的是 trigger_hits，空的含义是"没有新增命中"。"""
+        return {"anomaly_count": 0, "trigger_hits": []}
 
     def _assess(self, request: AgentMessage) -> dict[str, Any]:
         hits = request.payload.get("hits", [])
@@ -273,6 +282,153 @@ class MockAgent:
             ],
         }
 
+    # ---------- 灾种链的六条腿 ----------
+
+    def _data_quality(self, request: AgentMessage) -> dict[str, Any]:
+        """证据质量门：替身给一份"合格"的判据，让研判段的下游路径能被完整走到。"""
+        payload = request.payload or {}
+        observations = (payload.get("evidence") or {}).get("observations") or []
+        total = len(observations)
+        return data_quality_response(
+            {
+                "is_valid": True,
+                "completeness_ratio": 1.0 if total else 0.0,
+                "validation_reason": "mock 替身：证据质量合格",
+                "sufficient": bool(total) or not payload.get("evidence"),
+                "reason": "mock 替身：证据质量合格",
+                "missing_data": [],
+            }
+        )
+
+    def _factor_risk(self, request: AgentMessage) -> dict[str, Any]:
+        """因子引擎交叉验证：与主研判**同档**——分歧腿的价值在于比对，不在于制造分歧。"""
+        payload = request.payload or {}
+        hits = payload.get("hits") or []
+        first = hits[0] if isinstance(hits, list) and hits else {}
+        level = RiskLevel.RED if isinstance(hits, list) and len(hits) > 1 else RiskLevel.ORANGE
+        region = str(payload.get("region_code") or first.get("region_code") or "540100A1")
+        return factor_risk_response(
+            {
+                "hazard_type": str(first.get("hazard_type", HazardType.DEBRIS_FLOW.value)),
+                "region_code": region,
+                "risk_level": int(level),
+                "confidence": 0.55,
+                "confidence_basis": "mock_agent:0.55",
+                "rationale": f"mock 因子引擎：{len(hits)} 条触发命中",
+                "evidence_refs": [],
+                "source": "platform.mock",
+                "assessed_by": self.agent_id,
+                "human_review_suggested": True,
+                "assessment": {"engine_version": "MOCK-FACTOR-v0.1"},
+                "data_provenance": {"data_kind": "mock", "sources": ["mock_agent"], "method": "mock", "is_mock": True},
+            }
+        )
+
+    def _scenario_sim(self, request: AgentMessage) -> dict[str, Any]:
+        """情景仿真：产出全程带 mock 标记——替身不装成真模型。"""
+        payload = request.payload or {}
+        return {
+            "hazard_type": str(payload.get("hazard_type") or ""),
+            "status": "success",
+            "simulation_results": [],
+            "comparison": {"comparison_table": [], "ranking": [], "key_findings": []},
+            "missing_inputs": [],
+            "unsupported_reason": "",
+            "model_info": {"is_real_prediction": False, "model_version": "MOCK-v0.1"},
+            "is_mock": True,
+            "is_real_prediction": False,
+        }
+
+    def _hazard_workflow(self, request: AgentMessage) -> dict[str, Any]:
+        """灾种闭环：替身把五步都标成已提供，产出空报告。"""
+        payload = request.payload or {}
+        return {
+            "event_id": str(payload.get("event_id") or ""),
+            "hazard_type": str(payload.get("hazard_type") or ""),
+            "region": str(payload.get("region") or ""),
+            "task_status": "completed",
+            "agent_status": {
+                "data_agent": "provided",
+                "risk_agent": "provided",
+                "simulation_agent": "skipped",
+                "warning_agent": "provided",
+                "feedback_agent": "provided",
+            },
+            "execution_plan": ["data_agent", "risk_agent", "simulation_agent", "warning_agent", "feedback_agent"],
+            "final_report": {"summary": "mock 闭环报告", "mock_only": True},
+            "error_history": [],
+        }
+
+    def _warn_content(self, request: AgentMessage) -> dict[str, Any]:
+        """预警素材：只有素材，没有发布动作。"""
+        payload = request.payload or {}
+        return warn_content_response(
+            {
+                "explanation_text": "mock 预警文案",
+                "suggested_actions": [],
+                "cap_xml": "",
+                "cap_dict": {},
+                "based_on": [],
+                "warning_level": str(payload.get("level") or ""),
+                "target_region": ",".join(payload.get("regions") or []),
+                "is_mock": True,
+            }
+        )
+
+    def _chain_audit(self, request: AgentMessage) -> dict[str, Any]:
+        """链内审计：没有发现不一致。"""
+        payload = request.payload or {}
+        return {
+            "hazard_type": str(payload.get("hazard_type") or ""),
+            "status": "success",
+            "feedback_id": "",
+            "event_id": str(payload.get("event_id") or ""),
+            "summary": {"issue_count": 0, "actionable_issue_count": 0, "needs_human_review_count": 0},
+            "issue_count": 0,
+            "actionable_issue_count": 0,
+            "needs_human_review_count": 0,
+            "feedback_items": [],
+            "improvement_suggestions": [],
+            "manager_actions": [],
+            "reflection_result": {},
+            "safety_declarations": {},
+        }
+
+    def _feedback(self, request: AgentMessage) -> dict[str, Any]:
+        """触达归因：字段与平台 `feedback.attribute` 的应答要求对齐。"""
+        payload = request.payload or {}
+        reach = payload.get("reach_stats") or {}
+        total = int(reach.get("total") or 0)
+        delivered = int(reach.get("delivered") or 0)
+        effect = round(delivered / total, 4) if total else 0.0
+        return {
+            "warning_id": str(payload.get("warning_id") or ""),
+            "effect_score": effect,
+            "attribution": f"mock 归因：触达 {delivered}/{total}",
+            "unreached_audiences": [],
+            "lag_stage": "",
+            "threshold_suggestion": "",
+            "suggestion_status": "pending_human_review",
+            "decided_by": "mock",
+        }
+
+    #: `(agent_type, action)` → 应答函数。动作才是"这次要哪条腿"的判据：同一个阶段下
+    #: 会有多项能力（研判段四条、决策段两条、执行段两条、反馈段两条），只按类型分派
+    #: 分不出来。
+    _HANDLERS: ClassVar[dict[tuple[AgentType, str], Any]] = {
+        (AgentType.PERCEIVE, Action.ASSESS_HAZARD.value): _perceive,
+        (AgentType.ASSESS, Action.ASSESS_HAZARD.value): _assess,
+        (AgentType.ASSESS, Action.ASSESS_DATA_QUALITY.value): _data_quality,
+        (AgentType.ASSESS, Action.ASSESS_FACTOR_RISK.value): _factor_risk,
+        (AgentType.ASSESS, Action.ASSESS_SCENARIO_SIM.value): _scenario_sim,
+        (AgentType.PLAN, Action.PLAN_STU.value): _plan,
+        (AgentType.PLAN, Action.PLAN_HAZARD_WORKFLOW.value): _hazard_workflow,
+        (AgentType.EXECUTE, Action.EXECUTE_WARN.value): _execute,
+        (AgentType.EXECUTE, Action.EXECUTE_WARN_CONTENT.value): _warn_content,
+        (AgentType.FEEDBACK, Action.FEEDBACK_ATTRIBUTE.value): _feedback,
+        (AgentType.FEEDBACK, Action.FEEDBACK_CHAIN_AUDIT.value): _chain_audit,
+    }
+
 
 async def publish_response(transport: BusTransport, message: AgentMessage, reply_to: str) -> None:
     await transport.publish(reply_to, message)
@@ -288,13 +444,9 @@ async def start_mock_agents(
 ) -> list[MockAgent]:
     """拉起五类智能体的 Mock 实例。注意：响应回投递需 request.reply_to，见 MockAgent._on_request。"""
     misbehavior = misbehavior or {}
-    specs = [
-        (AgentType.PERCEIVE, ["anomaly_detect", "trigger_recognize"]),
-        (AgentType.ASSESS, ["risk_assess"]),
-        (AgentType.PLAN, ["task_decompose"]),
-        (AgentType.EXECUTE, ["warn_publish"]),
-        (AgentType.FEEDBACK, ["reach_track"]),
-    ]
+    # 能力表取自能力矩阵：替身要覆盖矩阵里该阶段的**全部**能力，否则矩阵里的某项能力
+    # 在 mock 档就没人接——而 mock 档正是 CI 与演练跑得最多的形态。
+    specs = [(agent_type, list(capabilities_for(agent_type))) for agent_type in AgentType]
     agents = [
         MockAgent(
             transport=transport,

@@ -113,6 +113,7 @@ class ManagerState(TypedDict, total=False):
 
     # === 任务信息 ===
     event_id: str  # 任务业务标识（同时用作 Checkpoint thread_id）
+    trace_id: str  # 链路追踪号；经总线派单时随请求带下去，让闭环的每一步可归因
     user_request: str  # 用户原始输入文本
     task_type: str  # 六类之一（空则按 full_analysis）
     hazard_type: str  # 标准灾种键（task_analyze 归一化后写入）

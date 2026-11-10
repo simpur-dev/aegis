@@ -1,7 +1,7 @@
-"""外部研判服务（`RiskAssessAgent`）：统一契约进、统一契约出、错误走类型化通道。
+"""因子引擎本体（`FactorAssessAgent`）：统一契约进、统一契约出、错误走类型化通道。
 
 覆盖：
-- 合法请求 → `AssessResponse` 往返（含出处/置信度/人工核签标记）；
+- 合法请求 → 因子引擎契约应答（含出处/置信度/人工核签标记）；
 - 数据不足（无证据 / 空观测 / 冰湖无扳机）→ `E_ASSESS_INSUFFICIENT`，retryable=False；
 - 灾种不支持 → `E_ASSESS_HAZARD_UNSUP`；畸形请求 / 错误动作 / 区域不一致 → `E_ASSESS_BAD_INPUT`；
 - 图内部异常 → `E_ASSESS_FAILED`（retryable=True）；
@@ -20,8 +20,9 @@ from typing import Any
 
 import pytest
 
+from aegis.agents.hazards.pool import configure_pool, hazard_pool
 from aegis.agents.hazards.risk_agent import agent as agent_module
-from aegis.agents.hazards.risk_agent.agent import RiskAssessAgent
+from aegis.agents.hazards.risk_agent.agent import FactorAssessAgent
 from aegis.agents.hazards.risk_agent.errors import AssessRejected
 from aegis.agents.hazards.risk_agent.evidence_pull import DATA_API_TOKEN_ENV, DATA_API_URL_ENV
 from aegis.agents.hazards.risk_agent.main import run_risk_agent
@@ -64,13 +65,14 @@ def _no_llm(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(importlib.import_module(module_name), "get_risk_llm", lambda: _BrokenLlm())
 
 
-def _agent(*, pool_workers: int = 1) -> RiskAssessAgent:
-    return RiskAssessAgent(
+def _agent(*, pool_workers: int = 1) -> FactorAssessAgent:
+    """构造本体。池容量是**模块级共享**的（`hazards/pool.py`），所以这里配的是共享池。"""
+    configure_pool(pool_workers)
+    return FactorAssessAgent(
         transport=_NullTransport(),  # type: ignore[arg-type]
         agent_type=AgentType.ASSESS,
         agent_id="assess.factor01",
-        capabilities=["risk_assess"],
-        pool_workers=pool_workers,
+        capabilities=["factor_risk_assess"],
     )
 
 
@@ -121,7 +123,7 @@ def _evidence(*, region: str = REGION, observations: list[FactorObservation] | N
 def _request(
     payload: dict[str, Any] | None = None,
     *,
-    action: str = Action.ASSESS_HAZARD.value,
+    action: str = Action.ASSESS_FACTOR_RISK.value,
     target: str = "assess.factor01",
 ) -> Any:
     return make_request(
@@ -150,24 +152,33 @@ def _payload(*, evidence: AssessEvidence | None = None, hazard: str = "debris_fl
 # ============================================================
 
 
+def _assert_factor_contract(payload: dict[str, Any]) -> None:
+    """因子引擎应答的字段级契约断言。
+
+    这一腿**不是** `assess.v1` 的应答（它有自己的动作 `assess.factor_risk`），所以不
+    拿 `AssessResponse` 去校验——那份 DTO 是主研判的契约，套上来会逼这条腿去扮演
+    另一个角色。字段级断言更贴：平台这条腿只读定级相关的几个字段。
+    """
+    assert payload["region_code"] == REGION
+    assert payload["hazard_type"] == HazardType.DEBRIS_FLOW.value
+    assert payload["source"] == "hazard.factor_engine"
+    assert payload["data_provenance"]["method"] == "factor_engine_mock"
+    assert payload["data_provenance"]["is_mock"] is True
+    assert 0 < payload["confidence"] <= 0.60
+    assert payload["confidence_basis"]
+    assert payload["human_review_suggested"] is True
+    assert payload["assessment"]["formula"]["status"] == "prototype_candidate"
+    assert payload["status"] == "success"
+
+
 async def test_happy_path_returns_contract_response() -> None:
-    """合法泥石流请求 → 合法 AssessResponse；区域/灾种回显，出处为 mock 方法。"""
+    """合法泥石流请求 → 合法契约应答；区域/灾种回显，出处为 mock 方法。"""
     reply = await _agent().handle(_request(_payload()))
-    response = AssessResponse.model_validate(reply.payload)
-    assert response.region_code == REGION
-    assert response.hazard_type == HazardType.DEBRIS_FLOW
-    assert response.source == "hazard.factor_engine"
-    assert response.data_provenance.method == "factor_engine_mock"
-    assert response.data_provenance.is_mock is True
-    assert 0 < response.confidence <= 0.60
-    assert response.confidence_basis
-    assert response.human_review_suggested is True
-    assert response.double_blind == "not_applicable"
-    assert response.assessment["formula"]["status"] == "prototype_candidate"
+    _assert_factor_contract(reply.payload)
 
 
 async def test_all_supported_hazards_use_the_same_contract() -> None:
-    """五个受支持灾种只有两种结局：合法 AssessResponse，或 E_ASSESS_INSUFFICIENT 拒绝。
+    """五个受支持灾种只有两种结局：合法契约应答，或 E_ASSESS_INSUFFICIENT 拒绝。
 
     没有第三种形状，也没有"未知灾种"的旁路——这条钉住"五灾种全部走统一 DTO"。
     """
@@ -181,9 +192,9 @@ async def test_all_supported_hazards_use_the_same_contract() -> None:
             assert exc.error_code == AssessErrorCode.INSUFFICIENT, (hazard, exc.error_code, exc.message)
             outcomes[hazard] = "insufficient"
         else:
-            response = AssessResponse.model_validate(reply.payload)
-            assert response.hazard_type.value == hazard
-            assert 0 < response.confidence <= 0.60
+            _assert_factor_contract(reply.payload)
+            assert reply.payload["hazard_type"] == hazard
+            assert 0 < reply.payload["confidence"] <= 0.60
             outcomes[hazard] = "response"
     assert outcomes["debris_flow"] == "response"
     assert outcomes["lake_outburst"] == "insufficient"
@@ -380,8 +391,7 @@ async def test_pull_leg_used_when_request_has_no_evidence(monkeypatch: pytest.Mo
     payload = _payload()
     payload.pop("evidence")
     reply = await _agent().handle(_request(payload))
-    response = AssessResponse.model_validate(reply.payload)
-    assert response.region_code == REGION
+    _assert_factor_contract(reply.payload)
     assert calls, "必须真的走过拉取腿"
     request, timeout = calls[0]
     assert "region_code=540121" in request.full_url and "window_minutes=60" in request.full_url
@@ -422,17 +432,17 @@ async def test_pull_leg_wrong_region_is_failure(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_pool_workers_must_be_positive() -> None:
-    """容量 0 在构造期就拒绝，而不是等第一条请求才发现起不来池。"""
+    """容量 0 在配置期就拒绝，而不是等第一条请求才发现起不来池。"""
     with pytest.raises(ValueError, match="≥1"):
-        _agent(pool_workers=0)
+        configure_pool(0)
 
 
 def test_build_hazard_agents_carries_pool_workers() -> None:
-    """装配层传入的容量必须落到实例上（否则又是个拧不动的空旋钮）。"""
-    from aegis.agents.hazards.runtime import build_hazard_agents
+    """装配层传入的容量必须落到共享池上（否则又是个拧不动的空旋钮）。"""
+    from aegis.agents.factory import build_hazard_agents
 
-    agents = build_hazard_agents(_NullTransport(), pool_workers=3)  # type: ignore[arg-type]
-    assert agents[0].pool_workers == 3  # type: ignore[union-attr]
+    build_hazard_agents(_NullTransport(), pool_workers=3)  # type: ignore[arg-type]
+    assert hazard_pool()._max_workers == 3
 
 
 async def test_dedicated_pool_bounds_concurrent_graph_runs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -462,7 +472,7 @@ async def test_dedicated_pool_bounds_concurrent_graph_runs(monkeypatch: pytest.M
 
     assert len(replies) == 6
     assert peak == 2, f"专用池容量 2 时并发峰值应为 2，实际 {peak}"
-    assert names and all(name.startswith("aegis-ext-assess") for name in names), f"请求跑到了别的执行器上: {names}"
+    assert names and all(name.startswith("aegis-hazard") for name in names), f"请求跑到了别的执行器上: {names}"
 
 
 async def test_pool_propagates_request_context(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -487,11 +497,15 @@ async def test_pool_propagates_request_context(monkeypatch: pytest.MonkeyPatch) 
     assert seen == ["trc_pool_propagation"]
 
 
-async def test_stop_shuts_down_the_dedicated_pool() -> None:
-    """stop() 之后池不再接任务：停机后没有新研判能排进来。"""
+async def test_stop_does_not_shut_down_the_shared_pool() -> None:
+    """本体停机**不关**共享池：池是模块级共享的，某个本体先停就关池会连累还在跑的兄弟。
+
+    关池是装配层的事（`shutdown_hazard_pool`）。
+    """
     agent = _agent(pool_workers=1)
     await agent.handle(_request(_payload()))
     await agent.stop()
 
-    with pytest.raises(RuntimeError, match="shutdown"):
-        agent._pool.submit(int)  # type: ignore[attr-defined]
+    # 池还在，且还能接活
+    assert hazard_pool()._max_workers >= 1
+    hazard_pool().submit(int).result(timeout=5)

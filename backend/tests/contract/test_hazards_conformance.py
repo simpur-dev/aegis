@@ -1,10 +1,10 @@
-"""外部交付实现（`aegis.agents.hazards`）过《智能体接入规范》§7 的一致性门禁。
+"""灾种闭环模块（`aegis.agents.hazards`）过《智能体接入规范》§7 的一致性门禁。
 
 【本文件在测什么】
-  适配层已删除：外部实现与 builtin/mock 平级，直接实现 `assess.v1` 契约。
+  适配层已删除：灾种模块与平台内环/mock 平级，直接吃平台契约。
   本文件钉住"它在总线上的行为与平台自建内环同一套口径"：
 
-  - 注册面：只注册 `assess.hazard`；决策段不注册 → 网关记 `no_agent`（不是 error）；
+  - 注册面：六个本体全部注册、**能力互不重叠**（每项能力恰好一个主人）；
   - 回执面：合法 response / 合法 error，全部过 `agent_message.v1`；
   - 生命周期：幂等、超时、错误回执、心跳摘除；
   - 数据边界：只经总线与请求载荷取数，不直连存储层；
@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 
+from aegis.agents.factory import build_hazard_agents
 from aegis.agents.hazards.hazard_registry import (
     HAZARD_ALIAS,
     SUPPORTED_HAZARDS,
@@ -37,8 +38,7 @@ from aegis.agents.hazards.hazard_registry import (
     require_hazard,
 )
 from aegis.agents.hazards.risk_agent import agent as agent_module
-from aegis.agents.hazards.risk_agent.agent import RiskAssessAgent
-from aegis.agents.hazards.runtime import build_hazard_agents
+from aegis.agents.hazards.risk_agent.agent import FactorAssessAgent
 from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway
 from aegis.bus.inmemory import InMemoryBus
@@ -161,11 +161,11 @@ def _fake_runner(*, delay_s: float = 0.0, exc: BaseException | None = None) -> A
     return runner
 
 
-async def bring_up_ext(bus: InMemoryBus, gateway: AgentGateway) -> RiskAssessAgent:
+async def bring_up_ext(bus: InMemoryBus, gateway: AgentGateway) -> FactorAssessAgent:
+    """拉起灾种模块的六个本体，只把因子引擎这一个启起来做门禁的被测对象。"""
     agents = build_hazard_agents(bus)
-    assert len(agents) == 1, "当前只有研判一个是等实现"
-    agent = agents[0]
-    assert isinstance(agent, RiskAssessAgent)
+    assert len(agents) == 6, "灾种模块有六个本体：数据质量门/因子引擎/情景仿真/预警素材/链内审计/闭环"
+    agent = next(a for a in agents if isinstance(a, FactorAssessAgent))
     await gateway.start()
     await agent.start(heartbeat_interval=0.05)
     await bus.idle()
@@ -207,25 +207,26 @@ class TestGate1SchemaLegality:
         agent = await bring_up_ext(bus, gateway)
         reply = await gateway.dispatch(
             AgentType.ASSESS,
-            Action.ASSESS_HAZARD,
+            Action.ASSESS_FACTOR_RISK,
             _assess_payload(),
             trace_id=TRACE,
-            capability="risk_assess",
+            capability="factor_risk_assess",
             hazard_type="debris_flow",
         )
-        assert gateway.counters["rejected"] == 0, "外部实现的回执必须过 agent_message.v1"
+        assert gateway.counters["rejected"] == 0, "灾种模块的回执必须过 agent_message.v1"
         assert reply.kind is MessageKind.RESPONSE
         assert reply.trace_id == TRACE
         assert reply.causation_id is not None
-        response = AssessResponse.model_validate(reply.payload)
-        assert response.source == "hazard.factor_engine"
-        assert response.hazard_type is HazardType.DEBRIS_FLOW
-        assert response.region_code == REGION
-        assert 0.0 < response.confidence <= 0.60
-        assert response.confidence_basis
-        assert response.data_provenance.method == "factor_engine_mock"
-        assert response.data_provenance.is_mock is True
-        assert response.human_review_suggested is True
+        # 这条腿的应答不是 assess.v1（它有自己的动作），所以按字段断言而不是套 DTO
+        payload = reply.payload
+        assert payload["source"] == "hazard.factor_engine"
+        assert payload["hazard_type"] == HazardType.DEBRIS_FLOW.value
+        assert payload["region_code"] == REGION
+        assert 0.0 < payload["confidence"] <= 0.60
+        assert payload["confidence_basis"]
+        assert payload["data_provenance"]["method"] == "factor_engine_mock"
+        assert payload["data_provenance"]["is_mock"] is True
+        assert payload["human_review_suggested"] is True
         # D10 溯源字段缺省即未知——不臆造模型版本：外部实现没有可声明的模型信息就留空
         assert reply.model_info is None
         await agent.stop()
@@ -243,7 +244,7 @@ class TestGate2Idempotency:
         request = make_request(
             source="platform.gateway",
             target=agent.agent_id,
-            action=Action.ASSESS_HAZARD.value,
+            action=Action.ASSESS_FACTOR_RISK.value,
             payload=_assess_payload(),
             trace_id=TRACE,
             reply_to="reply.gwext0001.inbox",
@@ -276,10 +277,10 @@ class TestGate3TimeoutSemantics:
         with pytest.raises(AegisError):
             await gateway.dispatch(
                 AgentType.ASSESS,
-                Action.ASSESS_HAZARD,
+                Action.ASSESS_FACTOR_RISK,
                 _assess_payload(),
                 trace_id=TRACE,
-                capability="risk_assess",
+                capability="factor_risk_assess",
                 deadline_ms=200,
             )
         assert gateway.transactions[-1].outcome != "ok", "超期的事务不许记成成功"
@@ -297,7 +298,7 @@ class TestGate3TimeoutSemantics:
         request = make_request(
             source="platform.gateway",
             target=agent.agent_id,
-            action=Action.ASSESS_HAZARD.value,
+            action=Action.ASSESS_FACTOR_RISK.value,
             payload=_assess_payload(),
             trace_id=TRACE,
             reply_to="reply.gwext0002.inbox",
@@ -332,7 +333,13 @@ class TestGate4ErrorReply:
         agent = await bring_up_ext(bus, gateway)
         monkeypatch.setattr(agent_module, "run_risk_agent", _fake_runner(exc=RuntimeError("图炸了")))
         with pytest.raises(AegisError) as info:
-            await gateway.dispatch(AgentType.ASSESS, Action.ASSESS_HAZARD, _assess_payload(), trace_id=TRACE, capability="risk_assess")
+            await gateway.dispatch(
+                AgentType.ASSESS,
+                Action.ASSESS_FACTOR_RISK,
+                _assess_payload(),
+                trace_id=TRACE,
+                capability="factor_risk_assess",
+            )
         assert info.value.retryable is True, "内部异常可重试：平台据此走重试/降级轨"
         assert info.value.detail["code"] == AssessErrorCode.FAILED.value
         assert gateway.transactions[-1].outcome == "error"
@@ -348,7 +355,7 @@ class TestGate4ErrorReply:
         request = make_request(
             source="platform.gateway",
             target=agent.agent_id,
-            action=Action.ASSESS_HAZARD.value,
+            action=Action.ASSESS_FACTOR_RISK.value,
             payload=_assess_payload(),
             trace_id=TRACE,
             reply_to="reply.gwext0003.inbox",
@@ -373,10 +380,10 @@ class TestGate4ErrorReply:
         with pytest.raises(AegisError) as info:
             await gateway.dispatch(
                 AgentType.ASSESS,
-                Action.ASSESS_HAZARD,
+                Action.ASSESS_FACTOR_RISK,
                 _assess_payload(evidence=_evidence(observations=[])),
                 trace_id=TRACE,
-                capability="risk_assess",
+                capability="factor_risk_assess",
             )
         assert info.value.detail["code"] == AssessErrorCode.INSUFFICIENT.value
         assert info.value.retryable is False
@@ -389,7 +396,7 @@ class TestGate4ErrorReply:
         await bus.publish(
             subjects.agent_out(AgentType.ASSESS),
             AgentMessage(
-                source="assess.ext01",
+                source="assess.factor01",
                 target="platform.sink",
                 kind=MessageKind.EVENT,
                 action="assess.teleport",
@@ -413,10 +420,10 @@ class TestGate5Lifecycle:
         entry = registry.get(agent.agent_id)
         assert entry is not None, "外部实现注册后必须立刻在册"
         assert entry.healthy
-        assert entry.reg.capabilities == ["risk_assess"]
+        assert entry.reg.capabilities == ["factor_risk_assess"]
         assert entry.reg.agent_type == AgentType.ASSESS.value
         assert entry.reg.hazard_types == SUPPORTED_HAZARDS
-        assert registry.pick(AgentType.ASSESS.value, "risk_assess") is not None
+        assert registry.pick(AgentType.ASSESS.value, "factor_risk_assess") is not None
         await agent.stop()
         await gateway.close()
 
@@ -427,11 +434,11 @@ class TestGate5Lifecycle:
         assert entry is not None
         entry.last_hb_mono = 0.0
         assert await registry.sweep_and_notify() == [agent.agent_id]
-        assert registry.pick(AgentType.ASSESS.value, "risk_assess") is None, "失联的本体不得再被派单"
+        assert registry.pick(AgentType.ASSESS.value, "factor_risk_assess") is None, "失联的本体不得再被派单"
 
         await agent.start(heartbeat_interval=0.05)
         await bus.idle()
-        assert registry.pick(AgentType.ASSESS.value, "risk_assess") is not None
+        assert registry.pick(AgentType.ASSESS.value, "factor_risk_assess") is not None
         await agent.stop()
         await gateway.close()
 
@@ -481,10 +488,10 @@ class TestGate6DataBoundary:
         agent = await bring_up_ext(bus, gateway)
         reply = await gateway.dispatch(
             AgentType.ASSESS,
-            Action.ASSESS_HAZARD,
+            Action.ASSESS_FACTOR_RISK,
             _assess_payload(),
             trace_id=TRACE,
-            capability="risk_assess",
+            capability="factor_risk_assess",
         )
         refs = reply.payload["evidence_refs"]
         assert refs, "结论必须声明用到的证据"
@@ -503,10 +510,10 @@ class TestGate7ContextSnapshot:
         agent = await bring_up_ext(bus, gateway)
         reply = await gateway.dispatch(
             AgentType.ASSESS,
-            Action.ASSESS_HAZARD,
+            Action.ASSESS_FACTOR_RISK,
             _assess_payload(),
             trace_id=TRACE,
-            capability="risk_assess",
+            capability="factor_risk_assess",
         )
         payload = reply.payload
         for field in (
@@ -530,8 +537,12 @@ class TestGate7ContextSnapshot:
         await agent.stop()
         await gateway.close()
 
-    async def test_未接线的决策段记no_agent而不是error(self, bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry) -> None:
-        """决策段不是"接了但接不了"，而是**没接**：网关记 `no_agent`，平台走既有本地降级轨。"""
+    async def test_没有承接方的能力记no_agent而不是error(self, bus: InMemoryBus, gateway: AgentGateway, registry: AgentRegistry) -> None:
+        """派一项**没人声明**的能力：网关记 `no_agent`，平台走既有本地降级轨。
+
+        这条现在仍然成立：灾种模块的决策段本体承接的是 `hazard_workflow`，不是
+        `task_decompose`——后者归平台自建的决策内环。
+        """
         agent = await bring_up_ext(bus, gateway)
         with pytest.raises(NoCapableAgentError):
             await gateway.dispatch(
@@ -582,10 +593,10 @@ class Test边界口径:
         with pytest.raises(AegisError) as info:
             await gateway.dispatch(
                 AgentType.ASSESS,
-                Action.ASSESS_HAZARD,
+                Action.ASSESS_FACTOR_RISK,
                 _assess_payload(hazard="quake_triggered"),
                 trace_id=TRACE,
-                capability="risk_assess",
+                capability="factor_risk_assess",
             )
         assert info.value.detail["code"] == AssessErrorCode.HAZARD_UNSUP.value
         assert gateway.transactions[-1].outcome == "error"
@@ -598,10 +609,10 @@ class Test边界口径:
         agent = await bring_up_ext(bus, gateway)
         reply = await gateway.dispatch(
             AgentType.ASSESS,
-            Action.ASSESS_HAZARD,
+            Action.ASSESS_FACTOR_RISK,
             _assess_payload(),
             trace_id=TRACE,
-            capability="risk_assess",
+            capability="factor_risk_assess",
         )
         builtin_ids = {item.agent_id for item in build_real_agents(bus)}
         assessed_by = reply.payload["assessed_by"]
@@ -627,16 +638,33 @@ class Test接线真实性:
             with pytest.raises(ModuleNotFoundError):
                 importlib.import_module(name)
 
-    def test_运行时装配只注册研判一个本体(self, bus: InMemoryBus) -> None:
+    def test_运行时装配注册全部六个本体且能力互不重叠(self, bus: InMemoryBus) -> None:
+        """六个本体全部在册，且每项能力**恰好一个**主人。
+
+        两项能力撞在同一对 `(agent_type, capability)` 上，网关的 `pick()` 会在两个本体
+        之间按负载取舍——"谁应答"就变成不可复现的随机数。所以这项断言不是"看着整齐"，
+        是路由正确性的前提。
+        """
         agents = build_hazard_agents(bus)
-        assert len(agents) == 1
-        assert agents[0].agent_type is AgentType.ASSESS
-        assert agents[0].agent_id == "assess.factor01"
-        assert agents[0].capabilities == ["risk_assess"]
-        assert agents[0].hazard_types == SUPPORTED_HAZARDS
+        assert len(agents) == 6
+        seen: dict[tuple[str, str], str] = {}
+        for agent in agents:
+            assert agent.hazard_types == SUPPORTED_HAZARDS
+            for capability in agent.capabilities:
+                key = (agent.agent_type.value, capability)
+                assert key not in seen, f"能力 {capability} 有两个主人：{seen.get(key)} 与 {agent.agent_id}"
+                seen[key] = agent.agent_id
+        assert set(seen) == {
+            ("assess", "data_quality"),
+            ("assess", "factor_risk_assess"),
+            ("assess", "scenario_sim"),
+            ("execute", "warn_content"),
+            ("feedback", "chain_audit"),
+            ("plan", "hazard_workflow"),
+        }
 
     def test_服务入口吃统一契约(self) -> None:
-        pytest.importorskip("langgraph", reason="未安装可选依赖 agents_ext（`uv sync --extra agents_ext`）")
+        pytest.importorskip("langgraph", reason="未安装可选依赖 agents（`uv sync --extra agents`）")
         from aegis.agents.hazards.risk_agent.main import run_risk_agent
 
         params = inspect.signature(run_risk_agent).parameters
@@ -646,7 +674,7 @@ class Test接线真实性:
         assert annotations["evidence"] is AssessEvidence
         assert inspect.signature(run_risk_agent).return_annotation is AssessResponse
 
-    def test_服务只认assess_hazard动作(self) -> None:
+    def test_服务只认assess_factor_risk动作(self) -> None:
         source = Path(agent_module.__file__).read_text(encoding="utf-8")
-        assert "Action.ASSESS_HAZARD.value" in source
+        assert "Action.ASSESS_FACTOR_RISK.value" in source
         assert "Action.PLAN" not in source

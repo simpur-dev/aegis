@@ -108,7 +108,7 @@ BASELINE: dict[str, dict[str, Any]] = {
             ["assess", "agent", True, "等级 2"],
             ["plan", "agent", True, "生成 5 个任务单元"],
             ["execute", "agent", True, "<wrn>"],
-            ["feedback", "local", True, "触达回执已归档"],
+            ["feedback", "agent", True, "触达回执已归档｜效果分 1.000｜归因腿 mock｜建议 pending_human_review｜建议入账 skipped_empty"],
         ],
         "stage_models": [],
         "hits": [["R-DEBRIS-RAIN-1", "debris_flow", 1.0]],
@@ -134,7 +134,6 @@ BASELINE: dict[str, dict[str, Any]] = {
         # 记在基线里是因为退役前后都该一模一样——把它们"修没"才是事故。
         "degradations": [
             "执行智能体自报 3 条通道结果未采信（无 dispatcher 凭证）：触达证据只认平台交付腿回执",
-            "反馈结论不合契约，按平台回执归档",
         ],
         "errors": [],
         "reference_cases": ["case_df_gully_evacuate", "case_df_night_rain_patrol", "case_df_road_closure_dispatch"],

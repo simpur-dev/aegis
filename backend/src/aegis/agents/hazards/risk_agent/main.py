@@ -46,7 +46,7 @@ SOURCE_MARK = "hazard.factor_engine"
 
 #: 临时等级（MOCK 阈值）→ 平台 RiskLevel。`none` 是"算出来没风险"；`unknown` 不进表
 #: （那是"算不出来"，不能写成 5=无风险）。
-_LEVEL_FROM_PROVISIONAL = {"high": RiskLevel.RED, "medium": RiskLevel.ORANGE, "low": RiskLevel.YELLOW, "none": RiskLevel.NONE}
+LEVEL_FROM_PROVISIONAL = {"high": RiskLevel.RED, "medium": RiskLevel.ORANGE, "low": RiskLevel.YELLOW, "none": RiskLevel.NONE}
 
 _MAX_EVIDENCE_REFS = 32
 
@@ -140,7 +140,7 @@ def run_risk_agent(
         )
 
     provisional = str(result.get("risk_level") or "")
-    level = _LEVEL_FROM_PROVISIONAL.get(provisional)
+    level = LEVEL_FROM_PROVISIONAL.get(provisional)
     if level is None:
         # "算不出来"不能落成平台 5（无风险）：宁可拒绝，也不做假定级。
         raise AssessRejected(
@@ -169,4 +169,4 @@ def run_risk_agent(
     )
 
 
-__all__ = ["SOURCE_MARK", "run_risk_agent"]
+__all__ = ["LEVEL_FROM_PROVISIONAL", "SOURCE_MARK", "run_risk_agent"]

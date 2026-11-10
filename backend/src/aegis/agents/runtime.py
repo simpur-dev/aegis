@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from aegis.agents.factory import build_real_agents
+from aegis.agents.factory import build_all_agents
 from aegis.agents.mcp_context import McpAssessContext
 from aegis.agents.perceive import EwmaDriftDetector, StationAnomaly
 from aegis.agents.rest_context import RestAssessContext
@@ -109,10 +109,12 @@ def build_agent_runtime(
     id_suffix: str = "real01",
     mcp_url: str = "",
     context_face: str = "auto",
+    pool_workers: int = 8,
 ) -> list[Any]:
-    """构造五智能体运行时（不启动；启动交给 `factory.start_real_agents`）。
+    """构造平台上**全部**本体（不启动）：平台五段内环 + 灾种闭环六体。
 
     `mcp_url` 非空 = 本进程确实有工具面可走；`context_face` 决定用它还是用 REST（见 `resolve_context_face`）。
+    灾种六体需要可选 extra `agents`；没装时 `build_all_agents` 如实留痕并只返回平台五段。
     """
     ewma = EwmaDriftDetector(rules=rule_engine.rules)
     perceive_detector = _CompositeDetector(RuleEngineDetector(rule_engine), ewma)
@@ -120,7 +122,7 @@ def build_agent_runtime(
     context: Any = (
         McpAssessContext(url=mcp_url, token=service_token) if face == "mcp" else RestAssessContext(base_url=base_url, token=service_token)
     )
-    return build_real_agents(
+    return build_all_agents(
         transport,
         llm=llm,
         memory=memory,
@@ -129,4 +131,5 @@ def build_agent_runtime(
         semantic=parser,
         contracts=contracts,
         id_suffix=id_suffix,
+        pool_workers=pool_workers,
     )

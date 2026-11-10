@@ -8,11 +8,17 @@ dispatch_node：调度枢纽（hub）—— 弹出调度队列队首，执行对
   - 成功：交付物写入对应 result 键、队首出队、登记 completed；
     失败：Agent 留在队首（供 retry_decision 决定重试/跳过/停止），交付物不落地。
 
+【走哪条接法】
+  有总线上下文（`current_bus_context()`）时走**总线**：向承接这一步的兄弟本体发标准
+  请求、等标准回执；没有总线上下文（离线自测 / 单机演示）时走本地直调。两条接法
+  产出同形状的交付物，闭环其余部分不感知差异。
+
 【红线】对交付物只存不改 —— 风险分数、预警等级、Mock 标识原样透传。
 """
 
 import time
 
+from aegis.agents.hazards.bus_context import current_bus_context
 from aegis.agents.hazards.manager_agent import dispatcher
 from aegis.agents.hazards.manager_agent.state import (
     AGENT_RESULT_KEY,
@@ -45,7 +51,20 @@ def dispatch_node(state: dict) -> dict:
 
     print(f"[Manager/Dispatch] >>> {agent}（第 {attempt} 次调用）")
     try:
-        output = dispatcher.dispatch(agent, state)
+        bus = current_bus_context()
+        if bus is not None:
+            output = dispatcher.dispatch_over_bus(
+                agent,
+                state,
+                bus,
+                trace_id=str(state.get("trace_id") or "") or "trc_0000000000000000",
+            )
+            # 闭环内部按**原形状**消费交付物（核验表与下一条腿都是按原形状写的）：
+            # 契约应答里带着 native，就用它；没有就退回整份应答（本地接法的产物）。
+            if isinstance(output, dict) and isinstance(output.get("native"), dict):
+                output = output["native"]
+        else:
+            output = dispatcher.dispatch(agent, state)
     except Exception as e:
         elapsed = round(time.monotonic() - t0, 2)
         err_type = ERROR_AGENT_TIMEOUT if "timeout" in str(e).lower() else ERROR_AGENT_EXECUTION

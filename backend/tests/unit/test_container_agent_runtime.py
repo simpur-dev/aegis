@@ -27,6 +27,15 @@ def typed(agents: Any) -> set[str]:
     return {agent.agent_type.value for agent in agents}
 
 
+def by_id(agents: Any) -> dict[str, Any]:
+    """按 agent_id 取本体。
+
+    不能按 agent_type 取：平台上现在有十一个本体、五种类型（研判段就有主结论、
+    证据门、因子交叉验证、情景仿真四个），按类型取会拿到随机一个。
+    """
+    return {agent.agent_id: agent for agent in agents}
+
+
 async def test_real内环拿到的是容器那一份共享记忆门面(settings: Any) -> None:
     """§4.3 的闭环靠的就是这一行注入：装配点漏了 `memory=`，`services/memory/memory.py` 写得再全
     也只是死代码——assess 的读写腿与 feedback 的教训写入全部走 `if self.memory is not None`，
@@ -34,19 +43,24 @@ async def test_real内环拿到的是容器那一份共享记忆门面(settings:
     container = await boot(settings.model_copy(update={"agent_runtime": "real"}))
     try:
         assert container.memory is not None, "容器上连门面都没有"
-        by_type = {agent.agent_type.value: agent for agent in container.real_agents}
-        assert by_type["assess"].memory is container.memory, "研判读不到历史、也写不回共享命名空间"
-        assert by_type["feedback"].memory is container.memory, "效果验证的教训没地方落"
-        assert not hasattr(by_type["plan"], "memory"), "plan 不是记忆消费者（§3.3 只读历史）：别把它顺手接上凑数"
+        agents = by_id(container.real_agents)
+        assert agents["assess.real01"].memory is container.memory, "研判读不到历史、也写不回共享命名空间"
+        assert agents["feedback.real01"].memory is container.memory, "效果验证的教训没地方落"
+        assert not hasattr(agents["plan.real01"], "memory"), "plan 不是记忆消费者（§3.3 只读历史）：别把它顺手接上凑数"
     finally:
         await container.shutdown()
 
 
-async def test_real模式压下mock且四副真内环上总线(settings: Any) -> None:
+async def test_real模式压下mock且全部真内环上总线(settings: Any) -> None:
+    from aegis.agents.hazards.pool import hazard_pool
+
     container = await boot(settings.model_copy(update={"agent_runtime": "real"}), with_mock_agents=True)
     try:
         assert container.mock_agents == [], "real 与 mock 同挂 agent_in 会抢答同一批请求"
-        assert len(container.real_agents) == 5
+        # 容器把配置里的池容量真的交给了装配层
+        assert hazard_pool()._max_workers == container.settings.hazard_pool_workers
+        # 平台五段 + 灾种六体 = 十一个本体
+        assert len(container.real_agents) == 11
         assert typed(container.real_agents) == {"perceive", "assess", "plan", "execute", "feedback"}
         assert "real" in container.agent_runtime_state and "mock" in container.agent_runtime_state
     finally:
@@ -57,7 +71,7 @@ async def test_real模式不写压制话术当调用方本就没要mock(settings
     container = await boot(settings.model_copy(update={"agent_runtime": "real"}))
     try:
         assert container.agent_runtime_state == "real"
-        assert container.mock_agents == [] and len(container.real_agents) == 5
+        assert container.mock_agents == [] and len(container.real_agents) == 11
     finally:
         await container.shutdown()
 
@@ -84,7 +98,7 @@ async def test_off模式两副都不起(settings: Any) -> None:
 
 async def test_停止后不留悬挂的智能体(settings: Any) -> None:
     container = await boot(settings.model_copy(update={"agent_runtime": "real"}))
-    assert len(container.real_agents) == 5
+    assert len(container.real_agents) == 11
     await container.shutdown()
     assert container.real_agents == [], "实例清单没清就等于心跳还在总线上飘"
     await container.shutdown()  # 重复 stop 必须幂等：shutdown 路径上会被叫两次

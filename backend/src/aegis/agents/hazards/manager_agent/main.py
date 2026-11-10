@@ -15,13 +15,18 @@ Manager Agent 入口 / 独立测试（多智能体全局调度中心）
 """
 
 import sys
+from typing import TYPE_CHECKING
 
+from aegis.agents.hazards.bus_context import reset_bus_context, set_bus_context
 from aegis.agents.hazards.manager_agent.graph import create_manager_graph
 from aegis.agents.hazards.manager_agent.state import (
     AGENT_ORDER,
     AGENT_RESULT_KEY,
     ManagerState,
 )
+
+if TYPE_CHECKING:
+    from aegis.agents.hazards.bus_context import BusContext
 
 
 def run_manager_agent(
@@ -41,6 +46,8 @@ def run_manager_agent(
     test_hooks: dict | None = None,
     checkpointer=None,
     thread_id: str | None = None,
+    bus: "BusContext | None" = None,
+    trace_id: str = "",
 ) -> dict:
     """运行 Manager 全局调度，返回最终任务报告（final_report 同级的结构化结果）。
 
@@ -54,11 +61,15 @@ def run_manager_agent(
         llm_polish           最终报告是否用 LLM 润色叙述文字（默认 False；
                              结构化事实与调度决策不受 LLM 影响，失败自动兜底）
         checkpointer         Phase 5：SQLite Checkpointer；thread_id 缺省取 event_id
+        bus                 总线上下文。给了就向兄弟本体**经总线**派单；不给就走本地
+                           直调（离线自测 / 单机演示）。
+        trace_id            闭环这一轮的链路追踪号，经总线派单时随请求带下去。
     """
     agent = create_manager_graph(checkpointer=checkpointer)
 
     initial_state: ManagerState = {
         "event_id": event_id,
+        "trace_id": trace_id,
         "user_request": user_request,
         "task_type": task_type,
         "hazard_type": hazard_type,
@@ -98,7 +109,11 @@ def run_manager_agent(
     if checkpointer is not None:
         config["configurable"] = {"thread_id": tid or "mgr-thread"}
 
-    final_state = agent.invoke(initial_state, config or None)
+    token = set_bus_context(bus)
+    try:
+        final_state = agent.invoke(initial_state, config or None)
+    finally:
+        reset_bus_context(token)
     return _build_payload(final_state)
 
 

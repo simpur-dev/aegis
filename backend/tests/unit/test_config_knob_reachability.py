@@ -164,9 +164,12 @@ class TestWiredKnobsChangeBehavior:
         assert off.weather is None
         assert [source.name for source in on.ingest.sources] == ["weather_api"]
 
-    def test_ext_pool_workers_reaches_the_ext_agent(self) -> None:
-        """ext 研判线程池容量：配置值必须真的落到智能体实例的池上，而不是又一个空旋钮。"""
-        ctn = create_container(Settings(env="test", bus_backend="memory", agent_impl="ext", ext_assess_pool_workers=3))
-        agents = ctn._build_hazard_agents()
-        assert len(agents) == 1
-        assert agents[0].pool_workers == 3
+    def test_hazard_pool_workers_reaches_the_hazard_pool(self) -> None:
+        """灾种模块线程池容量：配置值必须真的落到共享池上，而不是又一个空旋钮。"""
+        from aegis.agents.factory import build_hazard_agents
+        from aegis.agents.hazards.pool import hazard_pool
+
+        ctn = create_container(Settings(env="test", bus_backend="memory", hazard_pool_workers=3))
+        # 走容器启动时的同一条路径：容器的配置值 → 装配层 → 共享池
+        build_hazard_agents(ctn.transport, pool_workers=ctn.settings.hazard_pool_workers)
+        assert hazard_pool()._max_workers == 3

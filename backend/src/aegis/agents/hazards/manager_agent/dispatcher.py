@@ -1,17 +1,28 @@
 """
 Manager → 五个专业 Agent 的调度适配层
 
-【设计】
-  - 直接复用各 Agent main.py 已声明的"对外契约"函数（run_*_agent），
-    不复制任何 Agent 内部业务逻辑，也不重写它们；五个 Agent 零修改。
-  - AGENT_RUNNERS 是名字→适配函数的注册表：单元测试整体替换为 Mock 子图
-    （不依赖真实 LLM/API），集成测试换回默认真实实现即可。
-  - 每次调用产出结构化记录（agent / attempt / status / error），由
-    dispatch_node 写入 ManagerState.agent_call_log。
+【两条接法】
+- **总线**（默认）：按 capability 向兄弟本体发一条标准请求、等一条标准回执。
+  走总线才谈得上"接了总线"——进程内直调会绕过消息信封、deadline、`msg_id` 幂等与
+  类型化错误，等于在自己包里私开一套接线，平台层的门禁与观测全都照不到它。
+- **本地**（离线自测 / 单机演示）：直接调用各 Agent 的 `main` 函数。
+  只有在没有总线上下文时才走这条。
 
-【红线】适配函数只组装入参、透传交付物；对交付物内容只读不写。
+两条接法产出**同形状**的交付物，闭环的其余部分不关心走的是哪条。
+
+【红线】适配层只组装入参、透传交付物；对交付物内容只读不写。
 """
 
+from typing import Any
+
+from aegis.agents.hazards.bus_context import BusContext
+from aegis.agents.hazards.contracts import (
+    chain_audit_request,
+    data_quality_request,
+    factor_risk_request,
+    scenario_sim_request,
+    warn_content_request,
+)
 from aegis.agents.hazards.manager_agent.state import (
     AGENT_DATA,
     AGENT_FEEDBACK,
@@ -19,6 +30,7 @@ from aegis.agents.hazards.manager_agent.state import (
     AGENT_SIMULATION,
     AGENT_WARNING,
 )
+from aegis.domain.enums import Action
 
 
 def _task_desc(state: dict, purpose: str) -> str:
@@ -117,7 +129,7 @@ def restore_runners():
 
 
 def dispatch(agent_name: str, state: dict) -> dict:
-    """执行一个专业 Agent，返回其交付物 dict。
+    """执行一个专业 Agent，返回其交付物 dict（本地接法）。
 
     异常不在这里吞掉 —— 由 dispatch_node 统一转成 AGENT_EXECUTION_ERROR
     / AGENT_TIMEOUT 错误记录，保证 error_history 可追溯。
@@ -129,3 +141,104 @@ def dispatch(agent_name: str, state: dict) -> dict:
     if not isinstance(output, dict):
         raise TypeError(f"{agent_name} 返回的不是 dict，而是 {type(output).__name__}")
     return output
+
+
+# ============================================================
+# 总线接法：闭环的五步 → 总线上的能力与动作
+# ============================================================
+
+#: 闭环的哪一步对应总线上哪项能力与哪个动作。与 `agents/capabilities.py` 的能力
+#: 矩阵一一对应——同一个 capability 在平台链路与闭环里指的是**同一个本体**。
+BUS_LEGS: dict[str, tuple[str, Action]] = {
+    AGENT_DATA: ("data_quality", Action.ASSESS_DATA_QUALITY),
+    AGENT_RISK: ("factor_risk_assess", Action.ASSESS_FACTOR_RISK),
+    AGENT_SIMULATION: ("scenario_sim", Action.ASSESS_SCENARIO_SIM),
+    AGENT_WARNING: ("warn_content", Action.EXECUTE_WARN_CONTENT),
+    AGENT_FEEDBACK: ("chain_audit", Action.FEEDBACK_CHAIN_AUDIT),
+}
+
+_PURPOSES = {
+    AGENT_DATA: "获取并处理观测数据",
+    AGENT_RISK: "评估灾害风险",
+    AGENT_SIMULATION: "设计情景并模拟推演",
+    AGENT_WARNING: "生成预警草稿",
+    AGENT_FEEDBACK: "复核本次分析链路",
+}
+
+
+def _deliverable(state: dict, key: str) -> dict[str, Any]:
+    """取上一腿的交付物。
+
+    优先取原生产出（`native`）：闭环的下游腿本来就是按原形状写的，硬改成契约形状
+    反而要在下游再翻译一遍。`native` 不在时退回整份应答（本地接法的产物没有它）。
+    """
+    payload = state.get(key) or {}
+    if not isinstance(payload, dict):
+        return {}
+    native = payload.get("native")
+    return native if isinstance(native, dict) else payload
+
+
+def bus_request_for(agent_name: str, state: dict) -> tuple[str, Action, dict[str, Any]]:
+    """闭环这一步该向总线发什么：能力、动作、请求载荷。"""
+    if agent_name not in BUS_LEGS:
+        raise KeyError(f"闭环没有这条腿的总线映射: {agent_name}")
+    capability, action = BUS_LEGS[agent_name]
+    hazard_type = str(state.get("hazard_type") or "")
+    task = _task_desc(state, _PURPOSES[agent_name])
+
+    if agent_name == AGENT_DATA:
+        payload = data_quality_request(
+            hazard_type=hazard_type,
+            region_code=str(state.get("region") or ""),
+            fetch=True,
+            task=task,
+        )
+    elif agent_name == AGENT_RISK:
+        payload = factor_risk_request(
+            hazard_type=hazard_type,
+            region_code=str(state.get("region") or ""),
+            data_result=_deliverable(state, "data_result"),
+        )
+    elif agent_name == AGENT_SIMULATION:
+        payload = scenario_sim_request(
+            hazard_type=hazard_type,
+            data_result=_deliverable(state, "data_result"),
+            risk_result=_deliverable(state, "risk_result"),
+            task=task,
+            preset_scenario_configs=list(state.get("preset_scenario_configs") or []) or None,
+        )
+    elif agent_name == AGENT_WARNING:
+        payload = warn_content_request(
+            hazard_type=hazard_type,
+            risk_result=_deliverable(state, "risk_result"),
+            simulation_result=_deliverable(state, "simulation_result"),
+            data_result=_deliverable(state, "data_result"),
+        )
+    else:
+        payload = chain_audit_request(
+            hazard_type=hazard_type,
+            data_result=_deliverable(state, "data_result"),
+            risk_result=_deliverable(state, "risk_result"),
+            simulation_result=_deliverable(state, "simulation_result"),
+            warning_result=_deliverable(state, "warning_result"),
+            event_id=str(state.get("event_id") or ""),
+        )
+    return capability, action, payload
+
+
+def dispatch_over_bus(agent_name: str, state: dict, bus: BusContext, *, trace_id: str) -> dict[str, Any]:
+    """通过总线向承接这一步的兄弟本体派单，返回它的交付物。"""
+    capability, action, payload = bus_request_for(agent_name, state)
+    return bus.request_sync(capability, action, payload, trace_id=trace_id)
+
+
+__all__ = [
+    "AGENT_RUNNERS",
+    "BUS_LEGS",
+    "bus_request_for",
+    "dispatch",
+    "dispatch_over_bus",
+    "restore_runners",
+    "set_runner",
+]
