@@ -167,6 +167,6 @@ class TestWiredKnobsChangeBehavior:
     def test_ext_pool_workers_reaches_the_ext_agent(self) -> None:
         """ext 研判线程池容量：配置值必须真的落到智能体实例的池上，而不是又一个空旋钮。"""
         ctn = create_container(Settings(env="test", bus_backend="memory", agent_impl="ext", ext_assess_pool_workers=3))
-        agents = ctn._build_ext_agents()
+        agents = ctn._build_hazard_agents()
         assert len(agents) == 1
         assert agents[0].pool_workers == 3

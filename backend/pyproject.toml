@@ -103,9 +103,9 @@ ignore = ["B008", "RUF001", "RUF002", "RUF003"]
 # **缺陷类规则一条不放行**：F（未使用/重定义）、E/W（行宽与空白）、B（bugbear）、
 # C4（冗余推导）、RUF 其余规则、SIM 其余规则照常生效。
 # 另有一条独立门禁守"外部实现不许直连数据库"（见 tests/unit/test_agents_ext_boundaries.py）。
-"src/aegis/agents_ext/**" = ["RUF012", "SIM105"]
+"src/aegis/agents/hazards/**" = ["RUF012", "SIM105"]
 # 迁入的外部测试用同一组口径（它们进本仓 CI，门禁就该一样）。
-"tests/unit/agents_ext/**" = ["RUF012", "SIM105"]
+"tests/unit/agents/hazards/**" = ["RUF012", "SIM105"]
 
 [tool.mypy]
 # 按 3.12 语法解析：clickhouse-connect 的传递依赖 numpy 的 .pyi 使用了 `type X = ...`（3.12+ 语法），
@@ -144,5 +144,5 @@ no_implicit_optional = true
 #   abstract   —— 仿真模型的抽象基类在测试替身里被直接实例化。
 # 记录在案：这不是"降低质量"，而是把外部交付代码的类型债**记在明处**而不是混进全仓口径。
 [[tool.mypy.overrides]]
-module = ["aegis.agents_ext.*"]
+module = ["aegis.agents.hazards.*"]
 disable_error_code = ["type-var", "arg-type", "attr-defined", "index", "operator", "union-attr", "abstract"]

@@ -278,16 +278,16 @@ class PlatformContainer:
         if failed or expired:
             log.warning("动作台账启动收尾", extra={"failed": failed, "expired": expired})
 
-    def _build_ext_agents(self) -> list[Any]:
+    def _build_hazard_agents(self) -> list[Any]:
         """构造外部交付模块（`agents_ext`）的智能体内环。
 
         返回空列表表示"外部实现此刻不可用"（可选 extra 没装 / 导入失败），
         由调用方如实退回自建内环——不让一个可选依赖决定整条链路能不能跑。
         """
         try:
-            from aegis.agents_ext.runtime import build_ext_agents
+            from aegis.agents.hazards.runtime import build_hazard_agents
 
-            return build_ext_agents(self.transport, pool_workers=self.settings.ext_assess_pool_workers)
+            return build_hazard_agents(self.transport, pool_workers=self.settings.ext_assess_pool_workers)
         except Exception as exc:
             log.warning(
                 "外部智能体实现不可用，退回自建内环",
@@ -438,7 +438,7 @@ class PlatformContainer:
             self.agent_context_face = resolve_context_face(self.settings.agent_context_face, mcp_url=mcp_url)
             # 走哪一套实现（builtin/ext）：默认 builtin 不变；ext 直接实现同一个 assess.v1 契约。
             if self.settings.agent_impl == "ext":
-                self.real_agents = self._build_ext_agents()
+                self.real_agents = self._build_hazard_agents()
                 if self.real_agents:
                     log.info(
                         "智能体实现走外部交付模块（agents_ext，直接实现 assess.v1 契约）",

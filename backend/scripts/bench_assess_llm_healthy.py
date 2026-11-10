@@ -204,16 +204,16 @@ def main() -> int:
     base_url, server = _start_server()
     print(f"本地假端点：{base_url}")
 
-    from aegis.agents_ext import llm as ext_llm
-    from aegis.agents_ext.risk_agent import main as risk_main
+    from aegis.agents.hazards import llm as ext_llm
+    from aegis.agents.hazards.risk_agent import main as risk_main
 
     # ★ 必须拿**模块**，不是 `nodes/__init__.py` 导出的同名函数：
     #   `from ...nodes import risk_assess_node` 拿到的是函数对象，
     #   给它挂属性不会改到节点函数读的那个模块全局。
     #   节点里的 `get_risk_llm` 是 import 时绑定到**节点模块**的名字，
     #   所以要 patch 节点模块的全局。
-    assess_module = importlib.import_module("aegis.agents_ext.risk_agent.nodes.risk_assess_node")
-    validate_module = importlib.import_module("aegis.agents_ext.risk_agent.nodes.risk_validate_node")
+    assess_module = importlib.import_module("aegis.agents.hazards.risk_agent.nodes.risk_assess_node")
+    validate_module = importlib.import_module("aegis.agents.hazards.risk_agent.nodes.risk_validate_node")
 
     request = _request()
     evidence = request.evidence
