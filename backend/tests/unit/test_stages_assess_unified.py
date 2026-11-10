@@ -117,8 +117,9 @@ def _stages(
     settings: Settings,
     *,
     builder: Any | None = None,
+    **extra: Any,
 ) -> HazardStages:
-    kwargs: dict[str, Any] = {"assess_evidence": builder}
+    kwargs: dict[str, Any] = {"assess_evidence": builder, **extra}
     return HazardStages(
         gateway=gateway,  # type: ignore[arg-type]
         registry=_Registry(),  # type: ignore[arg-type]
@@ -320,3 +321,42 @@ class TestRejectionAndFallback:
         assert gateway.calls[0]["evidence"] is None
         assert board.result.verdict is not None
         assert board.result.verdict.data_provenance.method == "factor_engine_mock", "采纳的是智能体结论，出处随响应"
+
+
+# ============================================================
+# 本进程预警副本的窗口（2026-11-10 性能批）
+# ============================================================
+
+
+def test_预警副本有界_超出窗口丢最旧的() -> None:
+    """★ 这份 dict 只增不减就是内存泄漏：每条 WarningRecord 约 4 KB，
+    十万条就是 150 MB。而预警的**权威读视图**是 `store.warnings`（自带上限）。
+
+    这里直接验淘汰口径，不去跑整条发布链路（那条链路要真发布器）。
+    """
+    stages = _stages(_Gateway(), Settings(env="test"), warnings_window=10)  # type: ignore[call-arg]
+    for i in range(30):
+        stages._warnings[f"wrn_{i}"] = object()  # type: ignore[assignment]
+        stages._evict_warnings()
+    assert len(stages._warnings) == 10, "超出窗口必须淘汰"
+    assert "wrn_0" not in stages._warnings, "丢的应该是最旧的"
+    assert "wrn_29" in stages._warnings, "最新的必须还在"
+
+
+def test_同warning_id覆盖不增长也不误删() -> None:
+    """同 ID 覆盖（发布/撤回/改级写同一 warning_id）不得触发淘汰。"""
+    stages = _stages(_Gateway(), Settings(env="test"), warnings_window=10)  # type: ignore[call-arg]
+    for _ in range(50):
+        stages._warnings["wrn_same"] = object()  # type: ignore[assignment]
+        stages._evict_warnings()
+    assert len(stages._warnings) == 1
+    assert "wrn_same" in stages._warnings, "覆盖不该把仅存的那条误删"
+
+
+def test_窗口内不淘汰() -> None:
+    stages = _stages(_Gateway(), Settings(env="test"), warnings_window=10)  # type: ignore[call-arg]
+    for i in range(10):
+        stages._warnings[f"wrn_{i}"] = object()  # type: ignore[assignment]
+        stages._evict_warnings()
+    assert len(stages._warnings) == 10
+    assert "wrn_0" in stages._warnings

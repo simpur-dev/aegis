@@ -27,6 +27,11 @@ OK_SEARCH = (200, {"query": "debris_flow", "items": [DOC_ITEM]})
 EMPTY = (200, {"items": []})
 
 
+def _ok_handler(request: httpx.Request) -> httpx.Response:
+    """通用成功响应（复用客户端那几条用例只要"发得出请求"就行）。"""
+    return httpx.Response(200, json={"items": []})
+
+
 class Probe:
     """记下真发出去的请求，并按路由表给回响应。"""
 
@@ -215,3 +220,109 @@ async def test_没有关键词时检索腿不发() -> None:
     ctx = await provider.corroborate(region_code=REGION, hazard_hint=None, hits=[])
     assert [request.url.path for request in probe.requests] == [CASES_PATH]
     assert ctx["cases"] == [CASE_ITEM] and "retrieval" not in ctx and ctx["degraded"] == []
+
+
+# ============================================================
+# HTTP 客户端复用（2026-11-10 性能批）
+# ============================================================
+
+
+async def test_客户端只建一次并被复用() -> None:
+    """★ 复用是这次改造的核心：`httpx.AsyncClient` 每次构造都要重建 SSL context
+    并**从磁盘重载 CA 证书包**（实测 11 ms/次纯 CPU，且阻塞事件循环）。
+
+    判据用**工厂被调用几次**，不用耗时——耗时断言会因机器抖动误红。
+    """
+    built: list[Any] = []
+
+    def counting_factory(**kwargs: Any) -> httpx.AsyncClient:
+        kwargs.pop("transport", None)  # 生产侧传进来的真 transport 在这里被测试替身顶掉
+        client = httpx.AsyncClient(transport=httpx.MockTransport(_ok_handler), **kwargs)
+        built.append(client)
+        return client
+
+    provider = RestAssessContext(base_url="http://aegis.internal/", client_factory=counting_factory)
+    for _ in range(5):
+        await provider.corroborate(region_code=REGION, hazard_hint="debris_flow", hits=[])
+    assert len(built) == 1, f"客户端应只建一次，实际建了 {len(built)} 次"
+    await provider.aclose()
+
+
+async def test_令牌带在请求上而不是建在客户端上() -> None:
+    """客户端是复用的，令牌可能换：换令牌不该逼着重建 client。"""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"items": []})
+
+    built: list[Any] = []
+
+    def factory(**kwargs: Any) -> httpx.AsyncClient:
+        kwargs.pop("transport", None)
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs)
+        built.append(client)
+        return client
+
+    provider = RestAssessContext(base_url="http://aegis.internal/", token="s3cret", client_factory=factory)
+    await provider.corroborate(region_code=REGION, hazard_hint="debris_flow", hits=[])
+    assert seen, "应当真发出请求"
+    assert all(request.headers.get("authorization") == "Bearer s3cret" for request in seen)
+    assert len(built) == 1
+    await provider.aclose()
+
+
+async def test_aclose关掉自建的客户端() -> None:
+    """谁建谁关：复用就有连接池要关，否则进程退出时连接白留。"""
+    closed: list[Any] = []
+
+    class _Closable(httpx.AsyncClient):
+        async def aclose(self) -> None:
+            closed.append(self)
+            await super().aclose()
+
+    def factory(**kwargs: Any) -> httpx.AsyncClient:
+        kwargs.pop("transport", None)
+        return _Closable(transport=httpx.MockTransport(_ok_handler), **kwargs)
+
+    provider = RestAssessContext(base_url="http://aegis.internal/", client_factory=factory)
+    await provider.corroborate(region_code=REGION, hazard_hint="debris_flow", hits=[])
+    await provider.aclose()
+    assert len(closed) == 1, "自建的客户端必须被关掉"
+
+
+async def test_未发起过请求时aclose不报错() -> None:
+    provider = RestAssessContext(base_url="http://aegis.internal/")
+    await provider.aclose()  # 从没建过 client：不该抛
+
+
+async def test_assess停机时关掉取数门面的客户端() -> None:
+    """复用就有连接池要关：智能体停机时必须把门面的 client 关掉。"""
+    closed: list[Any] = []
+
+    class _Closable(httpx.AsyncClient):
+        async def aclose(self) -> None:
+            closed.append(self)
+            await super().aclose()
+
+    def factory(**kwargs: Any) -> httpx.AsyncClient:
+        kwargs.pop("transport", None)
+        return _Closable(transport=httpx.MockTransport(_ok_handler), **kwargs)
+
+    provider = RestAssessContext(base_url="http://aegis.internal/", client_factory=factory)
+    await provider.corroborate(region_code=REGION, hazard_hint="debris_flow", hits=[])
+    agent = assess(provider, FakeGateway())
+    await agent.stop()
+    assert len(closed) == 1, "智能体停机必须把取数门面的客户端关掉"
+
+
+async def test_服务不可达时如实记降级且不抛异常() -> None:
+    """★ 复用 client 后最该验的一条：**降级口径不能变**。
+
+    服务不可达时两条腿都要如实留白并写明原因，绝不能变成异常上抛。
+    """
+    provider = RestAssessContext(base_url="http://127.0.0.1:1", timeout_s=0.5)
+    ctx = await provider.corroborate(region_code=REGION, hazard_hint="debris_flow", hits=[])
+    assert ctx["degraded"], "服务不可达必须如实记降级"
+    assert len(ctx["degraded"]) == 2, "两条腿都要留白"
+    await provider.aclose()
