@@ -46,4 +46,24 @@ EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
     CMD ["python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=2).status==200 else 1)"]
 
+# 测试/CI 形态：在生产依赖之上补 dev（pytest 等），用于容器内跑全量测试。
+# 生产镜像保持上面的 --no-dev 干净形态；构建测试镜像用 `docker build --target test`。
+# extras 必须与生产层完全一致再叠加 dev：uv sync 会按本次指定的 extras 收敛，漏写即被卸载。
+#
+# 【stage 顺序是硬约束】不带 `--target` 的 `docker build` 取的是**最后一个** stage，compose 的
+# `build:` 也没写 target——所以生产 stage 必须排在最后。把 test 放在最后会让默认构建产物
+# 变成带 dev 的测试镜像，那不是"多一个可选形态"，而是把默认产物换掉了。
+FROM base AS test
+USER root
+# WORKDIR 已继承为 /app/backend（pyproject 所在目录），直接 uv sync。
+RUN uv sync --frozen \
+    --extra dev --extra postgres --extra iot --extra analytics --extra graph \
+    --extra retrieval --extra seekdb --extra mcp --extra agents_ext
+USER aegis
+# 测试镜像不跑服务：继承生产层的 HEALTHCHECK 会因为 /healthz 无人应答而一直判不健康。
+HEALTHCHECK NONE
+CMD ["python", "-m", "pytest", "tests", "-q"]
+
+# 生产 stage 放最后：默认 `docker build` 产物必须是它（--no-dev，不含 edge/perf/objectstore）。
+FROM base AS production
 CMD ["python", "-m", "aegis.main"]

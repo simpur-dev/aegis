@@ -58,7 +58,7 @@ def data_normalize_tool(cleaned_data: dict, normalize_precision: dict) -> dict:
             if normalized.get(field) is not None:
                 try:
                     value = float(normalized[field])
-                    normalized[field] = round(value, int(digits)) if digits > 0 else value
+                    normalized[field] = round(value, int(digits))
                     applied.append(f"{field}_{int(digits)}dp")
                 except (TypeError, ValueError):
                     # 非数值字段跳过，交由校验工具报告异常

@@ -23,6 +23,54 @@ _DOTENV_KEY = re.compile(r"^(AEGIS_[A-Z0-9_]+)=", re.MULTILINE)
 _ANY_DOTENV_KEY = re.compile(r"^([A-Z][A-Z0-9_]*)=", re.MULTILINE)
 # ${VAR} 与 ${VAR:?说明} 没有默认值，缺了 compose 直接失败；${VAR:-默认} 有默认值，可以留空
 _COMPOSE_INTERPOLATION = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?::([^}]*))?\}")
+# Dockerfile 的 stage 边界：`FROM <image> [AS <name>]`
+_STAGE_FROM = re.compile(r"^FROM\s+(?P<image>\S+)(?:\s+AS\s+(?P<name>\S+))?", re.MULTILINE | re.IGNORECASE)
+_EXTRA = re.compile(r"--extra ([a-z0-9_]+)")
+
+
+def dockerfile_stages() -> dict[str, tuple[str | None, str]]:
+    """把 Dockerfile 按 FROM 切成若干 stage：{stage 名: (父 stage 名, 该 stage 正文)}。
+
+    分 stage 是因为镜像有多个形态：生产 stage 与测试 stage 的 extras 闭包**故意不一样**
+    （测试形态多一个 dev）。用全文正则去扫会把两个形态混成一个集合，于是"生产镜像不该带
+    dev"这条约束要么误红、要么被放宽到失去意义。
+
+    父 stage 要记下来：`FROM base AS production` 只写自己的 CMD，依赖是 base 装的，
+    不沿继承链算就会把生产镜像的 extras 判成空集。
+    """
+    text = (REPO_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")
+    matches = list(_STAGE_FROM.finditer(text))
+    stages: dict[str, tuple[str | None, str]] = {}
+    for index, match in enumerate(matches):
+        name = match.group("name") or match.group("image").rsplit("/", 1)[-1]
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        parent = match.group("image") if match.group("name") else None
+        stages[name] = (parent, text[match.end() : end])
+    return stages
+
+
+def stage_body(stage: str) -> str:
+    """stage 的**有效**内容：自身正文 + 各级父 stage 的正文（沿 FROM 继承链回溯）。"""
+    stages = dockerfile_stages()
+    parts: list[str] = []
+    current: str | None = stage
+    while current is not None and current in stages:
+        parent, body = stages[current]
+        parts.append(body)
+        current = parent
+    return "\n".join(parts)
+
+
+def production_stage() -> tuple[str, str]:
+    """生产 stage = 文件里**最后一个** stage。
+
+    不带 `--target` 的 `docker build` 取的是最后一个 stage，compose 的 `build:` 也没写
+    target——所以"最后一个 stage 是不是生产镜像"是一条硬约束，不是风格偏好。
+    """
+    stages = dockerfile_stages()
+    name = list(stages)[-1]
+    return name, stage_body(name)
+
 
 
 def settings_field_for(name: str) -> str | None:
@@ -89,17 +137,30 @@ class TestDeploymentEnvKeys:
 
     def test_image_installs_every_platform_side_extra(self) -> None:
         """镜像缺一个 extra，对应腿在生产里就只是 /api/v1/integrations 上的一行降级。"""
-        dockerfile = (REPO_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")
-        installed = set(re.findall(r"--extra ([a-z0-9_]+)", dockerfile))
+        _, production = production_stage()
+        installed = set(_EXTRA.findall(production))
         pyproject = (REPO_ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8")
         declared = set(re.findall(r"^([a-z0-9_]+) = \[", pyproject, re.MULTILINE))
         # seekdb 也在内：`.env.example` 把 AEGIS_RETRIEVAL_INDEX_BACKEND 的 seekdb 档交给部署面去选，
         # 没有 pymysql 驱动时那是一个"打开即抛"的开关，而不是一个可选项。
         server_side = {"postgres", "iot", "analytics", "graph", "retrieval", "seekdb", "mcp", "agents_ext"}
         assert server_side <= installed, f"Dockerfile 未安装: {sorted(server_side - installed)}"
-        # 边缘与压测用的 extra 不该进平台镜像：它们会把 1GB 级依赖带到服务端
+        # 边缘与压测用的 extra 不该进**生产**镜像：它们会把 1GB 级依赖带到服务端。
+        # 判据只扫生产 stage——测试 stage 装 dev 是它存在的理由。
         assert not ({"edge", "perf", "dev", "objectstore"} & installed)
         assert installed <= declared, f"Dockerfile 引用了 pyproject 里不存在的 extra: {sorted(installed - declared)}"
+
+    def test_默认构建产物是生产镜像(self) -> None:
+        """不带 --target 的 docker build 取最后一个 stage——它必须是生产形态。
+
+        多 stage 的 Dockerfile 最容易出的事就是把 test stage 写在最后：默认构建产物于是变成
+        带 dev 的测试镜像，"生产镜像"变成了只有显式 `--target` 才拿得到的那一个。
+        compose 的 `build:` 没写 target，默认产物就是现场跑的那个镜像。
+        """
+        name, production = production_stage()
+        cmd = " ".join(re.findall(r"^CMD\s+(.+)$", production, re.MULTILINE))
+        assert "aegis.main" in cmd, f"最后一个 stage（{name}）必须跑主程序，默认构建产物才是生产镜像"
+        assert "pytest" not in cmd, f"最后一个 stage（{name}）是测试镜像，默认构建产物就换成了测试形态"
 
     def test_ci_测的闭包不小于镜像发的闭包(self) -> None:
         """CI 少装一个镜像里有的 extra，就会出现"本机永远绿、CI 必红"或反过来。
@@ -107,9 +168,12 @@ class TestDeploymentEnvKeys:
         2026-10-13 的真事故形状：`deploy/Dockerfile` 一直带 `--extra iot`，而 CI 那句 `uv sync` 没有，
         MQTT 装配面用例因此在 CI 上必红、在装着 iot 的开发机上永远绿；它此前还被 `--maxfail=1`
         挡在另一条红后面，修好那条才露出来。这条守卫把两边的关系直接钉住。
+
+        这里比的是**全部 stage 的并集**：测试形态多装的 dev 也得被 CI 测到，否则容器里跑得动
+        、CI 里装不上的那种形态同样会漏。
         """
-        image = set(re.findall(r"--extra ([a-z0-9_]+)", (REPO_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")))
-        ci = set(re.findall(r"--extra ([a-z0-9_]+)", CI.read_text(encoding="utf-8")))
+        image = set(_EXTRA.findall((REPO_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")))
+        ci = set(_EXTRA.findall(CI.read_text(encoding="utf-8")))
         missing = sorted(image - ci)
         assert not missing, f"镜像发出去而 CI 不测的依赖闭包: {missing}——这些腿的用例在 CI 上要么硬红要么静默跳过"
 

@@ -39,10 +39,13 @@ def data_clean_tool(raw_data: dict, required_fields: list) -> dict:
     unique_events = []
     for event in events:
         eid = event.get("event_id")
-        if eid and eid not in seen_ids:
+        if not eid:
+            # 无 event_id 无法判定重复：保留，不参与去重，缺失交由校验阶段标记
+            unique_events.append(event)
+        elif eid not in seen_ids:
             seen_ids.add(eid)
             unique_events.append(event)
-        elif eid in seen_ids:
+        else:
             cleaning_report["duplicates_removed"] += 1
 
     # 2. 检查并标记缺失值（不直接删除，留给后续判断）

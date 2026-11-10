@@ -125,6 +125,36 @@ def test_clean_tool_parameterized():
     print("  √ test_clean_tool_parameterized")
 
 
+def test_clean_tool_keeps_records_without_event_id():
+    """清洗工具：无 event_id（None/空串）的记录必须保留，不得静默丢弃，且账目平衡。"""
+    raw = {
+        "events": [
+            {"event_id": "E1", "time": "2024-01-01T00:00:00Z", "latitude": 29.0, "longitude": 95.0},
+            {"event_id": None, "time": "2024-01-01T01:00:00Z", "latitude": 29.1, "longitude": 95.1},
+            {"event_id": "", "time": "2024-01-01T02:00:00Z", "latitude": 29.2, "longitude": 95.2},
+            {"event_id": None, "time": "2024-01-01T03:00:00Z", "latitude": 29.3, "longitude": 95.3},
+        ],
+        "data_source": "mock",
+    }
+    r = data_clean_tool(raw, required_fields=["event_id", "time", "latitude", "longitude"])
+    report = r["cleaning_report"]
+
+    # 无 event_id 无法判定重复：4 条全部保留、不计重复，账目平衡
+    assert report["total_input"] == 4
+    assert report["duplicates_removed"] == 0
+    assert report["total_output"] == 4
+    assert report["total_input"] == report["total_output"] + report["duplicates_removed"]
+    assert len(r["events"]) == 4
+
+    # event_id=None 的记录应标记必需字段缺失，供下游校验发现；正常记录不被误标
+    none_records = [e for e in r["events"] if e.get("event_id") is None]
+    assert len(none_records) == 2
+    assert all(e.get("_has_missing") for e in none_records)
+    good = next(e for e in r["events"] if e.get("event_id") == "E1")
+    assert good.get("_has_missing") is False
+    print("  √ test_clean_tool_keeps_records_without_event_id")
+
+
 def test_normalize_tool_parameterized():
     """标准化工具：时间/坐标通用 + 观测字段按注册表精度处理（以滑坡为例）。"""
     req = get_hazard_data_requirements("landslide")
@@ -137,6 +167,20 @@ def test_normalize_tool_parameterized():
     assert ev1["soil_moisture_ratio"] == 0.78  # 2 位小数
     assert "time_iso8601" in r["normalization_applied"]
     print("  √ test_normalize_tool_parameterized")
+
+
+def test_normalize_tool_zero_digits_rounds():
+    """标准化工具：精度声明为 0 位小数时必须取整，不得忽略该精度。"""
+    cleaned = {
+        "events": [
+            {"event_id": "E1", "rockfall_history_count": 3.7},
+            {"event_id": "E2", "rockfall_history_count": 3.2},
+        ],
+        "data_source": "mock",
+    }
+    r = data_normalize_tool(cleaned, normalize_precision={"rockfall_history_count": 0})
+    assert [e["rockfall_history_count"] for e in r["events"]] == [4.0, 3.0]
+    print("  √ test_normalize_tool_zero_digits_rounds")
 
 
 def test_validate_tool_ranges():
