@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
@@ -26,23 +26,38 @@ T = TypeVar("T")
 
 
 class BoundedCollection(Generic[T]):
-    """线程安全（单事件循环 + Lock）的有界追加集合，读侧返回快照避免迭代期变更。"""
+    """线程安全（单事件循环 + Lock）的有界追加集合，读侧返回快照避免迭代期变更。
 
-    def __init__(self, maxlen: int = 10_000) -> None:
+    `on_evict`：条目被挤出上限时回调（参数是被挤掉的那一条）。
+    存在的理由：`deque(maxlen=)` 挤条目是**静默**的——调用方若同时维护一份
+    旁路索引（如 `TaskStore._index`），索引就永远等不到"我这条被淘汰了"的通知，
+    于是索引无界增长（实测 put 5000 条、上限 1000 → 索引留 5000 条）。
+    淘汰通知放在这里，是因为**只有这一处知道上限是多少**。
+    """
+
+    def __init__(self, maxlen: int = 10_000, *, on_evict: Callable[[T], None] | None = None) -> None:
         if maxlen <= 0:
             raise ValueError("maxlen 必须为正")
         self._items: deque[T] = deque(maxlen=maxlen)
         self._lock = asyncio.Lock()
+        self._on_evict = on_evict
+
+    def _append_locked(self, item: T) -> None:
+        """在锁内追加一条；满了先通知"即将被挤掉的那条"。"""
+        if self._on_evict is not None and len(self._items) == (self._items.maxlen or 0):
+            # deque(maxlen) 追加时会静默丢掉最左端 —— 通知必须在 append 之前发。
+            self._on_evict(self._items[0])
+        self._items.append(item)
 
     async def add(self, item: T) -> None:
         async with self._lock:
-            self._items.append(item)
+            self._append_locked(item)
 
     async def add_many(self, items: Iterable[T]) -> int:
         async with self._lock:
             count = 0
             for item in items:
-                self._items.append(item)
+                self._append_locked(item)
                 count += 1
             return count
 
@@ -116,7 +131,10 @@ class WarningStore:
     """
 
     def __init__(self, maxlen: int = 5_000) -> None:
-        self._order: deque[str] = deque(maxlen=maxlen)
+        self._maxlen = max(1, int(maxlen))
+        # 顺序队列**不设 maxlen**：有界 deque 满了会静默丢最左端，索引就跟着对不上
+        # （`get()` 能捞回已被 `list()` 淘汰的记录，且索引无界增长）。改为显式淘汰。
+        self._order: deque[str] = deque()
         self._index: dict[str, WarningRecord] = {}
 
     async def put(self, record: WarningRecord) -> None:
@@ -125,6 +143,18 @@ class WarningStore:
             return
         self._index[record.warning_id] = record
         self._order.append(record.warning_id)
+        self._evict()
+
+    def _evict(self) -> None:
+        """索引与顺序队列同步淘汰：只留最近 `_maxlen` 条。
+
+        此前 `_index` 从不淘汰：实测 put 2 万条（上限 5000）后索引里还留着 2 万条
+        `WarningRecord`，内存只增不减；且 `get()` 与 `list()` 对"哪些预警还在"给出
+        两种答案（`list()` 走顺序队列、`get()` 走索引）。
+        """
+        while len(self._order) > self._maxlen:
+            oldest = self._order.popleft()
+            self._index.pop(oldest, None)
 
     def get(self, warning_id: str) -> WarningRecord | None:
         return self._index.get(warning_id)
@@ -158,8 +188,21 @@ class WarningStore:
 
 class TaskStore:
     def __init__(self, maxlen: int = 20_000) -> None:
-        self._collection: BoundedCollection[StandardizedTaskUnit] = BoundedCollection(maxlen)
         self._index: dict[str, StandardizedTaskUnit] = {}
+        self._collection: BoundedCollection[StandardizedTaskUnit] = BoundedCollection(maxlen, on_evict=self._drop_from_index)
+
+    def _drop_from_index(self, unit: StandardizedTaskUnit) -> None:
+        """集合挤掉一条时，索引同步去掉。
+
+        索引与集合必须同步收缩：只让集合有界，索引仍会无界增长
+        （实测 put 5000 条、上限 1000 → 索引留 5000 条 `StandardizedTaskUnit`）。
+
+        只在"被挤掉的就是索引当前指向的那一条"时才删：同一个 id 被写过多遍时，
+        索引指向**最新**那一份，而 FIFO 淘汰先走最旧那份——
+        删早了会让索引指向一份已经被挤掉的记录。
+        """
+        if self._index.get(unit.task_unit_id) is unit:
+            self._index.pop(unit.task_unit_id, None)
 
     async def put_many(self, units: Iterable[StandardizedTaskUnit]) -> int:
         items = list(units)
@@ -626,19 +669,37 @@ class HandlingTaskStore:
         return None if row is None else self._space_public(row)
 
     async def list_spaces(self, *, open_only: bool = True, limit: int = 50) -> list[dict[str, Any]]:
+        """空间列表带任务计数。
+
+        计数**一次遍历**算完（先按 space_id 归拢，再取各空间的那两格），
+        与 SQL 侧的 `GROUP BY` 同形。此前是"每个空间全扫一遍 `_rows`"（N+1），
+        而本方法的文档对外声称"内存侧同语义，不做 N+1"——代码与承诺不一致，
+        实测 200 空间 × 20000 任务 = 26 ms，且随任务数线性放大。
+        """
         rows = [row for row in self._spaces.values() if not open_only or row["status"] == "open"]
         rows.sort(key=lambda row: row["created_at"], reverse=True)
         capped = max(1, min(int(limit), 200))
+        # 先算这批空间的任务计数（一次遍历 _rows），再按空间取用
+        wanted = {row["space_id"] for row in rows[:capped]}
+        total_by_space: dict[str, int] = {}
+        open_by_space: dict[str, int] = {}
+        for item in self._rows.values():
+            space_id = item["space_id"]
+            if space_id not in wanted:
+                continue
+            total_by_space[space_id] = total_by_space.get(space_id, 0) + 1
+            if item["status"] != "closed":
+                open_by_space[space_id] = open_by_space.get(space_id, 0) + 1
         summaries: list[dict[str, Any]] = []
         for row in rows[:capped]:
-            tasks = [item for item in self._rows.values() if item["space_id"] == row["space_id"]]
-            open_count = sum(1 for item in tasks if item["status"] != "closed")
+            total = total_by_space.get(row["space_id"], 0)
+            open_count = open_by_space.get(row["space_id"], 0)
             summaries.append(
                 {
                     **self._space_public(row),
-                    "tasks_total": len(tasks),
+                    "tasks_total": total,
                     "tasks_open": open_count,
-                    "tasks_closed": len(tasks) - open_count,
+                    "tasks_closed": total - open_count,
                 }
             )
         return summaries

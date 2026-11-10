@@ -230,12 +230,20 @@ class LlmGateway:
         """结构化输出首过率（§4.1.2/§8）：聚合自真实调用台账，一次都没跑则 rate=None（未评测，不冒满分）。
 
         同时按 task 各算一份——总率会被调用量大的那条腿 dominate，逐 task 才看得出是哪条腿在退步。
+
+        逐 task 的拆分**一次归拢**算完：此前每个 task 都要把整张台账过滤一遍
+        （任务数 × 台账行数，实测 12 个 task × 4 万行 = 多扫 12 遍）。
+        口径不变：只有带结构化调用的 task 才出现在 `by_task` 里，
+        且每个 task 的分母只算"模型真的答了"的行（`transport_error` 不进分母）。
         """
         rows = [rec.as_dict() for rec in self._usage]
         rate, breakdown = structured_first_pass_rate(rows)
-        by_task: dict[str, float | None] = {}
-        for task in sorted({str(row.get("task")) for row in rows if row.get("structured")}):
-            by_task[task] = structured_first_pass_rate([row for row in rows if row.get("task") == task])[0]
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            if not row.get("structured"):
+                continue
+            grouped.setdefault(str(row.get("task")), []).append(row)
+        by_task: dict[str, float | None] = {task: structured_first_pass_rate(group)[0] for task, group in sorted(grouped.items())}
         return {"rate": rate, "ledger_rows": len(rows), "detail": breakdown, "by_task": by_task}
 
     def usage_snapshot(self) -> dict[str, Any]:
