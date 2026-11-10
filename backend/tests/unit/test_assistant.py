@@ -754,9 +754,7 @@ async def test_第二票之后执行前失败要标记failed不能卡在executin
         idempotency_key=None,
         review_required=2,
     )
-    await store.review_action(
-        "act_0000000000000002", {"operator_id": "lead-01", "role": "lead", "at": "2026-11-09T00:00:00Z"}
-    )
+    await store.review_action("act_0000000000000002", {"operator_id": "lead-01", "role": "lead", "at": "2026-11-09T00:00:00Z"})
     rec = Recorder()
     service = build_service(rec, registry=demo_registry(rec), store=store, assistant_dual_review_enabled=True)
 
@@ -799,9 +797,7 @@ async def test_周期维护把过期提案与卡死执行中收尾() -> None:
     )
     await store.confirm_action("act_0000000000000004")
     # 卡死判据是"超过 10 分钟没更新"：不能真等，把这一行的时钟拨回去
-    store.control_actions._rows["act_0000000000000004"]["updated_at"] = (
-        store.control_actions._now() - timedelta(seconds=660)
-    )
+    store.control_actions._rows["act_0000000000000004"]["updated_at"] = store.control_actions._now() - timedelta(seconds=660)
 
     rec = Recorder()
     service = build_service(rec, registry=demo_registry(rec), store=store)
@@ -921,16 +917,13 @@ async def test_超出六十秒撤销窗口如实拒绝() -> None:
     store = PlatformStore()
     service = build_service(rec, registry=demo_registry(rec), store=store)
     created = await service.create_action("demo.reversible", {"note": "x"}, operator=DUTY)
-    store.control_actions._rows[created["action_id"]]["updated_at"] = (
-        store.control_actions._now() - timedelta(seconds=61)
-    )
+    store.control_actions._rows[created["action_id"]]["updated_at"] = store.control_actions._now() - timedelta(seconds=61)
 
     with pytest.raises(ActionError) as caught:
         await service.revoke_action(action_id=created["action_id"], operator=DUTY)
     assert caught.value.code == "E_ACTION_CONFLICT"
     current = await store.get_action(created["action_id"])
     assert current is not None and current["status"] == "proposed", current
-
 
 
 # ---------- 认知镜像与不编数 ----------

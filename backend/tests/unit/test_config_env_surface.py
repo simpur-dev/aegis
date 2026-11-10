@@ -72,7 +72,6 @@ def production_stage() -> tuple[str, str]:
     return name, stage_body(name)
 
 
-
 def settings_field_for(name: str) -> str | None:
     """AEGIS_PG_DSN -> pg_dsn：只认 env_prefix 直译，别名与校验器不做映射。"""
     field = name.removeprefix("AEGIS_").lower()

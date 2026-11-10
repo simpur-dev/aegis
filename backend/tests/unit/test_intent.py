@@ -5,14 +5,40 @@ from __future__ import annotations
 from aegis.services.assistant.intent import IntentClassifier, resolve_coreference
 
 _READ_ACTIONS = [
-    "warning.list", "warning.explain", "chain.list", "chain.explain", "task.list", "task.get",
-    "station.list", "agent.list", "metric.report", "plan.ask", "action.status",
+    "warning.list",
+    "warning.explain",
+    "chain.list",
+    "chain.explain",
+    "task.list",
+    "task.get",
+    "station.list",
+    "agent.list",
+    "metric.report",
+    "plan.ask",
+    "action.status",
 ]
 _WRITE_ACTIONS = [
-    "drill.start", "report.submit", "warning.publish", "warning.revoke", "warning.change_level",
-    "warning.silence", "warning.resend", "task.claim", "task.ack", "task.assign", "task.transfer",
-    "task.close", "notify.lead", "notify.group", "workflow.start", "workflow.decide", "workflow.abort",
-    "rule.confirm_suggestion", "rule.reject_suggestion", "rule.update", "device.control",
+    "drill.start",
+    "report.submit",
+    "warning.publish",
+    "warning.revoke",
+    "warning.change_level",
+    "warning.silence",
+    "warning.resend",
+    "task.claim",
+    "task.ack",
+    "task.assign",
+    "task.transfer",
+    "task.close",
+    "notify.lead",
+    "notify.group",
+    "workflow.start",
+    "workflow.decide",
+    "workflow.abort",
+    "rule.confirm_suggestion",
+    "rule.reject_suggestion",
+    "rule.update",
+    "device.control",
 ]
 _ALL = sorted(_READ_ACTIONS + _WRITE_ACTIONS)
 

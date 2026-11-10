@@ -19,6 +19,7 @@ P4 外部通知（设计 §14.2）：**站内先行、外发失败不装送达**
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -110,10 +111,9 @@ class Notifier:
         # 同一席位在一条群发里出现两次只留一条：去重在写入前做，不靠前端去重。
         unique = list(dict.fromkeys(item.strip() for item in recipients if item.strip()))
         # 各收件人相互独立，并发投递而不是逐个串行等待；gather 按 unique 顺序返回。
-        return await asyncio.gather(*(
-            self.notify(recipient=item, message=message, kind="group", sender=sender, space_id=space_id)
-            for item in unique
-        ))
+        return await asyncio.gather(
+            *(self.notify(recipient=item, message=message, kind="group", sender=sender, space_id=space_id) for item in unique)
+        )
 
     async def list_for(self, recipient: str, *, unread_only: bool = False, limit: int = 50) -> list[dict[str, Any]]:
         return await self._require().list_notifications(recipient=recipient, unread_only=unread_only, limit=limit)
@@ -143,8 +143,6 @@ class Notifier:
                 "delivery_error": record.get("delivery_error"),
             },
         )
-        try:
+        # 总线只是加速器：站内真源已落，广播失败不抛——否则值班员看到失败重发，会造出重复通知。
+        with contextlib.suppress(Exception):
             await self._publish(self._subject, event)
-        except Exception:
-            # 总线只是加速器：站内真源已落，广播失败不抛——否则值班员看到失败重发，会造出重复通知。
-            ...

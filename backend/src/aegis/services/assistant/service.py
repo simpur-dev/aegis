@@ -284,11 +284,7 @@ class AssistantService:
             # 只有"没抢到迁移"（或明确过期）才需要读回当前态分辨 expired/rejected。
             # 参数不合法、角色不够、目标不存在都是执行前就被拒：动作仍是 proposed，
             # 报成 expired 会让值班员以为"窗口过了"，其实换个人/修好参数还能再来。
-            status = (
-                await self._conflict_status(action_id)
-                if exc.code in {"E_ACTION_CONFLICT", "E_ACTION_EXPIRED"}
-                else "rejected"
-            )
+            status = await self._conflict_status(action_id) if exc.code in {"E_ACTION_CONFLICT", "E_ACTION_EXPIRED"} else "rejected"
             return {"status": status, "action_id": action_id, "action": action.spec.name, "reason": exc.message, "result": None}
         data = {} if outcome.result is None else dict(outcome.result.data)
         return {"status": "executed", "action_id": action_id, "action": action.spec.name, "actor": actor, "result": data}
