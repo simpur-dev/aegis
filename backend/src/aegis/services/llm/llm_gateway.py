@@ -25,14 +25,13 @@ import json
 import logging
 import re
 import time
-from collections import deque
 from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
 from aegis.agents.core.breaker import LlmBreaker, is_transport_failure
-from aegis.agents.core.ledger import LlmCallRecord
+from aegis.agents.core.ledger import LlmCallRecord, LlmUsageLedger
 from aegis.agents.core.prompts import PromptRegistry
 from aegis.config import LlmModelRoute, Settings, get_settings
 from aegis.domain.messages import now_iso
@@ -99,7 +98,9 @@ class LlmGateway:
             threshold=max(1, cfg.llm_breaker_fail_threshold),
             cooldown_seconds=float(getattr(cfg, "llm_breaker_cooldown_seconds", 60.0)),
         )
-        self._usage: deque[LlmCallRecord] = deque(maxlen=max(16, cfg.llm_usage_ledger_limit))
+        # 台账实现与灾种 provider 共用一份（agents/core/ledger.py）——落账的形状与
+        # 首过率口径必须两侧一致，否则质量门禁在两侧算的不是同一个数。
+        self._ledger = LlmUsageLedger(limit=cfg.llm_usage_ledger_limit, tracer=tracer)
 
     # ---------- 对外口径（与升级前逐字一致） ----------
 
@@ -159,19 +160,17 @@ class LlmGateway:
     # ---------- 可观测与用量 ----------
 
     def _record(self, rec: LlmCallRecord) -> None:
-        self._usage.append(rec)
-        if self._tracer is not None:
-            self._tracer.record("llm_call_ms", rec.latency_ms, trace_id=rec.trace_id, agent_id=rec.agent_id)
+        self._ledger.record(rec)
 
     def usage_records(self) -> list[LlmCallRecord]:
-        return list(self._usage)
+        return self._ledger.records()
 
     def current_month(self) -> str:
         return now_iso()[:7]  # "YYYY-MM"
 
     def monthly_token_usage_by_agent(self, month: str) -> dict[str, int]:
         out: dict[str, int] = {}
-        for rec in self._usage:
+        for rec in self._ledger.records():
             if rec.agent_id and rec.at[:7] == month:
                 out[rec.agent_id] = out.get(rec.agent_id, 0) + rec.total_tokens
         return out
@@ -207,7 +206,7 @@ class LlmGateway:
         口径不变：只有带结构化调用的 task 才出现在 `by_task` 里，
         且每个 task 的分母只算"模型真的答了"的行（`transport_error` 不进分母）。
         """
-        rows = [rec.as_dict() for rec in self._usage]
+        rows = [rec.as_dict() for rec in self._ledger.records()]
         rate, breakdown = structured_first_pass_rate(rows)
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
@@ -223,7 +222,7 @@ class LlmGateway:
         聚合自真实调用台账，不二次采样——报表与验收同源（架构铁律 7）。
         """
         buckets: dict[tuple[str | None, str], dict[str, Any]] = {}
-        for rec in self._usage:
+        for rec in self._ledger.records():
             key = (rec.agent_id, rec.model)
             b = buckets.get(key)
             if b is None:
@@ -254,7 +253,7 @@ class LlmGateway:
         month = self.current_month()
         return {
             "by_agent_model": rows,
-            "total_calls": len(self._usage),
+            "total_calls": len(self._ledger.records()),
             "month": month,
             "budget_alerts": self.budget_alerts(month),
             "structured_first_pass": self.first_pass_stats(),
@@ -413,9 +412,10 @@ class LlmGateway:
         return content
 
     def _mark_last_malformed(self, reason: str) -> None:
-        if not self._usage:
+        rows = self._ledger.records()
+        if not rows:
             return
-        last = self._usage[-1]
+        last = rows[-1]
         last.validation = "malformed"
         last.error = reason[:180]
 

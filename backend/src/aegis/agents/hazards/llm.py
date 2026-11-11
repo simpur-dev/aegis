@@ -68,16 +68,19 @@
 import hashlib
 import os
 import threading
+import time
 
-import openai
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.runnables import RunnableLambda
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, PrivateAttr
 
+from aegis.agents.core.breaker import LlmBreaker, LlmUnavailableError, is_transport_failure
+from aegis.agents.core.ledger import LlmCallRecord, record_call
+from aegis.agents.core.meta import CallMeta, current_call_meta
 from aegis.agents.hazards import config
-from aegis.agents.hazards.llm_breaker import LlmBreaker, LlmUnavailableError
+from aegis.domain.messages import now_iso
 
 # Key 未配置时的占位值：调用 API 时必然 401。
 # ★ 必须是纯 ASCII（HTTP 头无法编码中文），但内容仍是"去哪里填 Key"的指引
@@ -117,14 +120,57 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
         breaker = self._breaker
         if not breaker.allow():
             raise LlmUnavailableError("LLM 熔断中（连续失败达阈值，冷却窗口内不再发起调用）；本次直接走确定性兜底。")
+        started = time.perf_counter()
+        meta = current_call_meta()
         try:
             result = super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
         except Exception as exc:
-            if _is_transport_failure(exc):
+            if is_transport_failure(exc):
                 breaker.note_failure()
+            self._record_call(
+                meta,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                validation="transport_error",
+                error=f"{type(exc).__name__}: {str(exc)[:180]}",
+            )
             raise
         breaker.note_success()
+        self._record_call(meta, latency_ms=(time.perf_counter() - started) * 1000, validation="ok")
         return result
+
+    def _record_call(
+        self,
+        meta: CallMeta,
+        *,
+        latency_ms: float,
+        validation: str,
+        error: str | None = None,
+    ) -> None:
+        """落一条调用台账（与平台网关同一份形状）。
+
+        灾种侧此前**零记账、零埋点**：用量、首过率、时延按 agent×model 归因这些口径
+        全都统计不到灾种的调用。现在两边的台账行是同一种形状，
+        `scripts/quality_gate.py` 的首过率口径对两侧一致。
+        """
+        record = LlmCallRecord(
+            task=meta.task or "hazard",
+            model=self.model_name,
+            prompt_version=meta.prompt_version,
+            temperature=float(self.temperature or 0.0),
+            max_tokens=int(self.max_tokens or 0),
+            latency_ms=latency_ms,
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            validation=validation,
+            trace_id=meta.trace_id,
+            agent_id=meta.agent_id,
+            error=error,
+            at=now_iso(),
+            structured=meta.structured,
+            attempt=0,
+        )
+        record_call(record)
 
     def with_structured_output(self, schema, **kwargs):
         """返回与 langchain 兼容的结构化输出 Runnable。
@@ -170,25 +216,6 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
             raise RuntimeError("GLM 结构化输出失败：模型未调用工具，且 schema 不是 Pydantic 模型，无法回退")
 
         return RunnableLambda(_invoke)
-
-
-def _is_transport_failure(exc: BaseException) -> bool:
-    """这次失败该不该计入熔断？
-
-    只认"服务不可用"这一类：连接错误、超时、5xx、429（限流）。
-    这些是"等一会儿可能会好"的失败，值得熔断后冷却再试。
-
-    4xx（除 429 外）不算：那是请求本身有问题（Key 错、参数错、模型名错），
-    重试多少次都一样，把它们计入熔断只会让一个本该立刻暴露的配置错误
-    被一段冷却期糊过去。语义错误（模型返回非法 JSON）同理——那是提示词问题。
-    """
-    if isinstance(exc, openai.APIConnectionError):
-        # 覆盖 APIConnectionError 与 APITimeoutError（后者继承前者）
-        return True
-    if isinstance(exc, openai.APIStatusError):
-        status = getattr(exc, "status_code", None)
-        return status == 429 or (status is not None and status >= 500)
-    return False
 
 
 # ---------- 客户端进程级复用 ----------

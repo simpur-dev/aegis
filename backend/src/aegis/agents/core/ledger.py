@@ -10,8 +10,11 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
+
+from aegis.observability.tracer import Tracer
 
 
 @dataclass(slots=True)
@@ -59,3 +62,38 @@ class LlmCallRecord:
 
 
 __all__ = ["LlmCallRecord"]
+
+
+class LlmUsageLedger:
+    """调用台账：环形上限 + 可选 tracer 埋点。
+
+    平台网关按实例持一本（随网关走），灾种模块用模块级共享的一本（provider 是进程级
+    复用的）。**实现只有这一份**——台账行的形状、首过率的原料口径都必须一致，
+    否则 `scripts/quality_gate.py` 的首过率在两侧就不是同一个数。
+    """
+
+    def __init__(self, *, limit: int = 10_000, tracer: Tracer | None = None) -> None:
+        self._rows: deque[LlmCallRecord] = deque(maxlen=max(16, int(limit)))
+        self._tracer = tracer
+
+    def record(self, rec: LlmCallRecord) -> None:
+        self._rows.append(rec)
+        if self._tracer is not None:
+            self._tracer.record("llm_call_ms", rec.latency_ms, trace_id=rec.trace_id, agent_id=rec.agent_id)
+
+    def records(self) -> list[LlmCallRecord]:
+        return list(self._rows)
+
+
+#: 灾种 provider 用的模块级台账（provider 是进程级复用的，台账也该是）。
+_SHARED = LlmUsageLedger()
+
+
+def shared_ledger() -> LlmUsageLedger:
+    """进程级共享台账（灾种 provider 落账用）。"""
+    return _SHARED
+
+
+def record_call(rec: LlmCallRecord) -> None:
+    """往进程级共享台账落一行（灾种 provider 用）。"""
+    _SHARED.record(rec)

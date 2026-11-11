@@ -23,7 +23,7 @@ import httpx2
 import openai
 import pytest
 
-from aegis.agents.hazards.llm_breaker import LlmBreaker, LlmUnavailableError
+from aegis.agents.core.breaker import LlmBreaker, LlmUnavailableError
 
 # ============================================================
 # 熔断状态机：纯逻辑，不涉及网络
@@ -181,9 +181,9 @@ def _status_error(code: int) -> openai.APIStatusError:
     ],
 )
 def test_只对服务不可用记账(exc: Exception, should_count: bool) -> None:
-    from aegis.agents.hazards.llm import _is_transport_failure
+    from aegis.agents.core.breaker import is_transport_failure
 
-    assert _is_transport_failure(exc) is should_count
+    assert is_transport_failure(exc) is should_count
 
 
 # ============================================================
