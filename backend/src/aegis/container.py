@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from aegis.agents.agentkit import AgentKit
+from aegis.agents.core.ledger import shared_ledger
 from aegis.agents.hazards.pool import shutdown_hazard_pool
 from aegis.agents.mock import MockAgent, start_mock_agents
 from aegis.agents.runtime import build_agent_runtime, resolve_context_face
@@ -722,9 +723,15 @@ class PlatformContainer:
             "gateway_counters": dict(self.gateway.counters),
             # 网关 v2 用量：LLM 成本/时延按 agent×model 归因的出口（§4.1.4/§4.8.3）。
             # 未配 LLM 时如实给 configured=False，而不是空表读成"零成本"。
+            # 灾种 provider 的台账是模块级另一本（同形状），在这里并入同一个出口——
+            # 不并的话灾种调用的用量/成本/首过率在报表里整体缺席。
             "llm": {
                 "configured": self.llm_gateway is not None,
-                **(self.llm_gateway.usage_snapshot() if self.llm_gateway is not None else {"by_agent_model": [], "total_calls": 0}),
+                **(
+                    self.llm_gateway.usage_snapshot(extra_records=shared_ledger().records())
+                    if self.llm_gateway is not None
+                    else {"by_agent_model": [], "total_calls": 0}
+                ),
             },
             "reports": dict(self.report_stats),
             # 触达口径必须自带身份：mock 通道的 1.2s 与真实网关的送达时间是两回事，

@@ -25,7 +25,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -168,20 +168,28 @@ class LlmGateway:
     def current_month(self) -> str:
         return now_iso()[:7]  # "YYYY-MM"
 
-    def monthly_token_usage_by_agent(self, month: str) -> dict[str, int]:
+    def _all_records(self, extra_records: Sequence[LlmCallRecord]) -> list[LlmCallRecord]:
+        """本实例台账 + 外部台账行（灾种模块级那本由 container 传入）。
+
+        台账**实现**只有一份，但**实例**有两本（网关随实例走、灾种 provider 进程级共享）。
+        治理出口必须把两本合起来算，否则灾种的用量/成本/首过率在报表里整体缺席。
+        """
+        return [*self._ledger.records(), *extra_records]
+
+    def monthly_token_usage_by_agent(self, month: str, *, extra_records: Sequence[LlmCallRecord] = ()) -> dict[str, int]:
         out: dict[str, int] = {}
-        for rec in self._ledger.records():
+        for rec in self._all_records(extra_records):
             if rec.agent_id and rec.at[:7] == month:
                 out[rec.agent_id] = out.get(rec.agent_id, 0) + rec.total_tokens
         return out
 
-    def budget_alerts(self, month: str) -> list[dict[str, Any]]:
+    def budget_alerts(self, month: str, *, extra_records: Sequence[LlmCallRecord] = ()) -> list[dict[str, Any]]:
         """§4.8.3 成本治理：按 agent_id 月度预算，超限【只告警、绝不熔断】（熔断给故障，不给钱）。"""
         budget = self._settings.llm_monthly_token_budget_default
         if budget <= 0:
             return []
         alerts: list[dict[str, Any]] = []
-        for agent_id, tokens in sorted(self.monthly_token_usage_by_agent(month).items()):
+        for agent_id, tokens in sorted(self.monthly_token_usage_by_agent(month, extra_records=extra_records).items()):
             if tokens > budget:
                 alerts.append(
                     {
@@ -196,7 +204,7 @@ class LlmGateway:
                 )
         return alerts
 
-    def first_pass_stats(self) -> dict[str, Any]:
+    def first_pass_stats(self, *, extra_records: Sequence[LlmCallRecord] = ()) -> dict[str, Any]:
         """结构化输出首过率（§4.1.2/§8）：聚合自真实调用台账，一次都没跑则 rate=None（未评测，不冒满分）。
 
         同时按 task 各算一份——总率会被调用量大的那条腿 dominate，逐 task 才看得出是哪条腿在退步。
@@ -206,7 +214,7 @@ class LlmGateway:
         口径不变：只有带结构化调用的 task 才出现在 `by_task` 里，
         且每个 task 的分母只算"模型真的答了"的行（`transport_error` 不进分母）。
         """
-        rows = [rec.as_dict() for rec in self._ledger.records()]
+        rows = [rec.as_dict() for rec in self._all_records(extra_records)]
         rate, breakdown = structured_first_pass_rate(rows)
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
@@ -216,13 +224,15 @@ class LlmGateway:
         by_task: dict[str, float | None] = {task: structured_first_pass_rate(group)[0] for task, group in sorted(grouped.items())}
         return {"rate": rate, "ledger_rows": len(rows), "detail": breakdown, "by_task": by_task}
 
-    def usage_snapshot(self) -> dict[str, Any]:
+    def usage_snapshot(self, *, extra_records: Sequence[LlmCallRecord] = ()) -> dict[str, Any]:
         """按 (agent_id, model) 归因的用量聚合：成本/时延的治理出口（§4.1.4 / §4.8.3）。
 
         聚合自真实调用台账，不二次采样——报表与验收同源（架构铁律 7）。
+        `extra_records`：灾种模块级台账的 row（container 传入），与网关台账同形状同口径合并。
         """
+        records = self._all_records(extra_records)
         buckets: dict[tuple[str | None, str], dict[str, Any]] = {}
-        for rec in self._ledger.records():
+        for rec in records:
             key = (rec.agent_id, rec.model)
             b = buckets.get(key)
             if b is None:
@@ -253,10 +263,10 @@ class LlmGateway:
         month = self.current_month()
         return {
             "by_agent_model": rows,
-            "total_calls": len(self._ledger.records()),
+            "total_calls": len(records),
             "month": month,
-            "budget_alerts": self.budget_alerts(month),
-            "structured_first_pass": self.first_pass_stats(),
+            "budget_alerts": self.budget_alerts(month, extra_records=extra_records),
+            "structured_first_pass": self.first_pass_stats(extra_records=extra_records),
         }
 
     def model_info_for_task(self, task: str) -> dict[str, Any]:
