@@ -60,7 +60,13 @@ LLM 通路与平台**共用一个内核**（[`docs/adr/0017`](../adr/0017-llm-co
 - **D10 凭证**：六个本体的回执都带 `model_info`（模型 + prompt 版本），
   `prompt_version` 能在注册表里查到；
 - **记账**：调用落共享台账，用量/首过率/时延按 agent×model 归因——此前是零。
-- **环境变量**：`AEGIS_HAZARD_*`（旧名 `AEGIS_EXT_*` 仍可读，命中旧名记 deprecation 日志）。
+  口径已与平台对齐：token 取**真实用量**（响应 usage，缺省退到消息 `usage_metadata`）；
+  双通道回退的通道二记 `attempt=1`（修复轮不进首过率分母，否则首过率系统性虚高）；
+  "HTTP 200 但没产出合法对象"改判 `malformed`（算"需修复"，不让自然语言冒充首过）。
+  两本台账（网关随实例那本 + 灾种进程级那本）在 `container.latency_report()` 的治理
+  出口里并成一本算——灾种的用量/成本/首过率此前在报表里整体缺席。
+- **环境变量**：`AEGIS_HAZARD_*`（旧名 `AEGIS_EXT_*` 仍可读；**四处兜底都记** deprecation
+  日志，每变量一次——"还有谁在用旧名"看得见，才谈得上删兼容分支）。
 
 熔断实测：上游不可用时单次研判 **2952 ms → 4.14 ms**（同口径实测，见 [`docs/REPORT.md`](../REPORT.md)）。
 
