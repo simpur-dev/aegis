@@ -3,7 +3,7 @@ Risk Agent 的 LLM 工厂（集中收口）
 
 【2026-10-17 更新】本文件预留的"上收到根 llm.py"TODO 已完成：
   模型统一切换为智谱 GLM-4-Flash（OpenAI 兼容接口），
-  Key 与模型名在根目录 config.py 里配置（ZHIPUAI_API_KEY / ZHIPU_MODEL）。
+  Key 与模型名在根目录 config.py 里配置（HAZARD_LLM_API_KEY / HAZARD_LLM_MODEL）。
   本文件现在只是 Risk Agent 侧的转接层：节点只认 get_risk_llm() 这个函数名，
   将来再换模型/供应商时本文件依旧一行不用改。
 

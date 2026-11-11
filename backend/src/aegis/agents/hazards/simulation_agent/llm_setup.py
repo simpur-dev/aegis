@@ -3,7 +3,7 @@ Simulation Agent 的 LLM 工厂（集中收口）
 
 【2026-10-17 更新】模型统一切换为智谱 GLM-4-Flash（OpenAI 兼容接口），
   收口到根目录 llm.py 的 get_llm()（Key 与模型名在根目录 config.py 配置：
-  ZHIPUAI_API_KEY / ZHIPU_MODEL）。本文件只是 Simulation Agent 侧的转接层：
+  HAZARD_LLM_API_KEY / HAZARD_LLM_MODEL）。本文件只是 Simulation Agent 侧的转接层：
   节点只认 get_simulation_llm() 这个函数名，将来再换模型时本文件一行不用改。
 
 【对外契约】

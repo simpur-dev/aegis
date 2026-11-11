@@ -364,18 +364,19 @@ def test_换凭据不串号() -> None:
         second = get_llm()
         assert first is second, "同凭据应复用"
 
-        # 凭据指纹进缓存键：换 Key → 新实例
+        # 凭据指纹进缓存键：换 Key → 新实例。
+        # 凭据入口只有一处（`config.HAZARD_LLM_API_KEY`）——直接改它比改 os.environ 更强：
+        # 这同时证明了"换凭据"这件事真的只经过 config 那一个入口。
+        import aegis.agents.hazards.config as config_module
         import aegis.agents.hazards.llm as llm_module
 
-        original = llm_module.os.environ.get("AEGIS_EXT_LLM_API_KEY")
-        llm_module.os.environ["AEGIS_EXT_LLM_API_KEY"] = "another-key-for-test"
+        assert not hasattr(llm_module, "os"), "证 llm.py 不再自己读环境变量（凭据入口收口到 config）"
+        original = config_module.HAZARD_LLM_API_KEY
+        config_module.HAZARD_LLM_API_KEY = "another-key-for-test"
         try:
             third = get_llm()
         finally:
-            if original is None:
-                llm_module.os.environ.pop("AEGIS_EXT_LLM_API_KEY", None)
-            else:
-                llm_module.os.environ["AEGIS_EXT_LLM_API_KEY"] = original
+            config_module.HAZARD_LLM_API_KEY = original
         assert third is not first, "换凭据必须建新实例"
     finally:
         reset_llm_clients()

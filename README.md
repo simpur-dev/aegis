@@ -178,12 +178,12 @@ cd .. && npm run dev              # API http://127.0.0.1:8001/docs ｜ Web http:
 #    assess.data_quality / 因子引擎 assess.factor_risk / 情景仿真 assess.scenario_sim（闭环内腿）/
 #    预警素材 execute.warn_content / 链内审计 feedback.chain_audit（闭环内腿）/ 闭环编排
 #    plan.hazard_workflow（入口 POST /api/v1/hazards/workflow）。
-#    它们的模型凭据只从环境变量读：AEGIS_EXT_LLM_API_KEY（留空则 LLM 腿降级为确定性模板）；
-#    LLM 自带熔断（AEGIS_EXT_LLM_BREAKER_THRESHOLD=3 / _COOLDOWN_SECONDS=60）。
+#    它们的模型凭据只从环境变量读：AEGIS_HAZARD_LLM_API_KEY（留空则 LLM 腿降级为确定性模板）；
+#    LLM 自带熔断（AEGIS_HAZARD_LLM_BREAKER_THRESHOLD=3 / _COOLDOWN_SECONDS=60）。
 #    结论是 demo 级：因子权重 MOCK、公式原型候选，输出带 source=hazard.factor_engine、
 #    data_provenance.is_mock=true、human_review_suggested=true，置信度封顶 0.60。
 #    数据面：研判段由平台推送证据包（窗口观测 + 区域画像）；出进程部署可配
-#    AEGIS_EXT_DATA_API_URL/_TOKEN 经数据 API 拉取。
+#    AEGIS_HAZARD_DATA_API_URL/_TOKEN 经数据 API 拉取。
 #    已知限制（图取消不掉、LLM 绕开平台网关、共享记忆未打通、冰湖事件标志暂无遥测来源等）
 #    见 docs/adr/0011、docs/adr/0012、docs/adr/0013 的"已知限制"一节与 docs/architecture.md §3.1。
 ```

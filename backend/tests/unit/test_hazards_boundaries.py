@@ -145,7 +145,10 @@ def test_配置面只从环境变量取凭据() -> None:
     assert config.exists(), "灾种模块必须有自己的配置面（凭据来源集中在一处）"
     text = config.read_text(encoding="utf-8")
     assert "os.environ" in text, "config.py 必须从环境变量取凭据"
-    assert "ZHIPUAI_API_KEY = os.environ" in text, "凭据入口必须是环境变量读取"
+    # 凭据入口**只有一处**：`HAZARD_LLM_API_KEY = _env("LLM_API_KEY")`，而 `_env` 只读环境变量
+    # （新名优先、旧名兜底）。此前它是 `ZHIPUAI_API_KEY = os.environ.get(...)`；改名后断言
+    # 得跟着走，否则这条门禁会变成"查一个已经不存在的常量"。
+    assert 'HAZARD_LLM_API_KEY = _env("LLM_API_KEY")' in text, "凭据入口必须是环境变量读取（经 _env）"
 
 
 def test_不修改全局sys_path() -> None:

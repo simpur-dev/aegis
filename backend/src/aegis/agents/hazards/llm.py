@@ -7,8 +7,8 @@
   仍用 langchain_openai.ChatOpenAI 直连，无需换 SDK / 无需新依赖）。
 
 【API Key 配置】
-  Key 本身不在本文件：走环境变量 AEGIS_EXT_LLM_API_KEY
-  （旧名 ZHIPUAI_API_KEY 仍兼容，但文档与配置面只登记平台口径那一个）。
+  Key 本身不在本文件：走环境变量 AEGIS_HAZARD_LLM_API_KEY
+  （旧名 AEGIS_EXT_LLM_API_KEY 仍兼容读取，但文档与配置面只登记新名）。
   【并入主线时的改动】原实现让运维"把 Key 粘进 config.py"——那是把凭据写回源码，
   主线口径是**只从环境变量读**（见 agents_ext/config.py）。
   没填 Key 时本工厂不报错：返回一个占位 Key 的实例，
@@ -66,7 +66,6 @@
 """
 
 import hashlib
-import os
 import threading
 import time
 
@@ -87,8 +86,8 @@ from aegis.domain.messages import now_iso
 # 【并入主线时的改动】原提示串让运维"把 Key 粘进 config.py"——主线口径是**只从环境变量读**
 # （源码里不该有凭据），照着旧提示做等于把凭据重新写回源码。
 _PLACEHOLDER_KEY = (
-    "ZHIPU_KEY_NOT_SET: set the AEGIS_EXT_LLM_API_KEY environment variable "
-    "(or ZHIPUAI_API_KEY for compatibility); keys must not be written into source files"
+    "HAZARD_KEY_NOT_SET: set the AEGIS_HAZARD_LLM_API_KEY environment variable "
+    "(legacy AEGIS_EXT_LLM_API_KEY is still read); keys must not be written into source files"
 )
 
 
@@ -251,25 +250,20 @@ def get_llm():
     返回:
         ZhipuCompatChatOpenAI 实例（未绑定结构化输出，由各节点自己 .with_structured_output）
     """
-    # Key 优先级：平台口径 AEGIS_EXT_LLM_API_KEY > 旧名 ZHIPUAI_API_KEY（兼容她原来的用法）> 占位值。
-    # 平台口径的名字写在配置面（.env.example / config.py）上，旧名只作兼容，不再是文档里的主口径。
-    api_key = (
-        os.environ.get("AEGIS_EXT_LLM_API_KEY")
-        or os.environ.get("ZHIPUAI_API_KEY")
-        or (getattr(config, "ZHIPUAI_API_KEY", "") or "").strip()
-    )
-    if not api_key:
-        api_key = _PLACEHOLDER_KEY
+    # 凭据入口**只有一处**：`config.HAZARD_LLM_API_KEY`（新名优先、旧名兜底、都读环境变量）。
+    # 这里不再直接 os.environ.get——第二个凭据入口会让"凭据只从环境变量来"那条门禁
+    # 覆盖不到它（`test_hazards_boundaries.py` 只查 config.py）。
+    api_key = (config.HAZARD_LLM_API_KEY or "").strip() or _PLACEHOLDER_KEY
 
-    model = getattr(config, "ZHIPU_MODEL", "glm-4-flash")
-    base_url = getattr(config, "ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
+    model = config.HAZARD_LLM_MODEL
+    base_url = config.HAZARD_LLM_BASE_URL
     # SDK 盲重试次数：0 = 不重试。
     # 为什么默认 0：SDK 默认 2 次重试带指数退避（0.5s/1.0s），上游持续 5xx 时
     # 一次逻辑调用变成三次 HTTP 往返（实测占研判时延的 81%）。
     # 上游已经不可用时，重试的是"同样的请求"，只会把降级推迟 1.5 s。
     # 韧性改由本模块的熔断承担：它记得"上游坏了"，坏了就直接跳过并走确定性兜底。
     # 偶发抖动仍会被下面的节点兜底接住（模板/规则），不会丢结论。
-    max_retries = int(getattr(config, "ZHIPU_MAX_RETRIES", 0))
+    max_retries = int(config.HAZARD_LLM_MAX_RETRIES)
 
     cache_key = _client_cache_key(model, base_url, api_key, max_retries)
     with _CLIENT_CACHE_LOCK:
@@ -297,14 +291,9 @@ def current_hazard_model_name() -> str:
     D10 凭证里"模型名"这一格的含义是"这条结论由哪个模型产出"。没配凭据时灾种这一腿
     走的是模板兜底，没有模型参与——那时写一个模型名就是伪造审计证据。
     """
-    api_key = (
-        os.environ.get("AEGIS_EXT_LLM_API_KEY")
-        or os.environ.get("ZHIPUAI_API_KEY")
-        or (getattr(config, "ZHIPUAI_API_KEY", "") or "").strip()
-    )
-    if not api_key:
+    if not (config.HAZARD_LLM_API_KEY or "").strip():
         return ""
-    return str(getattr(config, "ZHIPU_MODEL", "glm-4-flash"))
+    return str(config.HAZARD_LLM_MODEL)
 
 
 def reset_llm_clients() -> None:

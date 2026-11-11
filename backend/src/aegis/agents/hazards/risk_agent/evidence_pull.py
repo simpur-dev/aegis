@@ -22,8 +22,11 @@ from aegis.domain.assess import REGION_PATTERN, WINDOW_PATTERN, AssessEvidence
 
 log = logging.getLogger("aegis.agents.hazards.evidence_pull")
 
-DATA_API_URL_ENV = "AEGIS_EXT_DATA_API_URL"
-DATA_API_TOKEN_ENV = "AEGIS_EXT_DATA_API_TOKEN"
+#: 环境变量名（新名；旧名 `AEGIS_EXT_DATA_API_*` 仍兼容读取）。
+DATA_API_URL_ENV = "AEGIS_HAZARD_DATA_API_URL"
+DATA_API_TOKEN_ENV = "AEGIS_HAZARD_DATA_API_TOKEN"
+_LEGACY_DATA_API_URL_ENV = "AEGIS_EXT_DATA_API_URL"
+_LEGACY_DATA_API_TOKEN_ENV = "AEGIS_EXT_DATA_API_TOKEN"
 PULL_TIMEOUT_SECONDS = 2.0
 
 
@@ -33,13 +36,13 @@ def pull_evidence(region: str, window: str) -> AssessEvidence | None:
 
     if not re.fullmatch(REGION_PATTERN, region or "") or not re.fullmatch(WINDOW_PATTERN, window or ""):
         return None
-    base = os.environ.get(DATA_API_URL_ENV, "").strip()
+    base = os.environ.get(DATA_API_URL_ENV, "").strip() or os.environ.get(_LEGACY_DATA_API_URL_ENV, "").strip()
     if not base:
         return None
     window_minutes = int(window[:-1]) * (60 if window.endswith("h") else 1)
     url = f"{base.rstrip('/')}/api/v1/assess/evidence?{urlencode({'region_code': region, 'window_minutes': window_minutes})}"
     headers = {"Accept": "application/json"}
-    token = os.environ.get(DATA_API_TOKEN_ENV, "").strip()
+    token = os.environ.get(DATA_API_TOKEN_ENV, "").strip() or os.environ.get(_LEGACY_DATA_API_TOKEN_ENV, "").strip()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
