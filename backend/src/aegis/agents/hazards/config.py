@@ -124,7 +124,11 @@ def _runtime_path(env_name: str, default_name: str) -> Path:
     # 但保留旧名的兼容读取（路径类变量不是 `_env` 的 name 形参，需要单独兜一次）。
     raw = os.environ.get(env_name, "").strip()
     if not raw and env_name.startswith(_NEW_PREFIX):
-        raw = os.environ.get(_LEGACY_PREFIX + env_name[len(_NEW_PREFIX) :], "").strip()
+        legacy_name = _LEGACY_PREFIX + env_name[len(_NEW_PREFIX) :]
+        raw = os.environ.get(legacy_name, "").strip()
+        if raw and env_name not in _warned:
+            _warned.add(env_name)
+            log.warning("环境变量 %s 已改名 %s（旧名仍可读，请更新部署配置）", legacy_name, env_name)
     if raw:
         return Path(raw).expanduser().resolve()
     return (Path.cwd() / "data" / default_name).resolve()

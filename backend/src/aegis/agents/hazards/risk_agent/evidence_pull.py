@@ -4,7 +4,7 @@
 **出进程部署**时的场景，因此只依赖 stdlib（`urllib`），不引入 HTTP 客户端依赖。
 
 口径：
-- 未配置 `AEGIS_EXT_DATA_API_URL` → 返回 `None`（没有拉取腿，由调用方诚实拒绝）；
+- 未配置 `AEGIS_HAZARD_DATA_API_URL` → 返回 `None`（没有拉取腿，由调用方诚实拒绝）；
 - 任一步失败（网络、HTTP 状态、非法 JSON、不合契约）→ 返回 `None` 并记 warning，
   **绝不返回半份证据**——半份证据会一路走到"数据不足"，让配置错误看起来像数据问题。
 - 响应必须整体通过 `AssessEvidence.model_validate`：契约从严，不在拉取层做字段裁剪。
@@ -29,6 +29,20 @@ _LEGACY_DATA_API_URL_ENV = "AEGIS_EXT_DATA_API_URL"
 _LEGACY_DATA_API_TOKEN_ENV = "AEGIS_EXT_DATA_API_TOKEN"
 PULL_TIMEOUT_SECONDS = 2.0
 
+_warned: set[str] = set()
+
+
+def _env_with_legacy(new_name: str, legacy_name: str) -> str:
+    """新名优先、旧名兜底；命中旧名记一条 deprecation 日志（每变量一次，与 hazards/config 同口径）。"""
+    value = os.environ.get(new_name, "").strip()
+    if value:
+        return value
+    legacy = os.environ.get(legacy_name, "").strip()
+    if legacy and new_name not in _warned:
+        _warned.add(new_name)
+        log.warning("环境变量 %s 已改名 %s（旧名仍可读，请更新部署配置）", legacy_name, new_name)
+    return legacy
+
 
 def pull_evidence(region: str, window: str) -> AssessEvidence | None:
     """按数据 API 拉取证据包；未配置或失败返回 `None`。"""
@@ -36,13 +50,13 @@ def pull_evidence(region: str, window: str) -> AssessEvidence | None:
 
     if not re.fullmatch(REGION_PATTERN, region or "") or not re.fullmatch(WINDOW_PATTERN, window or ""):
         return None
-    base = os.environ.get(DATA_API_URL_ENV, "").strip() or os.environ.get(_LEGACY_DATA_API_URL_ENV, "").strip()
+    base = _env_with_legacy(DATA_API_URL_ENV, _LEGACY_DATA_API_URL_ENV)
     if not base:
         return None
     window_minutes = int(window[:-1]) * (60 if window.endswith("h") else 1)
     url = f"{base.rstrip('/')}/api/v1/assess/evidence?{urlencode({'region_code': region, 'window_minutes': window_minutes})}"
     headers = {"Accept": "application/json"}
-    token = os.environ.get(DATA_API_TOKEN_ENV, "").strip() or os.environ.get(_LEGACY_DATA_API_TOKEN_ENV, "").strip()
+    token = _env_with_legacy(DATA_API_TOKEN_ENV, _LEGACY_DATA_API_TOKEN_ENV)
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
