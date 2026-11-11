@@ -32,6 +32,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from aegis.agents.core.breaker import LlmBreaker, is_transport_failure
 from aegis.config import LlmModelRoute, Settings, get_settings
 from aegis.domain.messages import now_iso
 from aegis.errors import AegisError, ErrorCode
@@ -131,12 +132,17 @@ class LlmGateway:
         if self._client is None and self._api_key:
             from openai import AsyncOpenAI
 
-            self._client = AsyncOpenAI(api_key=self._api_key, base_url=self._base_url, timeout=self._timeout)
+            # `max_retries=0`：SDK 默认盲重试 2 次，实测占灾种研判时延的 81%
+            # （ADR-0013）。熔断已接管"上游坏了"的判断——盲重试只会把一次失败变成
+            # 三次往返，让本该立刻走确定性兜底的节点白等三倍时间。
+            self._client = AsyncOpenAI(api_key=self._api_key, base_url=self._base_url, timeout=self._timeout, max_retries=0)
 
-        # provider 级熔断账：连续失败计数与开闸标记按模型名分列。
-        self._breaker_threshold = max(1, cfg.llm_breaker_fail_threshold)
-        self._failures: dict[str, int] = {}
-        self._open: dict[str, bool] = {}
+        # provider 级熔断账：按模型名分列，共享内核实现（带冷却窗口 + 半开试探）。
+        # 此前平台这份是"一开闸就永久跳过"，上游恢复了也永远用不上（ADR-0017）。
+        self._breaker = LlmBreaker(
+            threshold=max(1, cfg.llm_breaker_fail_threshold),
+            cooldown_seconds=float(getattr(cfg, "llm_breaker_cooldown_seconds", 60.0)),
+        )
         self._usage: deque[LlmCallRecord] = deque(maxlen=max(16, cfg.llm_usage_ledger_limit))
 
     # ---------- 对外口径（与升级前逐字一致） ----------
@@ -171,19 +177,28 @@ class LlmGateway:
         return out
 
     def _breaker_open(self, model_name: str) -> bool:
-        return bool(self._open.get(model_name))
+        """该模型此刻是否**不可用**（冷却窗口内）。
+
+        纯查询：平台要先筛候选再逐个尝试，筛选阶段不能占用试探名额。
+        """
+        return not self._breaker.available(model_name)
 
     def _note_failure(self, model_name: str) -> None:
-        self._failures[model_name] = self._failures.get(model_name, 0) + 1
-        if self._failures[model_name] >= self._breaker_threshold:
-            self._open[model_name] = True
-            log.warning("LLM 模型熔断", extra={"model": model_name, "failures": self._failures[model_name]})
+        """记一次失败——**只有传输层失败才计入熔断**。
+
+        4xx（429 除外）是请求本身错了，重试没有意义，却会让模型被下架；
+        语义错误（非法 JSON）该由提示词与解析层修。统一口径见
+        `agents/core/breaker.py::is_transport_failure`（ADR-0017）。
+        """
+        self._breaker.note_failure(model_name)
+        if self._breaker.state(model_name) == "open":
+            log.warning(
+                "LLM 模型熔断",
+                extra={"model": model_name, "failures": self._breaker.failures_for(model_name)},
+            )
 
     def _note_success(self, model_name: str) -> None:
-        if model_name in self._failures:
-            self._failures.pop(model_name, None)
-        if self._open.get(model_name):
-            self._open[model_name] = False
+        self._breaker.note_success(model_name)
 
     # ---------- 可观测与用量 ----------
 
@@ -330,12 +345,17 @@ class LlmGateway:
         eff_temperature = route.temperature if temperature is None else temperature
         eff_max_tokens = max_tokens if max_tokens is not None else (self._max_tokens if self._max_tokens is not None else route.max_tokens)
         candidates = self._candidates(task)
+        # 筛选用纯查询（`available`），**不占试探名额**；名额留到真正发起调用前再取
+        # （`acquire`）——筛选阶段就占名额会让并发的试探互相把对方挤掉。
         actionable = [m for m in candidates if not self._breaker_open(m)]
         if not actionable:
             raise LlmUnavailableError("LLM 全部候选模型处于熔断状态", detail={"task": task, "candidates": candidates})
 
         last_error: Exception | None = None
         for model_name in actionable:
+            if not self._breaker.acquire(model_name):
+                # 试探名额被并发调用抢走了：这一趟让给别人，试试下一个候选。
+                continue
             started = time.perf_counter()
             kwargs: dict[str, Any] = {
                 "model": model_name,
@@ -347,9 +367,12 @@ class LlmGateway:
                 kwargs["response_format"] = response_format
             try:
                 response = await self._client.chat.completions.create(**kwargs)
-            except Exception as exc:  # provider/传输故障：计入熔断，切备用模型
+            except Exception as exc:  # provider 故障：切备用模型
                 latency_ms = (time.perf_counter() - started) * 1000
-                self._note_failure(model_name)
+                # 台账照记（事实：这次 HTTP 失败了）；熔断只认传输层失败（策略：
+                # 4xx 与语义错误重试无意义，不该让模型下架）。
+                if is_transport_failure(exc):
+                    self._note_failure(model_name)
                 last_error = exc
                 self._record(
                     LlmCallRecord(
@@ -583,6 +606,8 @@ class LlmGateway:
         model_name = self._primary_model(task)
         if self._breaker_open(model_name):
             raise LlmUnavailableError("LLM 流式模型处于熔断状态", detail={"task": task, "model": model_name})
+        if not self._breaker.acquire(model_name):
+            raise LlmUnavailableError("LLM 流式模型的试探名额已被占用", detail={"task": task, "model": model_name})
         started = time.perf_counter()
         total_chars = 0
         try:
@@ -599,7 +624,8 @@ class LlmGateway:
                     total_chars += len(piece)
                     yield piece
         except Exception as exc:
-            self._note_failure(model_name)
+            if is_transport_failure(exc):
+                self._note_failure(model_name)
             self._record(
                 LlmCallRecord(
                     task=task,

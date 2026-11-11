@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     llm_models: dict[str, LlmModelRoute] = Field(default_factory=_default_llm_routes)
     # provider 连续失败到该次数即判定熔断、切备用模型（§4.1.5）。达阈值只处理故障不处理成本。
     llm_breaker_fail_threshold: int = 3
+    #: 熔断冷却窗口（秒）：达阈值开闸后，窗口内直接跳过该模型；窗口到期放行**一次**试探，
+    #: 成功即恢复。此前平台这份是"一开闸就永久跳过"，上游恢复了也永远用不上（ADR-0017）。
+    llm_breaker_cooldown_seconds: float = 60.0
     # 用量台账环形上限：成本/时延按 agent×model 归因的数据源，满了丢最旧、绝不无界吃内存。
     llm_usage_ledger_limit: int = 10_000
     # 每个 agent_id 的月度 token 预算（§4.8.3）。超限【只告警、不熔断】——熔断给故障不给钱。

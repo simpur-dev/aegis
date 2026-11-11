@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import openai
 import pytest
 from pydantic import BaseModel, Field, field_validator
 
@@ -104,6 +105,31 @@ class FakeClient:
         self.chat = FakeChat(self.completions)
 
 
+def _provider_5xx(message: str = "5xx") -> Exception:
+    """一次**真实的** provider 5xx 异常。
+
+    熔断的分类口径是显式的：只有传输层失败（连接错误/超时/5xx/429）才计入熔断，
+    4xx 与语义错误不计入。桩件因此必须模拟它声称的东西——用 `RuntimeError("5xx")`
+    顶替，早晚会把"分类错了"读成"熔断坏了"。
+    """
+    import httpx
+    import openai
+
+    request = httpx.Request("POST", "https://provider.invalid/chat/completions")
+    response = httpx.Response(503, request=request)
+    return openai.APIStatusError(message, response=response, body=None)
+
+
+def _provider_4xx(status: int = 400, message: str = "bad request") -> Exception:
+    """一次真实的 provider 4xx（参数/鉴权错）——按新口径**不**计入熔断。"""
+    import httpx
+    import openai
+
+    request = httpx.Request("POST", "https://provider.invalid/chat/completions")
+    response = httpx.Response(status, request=request)
+    return openai.APIStatusError(message, response=response, body=None)
+
+
 def gw(
     *outputs: Any, settings: Settings | None = None, tracer: Tracer | None = None, prompts: PromptRegistry | None = None
 ) -> tuple[LlmGateway, FakeCompletions]:
@@ -112,6 +138,19 @@ def gw(
         LlmGateway(client=client, settings=settings or Settings(env="test"), tracer=tracer, prompts=prompts),
         client.completions,
     )
+
+
+class _Clock:
+    """可推进的假时钟（熔断冷却窗口是时间相关的状态机，不能靠 sleep 赌）。"""
+
+    def __init__(self, now: float = 1000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
 
 
 class Verdict(BaseModel):
@@ -232,9 +271,9 @@ class TestChatStructured:
 
 class TestCircuitBreaker:
     async def test_no_fallback_opens_after_threshold_then_fail_fast(self) -> None:
-        g, calls = gw(RuntimeError("5xx"), RuntimeError("5xx"), settings=Settings(env="test", llm_breaker_fail_threshold=2))
+        g, calls = gw(_provider_5xx(), _provider_5xx(), settings=Settings(env="test", llm_breaker_fail_threshold=2))
         for _ in range(2):
-            with pytest.raises(RuntimeError):
+            with pytest.raises(openai.APIStatusError):
                 await g.chat([{"role": "user", "content": "x"}], task="perceive")
         assert len(calls.calls) == 2  # 两次都真打了 qwen-turbo
         # 第三次于调用前就熔断快退（perceive 无备用模型）：不再产生新的 create 调用。
@@ -242,8 +281,53 @@ class TestCircuitBreaker:
             await g.chat([{"role": "user", "content": "x"}], task="perceive")
         assert len(calls.calls) == 2
 
+    async def test_冷却窗口到期后模型重新可用(self) -> None:
+        """熔断不是永久下架：冷却窗口一过，该模型会被再试一次。
+
+        此前平台的熔断是"一开闸就永久跳过"——上游恢复了也永远用不上，只能靠人改配置。
+        """
+        clock = _Clock()
+        g, calls = gw(
+            _provider_5xx(),
+            _provider_5xx(),
+            "恢复后的结论",
+            settings=Settings(env="test", llm_breaker_fail_threshold=2, llm_breaker_cooldown_seconds=60.0),
+        )
+        # 熔断器的时钟由网关持有，这里直接替换它的 clock
+        g._breaker._clock = clock  # type: ignore[attr-defined]
+
+        for _ in range(2):
+            with pytest.raises(openai.APIStatusError):
+                await g.chat([{"role": "user", "content": "x"}], task="perceive")
+        assert len(calls.calls) == 2
+
+        # 冷却窗口内：调用前就快退，不产生新的 HTTP
+        with pytest.raises(LlmUnavailableError):
+            await g.chat([{"role": "user", "content": "x"}], task="perceive")
+        assert len(calls.calls) == 2
+
+        # 窗口到期：放行一次试探，成功即恢复
+        clock.advance(61.0)
+        out = await g.chat([{"role": "user", "content": "x"}], task="perceive")
+        assert out == "恢复后的结论"
+        assert len(calls.calls) == 3
+
+    async def test_4xx不计入熔断(self) -> None:
+        """4xx 是请求本身错了，重试无意义——不该把模型下架。"""
+        g, calls = gw(
+            _provider_4xx(400),
+            "调用方改对了之后的结论",
+            settings=Settings(env="test", llm_breaker_fail_threshold=1),
+        )
+        with pytest.raises(openai.APIStatusError):
+            await g.chat([{"role": "user", "content": "x"}], task="perceive")
+        # 未计入熔断 → 下一次照常发起调用
+        out = await g.chat([{"role": "user", "content": "x"}], task="perceive")
+        assert out == "调用方改对了之后的结论"
+        assert len(calls.calls) == 2
+
     async def test_fallback_model_serves_when_primary_fails(self) -> None:
-        g, calls = gw(RuntimeError("主模型 5xx"), "来自备用模型的结论")
+        g, calls = gw(_provider_5xx("主模型 5xx"), "来自备用模型的结论")
         out = await g.chat([{"role": "user", "content": "x"}], task="assess")
         assert out == "来自备用模型的结论"
         assert [c["model"] for c in calls.calls] == ["qwen-plus", "qwen-max"]
@@ -308,7 +392,9 @@ class TestCostGovernance:
         assert alerts[0]["over_by"] == alerts[0]["tokens"] - 10
         # 关键：告警不改可用性/不熔断——钱的问题不给假故障。
         assert g.available is True
-        assert g._open.get("qwen-plus") is None
+        # 断言的意图是"预算告警不熔断"；熔断账的结构从私有 dict 换成了共享内核
+        # （ADR-0017），因此断言跟着换成新 API。
+        assert g._breaker.state("qwen-plus") == "closed"
 
     async def test_within_budget_no_alert(self) -> None:
         g, _ = gw("结论", settings=Settings(env="test", llm_monthly_token_budget_default=1000))
