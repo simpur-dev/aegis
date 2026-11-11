@@ -68,9 +68,12 @@
 import hashlib
 import threading
 import time
+from contextvars import ContextVar
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.outputs import ChatResult
 from langchain_core.runnables import RunnableLambda
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, PrivateAttr
@@ -89,6 +92,53 @@ _PLACEHOLDER_KEY = (
     "HAZARD_KEY_NOT_SET: set the AEGIS_HAZARD_LLM_API_KEY environment variable "
     "(legacy AEGIS_EXT_LLM_API_KEY is still read); keys must not be written into source files"
 )
+
+#: 结构化调用的当前尝试序号（通道一=0，回退通道二=1）。不放 CallMeta：那是 frozen 的共享件；
+#: 放 ContextVar：研判在专用线程池里跑，池按 copy_context 隔离，各调用互不串号。
+_attempt_var: ContextVar[int] = ContextVar("aegis_hazard_llm_attempt", default=0)
+
+#: 本调用链的落账收集器（_invoke 创建，_record_call 往里 append）。
+#: 为什么是"可变列表"而不是"最近一行"：langchain 的 RunnableSequence 在**复制的上下文**里
+#: 跑每一步——子上下文里 set 的值传不回父上下文，但父子共享同一个列表对象。
+#: 按"全局最后一行"找则在多线程下会改到别人的账。
+_call_records_var: ContextVar[list[LlmCallRecord] | None] = ContextVar("aegis_hazard_llm_call_records", default=None)
+
+
+def _extract_tokens(result: ChatResult) -> tuple[int, int, int]:
+    """从 langchain 的 ChatResult 取真实 token 数（prompt/completion/total）。
+
+    首选 `llm_output["token_usage"]`（ChatOpenAI 从响应 usage 原样带入），
+    缺省时退到消息的 `usage_metadata`；都没有才记 0——不臆造用量。
+    """
+    usage = (result.llm_output or {}).get("token_usage") or {}
+    if usage:
+        return (
+            int(usage.get("prompt_tokens", 0) or 0),
+            int(usage.get("completion_tokens", 0) or 0),
+            int(usage.get("total_tokens", 0) or 0),
+        )
+    for gen in result.generations:
+        meta = getattr(gen.message, "usage_metadata", None)
+        if meta:
+            return (
+                int(meta.get("input_tokens", 0) or 0),
+                int(meta.get("output_tokens", 0) or 0),
+                int(meta.get("total_tokens", 0) or 0),
+            )
+    return (0, 0, 0)
+
+
+def _mark_last_malformed(records: list[LlmCallRecord], reason: str) -> None:
+    """把本调用链最近一行改判 malformed（语义不合规，不是传输失败）。
+
+    与平台网关 `_mark_last_malformed` **同口径**（HTTP 200 但没产出合法结构化结果，
+    首过率里算"需修复"而不是"首过"——否则灾种首过率会被自然语言回答冒充满分），
+    但**机制更严**：平台网关改的是"整本台账的最后一行"，这里改的是"本次调用链的行"。
+    研判跑在专用线程池里，多条腿同时回退时按全局最后一行找必然改到别人的账。
+    """
+    if records:
+        records[-1].validation = "malformed"
+        records[-1].error = reason[:180]
 
 
 class ZhipuCompatChatOpenAI(ChatOpenAI):
@@ -121,6 +171,7 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
             raise LlmUnavailableError("LLM 熔断中（连续失败达阈值，冷却窗口内不再发起调用）；本次直接走确定性兜底。")
         started = time.perf_counter()
         meta = current_call_meta()
+        attempt = _attempt_var.get()
         try:
             result = super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
         except Exception as exc:
@@ -131,10 +182,20 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
                 latency_ms=(time.perf_counter() - started) * 1000,
                 validation="transport_error",
                 error=f"{type(exc).__name__}: {str(exc)[:180]}",
+                attempt=attempt,
             )
             raise
         breaker.note_success()
-        self._record_call(meta, latency_ms=(time.perf_counter() - started) * 1000, validation="ok")
+        prompt_tokens, completion_tokens, total_tokens = _extract_tokens(result)
+        self._record_call(
+            meta,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            validation="ok",
+            attempt=attempt,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
         return result
 
     def _record_call(
@@ -143,8 +204,12 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
         *,
         latency_ms: float,
         validation: str,
+        attempt: int,
         error: str | None = None,
-    ) -> None:
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        total_tokens: int = 0,
+    ) -> LlmCallRecord:
         """落一条调用台账（与平台网关同一份形状）。
 
         灾种侧此前**零记账、零埋点**：用量、首过率、时延按 agent×model 归因这些口径
@@ -158,18 +223,25 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
             temperature=float(self.temperature or 0.0),
             max_tokens=int(self.max_tokens or 0),
             latency_ms=latency_ms,
-            prompt_tokens=0,
-            completion_tokens=0,
-            total_tokens=0,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
             validation=validation,
             trace_id=meta.trace_id,
             agent_id=meta.agent_id,
             error=error,
             at=now_iso(),
             structured=meta.structured,
-            attempt=0,
+            attempt=attempt,
         )
         record_call(record)
+        # 本次调用链的收集器（_invoke 建的那个 list）：父子上下文共享同一个列表对象，
+        # 所以子步骤里 append 的行，_invoke 看得见——改判才能落到自己那条腿上。
+        # 非结构化直调（没有 _invoke）时收集器为 None：只落台账，不参与改判。
+        collector = _call_records_var.get()
+        if collector is not None:
+            collector.append(record)
+        return record
 
     def with_structured_output(self, schema, **kwargs):
         """返回与 langchain 兼容的结构化输出 Runnable。
@@ -204,15 +276,41 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
             return messages
 
         def _invoke(messages):
-            # 通道一：模型调用了工具 → 直接返回解析结果
-            result = base_fc.invoke(messages)
-            if result is not None:
-                return result
-            # 通道一失败（模型自然语言回答）→ 通道二：服务端强制 JSON
-            if json_parser is not None:
-                return json_chain.invoke(_append_directive(messages))
-            # 非 pydantic schema：无法注入格式指令，直接报错（本项目 schema 全是 pydantic）
-            raise RuntimeError("GLM 结构化输出失败：模型未调用工具，且 schema 不是 Pydantic 模型，无法回退")
+            # 本次调用的落账收集器：只收"这条调用链"自己的行。
+            # langchain 的 RunnableSequence 每一步都在**复制的上下文**里跑——
+            # 子上下文里 set 的值传不回父上下文，但父子共享同一个列表对象，
+            # 所以子步骤 append 进来的行这里看得见（这正是不能用"全局最后一行"的原因）。
+            records: list[LlmCallRecord] = []
+            records_token = _call_records_var.set(records)
+            try:
+                # 通道一：模型调用了工具 → 直接返回解析结果。
+                # "HTTP 200 但没产出合法对象"（不调工具 / 工具参数不合规）在台账上改判 malformed：
+                # 首过率里算"需修复"，不能让自然语言回答冒充首答满分。异常照旧上抛，节点兜底不变。
+                # 解析失败有两族：OutputParserException（非法 JSON/未知工具，langchain 抛的）
+                # 与 pydantic ValidationError（参数不合 schema，它是 ValueError 子类）。
+                try:
+                    result = base_fc.invoke(messages)
+                except (OutputParserException, ValueError):
+                    _mark_last_malformed(records, "通道一工具参数解析失败")
+                    raise
+                if result is not None:
+                    return result
+                _mark_last_malformed(records, "模型未调用工具（自然语言回答）")
+                # 通道二：服务端强制 JSON。attempt+1 与网关修复轮同口径——
+                # 通道二是"修复"不是"首答"，不进首过率分母。
+                if json_parser is not None:
+                    attempt_token = _attempt_var.set(_attempt_var.get() + 1)
+                    try:
+                        return json_chain.invoke(_append_directive(messages))
+                    except OutputParserException:
+                        _mark_last_malformed(records, "通道二 JSON 解析失败")
+                        raise
+                    finally:
+                        _attempt_var.reset(attempt_token)
+                # 非 pydantic schema：无法注入格式指令，直接报错（本项目 schema 全是 pydantic）
+                raise RuntimeError("GLM 结构化输出失败：模型未调用工具，且 schema 不是 Pydantic 模型，无法回退")
+            finally:
+                _call_records_var.reset(records_token)
 
         return RunnableLambda(_invoke)
 

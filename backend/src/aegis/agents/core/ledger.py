@@ -97,3 +97,8 @@ def shared_ledger() -> LlmUsageLedger:
 def record_call(rec: LlmCallRecord) -> None:
     """往进程级共享台账落一行（灾种 provider 用）。"""
     _SHARED.record(rec)
+
+
+def reset_shared_ledger() -> None:
+    """清空进程级共享台账（测试用：模块级全局态，用例之间必须还原，否则漏进聚合断言）。"""
+    _SHARED._rows.clear()

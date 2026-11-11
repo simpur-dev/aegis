@@ -91,6 +91,16 @@ def _restore_hazard_pool_capacity():
     configure_pool(DEFAULT_POOL_SIZE)
 
 
+@pytest.fixture(autouse=True)
+def _restore_shared_llm_ledger():
+    """灾种共享台账是模块级全局：真跑 provider 的用例会落行，用量出口又把它并进聚合，
+    不清就会漏进后面用例的 total_calls/首过率断言，让计数随用例顺序漂。"""
+    yield
+    from aegis.agents.core.ledger import reset_shared_ledger
+
+    reset_shared_ledger()
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
