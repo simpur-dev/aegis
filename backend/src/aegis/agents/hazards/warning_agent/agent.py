@@ -17,9 +17,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from aegis.agents.agentkit import AgentKit, Reply
+from aegis.agents.core.meta import trace_id_var
 from aegis.agents.hazards.contracts import warn_content_response, with_native
 from aegis.agents.hazards.errors import HazardRejected
 from aegis.agents.hazards.pool import run_blocking
+from aegis.agents.hazards.provenance import hazard_model_info
 from aegis.domain.enums import Action
 from aegis.domain.messages import AgentMessage
 from aegis.errors import ErrorCode
@@ -31,7 +33,30 @@ log = logging.getLogger("aegis.agents.hazards.warning_agent.agent")
 class WarningContentAgent(AgentKit):
     """`warn_content` 的契约入口：定级结论 → 文案素材（不含发布动作）。"""
 
+    def _provenance(self):
+        """D10 凭证：这条结论由哪条提示词、哪个模型产出。
+
+        提示词版本来自唯一注册表；模型名取本体的 provider（未配置时留空，
+        **不臆造模型名**）。因子引擎的版本不在这里重复——它在 payload 的
+        `assessment.engine_version` 与业务 `model_info` dict 里。
+        """
+        from aegis.agents.hazards.llm import current_hazard_model_name
+
+        return hazard_model_info(self.agent_id, model=current_hazard_model_name())
+
     async def handle(self, request: AgentMessage) -> Reply:
+        """总线入口：挂 trace_id 后交给具体实现。
+
+        节点在图里跑、拿不到总线信封，trace_id 靠 ContextVar 带进去——
+        `pool.run_blocking` 的 `copy_context()` 保证切线程后仍然可读。
+        """
+        token = trace_id_var.set(request.trace_id)
+        try:
+            return await self._handle(request)
+        finally:
+            trace_id_var.reset(token)
+
+    async def _handle(self, request: AgentMessage) -> Reply:
         if request.action != Action.EXECUTE_WARN_CONTENT.value:
             raise HazardRejected(
                 ErrorCode.SCHEMA_INVALID,
@@ -64,7 +89,10 @@ class WarningContentAgent(AgentKit):
             ) from exc
 
         draft = result.get("warning_result") if isinstance(result.get("warning_result"), dict) else result
-        return Reply(payload=with_native(warn_content_response(self._to_material(draft)), draft))
+        return Reply(
+            payload=with_native(warn_content_response(self._to_material(draft)), draft),
+            model_info=self._provenance(),
+        )
 
     @staticmethod
     def _risk_result(payload: dict[str, Any]) -> dict[str, Any]:

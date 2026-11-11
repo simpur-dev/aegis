@@ -28,9 +28,11 @@ from typing import Any
 from pydantic import ValidationError
 
 from aegis.agents.agentkit import AgentKit, Reply
+from aegis.agents.core.meta import trace_id_var
 from aegis.agents.hazards.contracts import factor_risk_response, with_native
 from aegis.agents.hazards.errors import HazardRejected
 from aegis.agents.hazards.pool import run_blocking
+from aegis.agents.hazards.provenance import hazard_model_info
 from aegis.agents.hazards.risk_agent.errors import AssessRejected
 from aegis.agents.hazards.risk_agent.evidence_pull import pull_evidence
 from aegis.agents.hazards.risk_agent.main import LEVEL_FROM_PROVISIONAL, SOURCE_MARK, run_risk_agent
@@ -46,7 +48,30 @@ log = logging.getLogger("aegis.agents.hazards.risk_agent.agent")
 class FactorAssessAgent(AgentKit):
     """`factor_risk_assess` 的契约入口：统一契约进，统一契约出。"""
 
+    def _provenance(self):
+        """D10 凭证：这条结论由哪条提示词、哪个模型产出。
+
+        提示词版本来自唯一注册表；模型名取本体的 provider（未配置时留空，
+        **不臆造模型名**）。因子引擎的版本不在这里重复——它在 payload 的
+        `assessment.engine_version` 与业务 `model_info` dict 里。
+        """
+        from aegis.agents.hazards.llm import current_hazard_model_name
+
+        return hazard_model_info(self.agent_id, model=current_hazard_model_name())
+
     async def handle(self, request: AgentMessage) -> Reply:
+        """总线入口：挂 trace_id 后交给具体实现。
+
+        节点在图里跑、拿不到总线信封，trace_id 靠 ContextVar 带进去——
+        `pool.run_blocking` 的 `copy_context()` 保证切线程后仍然可读。
+        """
+        token = trace_id_var.set(request.trace_id)
+        try:
+            return await self._handle(request)
+        finally:
+            trace_id_var.reset(token)
+
+    async def _handle(self, request: AgentMessage) -> Reply:
         if request.action != Action.ASSESS_FACTOR_RISK.value:
             raise AssessRejected(
                 AssessErrorCode.BAD_INPUT,
@@ -55,8 +80,8 @@ class FactorAssessAgent(AgentKit):
             )
         payload = request.payload or {}
         if payload.get("data_result"):
-            return Reply(payload=await self._assess_from_data_result(payload))
-        return Reply(payload=await self._assess_from_request(payload))
+            return Reply(payload=await self._assess_from_data_result(payload), model_info=self._provenance())
+        return Reply(payload=await self._assess_from_request(payload), model_info=self._provenance())
 
     async def _assess_from_request(self, payload: dict[str, Any]) -> dict[str, Any]:
         """平台路径：assess.v1 请求 + 证据包 → 定级结论。"""

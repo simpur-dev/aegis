@@ -486,15 +486,16 @@ async def test_pool_propagates_request_context(monkeypatch: pytest.MonkeyPatch) 
         return _ok_response(request)
 
     monkeypatch.setattr(agent_module, "run_risk_agent", runner)
-    token = trace_id_var.set("trc_pool_propagation")
     agent = _agent(pool_workers=1)
+    # 本体按**总线信封**的 trace_id 覆盖上下文（信封才是这次请求的真实 trace），
+    # 再由 run_blocking 的 copy_context() 穿透进池线程里的节点。
+    request = _request(_payload())
     try:
-        await agent.handle(_request(_payload()))
+        await agent.handle(request)
     finally:
-        trace_id_var.reset(token)
         await agent.stop()
 
-    assert seen == ["trc_pool_propagation"]
+    assert seen == [request.trace_id]
 
 
 async def test_stop_does_not_shut_down_the_shared_pool() -> None:

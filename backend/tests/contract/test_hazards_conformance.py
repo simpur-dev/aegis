@@ -28,6 +28,7 @@ from typing import Any
 
 import pytest
 
+from aegis.agents.core.prompts import PromptRegistry
 from aegis.agents.factory import build_hazard_agents
 from aegis.agents.hazards.hazard_registry import (
     HAZARD_ALIAS,
@@ -226,8 +227,16 @@ class TestGate1SchemaLegality:
         assert payload["data_provenance"]["method"] == "factor_engine_mock"
         assert payload["data_provenance"]["is_mock"] is True
         assert payload["human_review_suggested"] is True
-        # D10 溯源字段缺省即未知——不臆造模型版本：外部实现没有可声明的模型信息就留空
-        assert reply.model_info is None
+        # D10：灾种本体现在也带凭证（此前 8 处 Reply() 全裸，`prompt_version` 无处可写）。
+        # 钉住的是"版本号可在注册表里查到"——正文改了没升版本号，这条就会红。
+        assert reply.model_info is not None, "灾种回执必须带 D10 凭证"
+        registry = PromptRegistry.builtin()
+        versions = {registry.version_for_task(task) for task in registry.tasks() if task.startswith("hazard.")}
+        assert reply.model_info.prompt_version in versions, (
+            f"prompt_version 必须对应一条已登记的灾种模板，实际 {reply.model_info.prompt_version!r}"
+        )
+        # 没配凭据时模型名该留空（这一腿走模板兜底，没有模型参与）——不臆造模型名。
+        assert reply.model_info.model is None or isinstance(reply.model_info.model, str)
         await agent.stop()
         await gateway.close()
 

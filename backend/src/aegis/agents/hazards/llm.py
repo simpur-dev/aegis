@@ -291,6 +291,22 @@ def get_llm():
     return client
 
 
+def current_hazard_model_name() -> str:
+    """当前配置的模型名；**没配 Key 就返回空串**（不臆造模型名）。
+
+    D10 凭证里"模型名"这一格的含义是"这条结论由哪个模型产出"。没配凭据时灾种这一腿
+    走的是模板兜底，没有模型参与——那时写一个模型名就是伪造审计证据。
+    """
+    api_key = (
+        os.environ.get("AEGIS_EXT_LLM_API_KEY")
+        or os.environ.get("ZHIPUAI_API_KEY")
+        or (getattr(config, "ZHIPUAI_API_KEY", "") or "").strip()
+    )
+    if not api_key:
+        return ""
+    return str(getattr(config, "ZHIPU_MODEL", "glm-4-flash"))
+
+
 def reset_llm_clients() -> None:
     """清空客户端缓存与熔断状态（测试用；运维改配置后也可调用）。"""
     with _CLIENT_CACHE_LOCK:
