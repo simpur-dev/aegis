@@ -51,9 +51,18 @@
 `docs/adr/0011` 记的是**并入当时**的决策原貌，其中三层适配层与"交不出结论"两条已被 ADR-0012 取代，
 文件头有横幅，不要按它实现接线。
 
-它的 LLM 调用自带熔断（[`docs/adr/0013`](../adr/0013-ext-llm-breaker-and-client-reuse.md)）：
-连续失败达阈值后在冷却窗口内直接跳过 LLM，研判走确定性兜底——上游不可用时
-单次研判 **2952 ms → 4.14 ms**（同口径实测，见 [`docs/REPORT.md`](../REPORT.md)）。
+LLM 通路与平台**共用一个内核**（[`docs/adr/0017`](../adr/0017-llm-core-and-prompt-versioning.md)）：
+熔断（带冷却窗口）、提示词注册表、调用台账、调用元数据都在 `agents/core/`，两侧共用一份实现；
+只有"厂商特有"的部分（Zhipu 的 `function_calling` 双通道）留在灾种 provider 里。
+
+- **提示词版本化**：15 条灾种模板与平台 6 条同处一个注册表（键名 `hazard.<节点>`，
+  重试变体 `hazard.<节点>.retry`），正文逐字迁移、版本号 `1.0.0`；
+- **D10 凭证**：六个本体的回执都带 `model_info`（模型 + prompt 版本），
+  `prompt_version` 能在注册表里查到；
+- **记账**：调用落共享台账，用量/首过率/时延按 agent×model 归因——此前是零。
+- **环境变量**：`AEGIS_HAZARD_*`（旧名 `AEGIS_EXT_*` 仍可读，命中旧名记 deprecation 日志）。
+
+熔断实测：上游不可用时单次研判 **2952 ms → 4.14 ms**（同口径实测，见 [`docs/REPORT.md`](../REPORT.md)）。
 
 ## 目录
 

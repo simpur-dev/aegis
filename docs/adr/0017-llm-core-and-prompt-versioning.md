@@ -111,3 +111,40 @@ prompt_version=<主 prompt 版本>)`。每个本体一个**主 prompt**（结论
   `agents/hazards/prompts/` 目录消失。
 - 不在本次范围：灾种改走平台网关；`AEGIS_EXT_*` → `AEGIS_HAZARD_*` 的改名与旧名兼容
   读取（同批落地，见提交说明）。
+
+## 落地记录（2026-11-11）
+
+| 阶段 | 提交 | 内容 |
+|---|---|---|
+| 阶段 1 | `51db9dc` | 平台三项缺陷修复 + 共享熔断内核（`agents/core/breaker.py`） |
+| 阶段 2a | `decbefc` | 提示词全量迁入唯一注册表（21 条），删 `hazards/prompts/` |
+| 阶段 2b | `bac0fcc` | 灾种 provider 改用共享熔断与共享台账，删第二份 `llm_breaker.py` |
+| 阶段 2c | `c31caf2` | D10 凭证贯通（8 处 `Reply`）+ trace_id 跨线程通路 |
+| 阶段 2d | `8d65f40` | 环境变量族改名 `AEGIS_EXT_*` → `AEGIS_HAZARD_*`（旧名兼容） |
+
+### 实测证据
+
+- **提示词迁移逐字保真**：正文用 AST 从原 f-string 抽取（不手抄），再逐条渲染比对——
+  **15/15 与原 builder 输出逐字一致**（含换行、全角标点、空格）。其中一个重试变体
+  （`hazard.scenario_design.retry`）因对应节点**从不传 `retry_count`**（原分支永不可达）
+  而没有登记——登记一条用不到的就是死代码。
+- **全量门禁**：4277 通过 / 0 失败 / 119 跳过；ruff 与 mypy 全绿。
+- **新增门禁**：`test_llm_breaker_core.py`（19 条，熔断状态机与失败分类）、
+  `test_hazard_prompt_versions.py`（3 条，版本号 + 正文指纹防"改正文忘升版本"）。
+
+### 一处记录更正
+
+`1cf35b9` 的提交信息写"删了 `manager_prompt.py` 的 8 个死符号"，实际只删掉了 4 个
+函数——那次脚本在常量替换处断言失败、文件没落盘。4 个常量（`MANAGER_TASK_ANALYZE_PROMPT` /
+`MANAGER_TASK_PLAN_PROMPT` / `MANAGER_ERROR_ANALYSIS_PROMPT` / `MANAGER_FEEDBACK_REVIEW_PROMPT`）
+至今还在，已在 `51db9dc` 补删。这条更正留在 ADR 里，因为"提交信息说了不等于做成了"。
+
+## 后续项（不在本次范围）
+
+1. **灾种 LLM 通路改走平台网关**：需要给网关加多 provider 路由（单端点单凭据 → 按 task
+   选端点与凭据）并把 Zhipu 的 function_calling 兼容层搬进通用网关——那是**新功能**，
+   不是"合并两套实现"，且会让平台网关从通用件退化成认识某厂商 quirks 的件。
+2. **`AEGIS_EXT_*` 旧名的移除**：现网部署迁移完成后才能删兼容读取分支（保留一个发布周期
+   是稳妥的）。
+3. **灾种 prompt 的语义演化**：15 条模板现在有了版本号，后续任何正文改动都要升版本并
+   同步 `test_hazard_prompt_versions.py` 的指纹——那正是 D10 要的可追溯性。
