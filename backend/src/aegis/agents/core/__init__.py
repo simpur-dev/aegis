@@ -9,9 +9,8 @@
 
 - `breaker.py`：熔断状态机（带冷却窗口）与失败分类口径——两侧共用一份实现。
 - `prompts.py`：提示词注册表（版本化真源）。
-- `ledger.py`：LLM 调用台账与时延埋点。
+- `ledger.py`：LLM 调用台账（一次调用的可审计事实）。
 - `meta.py`：调用元数据与 trace_id 的跨线程上下文。
-- `providers.py`：provider 错误分类策略。
 """
 
 from __future__ import annotations
@@ -22,5 +21,22 @@ from aegis.agents.core.breaker import (
     State,
     is_transport_failure,
 )
+from aegis.agents.core.ledger import LlmCallRecord
+from aegis.agents.core.meta import CallMeta, current_call_meta, llm_call_meta, trace_id_var
+from aegis.agents.core.prompts import PromptRegistry, PromptTemplate, build_prompt, default_registry
 
-__all__ = ["LlmBreaker", "LlmUnavailableError", "State", "is_transport_failure"]
+__all__ = [
+    "CallMeta",
+    "LlmBreaker",
+    "LlmCallRecord",
+    "LlmUnavailableError",
+    "PromptRegistry",
+    "PromptTemplate",
+    "State",
+    "build_prompt",
+    "current_call_meta",
+    "default_registry",
+    "is_transport_failure",
+    "llm_call_meta",
+    "trace_id_var",
+]

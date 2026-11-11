@@ -13,6 +13,7 @@ import openai
 import pytest
 from pydantic import BaseModel, Field, field_validator
 
+from aegis.agents.core.prompts import PromptRegistry, PromptTemplate
 from aegis.config import Settings
 from aegis.observability.tracer import Tracer
 from aegis.services.llm.llm_gateway import (
@@ -21,7 +22,6 @@ from aegis.services.llm.llm_gateway import (
     MalformedLlmOutputError,
     build_gateway_if_configured,
 )
-from aegis.services.llm.prompt_registry import PromptRegistry, PromptTemplate
 
 
 class FakeMessage:

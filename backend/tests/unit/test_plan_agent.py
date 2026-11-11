@@ -11,11 +11,11 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from aegis.agents.core.prompts import PromptRegistry, PromptTemplate
 from aegis.agents.plan import PlanAdjustment, PlanAgent, PlanRefinement
 from aegis.contracts import ContractRegistry
 from aegis.domain.enums import AgentType, TaskType
 from aegis.domain.messages import make_request
-from aegis.services.llm.prompt_registry import PromptRegistry, PromptTemplate
 
 TRACE = "trc_" + "6" * 16
 EVENT = "evt_" + "a" * 12

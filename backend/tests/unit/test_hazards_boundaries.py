@@ -43,6 +43,9 @@ FORBIDDEN_PREFIXES = ("aegis.storage", "aegis.persistence")
 HAZARDS_ALLOWED = (
     "aegis.agents.agentkit",
     "aegis.agents.capabilities",
+    # 共享内核（熔断 / 提示词注册表 / 调用台账 / 调用元数据）：L3 智能体层自己的契约面，
+    # 与 agentkit、capabilities 同级。放在 L4 的 services/llm 下会逼灾种包做 L3→L4 倒挂依赖。
+    "aegis.agents.core",
     "aegis.agents.hazards",
     "aegis.bus",
     "aegis.domain",

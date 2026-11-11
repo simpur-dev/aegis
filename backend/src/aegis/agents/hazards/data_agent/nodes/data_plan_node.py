@@ -15,19 +15,18 @@ import json
 import logging
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+# 项目根目录入 sys.path（hazard_registry 位于根目录）
+from aegis.agents.core.meta import llm_call_meta
+from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.data_agent.state import DataAgentState
 from aegis.agents.hazards.data_agent.tools.hazard_data_registry import (
     build_query_param_model,
     get_hazard_data_requirements,
 )
 from aegis.agents.hazards.hazard_registry import UnsupportedHazardError, require_hazard
-
-# 项目根目录入 sys.path（hazard_registry 位于根目录）
 from aegis.agents.hazards.llm import get_llm
-from aegis.agents.hazards.prompts.data_prompt import PLAN_SYSTEM_PROMPT, build_plan_user_prompt
 
 log = logging.getLogger("aegis.agents.hazards.data_agent.nodes.data_plan_node")
 
@@ -82,22 +81,18 @@ def data_plan_node(state: DataAgentState) -> dict[str, Any]:
     try:
         QueryParamModel = build_query_param_model(hazard_key)  # 菜单驱动的动态模型
         structured_llm = get_llm().with_structured_output(QueryParamModel)
-        result = structured_llm.invoke(
-            [
-                SystemMessage(content=PLAN_SYSTEM_PROMPT),
-                HumanMessage(
-                    content=build_plan_user_prompt(
-                        task=task,
-                        hazard_type=hazard_key,
-                        hazard_type_cn=req["hazard_type_cn"],
-                        menu_str=json.dumps(menu, ensure_ascii=False, indent=1),
-                        retry_count=retry_count,
-                        error_message=state.get("error_message", ""),
-                        missing_data=state.get("missing_data", []),
-                    )
-                ),
-            ]
+        messages, prompt_version = build_prompt(
+            "hazard.data_plan.retry" if retry_count > 0 else "hazard.data_plan",
+            task=task,
+            hazard_type=hazard_key,
+            hazard_type_cn=req["hazard_type_cn"],
+            menu_str=json.dumps(menu, ensure_ascii=False, indent=1),
+            retry_count=retry_count,
+            error_message=state.get("error_message", ""),
+            missing_data=state.get("missing_data", []),
         )
+        with llm_call_meta(task="hazard.data_plan", prompt_version=prompt_version, structured=True):
+            result = structured_llm.invoke(messages)
         params = result.model_dump()
         used_llm = True
         processing_plan = (

@@ -20,13 +20,10 @@ ScenarioDesign 节点 —— 情景设计
 import json
 import logging
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from aegis.agents.hazards.prompts.simulation_prompt import (
-    SCENARIO_DESIGN_SYSTEM_PROMPT,
-    build_scenario_design_user_prompt,
-)
+from aegis.agents.core.meta import llm_call_meta
+from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.simulation_agent.llm_setup import get_simulation_llm
 from aegis.agents.hazards.simulation_agent.tools.default_scenario_tool import build_default_scenarios_tool
 from aegis.agents.hazards.simulation_agent.tools.hazard_model_router import (
@@ -220,21 +217,17 @@ def scenario_design_node(state: dict) -> dict:
             req = get_model_requirements(normalized)
             llm = get_simulation_llm()
             structured = llm.with_structured_output(ScenarioPlan)
-            plan: ScenarioPlan = structured.invoke(
-                [
-                    SystemMessage(content=SCENARIO_DESIGN_SYSTEM_PROMPT),
-                    HumanMessage(
-                        content=build_scenario_design_user_prompt(
-                            simulation_task=task,
-                            hazard_type=normalized,
-                            hazard_type_cn=req["hazard_type_cn"],
-                            data_summary=_build_data_summary(data_result),
-                            risk_summary=_build_risk_summary(risk_result),
-                            requirements_str=json.dumps(req["param_menu"], ensure_ascii=False, indent=1),
-                        )
-                    ),
-                ]
+            messages, prompt_version = build_prompt(
+                "hazard.scenario_design",
+                simulation_task=task,
+                hazard_type=normalized,
+                hazard_type_cn=req["hazard_type_cn"],
+                data_summary=_build_data_summary(data_result),
+                risk_summary=_build_risk_summary(risk_result),
+                requirements_str=json.dumps(req["param_menu"], ensure_ascii=False, indent=1),
             )
+            with llm_call_meta(task="hazard.scenario_design", prompt_version=prompt_version, structured=True):
+                plan = structured.invoke(messages)
             # LLM 判断上游信息不足 → 早退（缺什么由 LLM 给出）
             if plan.needs_more_data:
                 info = plan.missing_info or ["上游信息不足（LLM 未给出具体缺失项）"]

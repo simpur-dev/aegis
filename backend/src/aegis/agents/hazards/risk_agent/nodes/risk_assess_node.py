@@ -20,17 +20,14 @@ import json
 import logging
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from aegis.agents.core.meta import llm_call_meta
+from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.hazard_registry import (
     UnsupportedHazardError,
     require_hazard,
     supported_hazards_text,
-)
-from aegis.agents.hazards.prompts.risk_prompt import (
-    RISK_EXPLANATION_SYSTEM_PROMPT,
-    build_risk_explain_user_prompt,
 )
 from aegis.agents.hazards.risk_agent.llm_setup import get_risk_llm
 from aegis.agents.hazards.risk_agent.state import RiskAgentState
@@ -178,22 +175,24 @@ def risk_assess_node(state: RiskAgentState) -> dict[str, Any]:
     llm = get_risk_llm()
     structured_llm = llm.with_structured_output(RiskExplanation)
     try:
-        r: RiskExplanation = structured_llm.invoke(
-            [
-                SystemMessage(content=RISK_EXPLANATION_SYSTEM_PROMPT),
-                HumanMessage(
-                    content=build_risk_explain_user_prompt(
-                        task=task,
-                        hazard_type=hazard_key,
-                        hazard_type_cn=profile["hazard_type_cn"],
-                        risk_factors=profile["risk_factors"],
-                        assessment_json=json.dumps(assessment, ensure_ascii=False),
-                        retry_count=retry_count,
-                        previous_issues="; ".join(last_issues) if last_issues else "",
-                    )
-                ),
-            ]
+        # 提示词正文与版本号来自唯一注册表（`agents/core/prompts.py`）：正文改了就得
+        # 升版本号，否则 D10 的 `prompt_version` 描述的不是实际发送的正文。
+        messages, prompt_version = build_prompt(
+            "hazard.risk_explain.retry" if retry_count > 0 and last_issues else "hazard.risk_explain",
+            task=task,
+            hazard_type=hazard_key,
+            hazard_type_cn=profile["hazard_type_cn"],
+            risk_factors=profile["risk_factors"],
+            assessment_json=json.dumps(assessment, ensure_ascii=False),
+            retry_count=retry_count,
+            previous_issues="; ".join(last_issues) if last_issues else "",
         )
+        with llm_call_meta(
+            task="hazard.risk_explain",
+            prompt_version=prompt_version,
+            structured=True,
+        ):
+            r: RiskExplanation = structured_llm.invoke(messages)
         reasoning = r.reasoning
         risk_factors = r.risk_factors or profile["risk_factors"]
         uncertainties = r.uncertainties

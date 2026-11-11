@@ -27,17 +27,17 @@ import re
 import time
 from collections import deque
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
 from aegis.agents.core.breaker import LlmBreaker, is_transport_failure
+from aegis.agents.core.ledger import LlmCallRecord
+from aegis.agents.core.prompts import PromptRegistry
 from aegis.config import LlmModelRoute, Settings, get_settings
 from aegis.domain.messages import now_iso
 from aegis.errors import AegisError, ErrorCode
 from aegis.observability.tracer import Tracer, percentile
-from aegis.services.llm.prompt_registry import PromptRegistry
 from aegis.services.llm.quality_eval import structured_first_pass_rate
 
 log = logging.getLogger("aegis.services.llm")
@@ -55,50 +55,6 @@ class LlmUnavailableError(AegisError):
 
 class MalformedLlmOutputError(AegisError):
     code = ErrorCode.INTERNAL
-
-
-@dataclass(slots=True)
-class LlmCallRecord:
-    """一次调用的可审计事实（对齐 D1"可审计"：模型/prompt版本/token/时延/校验态）。"""
-
-    task: str
-    model: str
-    prompt_version: str | None
-    temperature: float
-    max_tokens: int
-    latency_ms: float
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    validation: str  # ok | malformed | transport_error（整链不可用不落行：它在调用之前就抛了）
-    trace_id: str | None
-    agent_id: str | None
-    error: str | None = None
-    at: str = ""  # UTC ISO，成本按月归因用（§4.8.3）
-    #: 首过率的原料（§4.1.2/§8）：结构化调用的每一次尝试各落一条，`attempt=0` 就是"第一次答"。
-    #: 没有这两格，台账里"修复轮过了"和"首答就过"长得一模一样，"首过率"就只能靠声称。
-    structured: bool = False
-    attempt: int = 0
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "task": self.task,
-            "model": self.model,
-            "prompt_version": self.prompt_version,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "latency_ms": round(self.latency_ms, 3),
-            "prompt_tokens": self.prompt_tokens,
-            "completion_tokens": self.completion_tokens,
-            "total_tokens": self.total_tokens,
-            "validation": self.validation,
-            "trace_id": self.trace_id,
-            "agent_id": self.agent_id,
-            "error": self.error,
-            "at": self.at,
-            "structured": self.structured,
-            "attempt": self.attempt,
-        }
 
 
 class LlmGateway:

@@ -22,6 +22,8 @@ import json
 import logging
 from typing import Any
 
+from aegis.agents.core.meta import llm_call_meta
+from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
 
 log = logging.getLogger("aegis.agents.hazards.feedback_agent.nodes.reflection_node")
@@ -73,11 +75,9 @@ def reflection_node(state: FeedbackAgentState) -> dict[str, Any]:
 
     reflections, used_llm, overall = [], False, ""
     try:
-        from langchain_core.messages import HumanMessage, SystemMessage
         from pydantic import BaseModel, Field
 
         from aegis.agents.hazards.feedback_agent.llm_setup import get_feedback_llm
-        from aegis.agents.hazards.prompts.feedback_prompt import FEEDBACK_REFLECTION_PROMPT, build_reflection_user_prompt
 
         class ReflectionOut(BaseModel):
             overall_analysis: str = Field(description="整体问题分析概述")
@@ -91,17 +91,13 @@ def reflection_node(state: FeedbackAgentState) -> dict[str, Any]:
 
         llm = get_feedback_llm()
         structured = llm.with_structured_output(ReflectionOut)
-        r = structured.invoke(
-            [
-                SystemMessage(content=FEEDBACK_REFLECTION_PROMPT),
-                HumanMessage(
-                    content=build_reflection_user_prompt(
-                        items_json=json.dumps(items, ensure_ascii=False),
-                        historical_json=json.dumps(state.get("historical_feedback", [])[:3], ensure_ascii=False),
-                    )
-                ),
-            ]
+        messages, prompt_version = build_prompt(
+            "hazard.feedback_reflection",
+            items_json=json.dumps(items, ensure_ascii=False),
+            historical_json=json.dumps(state.get("historical_feedback", [])[:3], ensure_ascii=False),
         )
+        with llm_call_meta(task="hazard.feedback_reflection", prompt_version=prompt_version, structured=True):
+            r = structured.invoke(messages)
         # LLM 结果与确定性结果并轨：以 issue_id 对齐，缺条目用兜底补齐；
         # 低置信条目强制 evidence_sufficient=False（不允许 LLM 拔高证据等级）
         by_id = {x.get("issue_id"): x for x in (r.reflections or []) if isinstance(x, dict)}

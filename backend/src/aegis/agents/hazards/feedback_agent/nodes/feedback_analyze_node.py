@@ -19,6 +19,8 @@ import json
 import logging
 from typing import Any
 
+from aegis.agents.core.meta import llm_call_meta
+from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
 from aegis.agents.hazards.feedback_agent.tools.feedback_check_tool import (
     run_deterministic_checks,
@@ -32,11 +34,9 @@ def _llm_commentary(state, issues) -> dict:
     if not issues:
         return {"commentary": "", "used_llm": False, "note": "确定性检查未发现问题，无需解释"}
     try:
-        from langchain_core.messages import HumanMessage, SystemMessage
         from pydantic import BaseModel, Field
 
         from aegis.agents.hazards.feedback_agent.llm_setup import get_feedback_llm
-        from aegis.agents.hazards.prompts.feedback_prompt import FEEDBACK_ANALYZE_PROMPT, build_analyze_user_prompt
 
         class AnalyzeCommentary(BaseModel):
             commentary: str = Field(description="对已发现问题的通俗解释与影响说明")
@@ -44,17 +44,13 @@ def _llm_commentary(state, issues) -> dict:
 
         llm = get_feedback_llm()
         structured = llm.with_structured_output(AnalyzeCommentary)
-        r = structured.invoke(
-            [
-                SystemMessage(content=FEEDBACK_ANALYZE_PROMPT),
-                HumanMessage(
-                    content=build_analyze_user_prompt(
-                        context_json=json.dumps(state.get("collected_context", {}), ensure_ascii=False),
-                        issues_json=json.dumps(issues, ensure_ascii=False),
-                    )
-                ),
-            ]
+        messages, prompt_version = build_prompt(
+            "hazard.feedback_analyze",
+            context_json=json.dumps(state.get("collected_context", {}), ensure_ascii=False),
+            issues_json=json.dumps(issues, ensure_ascii=False),
         )
+        with llm_call_meta(task="hazard.feedback_analyze", prompt_version=prompt_version, structured=True):
+            r = structured.invoke(messages)
         return {"commentary": r.commentary, "manager_attention": list(r.manager_attention or []), "used_llm": True}
     except Exception as e:
         log.info(f"[FeedbackAnalyze] LLM 解释不可用，跳过（确定性结果不受影响）: {e}")

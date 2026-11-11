@@ -19,6 +19,8 @@ import json
 import logging
 from typing import Any
 
+from aegis.agents.core.meta import llm_call_meta
+from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
 from aegis.agents.hazards.hazard_registry import normalize_hazard_type
 
@@ -104,11 +106,9 @@ def suggestion_node(state: FeedbackAgentState) -> dict[str, Any]:
 
     if items:
         try:
-            from langchain_core.messages import HumanMessage, SystemMessage
             from pydantic import BaseModel, Field
 
             from aegis.agents.hazards.feedback_agent.llm_setup import get_feedback_llm
-            from aegis.agents.hazards.prompts.feedback_prompt import FEEDBACK_SUGGESTION_PROMPT, build_suggestion_user_prompt
 
             class SuggestionOut(BaseModel):
                 suggestions: list = Field(
@@ -121,17 +121,13 @@ def suggestion_node(state: FeedbackAgentState) -> dict[str, Any]:
 
             llm = get_feedback_llm()
             structured = llm.with_structured_output(SuggestionOut)
-            r = structured.invoke(
-                [
-                    SystemMessage(content=FEEDBACK_SUGGESTION_PROMPT),
-                    HumanMessage(
-                        content=build_suggestion_user_prompt(
-                            reflection_json=json.dumps(state.get("reflection_result", {}), ensure_ascii=False),
-                            items_json=json.dumps(items, ensure_ascii=False),
-                        )
-                    ),
-                ]
+            messages, prompt_version = build_prompt(
+                "hazard.feedback_suggestion",
+                reflection_json=json.dumps(state.get("reflection_result", {}), ensure_ascii=False),
+                items_json=json.dumps(items, ensure_ascii=False),
             )
+            with llm_call_meta(task="hazard.feedback_suggestion", prompt_version=prompt_version, structured=True):
+                r = structured.invoke(messages)
             by_id = {s.get("feedback_id"): s for s in (r.suggestions or []) if isinstance(s, dict)}
             merged = []
             for t in template:

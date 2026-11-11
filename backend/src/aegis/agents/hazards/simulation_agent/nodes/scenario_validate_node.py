@@ -20,13 +20,10 @@ ScenarioValidate 节点 —— 情景与参数校验
 import json
 import logging
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from aegis.agents.hazards.prompts.simulation_prompt import (
-    SCENARIO_VALIDATE_SYSTEM_PROMPT,
-    build_scenario_validate_user_prompt,
-)
+from aegis.agents.core.meta import llm_call_meta
+from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.simulation_agent.llm_setup import get_simulation_llm
 from aegis.agents.hazards.simulation_agent.tools.scenario_validate_tool import validate_scenarios_tool
 
@@ -70,20 +67,14 @@ def scenario_validate_node(state: dict) -> dict:
         try:
             llm = get_simulation_llm()
             structured = llm.with_structured_output(ScenarioReview)
-            review: ScenarioReview = structured.invoke(
-                [
-                    SystemMessage(content=SCENARIO_VALIDATE_SYSTEM_PROMPT),
-                    HumanMessage(
-                        content=build_scenario_validate_user_prompt(
-                            scenario_configs_str=json.dumps(configs, ensure_ascii=False, indent=1),
-                            deterministic_summary=(
-                                f"总数={report['total']}，通过={report['valid_count']}，"
-                                f"未通过明细={json.dumps(invalid, ensure_ascii=False)}"
-                            ),
-                        )
-                    ),
-                ]
+            messages, prompt_version = build_prompt(
+                "hazard.scenario_validate",
+                scenario_configs_str=json.dumps(configs, ensure_ascii=False, indent=1),
+                deterministic_summary=f"总数={report['total']}，通过={report['valid_count']}，"
+                f"未通过明细={json.dumps(invalid, ensure_ascii=False)}",
             )
+            with llm_call_meta(task="hazard.scenario_validate", prompt_version=prompt_version, structured=True):
+                review = structured.invoke(messages)
             review_dict = review.model_dump()
             issues = list(review.issues or [])
             if review.recommendation in ("retry", "fail"):

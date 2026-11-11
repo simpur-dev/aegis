@@ -15,11 +15,11 @@ import pytest
 from pydantic import ValidationError
 
 from aegis.agents.assess import AssessAgent, AssessVerdict
+from aegis.agents.core.prompts import PromptRegistry
 from aegis.config import Settings
 from aegis.domain.enums import AgentType, HazardType
 from aegis.domain.messages import make_request, now_iso
 from aegis.services.llm.llm_gateway import LlmGateway, MalformedLlmOutputError
-from aegis.services.llm.prompt_registry import PromptRegistry
 from aegis.services.memory.memory import InMemoryAgentMemory, MemoryService, new_memory_record_id
 
 TRACE = "trc_" + "7" * 16

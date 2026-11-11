@@ -16,8 +16,8 @@ WarningValidator 节点（预警消息校验）
 import logging
 from typing import Any
 
-from aegis.agents.hazards.prompts.warning_prompt import LEVEL_KEYWORDS
 from aegis.agents.hazards.warning_agent.state import WarningAgentState
+from aegis.agents.hazards.warning_agent.tools.hazard_warning_rule_registry import LEVEL_KEYWORDS
 
 log = logging.getLogger("aegis.agents.hazards.warning_agent.nodes.warning_validator_node")
 

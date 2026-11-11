@@ -138,20 +138,37 @@ def finalize_node(state: dict) -> dict:
     return {"task_status": task_status, "final_report": report}
 
 
+#: 最终报告里要复述给使用者看的结构化事实（其余字段不进提示词）。
+_REPORT_OVERVIEW_KEYS = (
+    "event_id",
+    "hazard_type",
+    "task_type",
+    "task_status",
+    "agent_status",
+    "execution_summary",
+    "mock_disclosure",
+    "capability_limits",
+    "human_review_required",
+)
+
+
 def _llm_polish(report: dict) -> tuple:
     """LLM 报告润色（可选增强）：失败/不可用时返回确定性摘要兜底。"""
     fallback = (report.get("summary_text", ""), False)
     try:
+        from aegis.agents.core.meta import llm_call_meta
+        from aegis.agents.core.prompts import build_prompt
         from aegis.agents.hazards.manager_agent.llm_setup import get_manager_llm
-        from aegis.agents.hazards.prompts.manager_prompt import MANAGER_FINAL_REPORT_PROMPT, build_final_report_user_prompt
 
         llm = get_manager_llm()
-        resp = llm.invoke(
-            [
-                ("system", MANAGER_FINAL_REPORT_PROMPT),
-                ("user", build_final_report_user_prompt(report)),
-            ]
+        # 提示词正文与版本号来自唯一注册表；这一腿是**纯文本**润色（非结构化输出），
+        # 因此 meta 不标 structured。
+        messages, prompt_version = build_prompt(
+            "hazard.manager_report",
+            overview=str({k: report.get(k) for k in _REPORT_OVERVIEW_KEYS}),
         )
+        with llm_call_meta(task="hazard.manager_report", prompt_version=prompt_version):
+            resp = llm.invoke(messages)
         text = (getattr(resp, "content", "") or "").strip()
         return (text or fallback[0], bool(text))
     except Exception as e:

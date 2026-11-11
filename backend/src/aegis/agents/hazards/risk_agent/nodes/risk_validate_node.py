@@ -14,13 +14,10 @@ import json
 import logging
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from aegis.agents.hazards.prompts.risk_prompt import (
-    RISK_VALIDATION_SYSTEM_PROMPT,
-    build_risk_validate_user_prompt,
-)
+from aegis.agents.core.meta import llm_call_meta
+from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.risk_agent.llm_setup import get_risk_llm
 from aegis.agents.hazards.risk_agent.state import RiskAgentState
 
@@ -57,18 +54,14 @@ def risk_validate_node(state: RiskAgentState) -> dict[str, Any]:
     llm = get_risk_llm()
     structured_llm = llm.with_structured_output(RiskValidationOutput)
     try:
-        r: RiskValidationOutput = structured_llm.invoke(
-            [
-                SystemMessage(content=RISK_VALIDATION_SYSTEM_PROMPT),
-                HumanMessage(
-                    content=build_risk_validate_user_prompt(
-                        risk_result=json.dumps(risk_result, ensure_ascii=False),
-                        evidence=json.dumps(evidence, ensure_ascii=False),
-                        uncertainties=json.dumps(uncertainties, ensure_ascii=False),
-                    )
-                ),
-            ]
+        messages, prompt_version = build_prompt(
+            "hazard.risk_validate",
+            risk_result=json.dumps(risk_result, ensure_ascii=False),
+            evidence=json.dumps(evidence, ensure_ascii=False),
+            uncertainties=json.dumps(uncertainties, ensure_ascii=False),
         )
+        with llm_call_meta(task="hazard.risk_validate", prompt_version=prompt_version, structured=True):
+            r = structured_llm.invoke(messages)
         validation = {
             "is_valid": r.is_valid,
             "evidence_sufficient": r.evidence_sufficient,

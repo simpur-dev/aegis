@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from aegis.agents.core.prompts import PromptRegistry
 from aegis.config import Settings
-from aegis.services.llm.prompt_registry import PromptRegistry
 
 #: 平台自建的五智能体 + 助手（§3），每个对应一个网关 task key。
 CARD_TASKS: tuple[str, ...] = ("perceive", "assess", "plan", "execute", "feedback", "assistant")

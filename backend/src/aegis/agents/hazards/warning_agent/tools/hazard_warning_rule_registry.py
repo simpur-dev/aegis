@@ -36,6 +36,17 @@ from aegis.agents.hazards.hazard_registry import (
     supported_hazards_text,
 )
 
+#: 内部预警等级 → 说明文字里必须出现的等级关键词。
+#: 这是**确定性映射表**（不是提示词）：等级与关键词一一对应，说明正文里必须逐字带上
+#: 关键词，校验节点据此判定"等级被改写"。原先它与提示词常量混在一个模块里，
+#: 提示词迁进注册表后它留在原地会被一起删掉——故移到等级映射表旁边。
+LEVEL_KEYWORDS = {
+    "warning": "警报",
+    "watch": "关注",
+    "advisory": "提示",
+    "none": "无预警建议",
+}
+
 # 各灾种建议行动（Mock 文案；正式行动清单需业务方确认）
 _SUGGESTED_ACTIONS = {
     "warning": [

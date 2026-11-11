@@ -12,16 +12,13 @@ import json
 import logging
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from aegis.agents.hazards.prompts.warning_prompt import (
-    LEVEL_KEYWORDS,
-    WARNING_EXPLANATION_SYSTEM_PROMPT,
-    build_explain_user_prompt,
-)
+from aegis.agents.core.meta import llm_call_meta
+from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.warning_agent.llm_setup import get_warning_llm
 from aegis.agents.hazards.warning_agent.state import WarningAgentState
+from aegis.agents.hazards.warning_agent.tools.hazard_warning_rule_registry import LEVEL_KEYWORDS
 
 log = logging.getLogger("aegis.agents.hazards.warning_agent.nodes.llm_explanation_node")
 
@@ -46,19 +43,15 @@ def llm_explanation_node(state: WarningAgentState) -> dict[str, Any]:
     try:
         llm = get_warning_llm()
         structured = llm.with_structured_output(AlertExplanation)
-        r = structured.invoke(
-            [
-                SystemMessage(content=WARNING_EXPLANATION_SYSTEM_PROMPT),
-                HumanMessage(
-                    content=build_explain_user_prompt(
-                        alert_json=json.dumps(alert, ensure_ascii=False, indent=1),
-                        required_keyword=level_keyword,
-                        retry_count=retry_count,
-                        previous_issues="；".join(last_issues),
-                    )
-                ),
-            ]
+        messages, prompt_version = build_prompt(
+            "hazard.warning_explain.retry" if retry_count > 0 and ("；".join(last_issues)) else "hazard.warning_explain",
+            alert_json=json.dumps(alert, ensure_ascii=False, indent=1),
+            required_keyword=level_keyword,
+            retry_count=retry_count,
+            previous_issues="；".join(last_issues),
         )
+        with llm_call_meta(task="hazard.warning_explain", prompt_version=prompt_version, structured=True):
+            r = structured.invoke(messages)
         text = r.summary + ("\n" + "\n".join(f"- {b}" for b in r.bullet_points) if r.bullet_points else "")
         # 确定性保障：LLM 文本缺等级关键词时，追加一句结构化事实复述（不编造内容）
         if level_keyword and level_keyword not in text:

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from aegis.agents.core.prompts import PromptRegistry
 from aegis.config import Settings
 from aegis.contracts import ContractRegistry
 from aegis.services.llm.model_cards import build_model_cards
-from aegis.services.llm.prompt_registry import PromptRegistry
 from aegis.services.llm.quality_eval import QualityMetrics, regression_gate, stu_legality_rate
 
 

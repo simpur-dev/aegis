@@ -22,13 +22,10 @@ ResultsAnalysis 节点 —— 结果比较与分析
 import json
 import logging
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from aegis.agents.hazards.prompts.simulation_prompt import (
-    RESULTS_ANALYSIS_SYSTEM_PROMPT,
-    build_results_analysis_user_prompt,
-)
+from aegis.agents.core.meta import llm_call_meta
+from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.simulation_agent.llm_setup import get_simulation_llm
 from aegis.agents.hazards.simulation_agent.tools.completeness_check_tool import check_results_completeness_tool
 from aegis.agents.hazards.simulation_agent.tools.hazard_model_router import get_model_requirements
@@ -137,21 +134,17 @@ def results_analysis_node(state: dict) -> dict:
             ],
             ensure_ascii=False,
         )
-        analysis: ScenarioAnalysis = structured.invoke(
-            [
-                SystemMessage(content=RESULTS_ANALYSIS_SYSTEM_PROMPT),
-                HumanMessage(
-                    content=build_results_analysis_user_prompt(
-                        simulation_task=task,
-                        hazard_type=hazard,
-                        comparison_tool_result=json.dumps(comp, ensure_ascii=False),
-                        results_digest=digest,
-                        retry_count=retry_count,
-                        previous_issues=previous_issues,
-                    )
-                ),
-            ]
+        messages, prompt_version = build_prompt(
+            "hazard.results_analysis.retry" if retry_count > 0 and (previous_issues) else "hazard.results_analysis",
+            simulation_task=task,
+            hazard_type=hazard,
+            comparison_tool_result=json.dumps(comp, ensure_ascii=False),
+            results_digest=digest,
+            retry_count=retry_count,
+            previous_issues=previous_issues,
         )
+        with llm_call_meta(task="hazard.results_analysis", prompt_version=prompt_version, structured=True):
+            analysis = structured.invoke(messages)
         findings = [{"text": f.text, "source_tag": f.source_tag} for f in analysis.key_findings] or findings
         narrative = analysis.comparison_summary or narrative
         worst = analysis.worst_scenario_id or worst
