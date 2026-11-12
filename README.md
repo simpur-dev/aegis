@@ -45,7 +45,7 @@ aegis/
 │   ├── stu.v1.schema.json
 │   └── AGENT_INTEGRATION_SPEC.v1.md
 ├── archive/                   # 存档区（不进主线构建）：外部模块并入前的原始物料与占位说明的溯源副本
-├── data/                      # 外部公开灾情数据（NASA GLC 中国/西藏子集，public domain；准入规则/许可/校验见 data/external/README.md）
+├── data/                      # 外部公开数据（NASA GLC 中国/西藏子集 public domain；西藏公路地灾普查 CC BY-NC 4.0 隔离放置；见 data/external/README.md）
 ├── backend/
 │   ├── src/aegis/
 │   │   ├── config.py          # 运行配置与考核指标阈值口径（唯一配置面）
@@ -70,7 +70,7 @@ aegis/
 │   │   ├── agents/            # 统一智能体层（11 本体）：agentkit 契约壳 + 能力矩阵 + 五段内环 + `core/`（LLM 共享内核：熔断/提示词注册表/台账/meta）+ 三态运行时（real 与 mock 互斥；mock 留作契约门禁对照）
 │   │   │   └── hazards/       # 灾种闭环六体（并入自 hazard-landslide-agent，LangGraph 图编排）：数据质量门/因子引擎/情景仿真/预警素材/链内审计/闭环编排，各占一项能力，随 AEGIS_AGENT_RUNTIME=real 与平台五段同装
 │   │   └── api/               # FastAPI HTTP/SSE 接口：`app.py` 只做装配（闸/lifespan/异常/MCP 挂载），端点在 `routers/` 按资源分文件；另有工作流接口与语义交互（助手 SSE + 人工确认）
-│   ├── scripts/               # drill / metrics_report / accuracy_replay / eval_report_parsing / quality_gate / emit_model_cards / load_curve / zenoh_poc / import_stations / import_site_profiles / ingest_cases / fetch_external_disaster_data
+│   ├── scripts/               # drill / metrics_report / accuracy_replay / eval_report_parsing / quality_gate / emit_model_cards / load_curve / zenoh_poc / import_stations / import_site_profiles / ingest_cases / fetch_external_disaster_data / fetch_tibet_road_geohazard
 │   ├── tests/                 # unit / contract / integration / e2e / api / perf / load
 │   └── pyproject.toml         # extras：postgres / iot / graph / retrieval / analytics / edge / agents / mcp / objectstore / seekdb / perf / dev
 ├── frontend/                  # Vue 3 + Vite；Cesium 一张图、Vue Flow 编排画布
@@ -98,10 +98,12 @@ aegis/
 > `docs/archive/课题6_类似项目架构调研报告.md`（9-20 前期调研），原文保留、仅顶部加归档说明。
 > ADR 按惯例不移动；`docs/` 下的外部论文 PDF 是参考文献，无过时性。
 
-> **两类数据目录别混**：`data/external/` 只放**许可允许再分发**的外部公开数据（随仓库发布，
-> 每个数据集带 `manifest.json` / `schema.json` / 可复跑抓取脚本）；运行态数据（遥测、预警、
-> 模型权重、反馈记忆）在 `backend/data/`，不入库。NC/ND/需登录的数据一律不收，
-> 只在 `data/external/README.md` 的"未收清单"里记录原因。
+> **两类数据目录别混**：`data/external/` 放**外部公开数据**（随仓库发布，每个数据集带
+> `manifest.json` / `schema.json` / 可复跑抓取脚本）。默认只收许可允许再分发的数据；
+> **唯一例外**是 `sciencedb-tibet-road-geohazard-2022`（**CC BY-NC 4.0，非商业**）——
+> 它独立目录、独立许可文件、manifest 标 `commercial_use: false`，**商用发行前必须整目录移除**。
+> 运行态数据（遥测、预警、模型权重、反馈记忆）在 `backend/data/`，不入库。
+> NC/ND/需登录的数据默认不收，只在 `data/external/README.md` 的"未收清单"里记录原因。
 
 ## 2. 部署与运行
 
@@ -539,7 +541,7 @@ curl -s 'http://localhost:8000/api/v1/accuracy/replay?since=2026-09-01T00:00:00Z
 | 外部文本必过围栏 | 上报/案例/检索片段/回执进 prompt 前包进不可伪造的分隔围栏（提示注入防线）：内容原样保留，但只是数据、不再是指令 |
 | LLM 横切件唯一实现 | 熔断、提示词注册表（21 条）、调用台账、调用元数据各**只有一份实现**（`agents/core/`），平台网关与灾种 provider 共用；厂商 quirks 留在各自适配器。改提示词正文必须升版本号并同步正文指纹门禁（`tests/unit/agents/test_hazard_prompt_versions.py`），否则 `model_info.prompt_version` 描述的不是实际发送的正文 |
 | 台账口径两侧一致 | 首过率只算 `attempt=0` 的首答（修复轮不进分母）、传输失败不参与；token 取真实用量（响应 `usage`，缺省退消息 `usage_metadata`，都没有才记 0，不臆造）；治理出口把网关那本与灾种进程级那本**合并统计**——台账实现共享不等于统计共享 |
-| 外部数据可核验 | `data/external/` 只收许可允许再分发的公开数据；每个数据集带 `manifest.json`（来源/许可/SHA-256/条数）、`schema.json` 与可复跑抓取脚本，`--check` 与 `test_external_data_catalog.py` 把"手改数据 / 许可漂移 / 形状漂移"钉成红。空值一律 `null`（未报），不用 0 冒充 |
+| 外部数据可核验 | `data/external/` 的数据必须带 `manifest.json`（来源/许可/SHA-256/条数）、`schema.json` 与可复跑抓取脚本，`--check` 与两组 `test_external_*_catalog.py` 把"手改数据 / 许可漂移 / 形状漂移"钉成红。空值一律 `null`（未报），不用 0 冒充。**CC BY-NC 4.0 是唯一例外**（独立目录 + 独立许可 + `commercial_use: false`），商用发行前必须整目录移除 |
 | 指标必须实测 | `latency_report()` 输出运行时埋点的分位数与 SLA 判定，验收数字全部可追溯到样本 |
 | 降级留痕 | 降级写入 `ChainResult.degradations`（可归因），致命错误写入 `errors`（判失败） |
 | 双语不伪造 | 未接入可信翻译能力时预警仅中文并标记 `translation_pending`，不生成未经审核的藏语文本 |
