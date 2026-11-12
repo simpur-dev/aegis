@@ -1,0 +1,86 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-11-12T01:15:23.571064+00:00",
+  "datasets": [
+    {
+      "id": "sciencedb-tibet-road-geohazard-2022",
+      "title": "2022 年度西藏地质灾害普查数据（公路沿线）",
+      "publisher": "Science Data Bank",
+      "authors": [
+        "田建（Tian Jian），中国交通科学研究院（China Academy of Transportation Sciences）"
+      ],
+      "doi": "10.57760/sciencedb.27813",
+      "cstr": "31253.11.sciencedb.27813",
+      "license": {
+        "id": "cc-by-nc-4.0",
+        "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+        "commercial_use": false,
+        "note": "CC BY-NC 4.0：允许署名、非商业性再分发；禁止商业性使用。本目录与 AGPL-3.0 主仓库隔离，manifest 标 commercial_use=false；商用发行前必须移除本目录或另行取得授权。"
+      },
+      "citation": "田建（Tian Jian），中国交通科学研究院（China Academy of Transportation Sciences）. 2022 年度西藏地质灾害普查数据（公路沿线）[DS/OL]. V1. Science Data Bank, 2025. https://doi.org/10.57760/sciencedb.27813. CSTR:31253.11.sciencedb.27813.",
+      "source": {
+        "landing_url": "https://www.scidb.cn/doi/10.57760/sciencedb.27813",
+        "filetree_api": "https://www.scidb.cn/api/gin-sdb-filetree/getAllUrl?dataSetId=9b7541457595412c91304d3193198cc5&type=personal&version=V1&global=Asia/Shanghai",
+        "retrieved_at": "2026-11-12T01:15:23.571064+00:00"
+      },
+      "selection": {
+        "scope": "五个 CSV 的全部记录（崩塌/水毁/沉陷塌陷/泥石流/滑坡）",
+        "exclusions": []
+      },
+      "normalization": {
+        "raw_encoding": "gb18030",
+        "raw_line_endings": "CRLF（raw 按字节原样保留）",
+        "normalized_encoding": "utf-8",
+        "normalized_line_endings": "LF",
+        "date_rule": "最近发生时间 → ISO；解析不了留空，原文在 last_event_date_raw",
+        "coord_rule": "经纬度CGCS2K 取第一个点；原串是 'lon,lat;lon,lat;' 折线",
+        "category_map": {
+          "崩塌": "rockfall",
+          "滑坡": "landslide",
+          "泥石流": "debris_flow",
+          "沉陷塌陷": "unknown",
+          "水毁": "unknown"
+        },
+        "note": "沉陷塌陷/水毁在项目 HazardType 里没有对应类，落 unknown，原文保留在 source_category"
+      },
+      "known_limitations": [
+        "公路沿线普查口径，不是行政区域全量灾情；非公路地质灾害点不在内。",
+        "2,070 条 是否发生灾害=否 是隐患点，不是已发生事件（normalized.occurred=false）。",
+        "最近发生时间 2,056 条为空；有值的范围 2012-07-10 至 2022-09-04。",
+        "经纬度是灾害体折线（首点入 normalized），不是单点坐标。"
+      ],
+      "files": {
+        "raw/崩塌.csv": {
+          "sha256": "597c266948a2755b5b7bbb1cd8e72903f3ca55c3ca0d9b487f86843f5208b9a8",
+          "bytes": 6193326,
+          "rows": 6692
+        },
+        "raw/水毁.csv": {
+          "sha256": "b50c9ea0837195f131c79c4c05188bd0171f11a9e1256a7558d45e6b7cd032a1",
+          "bytes": 1039436,
+          "rows": 1037
+        },
+        "raw/沉陷塌陷.csv": {
+          "sha256": "d8e700151d6c21eda6c70bb3ab1ab8bfb4ec680e638c7dae62683e0b234d392f",
+          "bytes": 1208197,
+          "rows": 1227
+        },
+        "raw/泥石流.csv": {
+          "sha256": "a76f19391da8b4787446fe8ee972ce1757f09cf1c23bf6289cdcdb654328a935",
+          "bytes": 2760582,
+          "rows": 2909
+        },
+        "raw/滑坡.csv": {
+          "sha256": "f00edc3c681a140bc785214596fc6b26c2f4e171c40e23828eb5505305f5f01c",
+          "bytes": 1807851,
+          "rows": 1903
+        },
+        "normalized/tibet_road_geohazard_2022.v1.csv": {
+          "sha256": "78330f3ad5fb2eeedde93e35d9d3d98e8fbf89395c3ceaf2acddb71b66efa8a8",
+          "bytes": 4311079,
+          "rows": 13768
+        }
+      }
+    }
+  ]
+}

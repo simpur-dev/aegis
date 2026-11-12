@@ -1,0 +1,3 @@
+# 外部数据按字节入库：raw/ 里有 GB18030 + CRLF 的原始件，
+# `* text=auto eol=lf` 会把换行转成 LF，manifest 的 SHA-256 在新克隆里立刻失配。
+*.csv -text
