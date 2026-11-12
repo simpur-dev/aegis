@@ -314,3 +314,9 @@
   **③ 台账口径与治理出口（11-12）**：落账统一了但账没人读、口径也不齐——token 恒 0（成本归因假零）、attempt 恒 0（双通道回退被读成"首答就过"，首过率系统性虚高）、"HTTP 200 但没产出合法对象"记 ok（自然语言冒充首过）。三条全部修正：token 取响应 usage（缺省退消息 `usage_metadata`，都没有才记 0）、通道二记 `attempt=1`、不合规改判 `malformed`；改判按**本次调用链**定位（多腿并发时按"全局最后一行"会改到别人的账）。两本台账（网关随实例 + 灾种进程级）在 `GET /api/v1/metrics/latency` 的治理出口合并统计。四处旧名兜底（`_env`/`_runtime_path`/数据 API URL+TOKEN）都补了 deprecation 日志——"等现网迁移完再删旧名"的前提是能观察到谁还在用。
   **门禁（2026-11-12 本机）**：`pytest tests/unit tests/api tests/contract tests/e2e tests/integration` **4300 passed / 0 failed / 119 skipped**（391.8 s）、`ruff check` + `ruff format --check` 全绿、`mypy src` **360 文件**全绿。新增门禁：熔断状态机 19 条、提示词版本 + 正文指纹 3 条、台账口径 10 条、两本台账合并 6 条、旧名可观察 4 条；`test_capability_matrix.py` 钉住"每个登记能力有真实派发点、每个派发点都已登记"。
   **仍未做（不声称）**：灾种 LLM 仍**不走**平台网关——不进平台的提示注入围栏、不走网关的模型路由（这两条是真缺口；"不进模型台账"已不成立，台账已共享）；`AEGIS_EXT_*` 兼容分支仍在，删不删按部署面证据走；prompt 语义演化从此受正文指纹门禁约束（改正文不升版本即红）。
+
+- 2026-11-12｜**外部公开灾情数据目录（`data/external/`，先立规范再放数据）**｜实现落 `data/external/nasa-glc/`、`backend/scripts/fetch_external_disaster_data.py`、`backend/tests/unit/test_external_data_catalog.py`。
+  **准入四条**：许可允许再分发、每条能回到来源 URL、只收结构化事件、不伪装完整。NC/ND/需登录的一律不收——ScienceDB 的《2022 年西藏地质灾害普查数据》实测是 **CC BY-NC 4.0**，随 AGPL 仓库分发会让下游商用违约，因此只登记在"未收清单"，不入库；NSIDC HMA 目录需 Earthdata Login，同样不收。
+  **入仓数据**：NASA Global Landslide Catalog（美国政府作品，public domain）静态快照，按写死的规则取中国 426 条、西藏 16 条（源标注 18 条，排除 2 条 `admin_division` 错标：`4392` 实为印度 Dibang、`7108` 实为尼泊尔 Tatopani）。`raw/` 保留原始 31 列投影，`normalized/` 落项目口径 JSONL；空字符串一律 `null`（未报），`0` 才是明确报了零。
+  **可核验**：`manifest.json` 记录来源 URL / SHA-256 / 字节数 / 行数 / 选择规则 / 排除理由；`--check` 与 `test_external_data_catalog.py`（6 条）把"手改数据、许可漂移、灾种枚举漂移、排序/唯一性"钉成红。
+  **仍未做（不声称）**：数据是历史目录（事件止于 2016-06、只含降雨触发滑坡、媒体源偏差），**未接入任何生产链路**；要进预警/研判需另写导入适配并补契约测试。
