@@ -5,7 +5,7 @@
 > 选型结论与四问口径见 BRIEF §2/§7：组件库已批 **Arco Design Vue**（先探针实测再迁）；旧视觉已批现在停用；
 > 布局骨架 2026-10-17 拍板并实施为可折叠侧栏，**2026-10-30 已整块退役**，改透明顶栏横排（见下方"现状校准"与决策日志）。
 
-## 现状校准（2026-11-10 更新，读台账前先看）
+## 现状校准（2026-11-12 更新，读台账前先看）
 
 > 本看板的"里程碑/任务表"停在早期批次，**下文历史工作日志与决策记录保留原样不改**；
 > 下表以当前代码为准，与它冲突的条目按此读。
@@ -19,25 +19,29 @@
 | T27 过期判据 | in_progress | `eb6f1de`（11-01）已删掉随外壳退役的结构判据（127→122）；当前挂账是另 4 项，见下 |
 | M4 智能体状态区 | 已随侧栏落地迷你区 | 迷你区随侧栏一起退役；顶栏状态胶囊与总览的智能体在线板仍在 |
 | 智能助手 P0–P4 | 曾写 in_progress | **已全部完成**（11-04～11-08）：席位/通知/审计/write 动作/强认证/外部通知闭环，见决策日志 11-04～11-08 各条与 `docs/智能助手_设计文档.md` |
+| L3 智能体层 | 平台五段 + 外部实现两套 | **2026-11-11 已统一**（`docs/adr/0016`）：11 本体同挂一条总线、能力矩阵单一真源、`AEGIS_AGENT_IMPL` 已删；灾种六体住在 `agents/hazards/`（原 `agents_ext/`） |
+| LLM 通路 | 平台网关与外部实现各一套 | **2026-11-11 已统一**（`docs/adr/0017`）：熔断/提示词注册表（21 条）/台账/meta 在 `agents/core/` 共用一份实现，只留厂商 quirks；灾种调用已进共享台账并在治理出口合并统计 |
 
-**当前门禁（2026-11-10 实测，junit 计数）**
+**当前门禁（2026-11-12 实测，junit 计数）**
 
-- 后端：`pytest tests/unit tests/api tests/contract tests/e2e` **4063 passed / 0 failed / 0 skipped**
-  （`backend/tests` 205 个 `test_*.py`；`backend/src` 355 个 .py / 60,494 行）；
-  `ruff check` + `ruff format --check` 全绿、`mypy src/aegis` 355 文件全绿。
+- 后端：`pytest tests/unit tests/api tests/contract tests/e2e tests/integration`
+  **4300 passed / 0 failed / 119 skipped**（391.8 s；`backend/tests` 213 个 `test_*.py`）；
+  `ruff check` + `ruff format --check` 全绿、`mypy src` 360 文件全绿。
 - 前端：`vitest` 最近一次全量 **87 files / 1278 passed**（11-08 入档）、typecheck 0 error；
   颜色棘轮基线现役 **106**（`frontend/src/uiTheme.spec.ts` 的 `COLOR_BASELINE`），正文里的 154 / 139 / 104
   都是历史实量值，别当现行基线读。
 
-**未清项（截至 2026-11-10，这些账仍在）**
+**未清项（截至 2026-11-12，这些账仍在）**
 
 - e2e 界面自检 122 项：11-01 `0e1b31e` 按实测对比度修完字色后仍留 4 项——地图后端不可达时浮层互压 2、
   深色换肤读不到半透明卡面 1、monitor 图表换肤取样下限 1；口径未定前先留着。
 - `/api/v1/agents` 的 `online`/`items` 口径不一致（README §2.3 第 8 条）仍待复测。
 - `store` 读视图 **已于 P0 接上启动回填**（`read_backfill_limit`，默认 500 条 warnings/tasks；
   `chains` 不回填、`chain.list` 按需查库），README 那条已同步改正；**仍欠**超出窗口的历史查询体验。
-- 外部实现只接通研判段 `assess.hazard`；其余四段不注册（网关记 `no_agent`），
-  其 LLM 仍绕开平台网关（不进模型台账、不经提示注入围栏）——见 `docs/architecture.md` §3.1。
+- 灾种 LLM 仍**不走**平台网关（`docs/adr/0017` 第 1 项后续）：不进平台的提示注入围栏、不走网关的
+  模型路由；但**已进共享台账**，用量/首过率/时延在治理出口与网关那本合并统计。
+- `AEGIS_EXT_*` 旧名兼容分支仍在（第 2 项后续）：四处兜底都已记 deprecation 日志，
+  删不删按"部署面迁移确认 + 一个发布周期内无告警"的证据走，不按时间走。
 
 ## 里程碑
 
@@ -303,3 +307,10 @@
   **两处口径被顺手改掉的后果，如实记**：① `WarningStore.get()` / `TaskStore.get()` 对**已被淘汰**的记录从此返回 `None`（此前索引留着它，能捞到一条列表里已经不存在的记录）——这是把"索引与列表对同一批记录给出不同答案"修掉的代价，只影响内存形态；② `stages._warnings` 超出窗口的记录不再保留（此前无上限）——预警的权威读视图是 `store.warnings`（自带上限），这份只是便捷副本。
   **查过但决定不改的**：① 消息校验的"序列化→反序列化"往返（`model_dump_json` + `json.loads`）——实测只占校验耗时的 12%（0.020 / 0.172 ms），大头是 JSON Schema 校验本身（0.152 ms），**不值得动**；② MCP 取数门面的"每次取数开合会话"——那是**协议级会话**（connect/initialize/call/close），其 docstring 已写明理由，与 REST 的 keep-alive 不是一回事，**不动**；③ `AlertStore` / `ControlActionStore` / `NotificationStore`——它们**已有**配套淘汰逻辑，本批只修缺这一段的两处。
   门禁（2026-11-10，本机）：`pytest tests/unit tests/api tests/contract tests/e2e` **4063 tests / 0 failures / 0 errors / 0 skipped**（junit 计数，两轮共 +40）、`ruff check src tests scripts` 与 `ruff format --check` 全绿、`mypy src/aegis` 355 文件全绿。
+
+- 2026-11-11～12｜**统一智能体层与 LLM 通路（把"两套系统"收成一套）**｜决策记录 `docs/adr/0016`、`docs/adr/0017`，实现落 `backend/src/aegis/agents/`（`core/` 共享内核、`hazards/` 灾种六体、`capabilities.py` 能力矩阵）。
+  **① 智能体层统一（11-11）**：平台五段内环 + 灾种六体共 **11 个本体**同挂一条总线，能力与归属的唯一真源是 `agents/capabilities.py`（每项能力恰好一个主人），`AEGIS_AGENT_IMPL` 已删——不存在"用哪套实现"的开关；灾种六体随 `AEGIS_AGENT_RUNTIME=real` 与平台五段同装，闭环内部派单也走总线（进程内直调会绕过信封/deadline/幂等/错误分类）。四腿接入生产链路 + 闭环入口 `POST /api/v1/hazards/workflow`。
+  **② LLM 通路统一（11-11）**：熔断（带 60s 冷却 + 半开试探）、提示词注册表（**21 条**：平台 6 + 灾种 15）、调用台账、调用元数据下沉到 `agents/core/`，平台网关与灾种 provider **共用一份实现**；只留厂商 quirks（`json_object` 修复轮 / GLM 的 `function_calling` 双通道）。灾种 15 条正文用 AST 从原 f-string 抽取并逐条渲染比对（**15/15 逐字一致**），`hazards/prompts/` 目录删除；D10 凭证补齐 8 处 `Reply()`，`trace_id_var` 此前全仓零 `.set()` 的老问题一并修掉（JSON 日志终于有 trace_id）。环境变量族改名 `AEGIS_EXT_*` → `AEGIS_HAZARD_*`，旧名兼容读取。
+  **③ 台账口径与治理出口（11-12）**：落账统一了但账没人读、口径也不齐——token 恒 0（成本归因假零）、attempt 恒 0（双通道回退被读成"首答就过"，首过率系统性虚高）、"HTTP 200 但没产出合法对象"记 ok（自然语言冒充首过）。三条全部修正：token 取响应 usage（缺省退消息 `usage_metadata`，都没有才记 0）、通道二记 `attempt=1`、不合规改判 `malformed`；改判按**本次调用链**定位（多腿并发时按"全局最后一行"会改到别人的账）。两本台账（网关随实例 + 灾种进程级）在 `GET /api/v1/metrics/latency` 的治理出口合并统计。四处旧名兜底（`_env`/`_runtime_path`/数据 API URL+TOKEN）都补了 deprecation 日志——"等现网迁移完再删旧名"的前提是能观察到谁还在用。
+  **门禁（2026-11-12 本机）**：`pytest tests/unit tests/api tests/contract tests/e2e tests/integration` **4300 passed / 0 failed / 119 skipped**（391.8 s）、`ruff check` + `ruff format --check` 全绿、`mypy src` **360 文件**全绿。新增门禁：熔断状态机 19 条、提示词版本 + 正文指纹 3 条、台账口径 10 条、两本台账合并 6 条、旧名可观察 4 条；`test_capability_matrix.py` 钉住"每个登记能力有真实派发点、每个派发点都已登记"。
+  **仍未做（不声称）**：灾种 LLM 仍**不走**平台网关——不进平台的提示注入围栏、不走网关的模型路由（这两条是真缺口；"不进模型台账"已不成立，台账已共享）；`AEGIS_EXT_*` 兼容分支仍在，删不删按部署面证据走；prompt 语义演化从此受正文指纹门禁约束（改正文不升版本即红）。
