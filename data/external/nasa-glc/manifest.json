@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-11-12T01:09:04.868008+00:00",
+  "datasets": [
+    {
+      "id": "nasa-glc",
+      "title": "NASA Global Landslide Catalog (GLC) Export",
+      "publisher": "NASA Goddard Space Flight Center",
+      "license": {
+        "id": "public-domain",
+        "url": "https://www.nasa.gov/nasa-brand-center/images-and-media/"
+      },
+      "citation": "Kirschbaum, D. B., Adler, R., Hong, Y., Hill, S., & Lerner-Lam, A. (2010). A global landslide catalog for hazard applications: method, results, and limitations. Natural Hazards, 52(3), 561-575. doi:10.1007/s11069-009-9401-4",
+      "source": {
+        "url": "https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog_Export/Global_Landslide_Catalog_Export_rows.csv",
+        "sha256": "2c4898899dd4f373c4320e121c5b655ebb5394d431fa42e57ec4828d07d48b04",
+        "bytes": 8479717,
+        "rows": 11033,
+        "snapshot_note": "data.nasa.gov 的静态导出快照（事件日期止于 2016-06）；上游最新数据走 COOLR / Landslide Viewer。目录只收**降雨触发**的滑坡事件，且以媒体报道为源，不是完整普查。",
+        "retrieved_at": "2026-11-12T01:09:04.875557+00:00"
+      },
+      "selection": {
+        "china": "country_name == 'China'",
+        "tibet": "country_name == 'China' and admin_division_name == 'Tibet Autonomous Region'",
+        "tibet_exclusions": [
+          {
+            "event_id": "4392",
+            "reason": "admin_division 标 Tibet，但 location 为 Dibang, Arunachal Pradesh（印度）"
+          },
+          {
+            "event_id": "7108",
+            "reason": "admin_division 标 Tibet，但 location 为 Tatopani/Araniko Highway（尼泊尔，2015 尼泊尔地震）"
+          }
+        ]
+      },
+      "files": {
+        "raw/glc_export_rows.china.csv": {
+          "sha256": "c58883c927ef931d37cae5c1ef49b17cc1f92131bbb72925905b609dd3b44c0a",
+          "bytes": 353358,
+          "rows": 426
+        },
+        "raw/glc_export_rows.tibet_admin_labeled.csv": {
+          "sha256": "f11de465c3afcd200c0cb9e60f932f2e23e5610c52aed83b374f34526cd3d9d2",
+          "bytes": 17003,
+          "rows": 18
+        },
+        "normalized/china_landslide_events.v1.jsonl": {
+          "sha256": "7dbf909eb4c0f9a501109390fa8ffe4141f4bbc34bf96123b3f4e6e4367c9289",
+          "bytes": 524851,
+          "rows": 426
+        },
+        "normalized/tibet_landslide_events.v1.jsonl": {
+          "sha256": "780018ad2fc6902ca68c281201ecfcf9387a1afdd2f2d1af4371eba410a86737",
+          "bytes": 21656,
+          "rows": 16
+        }
+      }
+    }
+  ]
+}

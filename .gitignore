@@ -33,6 +33,12 @@ data/
 !backend/data/
 backend/data/*
 !backend/data/site_profiles.demo.jsonl
+# 例外：外部公开灾情数据随仓库发布（NASA GLC，公共领域，可再分发；来源/许可/校验和见
+# data/external/README.md）。锚定仓库根，避免把任意层级的 data/ 一并放行；运行态数据仍不入库。
+!/data/
+/data/*
+!/data/external/
+!/data/external/**
 *.db
 *.sqlite3
 logs/

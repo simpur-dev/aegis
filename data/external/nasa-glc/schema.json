@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegis.local/schemas/external_disaster_event.v1.json",
+  "title": "AEGIS external disaster event record v1",
+  "description": "外部公开灾情数据规范化后的单条事件记录。空值一律用 null（未报），不用 0 冒充——0 是明确报了零。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "record_id", "source", "event", "geo", "hazard", "impact"],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "record_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+:[A-Za-z0-9._-]+$",
+      "description": "`<dataset-id>:<源事件号>`，跨数据集不重复。"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset", "event_id", "source_name", "source_url", "license"],
+      "properties": {
+        "dataset": {
+          "const": "nasa-glc"
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "source_name": {
+          "type": ["string", "null"],
+          "description": "源目录里记录的信息提供方（多为媒体），不是发布者。"
+        },
+        "source_url": {
+          "type": ["string", "null"],
+          "pattern": "^https?://"
+        },
+        "license": {
+          "const": "public-domain"
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "time_raw", "title", "description", "location", "location_accuracy", "storm_name", "notes"],
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "time_raw": {
+          "type": ["string", "null"],
+          "description": "源数据的本地时刻原文，未做时区换算；`12:00:00 AM` 常见为占位零点。"
+        },
+        "title": {
+          "type": ["string", "null"]
+        },
+        "description": {
+          "type": ["string", "null"]
+        },
+        "location": {
+          "type": ["string", "null"]
+        },
+        "location_accuracy": {
+          "type": ["string", "null"]
+        },
+        "storm_name": {
+          "type": ["string", "null"]
+        },
+        "notes": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "geo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["latitude", "longitude", "country", "admin_division"],
+      "properties": {
+        "latitude": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "country": {
+          "type": ["string", "null"]
+        },
+        "admin_division": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "hazard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "source_category", "trigger", "size", "setting"],
+      "properties": {
+        "type": {
+          "enum": ["landslide", "rockfall", "debris_flow", "avalanche", "lake_outburst", "quake_triggered", "unknown"],
+          "description": "项目 HazardType；由源 category 映射，原文保留在 source_category。"
+        },
+        "source_category": {
+          "type": ["string", "null"]
+        },
+        "trigger": {
+          "type": ["string", "null"]
+        },
+        "size": {
+          "type": ["string", "null"]
+        },
+        "setting": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fatalities", "injuries"],
+      "properties": {
+        "fatalities": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "injuries": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
