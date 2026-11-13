@@ -202,7 +202,10 @@ const statusTitle = computed<string>(() =>
           <span class="alert-banner__meta">在案 {{ badgeCount }} 条 ｜ 处置入口在右侧助手抽屉</span>
         </div>
 
-        <main class="main-content" :class="{ 'is-immersive': immersive, 'is-map': route.name === 'map' }">
+        <main
+          class="main-content"
+          :class="{ 'is-immersive': immersive, 'is-map': route.name === 'map', 'is-desk': route.name === 'assistant' }"
+        >
           <router-view />
           <!-- 服务令牌条常驻页脚：一台机器填一次，但"这台开了鉴权"必须每页都说得出口（§4.8.1） -->
           <ServiceTokenBar v-if="!immersive" />
@@ -501,6 +504,20 @@ html.assistant-resizing .main-content {
 /* 一张图全屏：主内容不再留内边距，地图自己铺满顶栏以下 */
 .main-content.is-map {
   padding: 0;
+}
+/* 值班台主内容改竖排 flex：内容不足一屏时会话吃掉令牌条与页脚之外的全部高度，
+   内容更高时整页滚动，令牌条与页脚跟在全部内容之后 */
+.main-content.is-desk {
+  display: flex;
+  flex-direction: column;
+  /* 值班台两侧多留一倍呼吸位（24→48），会话整体右移，页面不贴边 */
+  padding-left: var(--aeg-space-s12);
+  padding-right: var(--aeg-space-s12);
+}
+.main-content.is-desk > :first-child {
+  /* auto 基线 + 不压缩：零基线(flex:1)会把外壳压到视口高，
+     更高的会话溢出后与令牌条/页脚叠在一起 */
+  flex: 1 0 auto;
 }
 .main-content.is-immersive {
   height: 100vh;

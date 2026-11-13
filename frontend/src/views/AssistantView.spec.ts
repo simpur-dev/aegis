@@ -1,11 +1,12 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ActionSpecDto, AssistantFrame, CapabilitiesDto } from '@/api/assistant'
 import { AssistantApiError, assistantApi, CHAT_LIMITS } from '@/api/assistant'
 import { readRepoFile } from '@/testing/repoSource'
 import { reloadAssistantSession, resetAssistantSession } from '@/composables/useAssistantSession'
 import { resetAssistantCapabilities } from '@/composables/useAssistantCapabilities'
+import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import AssistantView from '@/views/AssistantView.vue'
 
 vi.mock('@/api/assistant', async (importOriginal) => {
@@ -173,12 +174,10 @@ describe('建议条：点一下填进输入框，不代发', () => {
 })
 
 describe('能力面：读不到与没配置都不许显示成正常', () => {
-  it('llm_configured=false 时明说"语义服务未配置：仅规则词表可用"', async () => {
+  it('llm_configured=false 时页头明说"语义服务未配置"，黄色横幅已移除', async () => {
     const wrapper = await renderView(capabilities({ llm_configured: false }))
-    const banner = byTestid(wrapper, 'banner-no-llm')
-    expect(banner.exists()).toBe(true)
-    expect(banner.text()).toContain('语义服务未配置：仅规则词表可用')
     expect(byTestid(wrapper, 'caps-state').text()).toBe('语义服务未配置')
+    expect(wrapper.find('[data-testid="banner-no-llm"]').exists()).toBe(false)
   })
 
   it('能力面失败时显示"读不到"，不显示"一切正常"', async () => {
@@ -745,5 +744,321 @@ describe('换页再回来：对话要接得上（后端会话还在时限内）'
     await flushPromises()
     expect(wrapper.find('[data-testid="frame-answer"]').exists()).toBe(false)
     expect(byTestid(wrapper, 'session-id').text()).toContain('as_live_1')
+  })
+})
+
+/**
+ * 值班台双栏与拉杆（page 模式专属）。
+ *
+ * 判据与驾驶舱那根拉杆同一份：多发 pointermove 只排一帧、帧落地前高度不动、
+ * pointerup 才写记忆。竖排满栏里两板高度互补（拖一块另一块让位），夹在
+ * [160, 栏高−缝−160]；键盘与双击复位走得通、刷新认记忆。
+ * dock 模式不渲染右栏，告警与处置空间仍在聊天容器里。
+ */
+describe('值班台：左会话全高、右栏竖排互补拉杆', () => {
+  const ALERTS_KEY = 'aegis.assistant.alerts-pane'
+  const HANDLING_KEY = 'aegis.assistant.handling-pane'
+  const DESK_KEY = 'aegis.assistant.desk-height'
+
+  beforeEach(() => {
+    localStorage.removeItem(ALERTS_KEY)
+    localStorage.removeItem(HANDLING_KEY)
+    localStorage.removeItem(DESK_KEY)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.removeItem(ALERTS_KEY)
+    localStorage.removeItem(HANDLING_KEY)
+    localStorage.removeItem(DESK_KEY)
+  })
+
+  /** jsdom 没有布局：右栏全高与两板起始高度都得手动量给组件（800 栏 → 默认各 392）。 */
+  function stubGeometry(wrapper: ReturnType<typeof mount>, column = 800, paneHeight = 392) {
+    const side = wrapper.find('[data-testid="assistant-side"]')
+    Object.defineProperty(side.element, 'clientHeight', { value: column, configurable: true })
+    for (const id of ['alerts-pane', 'handling-pane']) {
+      wrapper.find(`[data-testid="${id}"]`).element.getBoundingClientRect = () => ({ height: paneHeight }) as DOMRect
+    }
+    return side
+  }
+
+  function stubCapture(handle: { element: Element }) {
+    const el = handle.element as HTMLElement
+    el.setPointerCapture = vi.fn()
+    el.hasPointerCapture = vi.fn(() => true)
+    el.releasePointerCapture = vi.fn()
+    return el
+  }
+
+  it('page 模式：会话在左栏全高，告警与处置空间竖排在右栏', async () => {
+    const wrapper = await renderView()
+    const desk = byTestid(wrapper, 'assistant-desk')
+    expect(desk.exists()).toBe(true)
+    expect(desk.find('.chat').exists()).toBe(true)
+    const side = byTestid(wrapper, 'assistant-side')
+    expect(side.find('[data-testid="alert-stack"]').exists()).toBe(true)
+    expect(side.find('[data-testid="handling-bar"]').exists()).toBe(true)
+    expect(wrapper.find('.chat [data-testid="alert-stack"]').exists()).toBe(false)
+    expect(wrapper.find('.chat [data-testid="handling-bar"]').exists()).toBe(false)
+    expect(wrapper.find('.chat [data-testid="timeline"]').exists()).toBe(true)
+    expect(wrapper.find('.chat [data-testid="field-message"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('dock 模式不渲染右栏：告警与处置空间仍在聊天容器里', async () => {
+    mockedCapabilities.mockResolvedValue(capabilities())
+    const wrapper = mount(AssistantPanel, { props: { mode: 'dock' }, global: { stubs: STUBS } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="assistant-side"]').exists()).toBe(false)
+    expect(wrapper.find('.chat [data-testid="alert-stack"]').exists()).toBe(true)
+    expect(wrapper.find('.chat [data-testid="handling-bar"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('拉杆拖动合帧：pointermove 攒到 rAF 才写一次高度，pointerup 才提交记忆', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    const wrapper = await renderView()
+    stubGeometry(wrapper)
+    const pane = byTestid(wrapper, 'alerts-pane')
+    const other = byTestid(wrapper, 'handling-pane')
+    const handle = byTestid(wrapper, 'alerts-pane-handle')
+    stubCapture(handle)
+
+    await handle.trigger('pointerdown', { clientY: 500, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 520, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 540, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 560, pointerId: 1 })
+    // 帧回调落地前高度不动：多发事件合进同一帧，不许逐发回流
+    expect(frames).toHaveLength(1)
+    expect(pane.attributes('style') ?? '').not.toContain('height')
+    frames.splice(0).forEach((cb) => cb(performance.now()))
+    expect(pane.attributes('style')).toContain('height: 452px')
+    // 互补：另一块当场让位到 800−16−452=332
+    expect(other.attributes('style')).toContain('height: 332px')
+    expect(handle.attributes('aria-valuenow')).toBe('452')
+    expect(localStorage.getItem(ALERTS_KEY)).toBeNull()
+
+    await handle.trigger('pointerup', { clientY: 560, pointerId: 1 })
+    expect(localStorage.getItem(ALERTS_KEY)).toBe('452')
+    expect(localStorage.getItem(HANDLING_KEY)).toBe('332')
+    expect(pane.classes()).not.toContain('is-resizing')
+    wrapper.unmount()
+  })
+
+  it('夹上限：拖到顶时另一块不许低于 160', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    const wrapper = await renderView()
+    stubGeometry(wrapper, 800, 392)
+    const handle = byTestid(wrapper, 'alerts-pane-handle')
+    stubCapture(handle)
+    await handle.trigger('pointerdown', { clientY: 500, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 2000, pointerId: 1 })
+    frames.splice(0).forEach((cb) => cb(performance.now()))
+    expect(byTestid(wrapper, 'alerts-pane').attributes('style')).toContain('height: 624px')
+    expect(byTestid(wrapper, 'handling-pane').attributes('style')).toContain('height: 160px')
+    await handle.trigger('pointerup', { clientY: 2000, pointerId: 1 })
+    expect(localStorage.getItem(ALERTS_KEY)).toBe('624')
+    expect(localStorage.getItem(HANDLING_KEY)).toBe('160')
+    wrapper.unmount()
+  })
+
+  it('键盘微调与 Home/End：每一步都落地并记住两块', async () => {
+    const wrapper = await renderView()
+    stubGeometry(wrapper, 800, 392)
+    const handle = byTestid(wrapper, 'alerts-pane-handle')
+
+    await handle.trigger('keydown', { key: 'ArrowDown' })
+    expect(localStorage.getItem(ALERTS_KEY)).toBe('416')
+    expect(localStorage.getItem(HANDLING_KEY)).toBe('368')
+    await handle.trigger('keydown', { key: 'ArrowUp' })
+    expect(localStorage.getItem(ALERTS_KEY)).toBe('392')
+    await handle.trigger('keydown', { key: 'Home' })
+    expect(localStorage.getItem(ALERTS_KEY)).toBe('160')
+    expect(localStorage.getItem(HANDLING_KEY)).toBe('624')
+    await handle.trigger('keydown', { key: 'End' })
+    expect(localStorage.getItem(ALERTS_KEY)).toBe('624')
+    // 无关按键不拦也不改
+    await handle.trigger('keydown', { key: 'a' })
+    expect(localStorage.getItem(ALERTS_KEY)).toBe('624')
+    wrapper.unmount()
+  })
+
+  it('双击复位：两块一起回默认各半，两份记忆都清掉', async () => {
+    const wrapper = await renderView()
+    stubGeometry(wrapper, 800, 392)
+    const handle = byTestid(wrapper, 'alerts-pane-handle')
+    await handle.trigger('keydown', { key: 'ArrowDown' })
+    expect(localStorage.getItem(ALERTS_KEY)).toBe('416')
+    await handle.trigger('dblclick')
+    expect(localStorage.getItem(ALERTS_KEY)).toBeNull()
+    expect(localStorage.getItem(HANDLING_KEY)).toBeNull()
+    expect(byTestid(wrapper, 'alerts-pane').attributes('style') ?? '').not.toContain('height')
+    expect(byTestid(wrapper, 'handling-pane').attributes('style') ?? '').not.toContain('height')
+    expect(handle.attributes('aria-valuenow')).toBe('392')
+    wrapper.unmount()
+  })
+
+  it('刷新后按记忆恢复；存了坏值就当没存', async () => {
+    localStorage.setItem(ALERTS_KEY, '452')
+    localStorage.setItem(HANDLING_KEY, '332')
+    const first = await renderView()
+    expect(byTestid(first, 'alerts-pane').attributes('style')).toContain('height: 452px')
+    expect(byTestid(first, 'handling-pane').attributes('style')).toContain('height: 332px')
+    first.unmount()
+
+    localStorage.setItem(ALERTS_KEY, '不是数字')
+    const second = await renderView()
+    expect(byTestid(second, 'alerts-pane').attributes('style') ?? '').not.toContain('height')
+    second.unmount()
+  })
+
+  it('高屏存记忆、矮屏刷新：按当前栏高重新夹住，不让右栏溢出视口', async () => {
+    localStorage.setItem(ALERTS_KEY, '452')
+    localStorage.setItem(HANDLING_KEY, '332')
+    // jsdom 没有 ResizeObserver：装一个能手动触发的假观察器，走真实"栏高变了"那条夹取路径
+    let fireBudget: () => void = () => {}
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          fireBudget = cb
+        }
+        observe() {}
+        disconnect() {}
+      },
+    )
+    const wrapper = await renderView()
+    stubGeometry(wrapper, 488, 236)
+    fireBudget()
+    await flushPromises()
+    // 栏高 488：上限 488−16−160=312，另一块拿剩下的 160
+    expect(byTestid(wrapper, 'alerts-pane').attributes('style')).toContain('height: 312px')
+    expect(byTestid(wrapper, 'handling-pane').attributes('style')).toContain('height: 160px')
+    expect(localStorage.getItem(ALERTS_KEY)).toBe('312')
+    expect(localStorage.getItem(HANDLING_KEY)).toBe('160')
+    wrapper.unmount()
+  })
+
+  /** jsdom 没有主内容盒：造一个量好尺寸的 .main-content，让 fitDesk 能算出"一屏适配"。 */
+  function stubMain(fit: { client: number; scroll: number; top: number }) {
+    const main = document.createElement('div')
+    main.className = 'main-content'
+    document.body.appendChild(main)
+    Object.defineProperty(main, 'clientHeight', { value: fit.client, configurable: true })
+    Object.defineProperty(main, 'scrollHeight', { value: fit.scroll, configurable: true })
+    main.getBoundingClientRect = () => ({ top: fit.top }) as DOMRect
+    return main
+  }
+  function stubBudgetObserver() {
+    let fire: () => void = () => {}
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          fire = cb
+        }
+        observe() {}
+        disconnect() {}
+      },
+    )
+    return () => fire()
+  }
+
+  it('值班台默认高＝一屏适配×4/3：适配 488 就立 651 的最低高', async () => {
+    const fire = stubBudgetObserver()
+    const main = stubMain({ client: 700, scroll: 700, top: 100 })
+    const wrapper = await renderView()
+    const desk = byTestid(wrapper, 'assistant-desk')
+    desk.element.getBoundingClientRect = () => ({ top: 214, bottom: 702, height: 488 }) as DOMRect
+    fire()
+    await flushPromises()
+    // fit = 700 − (214−100) − (700−(702−100)) = 488；×4/3 ≈ 651
+    expect(desk.attributes('style')).toContain('min-height: 651px')
+    wrapper.unmount()
+    main.remove()
+  })
+
+  it('整页拉杆：合帧写高、pointerup 才记忆、双击复位清记忆', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    const fire = stubBudgetObserver()
+    // desk 已高 651（比适配 488 多 163），主内容 scrollHeight 跟着长同样的量
+    const main = stubMain({ client: 700, scroll: 863, top: 100 })
+    const wrapper = await renderView()
+    const desk = byTestid(wrapper, 'assistant-desk')
+    desk.element.getBoundingClientRect = () => ({ top: 214, bottom: 865, height: 651 }) as DOMRect
+    fire()
+    await flushPromises()
+    const handle = byTestid(wrapper, 'desk-handle')
+    stubCapture(handle)
+    await handle.trigger('pointerdown', { clientY: 500, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 520, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 540, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 560, pointerId: 1 })
+    expect(frames.length, '三次 pointermove 只该攒出一帧').toBe(1)
+    expect(desk.attributes('style') ?? '').not.toContain('height: 711px')
+    frames.forEach((cb) => cb(0))
+    expect(desk.attributes('style')).toContain('height: 711px')
+    expect(localStorage.getItem(DESK_KEY)).toBe(null)
+    await handle.trigger('pointerup', { clientY: 560, pointerId: 1 })
+    expect(localStorage.getItem(DESK_KEY)).toBe('711')
+    expect(handle.attributes('aria-valuenow')).toBe('711')
+    await handle.trigger('dblclick')
+    expect(localStorage.getItem(DESK_KEY)).toBe(null)
+    expect(desk.attributes('style')).toContain('min-height: 651px')
+    expect(desk.attributes('style')).not.toContain('height: 711px')
+    wrapper.unmount()
+    main.remove()
+  })
+
+  it('整页拉杆：没按下时 hover 的 pointermove/pointerup 不写高不记忆', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    const fire = stubBudgetObserver()
+    const main = stubMain({ client: 700, scroll: 863, top: 100 })
+    const wrapper = await renderView()
+    const desk = byTestid(wrapper, 'assistant-desk')
+    desk.element.getBoundingClientRect = () => ({ top: 214, bottom: 865, height: 651 }) as DOMRect
+    fire()
+    await flushPromises()
+    const handle = byTestid(wrapper, 'desk-handle')
+    stubCapture(handle)
+    await handle.trigger('pointermove', { clientY: 695, pointerId: 1 })
+    await handle.trigger('pointerup', { clientY: 695, pointerId: 1 })
+    expect(frames.length, '没按下不该攒帧').toBe(0)
+    expect(desk.attributes('style') ?? '').not.toContain('height: 695px')
+    expect(localStorage.getItem(DESK_KEY)).toBe(null)
+    wrapper.unmount()
+    main.remove()
+  })
+
+  it('整页拉杆：上限取适配×2 与内容自然高的较大者', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    const fire = stubBudgetObserver()
+    const main = stubMain({ client: 700, scroll: 863, top: 100 })
+    const wrapper = await renderView()
+    const desk = byTestid(wrapper, 'assistant-desk')
+    desk.element.getBoundingClientRect = () => ({ top: 214, bottom: 865, height: 651 }) as DOMRect
+    Object.defineProperty(desk.element, 'scrollHeight', { value: 951, configurable: true })
+    fire()
+    await flushPromises()
+    const handle = byTestid(wrapper, 'desk-handle')
+    stubCapture(handle)
+    await handle.trigger('pointerdown', { clientY: 500, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 900, pointerId: 1 })
+    frames.forEach((cb) => cb(0))
+    // fit 488×2=976 > 自然高 951；651+400=1051 被夹到 976
+    expect(desk.attributes('style')).toContain('height: 976px')
+    wrapper.unmount()
+    main.remove()
   })
 })

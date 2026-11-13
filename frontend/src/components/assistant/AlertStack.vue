@@ -345,10 +345,16 @@ const shown = computed(() => openCards.value)
   padding: 2px 10px;
   cursor: pointer;
 }
+/* 实底主色 + 反色字：浅底蓝字实测 4.37:1 过不了 11px 的 4.5 门槛（e2e 对比度判据），
+   白压浅主色 5.98:1、深字压深主色 5.37:1，两主题都过 */
 .alert__btn--primary {
-  background: var(--aeg-color-brand-soft);
-  border-color: var(--aeg-color-brand-line);
-  color: var(--aeg-color-brand);
+  background: var(--aeg-color-brand);
+  border-color: var(--aeg-color-brand);
+  color: var(--aeg-color-text-inverse);
+}
+.alert__btn--primary:hover:not(:disabled) {
+  background: var(--aeg-color-brand-hover);
+  border-color: var(--aeg-color-brand-hover);
 }
 .alert__btn:disabled {
   opacity: 0.5;
