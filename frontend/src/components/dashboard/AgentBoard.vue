@@ -48,16 +48,25 @@ function loadRatio(agent: AgentInfo): number {
 .agent-board {
   display: flex;
   flex-direction: column;
+  gap: var(--aeg-space-s2);
 }
+/* 一颗智能体一张小卡：与链路卡同一套习语（sunken 底 + 细边 + 悬停品牌描边），
+   替掉原来的通栏分隔线——分隔线在滚动区里读起来像一张没表头的表。 */
 .agent {
   display: flex;
   align-items: center;
   gap: var(--aeg-space-s2);
-  padding: var(--aeg-space-s2) var(--aeg-space-s1);
-  border-bottom: 1px solid var(--aeg-color-border-subtle);
+  padding: var(--aeg-space-s2) 10px;
+  border: 1px solid var(--aeg-color-glass-border);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-sunken);
+  transition:
+    border-color var(--aeg-motion-base) ease,
+    box-shadow var(--aeg-motion-base) ease;
 }
-.agent:last-child {
-  border-bottom: none;
+.agent:hover {
+  border-color: var(--aeg-color-brand);
+  box-shadow: var(--aeg-shadow-sm);
 }
 .agent__dot {
   flex: 0 0 auto;

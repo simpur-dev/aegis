@@ -160,8 +160,141 @@ async function refresh(): Promise<void> {
   }
 }
 
+/**
+ * 智能体面板折叠 + 拉杆调高。
+ * 列表原先照单全收，十几颗智能体把第一行撑到一屏多高，
+ * 第二行（风险网格/链路/事件流）整个被顶出首屏；默认收进视口的约 55%，
+ * 剩下的交给拉杆——值班员想多看几颗就往下拖，双击回到默认。
+ */
+const AGENT_PANEL_KEY = 'aegis.dashboard.agent-panel'
+const AGENT_PANEL_MIN = 220
+/** 折叠后只留标题行：16 上内边距 + 69 卡头 + 16 下内边距。 */
+const AGENT_PANEL_COLLAPSED = 101
+const AGENT_PANEL_MAX_RATIO = 0.8
+const AGENT_PANEL_DEFAULT_RATIO = 0.55
+
+function readAgentPanel(): { collapsed: boolean; height: number | null } {
+  try {
+    const raw = localStorage.getItem(AGENT_PANEL_KEY)
+    if (raw !== null) {
+      const saved = JSON.parse(raw) as { collapsed?: unknown; height?: unknown }
+      return {
+        collapsed: saved.collapsed === true,
+        height: typeof saved.height === 'number' && Number.isFinite(saved.height) ? saved.height : null,
+      }
+    }
+  } catch {
+    // localStorage 不可用（隐私模式等）就落回默认高度，不让面板把页面一起拖垮
+  }
+  return { collapsed: false, height: null }
+}
+
+const agentPanelInit = readAgentPanel()
+const panelRef = ref<HTMLElement | null>(null)
+const panelCollapsed = ref(agentPanelInit.collapsed)
+/** null = 跟随默认 55vh；拖过拉杆才写明确像素。 */
+const panelHeight = ref<number | null>(agentPanelInit.height)
+const viewportH = ref(window.innerHeight)
+
+const panelMax = computed(() => Math.max(AGENT_PANEL_MIN, Math.round(viewportH.value * AGENT_PANEL_MAX_RATIO)))
+/** 第二行（风险网格/链路/事件流）自然高度约 266，加顶栏与两处 gap 约 370：
+    默认高度在 55vh 与"给第二行让位"之间取小，矮屏也保证第二行整行可见。 */
+const SECOND_ROW_RESERVE = 370
+const panelDefault = computed(() =>
+  Math.min(
+    860,
+    Math.max(
+      AGENT_PANEL_MIN,
+      Math.min(Math.round(viewportH.value * AGENT_PANEL_DEFAULT_RATIO), viewportH.value - SECOND_ROW_RESERVE),
+    ),
+  ),
+)
+const panelNow = computed(() => (panelCollapsed.value ? AGENT_PANEL_COLLAPSED : (panelHeight.value ?? panelDefault.value)))
+const panelStyle = computed(() => ({ height: `${panelNow.value}px` }))
+
+/** 折叠时标题行也要能回答"平台还活着吗"：在线数/总数，取不到写 — 不写 0。 */
+const agentSummary = computed(() => {
+  if (agents.value.length === 0) return '—'
+  return `在线 ${agents.value.filter((a) => a.healthy).length} / ${agents.value.length}`
+})
+
+watch([panelCollapsed, panelHeight], () => {
+  try {
+    localStorage.setItem(AGENT_PANEL_KEY, JSON.stringify({ collapsed: panelCollapsed.value, height: panelHeight.value }))
+  } catch {
+    // 隐私模式写不进就算了，下次不记忆而已
+  }
+})
+
+function clampPanel(h: number): number {
+  return Math.min(panelMax.value, Math.max(AGENT_PANEL_MIN, Math.round(h)))
+}
+
+let dragStartY = 0
+let dragStartH = 0
+let dragLastY = 0
+let dragRaf = 0
+let dragging = false
+/** pointermove 一帧能来好几发：逐发写高度就是一帧多次网格回流（实测改前拖动长帧 83ms）。
+    合到 rAF 每帧直写一次 DOM，pointerup 才提交状态，Vue 与 localStorage 都只动一次。
+    is-resizing 也走 classList 直改：它只关过渡/换手柄色，不值得在按下那一帧触发整页渲染。 */
+function writeDragHeight(): void {
+  dragRaf = 0
+  const el = panelRef.value
+  if (el === null) return
+  const h = clampPanel(dragStartH + (dragLastY - dragStartY))
+  el.style.height = `${h}px`
+  el.querySelector('[data-testid="agent-panel-handle"]')?.setAttribute('aria-valuenow', String(h))
+}
+function onPanelHandleDown(e: PointerEvent): void {
+  if (panelCollapsed.value) return
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  dragStartY = e.clientY
+  dragLastY = e.clientY
+  dragStartH = panelNow.value
+  dragging = true
+  panelRef.value?.classList.add('is-resizing')
+}
+function onPanelHandleMove(e: PointerEvent): void {
+  if (!dragging) return
+  dragLastY = e.clientY
+  if (dragRaf === 0) dragRaf = requestAnimationFrame(writeDragHeight)
+}
+function onPanelHandleUp(e: PointerEvent): void {
+  if (!dragging) return
+  dragging = false
+  panelRef.value?.classList.remove('is-resizing')
+  if (dragRaf !== 0) {
+    cancelAnimationFrame(dragRaf)
+    dragRaf = 0
+  }
+  // 没拖过（单纯点了一下）不写明确高度，保住"跟随默认 55vh"的语义
+  if (dragLastY !== dragStartY) panelHeight.value = clampPanel(dragStartH + (dragLastY - dragStartY))
+  const el = e.currentTarget as HTMLElement
+  if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
+}
+function onPanelHandleKey(e: KeyboardEvent): void {
+  let next: number
+  if (e.key === 'ArrowDown') next = panelNow.value + 24
+  else if (e.key === 'ArrowUp') next = panelNow.value - 24
+  else if (e.key === 'Home') next = AGENT_PANEL_MIN
+  else if (e.key === 'End') next = panelMax.value
+  else return
+  e.preventDefault()
+  panelCollapsed.value = false
+  panelHeight.value = clampPanel(next)
+}
+function resetPanelHeight(): void {
+  panelHeight.value = null
+}
+function onWindowResize(): void {
+  viewportH.value = window.innerHeight
+  if (panelHeight.value !== null) panelHeight.value = clampPanel(panelHeight.value)
+}
+
 onMounted(() => {
   void refresh()
+  window.addEventListener('resize', onWindowResize)
   // 页签切到后台就不发请求（与腿面板同一口径）：大屏副页签没人看，轮询却一直在打接口。
   timer = setInterval(() => {
     if (document.visibilityState !== 'visible') return
@@ -170,6 +303,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', onWindowResize)
+  if (dragRaf !== 0) cancelAnimationFrame(dragRaf)
+  dragRaf = 0
   if (timer !== null) clearInterval(timer)
   timer = null
   if (eventTimer !== null) clearTimeout(eventTimer)
@@ -260,11 +396,54 @@ watch(
         </template>
       </KpiStrip>
 
-      <!-- 第一行右：智能体在线状态（原来贴在右侧栏悬浮，现在与 KPI 同一行） -->
-      <section class="glass-panel dash-agent">
+      <!-- 第一行右：智能体在线状态。可折叠 + 底缘拉杆调高（默认约 55vh），
+           把第二行（风险网格/链路/事件流）让进首屏；状态记忆在 localStorage。 -->
+      <section
+        ref="panelRef"
+        class="glass-panel dash-agent"
+        :class="{ 'is-collapsed': panelCollapsed }"
+        :style="panelStyle"
+        data-testid="agent-panel"
+      >
         <a-card title="智能体在线状态（经总线契约注册）" size="small">
-          <AgentBoard :agents="agents" />
+          <template #extra>
+            <span class="dash-agent__summary" data-testid="agent-panel-summary">{{ agentSummary }}</span>
+            <button
+              type="button"
+              class="dash-agent__toggle"
+              data-testid="agent-panel-toggle"
+              :aria-expanded="!panelCollapsed"
+              aria-controls="agent-panel-body"
+              @click="panelCollapsed = !panelCollapsed"
+            >
+              <span class="dash-agent__chev" :class="{ 'is-collapsed': panelCollapsed }" aria-hidden="true">▾</span>
+              {{ panelCollapsed ? '展开' : '收起' }}
+            </button>
+          </template>
+          <div id="agent-panel-body" class="dash-agent__body" :aria-hidden="panelCollapsed">
+            <AgentBoard :agents="agents" />
+          </div>
         </a-card>
+        <div
+          v-show="!panelCollapsed"
+          class="dash-agent__handle"
+          data-testid="agent-panel-handle"
+          role="slider"
+          tabindex="0"
+          aria-label="智能体面板高度：上下方向键调整，双击恢复默认"
+          aria-orientation="vertical"
+          :aria-valuemin="AGENT_PANEL_MIN"
+          :aria-valuemax="panelMax"
+          :aria-valuenow="panelNow"
+          @pointerdown="onPanelHandleDown"
+          @pointermove="onPanelHandleMove"
+          @pointerup="onPanelHandleUp"
+          @pointercancel="onPanelHandleUp"
+          @dblclick="resetPanelHeight"
+          @keydown="onPanelHandleKey"
+        >
+          <i class="dash-agent__grip" aria-hidden="true"></i>
+        </div>
       </section>
 
       <!-- 第二行左：风险区域网格 + 链路执行记录（合起来与上方 KPI 同宽） -->
@@ -341,7 +520,104 @@ watch(
   grid-area: agent;
   min-width: 0;
   overflow: hidden;
-  align-self: stretch;
+  /* 高度由拉杆/折叠说了算（panelStyle）；第一行另一块 KPI 反过来跟它齐平 */
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  transition: height var(--aeg-motion-slow) ease;
+}
+/* 拖拽期间必须跟手：过渡会让手柄和面板差半拍 */
+.dash-agent.is-resizing {
+  transition: none;
+}
+.dash-agent :deep(.ant-card) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dash-agent :deep(.ant-card-body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 列表在卡内滚动：底部渐隐 + 细滚动条，与链路/事件流同一套习语 */
+.dash-agent__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: var(--aeg-space-s2);
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
+  mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
+}
+.dash-agent__body::-webkit-scrollbar {
+  width: 6px;
+}
+.dash-agent__body::-webkit-scrollbar-thumb {
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-border);
+}
+/* 折叠是外层高度动画，正文用 visibility 藏：保留滚动位置，展开接着看 */
+.dash-agent.is-collapsed .dash-agent__body {
+  visibility: hidden;
+}
+.dash-agent__summary {
+  margin-right: var(--aeg-space-s2);
+  font-size: var(--aeg-font-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--aeg-color-text-secondary);
+}
+.dash-agent__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--aeg-color-brand);
+  font-size: var(--aeg-font-xs);
+  cursor: pointer;
+}
+.dash-agent__toggle:hover {
+  text-decoration: underline;
+}
+.dash-agent__chev {
+  display: inline-block;
+  transition: transform var(--aeg-motion-base) ease;
+}
+.dash-agent__chev.is-collapsed {
+  transform: rotate(-90deg);
+}
+/* 拉杆：底缘一条水平手柄，拖拽调高；悬停/拖拽时品牌色 + 光晕提示"可以拖" */
+.dash-agent__handle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 14px;
+  margin-top: var(--aeg-space-s1);
+  border-radius: var(--aeg-radius-pill);
+  cursor: row-resize;
+  touch-action: none;
+}
+.dash-agent__handle:focus-visible {
+  outline: 2px solid var(--aeg-color-brand);
+  outline-offset: 2px;
+}
+.dash-agent__grip {
+  width: 56px;
+  height: 4px;
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-border-strong);
+  transition:
+    background var(--aeg-motion-base) ease,
+    box-shadow var(--aeg-motion-base) ease;
+}
+.dash-agent__handle:hover .dash-agent__grip,
+.dash-agent.is-resizing .dash-agent__grip {
+  background: var(--aeg-color-brand);
+  box-shadow: 0 0 0 3px var(--aeg-color-brand-soft);
 }
 .dash-layout > .dash-split {
   grid-area: split;
@@ -393,15 +669,19 @@ watch(
   }
 }
 
-/* 玻璃卡：一张半透明板 + 细白边 + 背景模糊；里层 antd 卡片的 chrome 全部让位，
-   只留标题的字距与小号字。所有面板共用这一个类，不许各写一份 backdrop-filter。 */
+/* 玻璃卡：一张半透明板 + 细白边；里层 antd 卡片的 chrome 全部让位，
+   只留标题的字距与小号字。所有面板共用这一个类。
+   不做面板级 backdrop-filter：全局雾底已预模糊 46px，再 blur 视觉无差（A/B 截图验过），
+   却要在滚动/拖动时每帧对六块面重采样重模糊——空白帧的主因。 */
 .glass-panel {
   padding: var(--aeg-space-s4);
   border: 1px solid var(--aeg-color-glass-border);
   border-radius: var(--aeg-radius-xl);
   background: var(--aeg-color-glass-bg);
   box-shadow: var(--aeg-shadow-md);
-  backdrop-filter: blur(var(--aeg-glass-blur));
+  /* 独立合成层：滚动时整块搬已栅格化的纹理，不重 raster 整页内容层。
+     原先这层隔离是 backdrop-filter 顺带给的，blur 退役后必须自己留住。 */
+  transform: translateZ(0);
 }
 .glass-panel :deep(.ant-card) {
   background: transparent;

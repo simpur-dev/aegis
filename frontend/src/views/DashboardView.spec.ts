@@ -80,7 +80,7 @@ function chainOf(traceId: string) {
 }
 
 const STUBS = {
-  'a-card': { name: 'ACard', props: ['title', 'loading', 'size'], template: '<div class="card"><div class="card-title">{{ title }}</div><slot /></div>' },
+  'a-card': { name: 'ACard', props: ['title', 'loading', 'size'], template: '<div class="card"><div class="card-title">{{ title }}<slot name="extra" /></div><slot /></div>' },
   'a-row': { name: 'ARow', props: ['gutter'], template: '<div class="row"><slot /></div>' },
   'a-col': { name: 'ACol', props: ['span'], template: '<div class="col"><slot /></div>' },
   'a-statistic': { name: 'AStatistic', props: ['title', 'value', 'suffix'], template: '<div class="stat" :data-testid="`stat-${title}`">{{ value }}{{ suffix }}</div>' },
@@ -110,6 +110,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
   vi.clearAllMocks()
+  localStorage.clear()
 })
 
 describe('态势总览的取数', () => {
@@ -555,5 +556,129 @@ describe('总览把等人签的工单顶到第一屏', () => {
     // 取数失败本身有页面级告警兜底，这里只确认没有把"未知"画成"没有"
     expect(wrapper.find('[data-testid="dashboard-error"]').exists()).toBe(true)
     wrapper.unmount()
+  })
+})
+
+/**
+ * 智能体面板折叠 + 拉杆：列表照单全收曾把第一行撑到一屏多高，
+ * 第二行整个被顶出首屏。这里钉住默认高度（55vh 与给第二行让位取小）、
+ * 折叠记忆、键盘调高与边界、双击复位。
+ * jsdom 视口高 768：默认 min(422, 768-370)=398、上限 614、下限 220。
+ */
+describe('智能体面板的折叠与拉杆', () => {
+  const KEY = 'aegis.dashboard.agent-panel'
+  const DEFAULT_H = Math.min(Math.round(768 * 0.55), 768 - 370)
+  const MAX_H = Math.round(768 * 0.8)
+
+  it('默认收进视口约 55% 且给第二行让位，不再把第二行顶出首屏', async () => {
+    responses()
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const panel = wrapper.find('[data-testid="agent-panel"]')
+    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
+    wrapper.unmount()
+  })
+
+  it('折叠只留标题行并记住状态，展开恢复', async () => {
+    responses()
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const toggle = wrapper.find('[data-testid="agent-panel-toggle"]')
+    const panel = wrapper.find('[data-testid="agent-panel"]')
+    await toggle.trigger('click')
+    expect(panel.classes()).toContain('is-collapsed')
+    expect(panel.attributes('style')).toContain('height: 101px')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(JSON.parse(localStorage.getItem(KEY) ?? '{}')).toEqual({ collapsed: true, height: null })
+    await toggle.trigger('click')
+    expect(panel.classes()).not.toContain('is-collapsed')
+    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
+    expect(JSON.parse(localStorage.getItem(KEY) ?? '{}').collapsed).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('拉杆键盘调高、上下边界夹住、双击回默认', async () => {
+    responses()
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const handle = wrapper.find('[data-testid="agent-panel-handle"]')
+    const panel = wrapper.find('[data-testid="agent-panel"]')
+    await handle.trigger('keydown', { key: 'ArrowDown' })
+    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H + 24}px`)
+    await handle.trigger('keydown', { key: 'Home' })
+    expect(panel.attributes('style')).toContain('height: 220px')
+    await handle.trigger('keydown', { key: 'ArrowUp' })
+    expect(panel.attributes('style')).toContain('height: 220px')
+    await handle.trigger('keydown', { key: 'End' })
+    expect(panel.attributes('style')).toContain(`height: ${MAX_H}px`)
+    await handle.trigger('keydown', { key: 'ArrowDown' })
+    expect(panel.attributes('style')).toContain(`height: ${MAX_H}px`)
+    await handle.trigger('dblclick')
+    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
+    wrapper.unmount()
+  })
+
+  it('拉杆拖动合帧：pointermove 攒到 rAF 才写一次高度，pointerup 才提交记忆', async () => {
+    responses()
+    // 手动接管 rAF：既不受 jsdom 视觉帧计时影响，又能数清"三发事件只排了一帧"
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const handle = wrapper.find('[data-testid="agent-panel-handle"]')
+    const panel = wrapper.find('[data-testid="agent-panel"]')
+    const el = handle.element as HTMLElement
+    el.setPointerCapture = vi.fn()
+    el.hasPointerCapture = vi.fn(() => true)
+    el.releasePointerCapture = vi.fn()
+    await handle.trigger('pointerdown', { clientY: 500, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 520, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 540, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 560, pointerId: 1 })
+    // 帧回调落地前高度不动：多发事件合进同一帧，不许逐发回流
+    expect(frames).toHaveLength(1)
+    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
+    frames.splice(0).forEach((cb) => cb(performance.now()))
+    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H + 60}px`)
+    expect(handle.attributes('aria-valuenow')).toBe(String(DEFAULT_H + 60))
+    expect(JSON.parse(localStorage.getItem(KEY) ?? '{}').height ?? null).toBeNull()
+    await handle.trigger('pointerup', { clientY: 560, pointerId: 1 })
+    expect(JSON.parse(localStorage.getItem(KEY) ?? '{}')).toEqual({ collapsed: false, height: DEFAULT_H + 60 })
+    wrapper.unmount()
+  })
+
+  it('刷新后按记忆恢复：自定义高度与折叠态都认', async () => {
+    responses()
+    localStorage.setItem(KEY, JSON.stringify({ collapsed: false, height: 500 }))
+    const first = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    expect(first.find('[data-testid="agent-panel"]').attributes('style')).toContain('height: 500px')
+    first.unmount()
+    localStorage.setItem(KEY, JSON.stringify({ collapsed: true, height: 500 }))
+    const second = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    expect(second.find('[data-testid="agent-panel"]').classes()).toContain('is-collapsed')
+    second.unmount()
+  })
+
+  it('标题行摘要报在线/总数；取不到写 — 不写 0', async () => {
+    responses()
+    mocked.agents.mockResolvedValue({
+      items: [
+        { agent_id: 'a1', agent_type: 'assess', capabilities: [], healthy: true, inflight: 0, max_concurrency: 4, served: 0, failed: 0 },
+        { agent_id: 'a2', agent_type: 'execute', capabilities: [], healthy: false, inflight: 0, max_concurrency: 4, served: 0, failed: 0 },
+      ],
+    } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="agent-panel-summary"]').text()).toBe('在线 1 / 2')
+    wrapper.unmount()
+
+    responses()
+    const empty = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    expect(empty.find('[data-testid="agent-panel-summary"]').text()).toBe('—')
+    empty.unmount()
   })
 })

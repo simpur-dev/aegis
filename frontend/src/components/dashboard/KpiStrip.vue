@@ -66,7 +66,9 @@ defineProps<{ items: KpiItem[] }>()
   border-radius: var(--aeg-radius-xl);
   background: var(--aeg-color-glass-bg);
   box-shadow: var(--aeg-shadow-md);
-  backdrop-filter: blur(var(--aeg-glass-blur));
+  /* 与 .glass-panel 同一口径：雾底已预模糊，面板级 blur 只付每帧重采样成本，不产生视觉差；
+     合成层隔离用 translateZ(0) 自己留住，滚动搬纹理不重 raster */
+  transform: translateZ(0);
 }
 
 /* 页头占满一整行，四颗球在它下面另起一行 */
