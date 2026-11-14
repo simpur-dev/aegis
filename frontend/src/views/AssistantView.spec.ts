@@ -3,6 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ActionSpecDto, AssistantFrame, CapabilitiesDto } from '@/api/assistant'
 import { AssistantApiError, assistantApi, CHAT_LIMITS } from '@/api/assistant'
+import { alertApi, type AlertDto } from '@/api/alerts'
 import { readRepoFile } from '@/testing/repoSource'
 import { reloadAssistantSession, resetAssistantSession } from '@/composables/useAssistantSession'
 import { resetAssistantCapabilities } from '@/composables/useAssistantCapabilities'
@@ -20,6 +21,31 @@ vi.mock('@/api/assistant', async (importOriginal) => {
 const mockedCapabilities = vi.mocked(assistantApi.capabilities)
 const mockedChat = vi.mocked(assistantApi.chat)
 const mockedConfirm = vi.mocked(assistantApi.confirm)
+
+vi.mock('@/api/alerts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/alerts')>()
+  return { ...actual, alertApi: { ...actual.alertApi, list: vi.fn() } }
+})
+const mockedListAlerts = vi.mocked(alertApi.list)
+
+function alertRow(id: string, level: number): AlertDto {
+  return {
+    alert_id: id,
+    warning_id: `w_${id}`,
+    level,
+    region_code: '5401',
+    status: 'raised',
+    ack_by: null,
+    ack_at: null,
+    assigned_to: null,
+    snooze_until: null,
+    escalated_at: null,
+    drill: false,
+    created_at: '2026-11-14T10:00:00Z',
+    title: `预警 ${id}`,
+    hazard_type: '冰湖溃决',
+  }
+}
 
 async function* framesOf(frames: AssistantFrame[]): AsyncGenerator<AssistantFrame> {
   for (const item of frames) yield item
@@ -125,6 +151,13 @@ beforeEach(() => {
   mockedCapabilities.mockReset()
   mockedChat.mockReset()
   mockedConfirm.mockReset()
+  mockedListAlerts.mockReset()
+  mockedListAlerts.mockResolvedValue({
+    count: 2,
+    items: [alertRow('a1', 1), alertRow('a2', 2)],
+    persistent: true,
+    escalation_minutes: 15,
+  })
   // 时间线、会话号与能力面都是模块级状态（换页接得上），用例之间必须从头开始
   resetAssistantSession()
   resetAssistantCapabilities()
@@ -753,7 +786,7 @@ describe('换页再回来：对话要接得上（后端会话还在时限内）'
  * 判据与驾驶舱那根拉杆同一份：多发 pointermove 只排一帧、帧落地前高度不动、
  * pointerup 才写记忆。竖排满栏里两板高度互补（拖一块另一块让位），夹在
  * [160, 栏高−缝−160]；键盘与双击复位走得通、刷新认记忆。
- * dock 模式不渲染右栏，告警与处置空间仍在聊天容器里。
+ * dock 模式不渲染右栏：告警/处置收进图标栏，点开才滑出（会话优先）。
  */
 describe('值班台：左会话全高、右栏竖排互补拉杆', () => {
   const ALERTS_KEY = 'aegis.assistant.alerts-pane'
@@ -806,13 +839,35 @@ describe('值班台：左会话全高、右栏竖排互补拉杆', () => {
     wrapper.unmount()
   })
 
-  it('dock 模式不渲染右栏：告警与处置空间仍在聊天容器里', async () => {
+  it('dock 模式会话优先：两块收进图标栏，点开才占空间、一次一块、Esc 先收层', async () => {
     mockedCapabilities.mockResolvedValue(capabilities())
     const wrapper = mount(AssistantPanel, { props: { mode: 'dock' }, global: { stubs: STUBS } })
     await flushPromises()
     expect(wrapper.find('[data-testid="assistant-side"]').exists()).toBe(false)
-    expect(wrapper.find('.chat [data-testid="alert-stack"]').exists()).toBe(true)
-    expect(wrapper.find('.chat [data-testid="handling-bar"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="dock-bar"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="dock-pane"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="field-message"]').exists()).toBe(true)
+    // 徽标与面板同源：台账两条在案 → 铃铛角标 2
+    expect(wrapper.find('[data-testid="dock-badge-alerts"]').text()).toBe('2')
+
+    // jsdom 的 getComputedStyle 不反映内联样式，isVisible 不可信；直接断言 v-show 写的内联 display
+    const isHidden = (id: string) => (wrapper.find(`[data-testid="${id}"]`).attributes('style') ?? '').includes('display: none')
+
+    await wrapper.find('[data-testid="dock-toggle-alerts"]').trigger('click')
+    expect(wrapper.find('[data-testid="dock-pane"]').exists()).toBe(true)
+    expect(isHidden('alert-stack')).toBe(false)
+    expect(isHidden('handling-bar')).toBe(true)
+
+    // 换开另一块：前一块收起，仍只有一块占空间
+    await wrapper.find('[data-testid="dock-toggle-handling"]').trigger('click')
+    expect(isHidden('alert-stack')).toBe(true)
+    expect(isHidden('handling-bar')).toBe(false)
+
+    // Esc 只收展开层（capture 拦截），问答框仍在
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dock-pane"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="field-message"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -979,6 +1034,20 @@ describe('值班台：左会话全高、右栏竖排互补拉杆', () => {
     await flushPromises()
     // fit = 700 − (214−100) − (700−(702−100)) = 488；×4/3 ≈ 651
     expect(desk.attributes('style')).toContain('min-height: 651px')
+    wrapper.unmount()
+    main.remove()
+  })
+
+  it('会话栏 sticky 定高：--chat-pin-h = 主内容高 − 页头 − 一道呼吸', async () => {
+    const fire = stubBudgetObserver()
+    const main = stubMain({ client: 700, scroll: 700, top: 100 })
+    const wrapper = await renderView()
+    const desk = byTestid(wrapper, 'assistant-desk')
+    desk.element.getBoundingClientRect = () => ({ top: 214, bottom: 702, height: 488 }) as DOMRect
+    fire()
+    await flushPromises()
+    // 700 − (214−100) − 16 = 570
+    expect(desk.attributes('style')).toContain('--chat-pin-h: 570px')
     wrapper.unmount()
     main.remove()
   })

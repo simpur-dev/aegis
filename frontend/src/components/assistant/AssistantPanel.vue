@@ -14,7 +14,10 @@
  * 4. **角色不够的动作照样列出来**，置灰并说明缺什么——把动作藏起来，用户只会以为助手不会这个。
  * 5. **page 模式是值班台布局**：两侧留白 48，左栏会话 : 右栏 = 2:1、缝 24px；
  *    台高默认"一屏适配×4/3"、内容更高时跟内容走（整页可滚），台底一条整页拉杆；
- *    右栏「在案告警／处置空间」竖排、拉杆互补；dock 模式保持原来的单列，两套容器共用这一份会话逻辑。
+ *    会话栏 sticky 定高、问答框常驻栏底（时间线内部滚），边框墨色单色（浅近黑／深近白）、发送用黑白强动作；
+ *    右栏「在案告警／处置空间」竖排、拉杆互补；dock 模式会话优先：两块收进图标栏
+ *    （实时计数徽标、点开滑出 ≤45%、一次一块、Esc 先收层），问答框常驻抽屉底；
+ *    两套容器共用这一份会话逻辑。
  */
 import { message } from 'ant-design-vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
@@ -27,7 +30,9 @@ import AlertStack from '@/components/assistant/AlertStack.vue'
 import HandlingBar from '@/components/assistant/HandlingBar.vue'
 import { useAssistantCapabilities } from '@/composables/useAssistantCapabilities'
 import { useAssistantSession } from '@/composables/useAssistantSession'
+import { useAlerts } from '@/composables/useAlerts'
 import { useConversationModel } from '@/composables/useConversationModel'
+import { useHandlingSpace } from '@/composables/useHandlingSpace'
 import { frameText, proposalText } from '@/utils/frameText'
 
 const props = withDefaults(defineProps<{ mode?: 'page' | 'dock' }>(), { mode: 'page' })
@@ -49,6 +54,31 @@ const draft = ref('')
 const streaming = ref(false)
 const streamError = ref('')
 const reportOpen = ref(false)
+
+// 抽屉「会话优先」：告警/处置收进两枚图标，点开才占空间，一次只开一块
+const dockPane = ref<'alerts' | 'handling' | null>(null)
+const { openCards, refresh: refreshAlerts } = useAlerts()
+const { detail: handlingDetail, refresh: refreshHandling } = useHandlingSpace()
+const dockAlertCount = computed(() => openCards.value.length)
+const dockHandlingCount = computed(() => handlingDetail.value?.tasks_total ?? 0)
+function toggleDockPane(pane: 'alerts' | 'handling'): void {
+  dockPane.value = dockPane.value === pane ? null : pane
+}
+/** Esc 先收展开层、再按才关抽屉：capture 阶段拦在 AssistantDock 的 bubble 监听之前。 */
+function onDockEscape(ev: KeyboardEvent): void {
+  if (props.mode !== 'dock' || dockPane.value === null || ev.key !== 'Escape') return
+  ev.stopPropagation()
+  dockPane.value = null
+}
+onMounted(() => {
+  window.addEventListener('keydown', onDockEscape, true)
+  // 面板随抽屉首开才挂载；挂载即对账一次，徽标在展开前就是真数
+  if (props.mode === 'dock') {
+    refreshAlerts()
+    refreshHandling()
+  }
+})
+onBeforeUnmount(() => window.removeEventListener('keydown', onDockEscape, true))
 
 /** 聊天面滚到队尾：值班员永远看最新一帧（测试环境宿主可能没挂，守一下）。 */
 const scrollHost = ref<HTMLElement | null>(null)
@@ -439,6 +469,16 @@ const deskStyle = computed(() => {
 function refreshDeskMin(): void {
   deskMin.value = Math.round((fitDesk() * 4) / 3)
 }
+/** 会话栏 sticky 定高：静止时页头下刚好放满、吸顶后顶部留一道呼吸。
+ *  above 要加回 scrollTop，否则页面一滚这个差值就跟着滚走。 */
+function refreshChatPin(): void {
+  const main = document.querySelector('.main-content') as HTMLElement | null
+  const el = deskRef.value
+  if (main === null || el === null) return
+  const above = el.getBoundingClientRect().top - main.getBoundingClientRect().top + (main.scrollTop || 0)
+  const h = Math.max(DESK_MIN, Math.round(main.clientHeight - above - 16))
+  el.style.setProperty('--chat-pin-h', `${h}px`)
+}
 function paintDesk(height: number): void {
   const el = deskRef.value
   if (el === null) return
@@ -522,11 +562,13 @@ onMounted(() => {
   sideBudget.value = el.clientHeight
   reconcilePanes()
   refreshDeskMin()
+  refreshChatPin()
   if (typeof ResizeObserver !== 'undefined') {
     budgetObserver = new ResizeObserver(() => {
       sideBudget.value = sideColRef.value?.clientHeight ?? 0
       reconcilePanes()
       refreshDeskMin()
+      refreshChatPin()
     })
     budgetObserver.observe(el)
   }
@@ -568,10 +610,47 @@ onBeforeUnmount(() => {
       :data-testid="props.mode === 'page' ? 'assistant-desk' : undefined"
     >
       <div class="chat">
-        <!-- 抽屉模式保持原来的单列：告警与处置空间仍在聊天容器里 -->
+        <!-- 抽屉模式会话优先：两块收进图标栏，点开才滑出；问答框常驻底 -->
         <template v-if="props.mode === 'dock'">
-          <AlertStack />
-          <HandlingBar />
+          <div class="dockbar" data-testid="dock-bar">
+            <button
+              type="button"
+              class="dockbar__icon"
+              :class="{ 'is-open': dockPane === 'alerts' }"
+              :aria-expanded="dockPane === 'alerts'"
+              aria-controls="dock-pane"
+              :title="`在案告警 · ${dockAlertCount} 条`"
+              data-testid="dock-toggle-alerts"
+              @click="toggleDockPane('alerts')"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3a6 6 0 0 0-6 6v3.2l-1.6 3.3a1 1 0 0 0 .9 1.5h13.4a1 1 0 0 0 .9-1.5L18 12.2V9a6 6 0 0 0-6-6Z" />
+                <path d="M10 19a2 2 0 0 0 4 0" />
+              </svg>
+              <span v-if="dockAlertCount > 0" class="dockbar__badge is-alert" data-testid="dock-badge-alerts">{{ dockAlertCount }}</span>
+            </button>
+            <button
+              type="button"
+              class="dockbar__icon"
+              :class="{ 'is-open': dockPane === 'handling' }"
+              :aria-expanded="dockPane === 'handling'"
+              aria-controls="dock-pane"
+              :title="`处置空间 · ${dockHandlingCount} 任务`"
+              data-testid="dock-toggle-handling"
+              @click="toggleDockPane('handling')"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+              </svg>
+              <span v-if="dockHandlingCount > 0" class="dockbar__badge" data-testid="dock-badge-handling">{{ dockHandlingCount }}</span>
+            </button>
+          </div>
+          <Transition name="dockpane">
+            <div v-if="dockPane !== null" id="dock-pane" class="dockpane" data-testid="dock-pane">
+              <AlertStack v-show="dockPane === 'alerts'" />
+              <HandlingBar v-show="dockPane === 'handling'" />
+            </div>
+          </Transition>
         </template>
         <div ref="scrollHost" class="chat__scroll" data-testid="timeline">
         <!-- 空态：欢迎 + 建议（点芯片只填句子，发不发由人） -->
@@ -907,6 +986,10 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
   }
+  .panel--page .chat {
+    position: static;
+    height: auto;
+  }
   .side {
     flex-direction: row;
   }
@@ -949,8 +1032,12 @@ onBeforeUnmount(() => {
 }
 /* page 模式：会话是值班台左栏、占满全高；超出部分时间线内部滚，输入区永远露出 */
 .panel--page .chat {
+  /* 会话栏吸顶定高：问答框常驻栏底，右栏跟整页滚；高度由 refreshChatPin 量给 */
+  position: sticky;
+  top: var(--aeg-space-s4);
+  align-self: start;
+  height: var(--chat-pin-h, auto);
   min-height: 0;
-  height: auto;
   max-width: none;
   margin: 0;
 }
@@ -964,6 +1051,82 @@ onBeforeUnmount(() => {
 }
 .panel--dock .chat__scroll {
   padding: var(--aeg-space-s3);
+}
+/* 抽屉上下文栏：收起只占这一行；徽标与面板同源实时计数 */
+.dockbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  padding: var(--aeg-space-s2) var(--aeg-space-s3);
+  border-bottom: 1px solid var(--aeg-color-border-subtle);
+}
+.dockbar__icon {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-sm);
+  background: transparent;
+  color: var(--aeg-color-text-secondary);
+  cursor: pointer;
+  transition:
+    color var(--aeg-motion-base) ease,
+    border-color var(--aeg-motion-base) ease;
+}
+.dockbar__icon svg {
+  width: 17px;
+  height: 17px;
+}
+.dockbar__icon:hover,
+.dockbar__icon.is-open {
+  color: var(--aeg-color-text);
+  border-color: var(--aeg-color-text);
+}
+.dockbar__badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--aeg-color-text);
+  color: var(--aeg-color-card);
+  font-size: var(--aeg-font-xs);
+  line-height: 16px;
+  text-align: center;
+}
+.dockbar__badge.is-alert {
+  background: var(--aeg-color-status-danger);
+  color: var(--aeg-color-text-inverse);
+}
+/* 展开层：点开才占空间，上限抽屉 45%，内部滚；一次只开一块 */
+.dockpane {
+  flex: none;
+  max-height: 45%;
+  overflow-y: auto;
+  padding: var(--aeg-space-s2) var(--aeg-space-s3);
+  border-bottom: 1px solid var(--aeg-color-border-subtle);
+}
+.dockpane-enter-active {
+  animation: dockpane-in var(--aeg-motion-base) ease;
+}
+.dockpane-leave-active {
+  animation: dockpane-in var(--aeg-motion-base) ease reverse;
+}
+@keyframes dockpane-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .chat__empty {
   margin: auto;
@@ -1177,7 +1340,8 @@ onBeforeUnmount(() => {
   margin: 0 0 var(--aeg-space-s2);
 }
 .composer {
-  border-top: 1px solid var(--aeg-color-border-subtle);
+  /* 墨色（浅近黑／深近白）一线到底：大框、小输入框同色，单色强动作收尾——简约高级感 */
+  border-top: 1px solid var(--aeg-color-text);
   padding: var(--aeg-space-s3) var(--aeg-space-s6) var(--aeg-space-s4);
   background: var(--aeg-color-card);
 }
@@ -1191,18 +1355,34 @@ onBeforeUnmount(() => {
   align-items: center;
   margin-bottom: var(--aeg-space-s2);
 }
+.composer__context :deep(.ant-input) {
+  border-color: var(--aeg-color-text);
+  border-radius: var(--aeg-radius-sm);
+  box-shadow: none;
+}
+.composer__context :deep(.ant-btn:not(.ant-btn-dangerous)) {
+  border-color: var(--aeg-color-text);
+  border-radius: var(--aeg-radius-sm);
+  color: var(--aeg-color-text);
+  box-shadow: none;
+}
+.composer__context :deep(.ant-btn:not(.ant-btn-dangerous):not(:disabled):hover) {
+  background: transparent;
+  border-color: var(--aeg-color-text);
+  color: var(--aeg-color-text);
+}
 .composer__box {
   display: flex;
   align-items: flex-end;
   gap: var(--aeg-space-s2);
-  border: 1px solid var(--aeg-color-border-strong);
-  border-radius: var(--aeg-radius-lg);
+  border: 1px solid var(--aeg-color-text);
+  border-radius: var(--aeg-radius-md);
   background: var(--aeg-color-card);
   padding: var(--aeg-space-s2) var(--aeg-space-s2) var(--aeg-space-s2) var(--aeg-space-s3);
-  transition: border-color var(--aeg-motion-base) ease;
+  transition: box-shadow var(--aeg-motion-base) ease;
 }
 .composer__box:focus-within {
-  border-color: var(--aeg-color-brand);
+  box-shadow: 0 0 0 1px var(--aeg-color-text);
 }
 .composer__box :deep(.ant-input),
 .composer__box textarea {
@@ -1221,6 +1401,36 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: var(--aeg-space-s2);
+}
+/* 权重必须压过 theme.css 的 `body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled)`
+   （0,4,1）——scoped 少写一个类就会输给它，发送按钮退回品牌蓝。 */
+.composer__actions :deep(.ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled)) {
+  background: var(--aeg-color-action-bg);
+  border-color: var(--aeg-color-action-bg);
+  color: var(--aeg-color-action-text);
+  box-shadow: none;
+}
+.composer__actions :deep(.ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover) {
+  background: var(--aeg-color-action-bg-hover);
+  border-color: var(--aeg-color-action-bg-hover);
+  color: var(--aeg-color-action-text);
+}
+.composer__actions :deep(.ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):active) {
+  background: var(--aeg-color-action-bg-active);
+  border-color: var(--aeg-color-action-bg-active);
+  color: var(--aeg-color-action-text);
+}
+.composer__actions :deep(.ant-btn:focus-visible) {
+  box-shadow:
+    0 0 0 2px var(--aeg-color-card),
+    0 0 0 4px var(--aeg-color-text);
+}
+.composer__actions :deep(.ant-btn-text) {
+  color: var(--aeg-color-text-secondary);
+}
+.composer__actions :deep(.ant-btn-text:not(:disabled):hover) {
+  color: var(--aeg-color-text);
+  background: transparent;
 }
 .composer__meta {
   margin-top: var(--aeg-space-s2);
