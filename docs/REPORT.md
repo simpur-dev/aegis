@@ -3,22 +3,29 @@
 这份文件只收**由真实产物量出来的数字**（命令、口径、样本量都写清楚），以及明确还没测到的东西。
 代码注释里的"见 REPORT"指向这里。任何数字过期就删掉重测，不做估算。
 
-> **取证范围（2026-11-10 更新）**：本文件按批次追加，最新几节是 2026-11-10 的四批性能取证
-> （外部实现 LLM 熔断与客户端复用、后端观测/存储热点两轮、取数门面客户端复用）。
-> 10-25～11-03 的界面重做（玻璃拟态、移除侧栏、全屏地图、悬浮助手抽屉、指标页重排）没有对应的取证记录，
+> **取证范围（2026-11-17 更新）**：本文件按批次追加，最新几节是 2026-11-11～12 的
+> **智能体层统一（ADR-0016）与 LLM 通路统一（ADR-0017）**、2026-11-12～17 的**外部公开数据目录**，
+> 再往前是 2026-11-10 的四批性能取证。
+> 10-25～11-03 的界面重做（玻璃拟态、移除侧栏、全屏地图、悬浮助手抽屉、指标页重排）与
+> 11-13～14 的三批前端（首屏折叠、助手值班台、抽屉会话优先）没有对应的取证记录，
 > 别把本文件的历史数字读成当前门禁状态；当前状态与未清项见 `docs/AGENT_PROGRESS.md`。
+>
+> **「还没测到的（诚实清单）」是 2026-10-05 的快照，不是"末尾"**：其后还有约 40 个日期批次段落，
+> 其中若干条的前提已被后文或代码推翻（批量回填入口、Playwright 进 CI、LLM 凭据已配、
+> 鉴权模型、"没有真实 JSONL"）——这些条目已在原处标注，其余仍成立。
 
 ## 环境与口径
 
 - 日期：2026-10-01 起；机器：单台 x64 Windows，CPU only（无 GPU、无独立推理卡）。
 - 存储后端：`store_backend=memory`（除特别说明外）；总线 `memory`；交付通道 `mock`。
   触达时延里的 1.2s 是 mock 通道适配器注入的模拟链路耗时，不是真实短信/北斗时延。
-- 测试规模（`--junitxml` 计数与 `find | wc -l` 实测，2026-11-10 复核）：全量
-  `pytest tests/unit tests/api tests/contract tests/e2e`
-  **4063 passed / 0 failed / 0 skipped**（口径见本文件末节），`backend/tests` 下 205 个 `test_*.py`；
-  `backend/src/` **355 个 .py、60,494 行**。前端另有 `vitest` 88 个 `.spec.ts`（最近一次全量记录
-  87 files / 1278 passed，见 `docs/AGENT_PROGRESS.md`）与 `vue-tsc` 类型检查。
-  （这一行每轮都重测：上一轮写的是 4023 passed（2026-11-10 上午）、再上一轮 3849（2026-11-09）。
+- 测试规模（`--junitxml` 计数与 `find | wc -l` 实测，2026-11-17 复核）：全量
+  `pytest tests/unit tests/api tests/contract tests/e2e tests/integration`
+  **4337 tests / 0 failed / 0 errors / 119 skipped**（实跑 4218；口径见本文件末节），
+  `backend/tests` 下 **214** 个 `test_*.py`；
+  `backend/src/` **360 个 .py、63,493 行**。前端另有 `vitest` 88 个 `.spec.ts`（2026-11-17 全量
+  **88 files / 1317 passed**，见 `docs/AGENT_PROGRESS.md`）与 `vue-tsc` 类型检查。
+  （这一行每轮都重测：上一轮写的是 4063 passed（2026-11-10）、再上一轮 4023（2026-11-10 上午）。
   数字过期就重测，这是这条报告自己的规矩。计数口径也换过一次：`pytest -q` 的尾行在重定向时会被截掉，
   现在一律读 junitxml 的属性，不读终端输出；带 `--junitxml` 重跑时不要用管道接 `tail`。）
 - 门禁：`ruff format --check`、`ruff check`、`mypy src/aegis`、全量 `pytest` 四项必须全绿才算完成。
@@ -81,7 +88,8 @@
 
 ## 工作流引擎实测
 
-容器启动后 `WorkflowEngine.node_types` 返回 **16** 类节点（≥10 的指标要求），
+容器启动后 `WorkflowEngine.node_types` 返回 **19** 类节点（≥10 的指标要求；2026-10-01 首次实测时是 16 类，
+2026-10-24 目录对账后为 19 类，见下文"工作流编辑器重构批次 D"），
 时延见上表"异常工况识别与重调度""常规任务调度响应"两行；证据与对照分析在
 `docs/adr/0004-self-built-dag-workflow.md`。
 
@@ -149,7 +157,7 @@ C 盘那份 MSI 安装（`C:\Program Files\seekdb`）与旧数据目录（`C:\Pr
 | 预案案例的整批回填入口 + 图谱连接的关停路径 | 本机真 Neo4j 5（`aegis-neo4j` 容器，`bolt://127.0.0.1:7687`）+ 仓库真装的 `graphiti-core`；模型凭据缺位（这一档刻意不需要它）；单测侧用真装配容器 + 替身驱动 | `uv run pytest -q tests/unit/test_ingest_cases.py`（31 项）/ `tests/unit/test_knowledge_wiring.py`（39 项）；真图 `AEGIS_TEST_NEO4J=bolt://127.0.0.1:7687 … -m slow tests/integration/test_knowledge_graphiti_live.py` → **5 collected / 3 passed / 2 skipped**；整库实跑 `AEGIS_KNOWLEDGE_GRAPHITI_URI=bolt://127.0.0.1:7687 … uv run python -m scripts.ingest_cases` → **exit=3，total 16 / landed 0 / degraded 16 / by_driver {in_memory: 16} / recall_checked 16 / close_error None** | 上一行留下的"没有批量入口"是真的：内置 16 条模板此前只有单条 POST 一个调用方，于是新部署的图谱是空的，而每次召回都从内存库拿到命中——`/api/v1/knowledge/recall` 看起来一切正常，图谱那侧一条事实都没有。补两件事：① `scripts.ingest_cases` 走**同一个** `build_knowledge` 装配点（脚本里禁止自己 new 提供者：它造出的链和生产用的链不是同一条时，"回填成功"只对本进程成立），逐条报 `driver/degraded/reason`，写完默认回读一次并报告命中的是哪条腿，契约外异常整批中止但把已落地的前缀原样交回；退出码分四档（1 中止或输入不合法 / 2 形态被拒 / 3 有降级 / 4 写得进去却召回不到），纯内存形态默认拒绝。② 关停路径：`FallbackKnowledgeProvider` 没有 `close()`、容器 `shutdown()` 也不关知识腿，图谱实例里的 Neo4j 驱动与 LLM 客户端就这么跟着进程一起烂。新增能力协议 `SupportsShutdown` 与 `integrations.close_knowledge`（上限 10s，比启动期那 20s 更短：索引没建成还能靠内存兜底继续服务，连接关不上会把整个停服卡住），失败作为 `close_error` 进 knowledge 那一行，且主腿关不上也要把兜底腿走完再把第一个异常抛出——变异实测过：把那条循环改回"先抛先退出"，`test_主腿关不上也要把兜底腿走完` 立刻红；把容器里那行 `close_knowledge` 注掉，`test_容器停服真的关掉了图谱连接` 与状态行那条一起红。**`durable` 这个字段是我自己判错过的**：第一版按"目标驱动是不是 graphiti"给值，真机一跑就露馅——图谱一条都没收下、16 条全在内存时它仍写 `durable=true`；改成只看实际落点（`landed == total > 0` 且目标是图谱），并补进单测与真图用例。**照实记**：真凭据下"16 条真的进了图谱"仍未跑（`-m slow` 第二档 2 项照旧 skip，`llm_api_key` 为空），这次实跑证明的是**命令在这种形态下说的是真话**（报 degraded=16 并退出 3），而不是回填能力已被验证；另一个上游现象记下备查：graphiti-core 在实例构造失败时会漏一个未 await 的协程（`RuntimeWarning: coroutine 'Neo4jDriver._execute_index_query' was never awaited`），不影响本仓库判定，但换版本时要重看"降级原因"还是不是同一个 |
 | 后端镜像第一次真建起来并跑起来（`deploy/Dockerfile` + compose 的 `app` 这条 profile） | 本机 Docker：`docker build -f deploy/Dockerfile -t aegis-backend:verify .` + `docker run`（容器内内存总线，18000→8000，不依赖宿主 Python） | `docker build` 成功；容器内 `python -m scripts.ingest_cases --dry-run` → `rows: 16`；`/healthz`、`/readyz`、`/api/v1/stations`、`/api/v1/cases/recall?query=泥石流` 全 200；`/api/v1/integrations` 列出 knowledge=`in_memory`/`fallback_cases=16`；门禁：`tests/unit/test_deploy_env_contract.py` + `test_repo_hygiene.py` + `tests/contract` + `tests/api` 共 116 项 + 全量 `pytest` + `ruff` + `mypy`（93 个 .py） | **这是这个镜像在本机第一次被构建出来**，`--profile app` 此前从没跑过，两个只有真跑容器才暴露的缺陷当场抓出：① `python` 用的是基础镜像的系统解释器，`aegis` 不在它的搜索路径里，`docker run` 直接停在 `ModuleNotFoundError: No module named 'aegis'`——而三个可选腿的依赖在 `.venv` 里其实都装好了（aiomqtt / asyncpg / pgvector / clickhouse-connect / duckdb / neo4j+graphiti-core / onnxruntime+tokenizers / nats 逐个 import 过），修法是 `.venv/bin` 进 PATH 且 `src` 进 PYTHONPATH；② Dockerfile 写的 `ENV AEGIS_CONTRACTS_DIR=/contracts` 在配置面**没有对应的键**，`extra="ignore"` 把它静默丢掉，容器于是按源码树相对路径去找 `/app/contracts`，启动期炸成"契约目录不存在"——修法是补真实设置 `contracts_dir`（`create_container(contracts_dir=…)` 的显式覆盖仍优先），并把这类幻影键钉成门禁：`test_镜像里声明的每个AEGIS环境变量都是配置面真有的键`。**顺带补上仓库里没有的 `.dockerignore`**：没有它时构建上下文实测 1.7GB+（含 `.env`、`frontend/node_modules`、宿主 `.venv`、1.1GB 模型权重），补后 buildkit 报 `transferring context: 3.16MB`；`COPY` 的源（`backend`、`contracts`）由 `test_dockerignore不排除Dockerfile真正COPY的东西` 反向盯着，防止有人把整目录列进忽略表、把镜像掏成空壳。**照实记**：容器这次是以内存总线起的；`docker compose --profile app up`（NATS JetStream + Postgres + Neo4j 三个容器本机都在跑）仍未跑，那一步要读仓库根 .env 里的真凭据 |
 | 部署形态整栈第一次跑通（compose + 真 NATS JetStream + 真 Postgres + 真 Neo4j） | 本机 Docker：`docker compose --env-file .env -f deploy/docker-compose.yml --profile app up -d --no-deps backend`，依赖侧沿用已在跑的 aegis-nats / aegis-postgres / aegis-neo4j | 容器 healthcheck 到 `Up (healthy)`；容器内读 `/api/v1/integrations` → `store=postgres`（`target=postgres:5432/aegis`，DSN 不带凭据）、`knowledge=graphiti` 且带 `schema_error="…llm_api_key 为空"`、`retrieval=hashing-ngram-1024`、`/readyz` 200；文档里那条命令原样跑：`docker compose … exec -T backend python -m scripts.ingest_cases --case-id … --case-id …` → **exit 3，total 2 / landed 0 / degraded 2 / by_driver {in_memory: 2} / durable false / recall_checked 2 / close_error None**，stderr 直接写"2 条没进图谱，落在兜底腿" | 两个只有整栈跑才会露面的东西：① 上一行修的镜像缺陷在部署形态下确认生效（`docker run` 起得来的容器现在真的能 `python -m aegis.main`）；② **服务名 DNS 不通**——这台机器上三个依赖容器是`docker run` 起的、挂在默认 `bridge` 上，而 compose 把 backend 放进了 `aegis_default`，于是 backend 里的 `nats`/`postgres`/`neo4j` 三个名字全都解析不到，日志表现是"NATS 连接异常 + Failed to DNS resolve address neo4j:7687"而**每条腿仍然各自优雅降级**（store 退回内存读视图、knowledge 落兜底库），也就是说：只看 `/readyz` 200 会把一条完全没接上依赖的部署读成成功。取证时用 `docker network connect --alias nats aegis_default aegis-nats`（postgres/neo4j 同理）把依赖挂进同一网络，三条腿立刻变成 `store=postgres / knowledge=graphiti`；测完把 alias 断开、backend 停掉，恢复原拓扑。**照实记**：图谱那一档仍是"库通着、缺模型凭据"——`schema_error` 与 `degraded=2` 说的就是这件事，"预案真的进了图"要到有 `AEGIS_LLM_API_KEY` 才能验 |
-| bge-m3 / bge-reranker int8 在**部署镜像**里真的装得上（一条被 `.env` 优先级静默废掉的 P0 腿） | 本机：`aegis-backend:verify` 镜像 + `-v backend/data/models:/models:ro`（宿主权重实测 1.1GB，`bge-m3-int8/model_int8.onnx` + tokenizer 系列） | 镜像内 `build_retrieval()` → `driver=bge-m3-int8`、`rerank_leg=True`、`degraded=""`；启动期预热（装载权重）**13.7s**；`docker compose … config` 解析出的挂载源是 `E:\python_xmegisackend\data\models` → `/models`；修好后 `printenv AEGIS_RETRIEVAL_MODEL_DIR` 在容器里回 `/models` | 上一行那次整栈跑里露出第二个更阴的问题：容器 retrieval 行报的是 `driver=hashing-ngram-1024`（词面近似替身），而不是 int8 模型。根因是配置优先级——镜像 `ENV AEGIS_RETRIEVAL_MODEL_DIR=/models` 被 `env_file: ../.env` 里的 `./data/models` 盖掉（`environment`/`env_file` 高于镜像 ENV），容器于是去 `/app/backend/data/models` 找权重而那里是空的，密集腿**静默**降级成替身，`/readyz` 依旧 200：P0 那一行"bge-m3 + bge-reranker ONNX int8 CPU"在部署形态里就这样没了。修法是在 compose 的 `environment` 里把模型目录钉成挂载目标 `/models`，并加门禁 `test_retrieval_model_dir_matches_the_mounted_weights_target`（断言"挂到哪儿"与"告诉进程去哪儿找"必须是同一个路径）。**顺带纠正一个我自己的读法**：`/api/v1/integrations` 的 `dense_leg` 为 False 在这里不是故障——它报的是"有没有向量索引可写"（pgvector/seekdb 那条外部索引腿），与"ONNX 稠密向量算不算得出来"是两件事；替身与真模型的分界一律看 `driver` 与 `degraded`。**照实记**：镜像内 `search()` 端到端时延与"≤3min 预警生成"在部署形态（真权重 + 真 pgvector）下的合账仍未量，本机权重档位此前只有宿主进程级证据 |
+| bge-m3 / bge-reranker int8 在**部署镜像**里真的装得上（一条被 `.env` 优先级静默废掉的 P0 腿） | 本机：`aegis-backend:verify` 镜像 + `-v backend/data/models:/models:ro`（宿主权重实测 1.1GB，`bge-m3-int8/model_int8.onnx` + tokenizer 系列） | 镜像内 `build_retrieval()` → `driver=bge-m3-int8`、`rerank_leg=True`、`degraded=""`；启动期预热（装载权重）**13.7s**；`docker compose … config` 解析出的挂载源是 `E:\python_xm\aegis\backend\data\models` → `/models`；修好后 `printenv AEGIS_RETRIEVAL_MODEL_DIR` 在容器里回 `/models` | 上一行那次整栈跑里露出第二个更阴的问题：容器 retrieval 行报的是 `driver=hashing-ngram-1024`（词面近似替身），而不是 int8 模型。根因是配置优先级——镜像 `ENV AEGIS_RETRIEVAL_MODEL_DIR=/models` 被 `env_file: ../.env` 里的 `./data/models` 盖掉（`environment`/`env_file` 高于镜像 ENV），容器于是去 `/app/backend/data/models` 找权重而那里是空的，密集腿**静默**降级成替身，`/readyz` 依旧 200：P0 那一行"bge-m3 + bge-reranker ONNX int8 CPU"在部署形态里就这样没了。修法是在 compose 的 `environment` 里把模型目录钉成挂载目标 `/models`，并加门禁 `test_retrieval_model_dir_matches_the_mounted_weights_target`（断言"挂到哪儿"与"告诉进程去哪儿找"必须是同一个路径）。**顺带纠正一个我自己的读法**：`/api/v1/integrations` 的 `dense_leg` 为 False 在这里不是故障——它报的是"有没有向量索引可写"（pgvector/seekdb 那条外部索引腿），与"ONNX 稠密向量算不算得出来"是两件事；替身与真模型的分界一律看 `driver` 与 `degraded`。**照实记**：镜像内 `search()` 端到端时延与"≤3min 预警生成"在部署形态（真权重 + 真 pgvector）下的合账仍未量，本机权重档位此前只有宿主进程级证据 |
 | 预警准确率回放的 HTTP 出口（`GET /api/v1/accuracy/replay`）与真库取证 | 本机容器：PostgreSQL 17.5 + PostGIS；HTTP 侧 ASGI 直连真应用；内存 store 只用来验降级回答 | `uv run pytest -q tests/api/test_accuracy_replay_endpoint.py`（16 项）；`AEGIS_TEST_PG_DSN=… uv run pytest -q tests/integration/test_accuracy_replay_live.py`（10 项，含真库上这条端点用例）；契约测试已把该路径列入考核相关端点 | 诚实清单第 9 条那句"回放只有 CLI 入口，没有 HTTP 端点"补上了。端点**不做任何算术**：`status/indicator/official_accuracy` 全部来自 `persistence/replay.measure`，用例把 HTTP 响应与"对同一批库侧案例直接调 measure"的结果逐字段对比——防的就是两套准确率。三条判据钉住：① `kind` 默认 `unspecified`，数据集没自证是现场标注时官方准确率恒为 None 并带 `provenance_warning`；② 内存 store 没有库侧配对能力 → 503 + `E_ACCURACY_UNAVAILABLE` + 明写要配 `AEGIS_STORE_BACKEND=postgres`（能力用 `SupportsAccuracyReplay` 探测，绝不在内存里伪造第二套配对阵列）；③ 裸时间、逆序窗、配对窗越界、区划格式错全部在**触库之前**被拒，用例断言 store 的调用计数没有增加。真库取证：两条标注 + 两条落在事件之后的预警 → `status=measured`、`official_accuracy=1.0`、`indicator=met`；把 `kind` 省掉就回到 `official_accuracy=None`。**顺带收成一份真源**：`parse_moment` 从 `scripts/accuracy_replay.py` 搬进 `persistence/accuracy.py`，CLI 与端点共用——两处各写一份 ISO 解析，迟早分裂成"CLI 拒的日期界面收下了"。**照实记**：这里的 `met` 来自门禁自己写进库的两条标注，只证明通路对，不证明真实世界的准确率；现场标注数据仓库里仍然没有（也不该造一个）|
 
 ## 并发曲线实测（2026-10-01，Locust）
@@ -1291,6 +1299,11 @@ dashboard：getAnimations 里还有 9 条 running
 
 ## 还没测到的（诚实清单）
 
+> **本清单最后一次修订：2026-10-05**（此后本文件又追加了约 40 个日期批次段落）。
+> 清单里有 5 条的前提已被后文或代码推翻，这 5 条已在原处就地标注（批量回填入口、Playwright 进 CI、
+> LLM 凭据已配、鉴权模型、"仓库里没有真实 JSONL"）；**其余条目仍成立**。
+> 看当前状态请以 `docs/AGENT_PROGRESS.md` 的"未清项"为准。
+
 1. **部署形态的并发曲线**：真总线 + 真库那一档已在 2026-10-02 量过（见上文"部署形态复测"，
    拐点同样是 120→200、容量口径仍是 ≤120），但**仍不是生产环境数字**：缺的部分是
    Linux + uvloop + 4 workers 的那条曲线（本机复现不了），以及"按站数梯度"的资源占用
@@ -1363,27 +1376,36 @@ dashboard：getAnimations 里还有 9 条 running
    这一条的证据档位要说满：以上全部来自**live DOM**（真实渲染 + 真实后端 + 真库回读），
    而 Qoder 内嵌浏览器当时没给出可视 surface（viewport 0×0），**截图与坐标点击都取不到**，
    所以这轮没有像素级证据；像素级复核要等浏览器面板开着再跑一次。
-   仓库里没有任何真实现场标注（也不该造一个），所以"≥80%"这项在真实数据上照旧是 `not_measured`。
+   仓库里现在**有**真实现场事件数据（`data/external/` 五套数据集，normalized 合计 1.8 万余条，
+   许可与校验和见各 manifest），但**还不是回放口径**——回放要的是 `{truth_warning, predicted_warning}`
+   成对案例且总数 ≥ `MIN_FIELD_CASES`（30），平台侧也还没有消费 `data/external/` 的入口。
+   所以"≥80%"这项仍照旧是 `not_measured`：**缺的是标注与接线，不是数据**。
 10. **图谱写路径的"真图"证据仍缺第二档**：`learn()` / `prepare_schema()` 现在都有生产调用方了
     （`POST /api/v1/knowledge/cases` + 启动期索引初始化，见上一节新增行），但"写进去之后真图上
-    确实能召回"这件事还是只有替身级证据——`AEGIS_LLM_API_KEY` 为空，`-m slow` 的第二档照旧 skip。
-    另外内置 16 条预案模板没有批量回填入口（当前只能逐条 POST），新部署的图仍然是空的。
+    确实能召回"这件事还是只有替身级证据——**`AEGIS_LLM_API_KEY` 现已配置**（仓库根 `.env` 与
+    `backend/.env` 都已填，skip 前提不再成立），但 `-m slow` 第二档**至今没有一次带凭据的真图实跑记录**：
+    缺的是证据，不是凭据。
+    另外内置 16 条预案模板的**批量回填入口是 `scripts/ingest_cases`**（2026-10-02 起，见上文"在线取证"表；
+    本条此前的"没有批量回填入口"已被后文推翻），逐条 POST 入口仍在。
 11. **工程配套**：① 已销项——`AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS` / `AEGIS_WORKFLOW_HTTP_TIMEOUT_MS`
     连同本轮新增的触达与语义腿共 11 个键已进 `.env.example`，并受
     `tests/unit/test_config_env_surface.py`（键 ↔ `Settings` 字段双向）与
     `tests/unit/test_config_knob_reachability.py`（每个字段都被生产代码读到，`RESERVED` 清单现应为空）
-    两条门禁夹住；② Playwright 真机门禁仍不在 CI 与默认测试命令里（见"地图两道门禁"行的照实记②），
-    它是唯一能证到 GPU 那一层的证据，静默停跑的风险由人承担而不是由流水线承担。
+    两条门禁夹住；② Playwright 真机门禁**已在 CI 里跑**（`.github/workflows/ci.yml` 的
+    "前端真浏览器门禁（Playwright / 地图可视）" job，只跑 `e2e/map-visual.spec.ts`），
+    但**默认测试命令 `npm run test` 仍不含 e2e**，全量 e2e 仍是交付前手动档。
+    它是唯一能证到 GPU 那一层的证据，静默停跑的风险由流水线承担一部分、另一部分仍由人承担。
 12. **带 LLM 的两条智能路径本轮没有数字**：任务解析的 LLM 裁决腿、语义交互的措辞润色都写完了并且有
-    替身级用例（非法输出弃用、越权动作拒绝、润色编数即整段回退），但 `AEGIS_LLM_API_KEY` 为空时它们按设计
-    缺席，所以"三路融合比两路好多少"这句话目前没有实测答案——需要一次带凭据的对照跑
-    （`uv run python -m scripts.eval_report_parsing --with-llm`）。
+    替身级用例（非法输出弃用、越权动作拒绝、润色编数即整段回退），但 `AEGIS_LLM_API_KEY` **现已配置**，
+    这两条路径的带凭据对照跑（`uv run python -m scripts.eval_report_parsing --with-llm`）
+    **至今没有实跑记录**——所以"三路融合比两路好多少"这句话目前仍没有实测答案。
 13. **部署形态下「≤3min 预警生成」的合账：2026-10-03 已补上**（本条从"未测得"改判为"已量，剩余部分另记"）。
     环境是 Docker Desktop 4.93.0（WSL2 后端，数据盘 `D:\Docker\data`）+ `aegis-nats`（JetStream）+
     `aegis-postgres`（自建 `aegis-pg:local`：PostgreSQL 17.5 + PostGIS 3.5.2 + pgvector 0.8.6）+ `aegis-neo4j`，
     后端镜像由 `deploy/Dockerfile` 现建（`aegis-backend:d4`），1.1GB 检索权重只读挂载 `/models`。
-    接线与否一律读 `/api/v1/integrations`（9 条腿：`store.driver=postgres` 且不再 degraded、
-    `retrieval.driver=bge-m3-int8` 且 `dense_leg=true`、`delivery=mock`），不读 `/readyz`。
+    接线与否一律读 `/api/v1/integrations`（**现役 11 条腿**：store/analytics/knowledge/retrieval/memory/
+    mcp/mqtt/weather/outbound/delivery/tracing；**本条 2026-10-03 那一档是 9 条**：`store.driver=postgres`
+    且不再 degraded、`retrieval.driver=bge-m3-int8` 且 `dense_leg=true`、`delivery=mock`），不读 `/readyz`。
     数字见上表"部署形态端到端合账"那一行。**这一档收出一条永远绿的假判定**（`warning_generation_ms`
     此前恒为 0.0ms，见上表），所以"≤3min 达标"这句话在修好之前其实没人量过。
     仍未测得的部分照实留着：真实网关凭据（触达仍是 mock 注入的 1.2s）、LLM 凭据（图谱写入与翻译腿）、
@@ -1404,8 +1426,9 @@ dashboard：getAnimations 里还有 9 条 running
     缺的不是判定逻辑而是可切的目标。本轮（2026-10-03 完成度复核）发现，已从 §4.3 的既成事实列表里移出并就地标注。
 17. **数据分级（公开/内部/敏感/机密）**：架构文档 §7.2 原本把它与"血缘、质量旗标"并排写成已交付项——**不成立**。
     仓库里没有任何密级枚举、字段标注或按级裁剪的代码（`grep 数据分级|sensitivity|classification` 在 `backend/src`、
-    `frontend/src`、`contracts/` 均无命中）。根因不是漏写一个枚举，而是**平台 HTTP API 没有鉴权模型**
-    （部署假设专网/内网，`api/app.py` 全部路由只依赖 `get_container`）：没有调用方身份，就没有"按密级少给几个字段"的落点，
+    `frontend/src`、`contracts/` 均无命中）。根因不是漏写一个枚举，而是**没有"按人身份"这一层可裁剪字段**：
+    `/api/` 的服务令牌闸已存在（§4.8.1 的 `enforce_service_token` 中间件，配 `AEGIS_SERVICE_TOKEN` 时
+    整面要 `X-Aegis-Token`），但那是**部署级凭据**而不是按人身份——没有按人身份，就没有"按密级少给几个字段"的落点，
     先摆一个四级枚举只会得到"看起来分了级"。要补这条，先要三个现场决定：谁调这些接口、带什么凭据、
     哪些字段算敏感（眼下已知的候选：`reporter` 上报人姓名、`location` 精确到小数点后 6 位的坐标、人员数量）。
     现状唯一的真实防线是脱敏：凭据只进请求头、外呼与触达目标只报 `scheme://host`、案例出处逐条外显。
@@ -1788,6 +1811,9 @@ dashboard：getAnimations 里还有 9 条 running
 - **容器形态未重测**：只做到 `deploy/Dockerfile` 与 CI 的 extras 一致、compose 能解析；重建后端镜像（本机实测约 13 分钟）
   后在容器里握手与调用没做，所以 README 2.2 的 `mcp` 那一格标的是"读模板与装配代码，容器本轮未重测"。
 - 对接实现只有官方 SDK 客户端这一种；第三方 MCP 客户端（桌面端、其它语言 SDK）没互测过。
+  〔**同日 §4.2 已用 MCP Inspector CLI 2.11.0 补测第三方客户端**：`tools/list` 5 项 +
+  `tools/call` 的 `cases.search` / `memory.categories`；各家客户端对 annotations/分页/资源面的
+  实现差异仍未测。〕
 - 工具调用的时延、并发与超时没量（`knowledge_recall_budget_ms` 只是透传进结果，不是这一面的预算执行点）。
 - 写工具 `memory.write` 在真协议面上没调过：默认面不含它，两把钥匙只在装配层与列表层验过。
 - 阶段 2 未启动，因此"智能体取数走 MCP"这句话现在还是假的，`.env.example` 与状态行的 `reason` 都写的是
@@ -3704,6 +3730,11 @@ CI 覆盖率 job 已扩到 8 个模块、321 条相关用例，并纳入 `test_w
 > **同日收口**：并入时的三层适配层（`adapter.py`/`contract_face.py`/`levels.py`）已删除，
 > 两端改为共用 `aegis.domain` 的 `assess.v1` DTO，见下方「契约统一与去适配层」与 `docs/adr/0012`。
 > 本节只记**实测到的**与**明确没测到的**。
+>
+> **〔状态校准 2026-11-17〕本节是 2026-11-09 的并入时状态**：`agents_ext/` 目录**已不存在**，
+> 灾种六体现在住在 `backend/src/aegis/agents/hazards/`；`AEGIS_AGENT_IMPL` **已删除**（ADR-0016）。
+> 当前架构见本文件末节「智能体层与 LLM 通路统一实测（2026-11-11～12）」与 `docs/adr/0016`。
+> 下文各条按当时口径保留原文，只在必要处加脚注。
 
 ### 落地形态
 
@@ -3760,12 +3791,17 @@ CI 覆盖率 job 已扩到 8 个模块、321 条相关用例，并纳入 `test_w
   三个事件标志当前**没有遥测来源**，该灾种会诚实返回 `E_ASSESS_INSUFFICIENT`，不是"无风险"。
 - **只接线了研判段**：`plan.stu` / `execute.warn` / `feedback.*` 与感知段**不注册**（网关记 `no_agent`，
   不是 error）；外部最有价值的"全局调度"（manager 编排）能力未接入。
+  〔2026-11-11 ADR-0016 后：灾种六体**已全部注册**，四条腿接入生产链路，闭环入口
+  `POST /api/v1/hazards/workflow`；本条是 11-09 的并入时状态。〕
 - **外部 LLM 绕开平台网关**：不经 `llm_gateway`、不经提示注入围栏（`fence_untrusted`）、不进平台模型台账。
+  〔2026-11-11 ADR-0017 后：**"不进平台模型台账"已不成立**（台账/熔断/meta 已共用 `agents/core/`）；
+  **"不经提示注入围栏、不走网关的模型路由"仍成立**——这两条是真缺口。〕
 - **共享记忆未打通**：外部反馈记忆写自己的 JSON 文件，不进平台共享命名空间。
 - **线程里的图取消不掉**：`AgentKit` 的 deadline 只取消协程，超时后那张 LangGraph 图仍在跑
   （内部还有自己的重试环），会继续烧 CPU 与模型调用。掐断得走进程隔离，本期未做。
 - **113 处 `print()`** 仍分布在外部模块（研判三节点 live 路径的 9 处已改为 `logging`；
   其余多在 legacy/demo/CLI 路径），未整体清理（属于"她的代码大改"，不在本期范围）。
+  〔2026-11-11 `7bc64d1` 后：生产可达的 print 全量改走 logging，现存 38 处多在 legacy/demo/CLI。〕
 
 ### 研判执行器与图复用（2026-11-09 性能批）
 
@@ -3845,6 +3881,8 @@ httpx 客户端（两个独立 client 的 `root_client._client` 是同一对象�
 重试都一样，记进去只会把一个该立刻暴露的问题糊进冷却期。
 半开只放行**一次**试探（并发下不穿透），冷却窗口默认 60 s（平台网关的熔断**没有**恢复窗口，
 靠 fallback 模型接力；外部实现只有一个模型，照抄会让熔断永久失效）。
+〔2026-11-11 ADR-0017 后：平台网关的熔断也换成了带冷却与半开的**同一份内核**
+（`agents/core/breaker.py`），此处是 11-10 的历史对比。〕
 
 **语义不变的证据**：熔断打开时抛的异常落在节点既有的 `try` 内
 （`get_risk_llm()` 是在 `try` **之外**调用的——若在工厂里抛错会冲掉"模板兜底"契约，
@@ -3963,5 +4001,78 @@ MCP 的顾虑（会话状态、重连语义）在这里不存在。
 ### 一件必须由人做的事
 
 外部仓库曾把**明文智谱 API Key** 写进源码并提交进公开仓库。该 Key 已随原仓库公开，
-**必须在供应商侧轮换**；本仓不持有它（主线只读 `AEGIS_EXT_LLM_API_KEY` 环境变量），
+**必须在供应商侧轮换**；本仓不持有它（主线只读 `AEGIS_HAZARD_LLM_API_KEY`；旧名
+`AEGIS_EXT_LLM_API_KEY` 仅兼容读取并记 deprecation 日志），
 但"我们曾经经手过它"这件事要求轮换而非仅仅删除。
+
+---
+
+## 智能体层与 LLM 通路统一实测（2026-11-11～12，ADR-0016 / ADR-0017）
+
+这一批把"两套系统"收成一套：平台五段内环与灾种闭环六体**同挂一条总线**，
+平台网关与灾种 provider **共用一份 LLM 内核**。
+
+**① 智能体层（2026-11-11）**
+
+- **11 个本体**（平台 5 + 灾种 6）、**12 项能力**，能力与归属的单一真源是
+  `backend/src/aegis/agents/capabilities.py`——每项能力恰好一个主人，每项能力都必须有真实派发点。
+- `AEGIS_AGENT_IMPL` **已删除**（全仓源码 0 处命中）：不存在"用哪套实现"的开关。
+- 灾种六体随 `AEGIS_AGENT_RUNTIME=real` 与平台五段同装；可选 extra `agents` 未装时如实留痕跳过。
+- 闭环入口 `POST /api/v1/hazards/workflow`；闭环内部对五条腿的派单**同样走总线**
+  （进程内直调会绕过信封/deadline/幂等/错误分类）。
+- 门禁：`tests/unit/agents/test_capability_matrix.py` 钉住"每个登记能力有真实派发点、
+  每个派发点都已登记"；`tests/unit/test_hazards_boundaries.py` 钉住数据边界（AST 读源码）。
+
+**② LLM 通路（2026-11-11～12）**
+
+- 共享内核落在 `backend/src/aegis/agents/core/`：`breaker.py`（熔断状态机，带 60s 冷却 + 半开试探）、
+  `prompts.py` + `prompt_texts_platform.py` + `prompt_texts_hazard.py`（提示词注册表）、
+  `ledger.py`（调用台账）、`meta.py`（调用元数据与 trace_id）。
+- **提示词注册表共 21 条**＝平台 6 + 灾种 15（15 条里 11 条基础 + 4 条重试变体）；
+  灾种 15 条正文用 AST 从原 f-string 抽取并逐条渲染比对（**15/15 逐字一致**），原 `hazards/prompts/` 目录删除。
+  改正文不升版本即红（正文指纹门禁）。
+- **两本台账合并**（2026-11-12）：落账口径修三条——token 取响应 `usage`（缺省退消息 `usage_metadata`，
+  都没有才记 0，不再恒 0）、双通道回退的通道二记 `attempt=1`（不再恒 0，首过率不再系统性虚高）、
+  "HTTP 200 但没产出合法对象"改判 `malformed`（不让自然语言冒充首过）。
+  改判按**本次调用链**定位（多腿并发时按"全局最后一行"会改到别人的账）。
+  治理出口（`GET /api/v1/metrics/latency`）把网关那本与灾种进程级那本**并成一册**统计。
+- 环境变量族 `AEGIS_EXT_*` → `AEGIS_HAZARD_*`，四处旧名兜底都记 deprecation 日志。
+
+**门禁（2026-11-12 本机）**：`pytest tests/unit tests/api tests/contract tests/e2e tests/integration`
+**4300 passed / 0 failed / 119 skipped**（391.8 s）、`ruff check` + `ruff format --check` 全绿、
+`mypy src` **360 文件**全绿。新增门禁：熔断状态机 19 条、提示词版本 + 正文指纹 3 条、
+台账口径 10 条、两本台账合并 6 条、旧名可观察 4 条。
+
+**仍未做（不声称）**：灾种 LLM 仍**不走平台网关**——不进平台的提示注入围栏、不走网关的模型路由
+（这两条是真缺口；"不进模型台账"已不成立，台账已共享）；`AEGIS_EXT_*` 兼容分支仍在，
+删不删按部署面证据走（"迁移确认 + 一个发布周期内无告警"），不按时间走。
+
+## 外部公开数据目录实测（2026-11-12～17，`data/external/`）
+
+**入仓五套**（许可准入四条见 `data/external/README.md`）：
+
+| 数据集 | 许可 | 记录数 | 覆盖 |
+|---|---|---|---|
+| `nasa-glc` | public domain（NASA） | 中国 426 / 西藏 16 | 2007-01-19 — 2016-10-06（中国）/ 2016-06-18（西藏）；以降雨触发为主 |
+| `sciencedb-tibet-road-geohazard-2022` | **CC BY-NC 4.0**（例外，隔离目录） | 13,768 | 公路沿线普查 2012-07 — 2022-09；崩塌 6,692 / 泥石流 2,909 / 滑坡 1,903 / 沉陷塌陷 1,227 / 水毁 1,037 |
+| `tpdc-himalaya-geohazard-2006-2009` | **CC BY-NC-SA 4.0**（例外，隔离目录） | 525 | 喜马拉雅全段 78.87–95.32°E；泥石流 353 / 滑坡 153 / 溃决隐患冰湖 19，带坡度/比降/发育阶段/地层/成灾风险 |
+| `zenodo-himalaya-landslide-inventories` | CC BY 4.0 | 831 | 东喜马拉雅大型滑坡 420 + 全球巨型滑坡 MEGAS 411（MEGAS 中国 26 条） |
+| `zenodo-parlung-zangbo-glacial-lakes` | CC BY 4.0 | 3,224 | 帕隆藏布流域冰湖（2020 / 2025 两期），92.99–97.09°E |
+
+**抓取形态（2026-11-17 收口，`3fa78b1`）**：从"两支各写一套"收敛为**统一内核 + 每数据集一模块**——
+`core.py` 持规矩（清单/校验和/规范化写盘/下载），`cli.py` 是唯一入口
+（`--check` / `--refresh` / `--dataset <id>`）；退役 `fetch_external_disaster_data.py`、
+`fetch_tibet_road_geohazard.py` 与 `test_external_census_catalog.py`；规范化产物统一到
+**JSONL 统一信封**（公路普查此前是 CSV），五个数据集共用同一份 `schema.json`。
+
+**门禁（2026-11-17 本机）**：`--check` **5 个数据集** manifest 与数据文件逐项一致
+（SHA-256 / 字节数 / 行数逐项比对）；`tests/unit/test_external_data_catalog.py` **37 项**全绿
+（完整性、形状、灾种枚举、许可隔离、目录与索引一致性）；`ruff check` / `format --check` /
+`mypy scripts/external_data`（10 文件）全绿；后端全量 **4337 tests / 0 failed / 119 skipped**
+（550.6 s）、`mypy src` 360 文件全绿。
+
+**仍未做（不声称）**：五套**都未接入任何生产链路**（不进预警/研判/知识库）——
+要接得先写导入适配并补契约测试，不能直接把 JSONL 塞进 `agents/hazards/`；
+**触发因子（降雨）仍缺**（TPDC 全国 0.1° 逐日降水 CC BY 4.0 / 46.8 GB，
+雅鲁藏布江 10km 降水 CC BY-NC-SA 4.0 / 29–62 MB——都是气象驱动数据，应落运行态目录而非 git）；
+**预警准确率仍是 `not_measured`**（这些数据不是回放口径的 `{truth_warning, predicted_warning}` 成对案例）。

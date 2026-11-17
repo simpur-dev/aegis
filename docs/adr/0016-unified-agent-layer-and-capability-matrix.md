@@ -1,5 +1,8 @@
 # ADR-0016：统一智能体层与能力矩阵
 
+> **状态校准（2026-11-17）**：**已落地**：`agents/capabilities.py` 实测 12 项能力 / 11 个本体，`agents/core/` 五个模块在位，`tests/unit/agents/test_capability_matrix.py` 守住"每个登记能力有真实派发点"。**§6 的"LLM 通路维持两套"与后果"`AEGIS_EXT_*` 暂未改"已被 ADR-0017 改写**（熔断/台账/meta 已共享，变量族已改名 `AEGIS_HAZARD_*`）。
+>
+
 - 状态：已采纳（2026-11-11）
 - 关联：ADR-0011（外部模块并入）、ADR-0012（assess 契约统一）、ADR-0013（LLM 熔断与客户端复用）、ADR-0015（REST 客户端复用与有界副本）
 

@@ -1,5 +1,8 @@
 # ADR-0006：预警触发规则的版本化与标定闭环
 
+> **状态校准（2026-11-17）**：**已落地**：`services/rules/trigger_rules.py`、`persistence/sql/005_trigger_rules.sql`、`services/rules/calibration.py` 与 `api/routers/rules.py` 均在位。无取代者。
+>
+
 - 状态：已采纳
 - 日期：2026-10-03
 - 相关：`services/rules/trigger_rules.py`、`services/rules/risk_engine.py`、`persistence/sql/005_trigger_rules.sql`、

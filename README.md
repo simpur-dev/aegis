@@ -14,7 +14,7 @@
   + 灾种闭环六体（数据质量门/因子引擎/情景仿真/预警素材/链内审计/闭环编排，LangGraph 图编排，
   住在 `agents/hazards/`）**同挂一条总线**，共 **11 个本体**；能力与归属的单一真源是
   `backend/src/aegis/agents/capabilities.py`（每项能力恰好一个主人），机器门禁在
-  `tests/unit/agents/test_capability_matrix.py` 与 `test_hazards_boundaries.py`。
+  `tests/unit/agents/test_capability_matrix.py` 与 `tests/unit/test_hazards_boundaries.py`。
   **不存在实现选择开关**——`AEGIS_AGENT_IMPL` 已删，灾种六体随 `AEGIS_AGENT_RUNTIME=real`
   一并装配（可选 extra `agents` 没装时如实留痕跳过，平台五段不受影响）
 - **LLM 通路也是一套**（2026-11-11 起）：熔断、提示词注册表、调用台账、调用元数据都在
@@ -81,7 +81,7 @@ aegis/
 │   ├── agents/                # L3 智能体的接入指引与交付落点索引（外部实现按契约接入；
 │   │                          #   自建本体在 backend/src/aegis/agents/，灾种闭环模块在 backend/src/aegis/agents/hazards/）
 │   └── audit/                 # 第三方迁移与合规盘点
-└── scripts/                   # 检索权重预置脚本（内网/离线部署前跑一次）
+└── scripts/                   # dev.mjs（npm run dev 五步编排）/ fetch_retrieval_models.py（检索权重预置）/ build_offline_tiles.py 与 bake_osm_basemap.py（离线底图与地形烘焙）
 ```
 
 > **文档地图（2026-11-04 归档整理）**：`docs/` 只放现行文档——`architecture.md`（实现态）、
@@ -330,7 +330,9 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
 1. **省掉 `--env-file .env` 就起不来**。compose 的变量插值默认只去 compose 文件所在目录（`deploy/`）找 `.env`，
    而模板在仓库根。实测原文报错：
    `error while interpolating services.postgres.environment.POSTGRES_PASSWORD: required variable POSTGRES_PASSWORD is missing a value`
-   ——一次性报 5 个必填项（POSTGRES/NEO4J/MINIO/EMQX/AEGIS_NEO4J），所以每条 compose 命令都得带上这个开关。
+   ——一次性报 5 处必填插值（**4 个不同变量**：POSTGRES / NEO4J / MINIO / EMQX；`NEO4J_PASSWORD`
+   出现两次，一次灌给 neo4j 的 `NEO4J_AUTH`、一次灌给 backend 的 `AEGIS_NEO4J_PASSWORD`），
+   所以每条 compose 命令都得带上这个开关。
 2. **`docker run` 起的依赖容器不在 compose 网络上**：backend 里 `nats`/`postgres`/`neo4j` 三个服务名全都解析不到，
    而每条腿仍然各自优雅降级——`/readyz` 照旧 200，于是"什么都没接上"被读成"部署成功"。
    要么整个栈都用这一份 compose 起，要么先把依赖挂进同一网络并带别名：
@@ -392,6 +394,10 @@ docker compose --env-file .env -f deploy/docker-compose.yml --profile app down -
 
 接口文档 `http://localhost:8000/docs`　指标 `http://localhost:8000/metrics`
 装配事实（哪条腿在跑、哪条腿是瘸的）`http://localhost:8000/api/v1/integrations`——`/dashboard` 页底有同源面板
+告警台账与处置空间（P2 面，2026-11-04 起）：`GET /api/v1/alerts`（在案告警，分级打断）与
+`POST /api/v1/alerts/{id}/ack|transfer|snooze`（接手/转派/稍后，ack 幂等）、`GET /api/v1/spaces`
+（一预警一处置空间）与 `POST /api/v1/spaces/{id}/tasks/{task_id}/claim|ack|transfer`（认领/回执/移交，
+`expected_version` 乐观锁）、`GET /api/v1/notifications`（站内通知）——三面共用一条 SSE 流按 subject 分流
 四类记忆门面的读出口 `http://localhost:8000/api/v1/memory/categories?q=`（每类分开说"这条腿没接"与"接了但没命中"；
 `memory` 那一行的 `detail.categories` 是不查询就能看见的接没接）
 告警链路取证口径 `deploy/observability/README.md`
@@ -423,11 +429,14 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 
 ### Web 页面（纯 Web，响应式，无原生移动端）
 
+> 本节口径截至 **2026-11-14 `dd5b576`**；页面形态的逐批改动记在 `docs/AGENT_PROGRESS.md` 工作日志。
+
 外壳是**透明顶栏**（2026-10-30 `46bf57a` 起，10-17 那版可折叠侧栏已整块退役）：导航横向一排，
 按 `router.ts` 的 `NAV_GROUPS` 分组渲染（值班主线 4：态势总览/监测预警/一张图/流程编排；系统 1：指标量测），
 当前项是半透明白色圆角胶囊；顶栏右列自左向右固定为「状态胶囊 → 浅/深主题 → AEGIS 品牌」，
 主题只留浅/深两档（老用户 `aegis.theme=system` 的偏好仍按系统解析）。分组数据仍是导航真源，
 只是渲染形态从侧栏换成横排，窄屏由顶栏自身横向滚动承接。
+**顶栏下方另有一条Ⅰ/Ⅱ级告警常驻横幅**（未确认条数 + 在案条数 + 处置入口指引）——抽屉关着也看得见。
 **智能助手是全站右下角的悬浮图标**（56px，可竖直拖拽）：点开是右侧抽屉，打开时主内容让位而不是被盖住，
 宽度可拖 320–480px 并持久化；`/assistant` 路由保留但标 `nav:false`。`/warnings` 与 `/simulation`
 同样标 `nav:false`、顶栏无入口（深链直达），这是有意的信息架构决定，不是遗漏。
@@ -436,12 +445,12 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 
 | 页面 | 路由 | 入口 | 内容 |
 | --- | --- | --- | --- |
-| 态势总览 | `/dashboard` | 顶栏·值班主线 | 读数带（KPI 四球）、风险瓦片墙（按严重度排序）、链路行五段分段条（每段 agent/local 如实标注）、智能体在线板、事件流日志排、页底各条可选腿的三态面板（腿名与后端装配面严格同名，多一条腿没登记标签就会被前端门禁挡住）；2026-10-25 起玻璃拟态、11-02 起两行 63/37 对齐 |
+| 态势总览 | `/dashboard` | 顶栏·值班主线 | 读数带（KPI 四球）、风险瓦片墙（按严重度排序）、链路行五段分段条（每段 agent/local 如实标注）、智能体在线板、事件流日志排、页底各条可选腿的三态面板（腿名与后端装配面严格同名，多一条腿没登记标签就会被前端门禁挡住）；2026-10-25 起玻璃拟态、11-02 起两行 63/37 对齐、**11-13 起首屏智能体面板可折叠、底缘拉杆可调高**（折叠态与高度记 localStorage） |
 | 监测预警 | `/monitor` | 顶栏·值班主线 | 遥测明细与时序曲线、劣化读数缺口显示、一键发起激增/背景演练；**人工上报入口**（群防群治表单 → 三路解析 → 同一条链路，回显等级/置信/`decided_by`/是否转人工核签与三腿留痕；低置信度由平台自动开出 `human_review` 核签工单，回执带回实例号与待签节点） |
 | 一张图 | `/map` | 顶栏·值班主线 | 全屏地图（2026-10-30 起铺满顶栏以下）：顶部悬浮工具条，左侧离线状态/未定位清单/未渲染几何、右侧图层/风险筛选/要素详情两列半透明面板。双档渲染面（页面级整块切换，选择记 localStorage）：默认**自托管离线三维**（Cesium + 自烘 PMTiles + quantized-mesh 地形；**这一档**不依赖 Cesium Ion/谷歌服务，前端有守卫用例禁止引入外部 token，缺瓦片时如实降级为"无底图 + 椭球地形"）；可切**高德 JS API 在线底图**（官方 JS API，key 填 `frontend/.env.local` 的 `VITE_AMAP_KEY`，可选、不入库，WGS84→GCJ-02 逐点纠偏，加载失败在图上说明）。场景层（站点/预警点位）两档共用同一份 RenderPlan |
 | 流程编排 | `/workflow` | 顶栏·值班主线 | **沉浸式外壳**（顶栏/服务令牌条/页脚整块不渲染，56px 编辑器头）；Vue Flow 画布：面板可拖 18 类、引擎注册 19 类（`chain_stage` 是内部原语；每一类都有引擎级分派证据，见 `tests/unit/test_workflow_node_dispatch_matrix.py`）、版本化定义与实例运行、试运行与实例图、人工决策/改参/旁路。配置里点名的 `upstream` 必须是画布上的连线，定义期就校验 |
 | 指标量测 | `/metrics` | 顶栏·系统 | 运行时埋点的 P50/P95/最大时延 vs 阈值判定、协同成功率、越限项；2026-11-03 起上排两卡 50/50、柱状图圆角渐变与 P95 峰值高亮 |
-| 智能助手 | `/assistant` | 全站悬浮图标（抽屉）＋顶栏末项 | 对话式界面：用户气泡靠右、回答为主回复，过程帧折进「过程 ｜ N 帧」一行（点开才是 meta/intent/status/result 等帧记录）；动作注册表是能力唯一真源，LLM 只有规划/选择权、执行权在服务端按席位角色判。**指令即执行、助手不放大权限**：操作者角色内本来能做的即执行，仅发布/批量/改规则/设备控制四类保留本人一次确认（提案卡内嵌会话流）；整体批量指令与注册表外动作一律拒绝并留痕。除预警/任务/通知动作外，还可按 `name=…` 启动工作流、对 `wfi_…` 做人工决策或中止、用显式 `rule_id/metric/threshold/version` 确认或调整阈值、按白名单下发设备指令——这七个 L4 动作同样受席位角色与提案确认闸约束，阈值数字一律由操作者给出、不由模型生成。抽屉顶部另有「在案告警」卡（分级打断、接手/转派/稍后）、「处置空间」条（一预警一空间，任务认领/回执/移交走 `/spaces`，`expected_version` 乐观锁、409 即"已被他人处置"并自动对账）与站内通知条，三者共用同一条 SSE 流按 subject 分流，断线重连按台账对账。高安全部署可开 `AEGIS_ASSISTANT_DUAL_REVIEW_ENABLED`：四类不可逆动作（发布预警/批量/改规则/设备控制）要求两名不同且达到角色门槛的席位各投一票，默认关闭时仍是本人一次确认。经助手执行的每条写动作都落 `audit_ops` 审计流水（意图在执行前、结果在执行后，与状态迁移同事务；越权尝试记 `unknown` 并留拒绝原因），`AEGIS_AUDIT_RETENTION_MONTHS=24` 控制热分区保留期。未配 LLM 时如实显示"语义服务未配置"而不是装可用。抽屉打开时主内容让位，宽度可拖 320–480px |
+| 智能助手 | `/assistant` | 全站悬浮图标（抽屉）＋顶栏末项 | 对话式界面：用户气泡靠右、回答为主回复，过程帧折进「过程 ｜ N 帧」一行（点开才是 meta/intent/status/result 等帧记录）；**页面态是值班台布局**（2026-11-13 `84f1a65` 起：左会话占满全高、右栏告警/处置竖排互补拉杆，左:右 ≈ 2:1，整页可滚并带整页拉杆），**抽屉态是会话优先**（下条）。动作注册表是能力唯一真源，LLM 只有规划/选择权、执行权在服务端按席位角色判。**指令即执行、助手不放大权限**：操作者角色内本来能做的即执行，仅发布/批量/改规则/设备控制四类保留本人一次确认（提案卡内嵌会话流）；整体批量指令与注册表外动作一律拒绝并留痕。除预警/任务/通知动作外，还可按 `name=…` 启动工作流、对 `wfi_…` 做人工决策或中止、用显式 `rule_id/metric/threshold/version` 确认或调整阈值、按白名单下发设备指令——这七个 L4 动作同样受席位角色与提案确认闸约束，阈值数字一律由操作者给出、不由模型生成。抽屉形态是**会话优先**（2026-11-14 `dd5b576` 起）：问答框常驻抽屉底，「在案告警」与「处置空间」收进两枚图标（带实时计数徽标），点开滑出、一次只开一块、Esc 先收层再关抽屉；站内通知随告警面板呈现。三者共用同一条 SSE 流按 subject 分流，断线重连按台账对账。告警卡带分级打断与接手/转派/稍后，处置空间是一预警一空间（任务认领/回执/移交走 `/spaces`，`expected_version` 乐观锁、409 即"已被他人处置"并自动对账）。高安全部署可开 `AEGIS_ASSISTANT_DUAL_REVIEW_ENABLED`：四类不可逆动作（发布预警/批量/改规则/设备控制）要求两名不同且达到角色门槛的席位各投一票，默认关闭时仍是本人一次确认。经助手执行的每条写动作都落 `audit_ops` 审计流水（意图在执行前、结果在执行后，与状态迁移同事务；越权尝试记 `unknown` 并留拒绝原因），`AEGIS_AUDIT_RETENTION_MONTHS=24` 控制热分区保留期。未配 LLM 时如实显示"语义服务未配置"而不是装可用。抽屉打开时主内容让位，宽度可拖 320–480px |
 | 预警发布 | `/warnings` | 深链（顶栏无入口） | 预警列表与详情、藏汉双语正文（待译显式标注）、通道投递回执、关联任务单元 |
 | 推演沙盒 | `/simulation` | 深链（顶栏无入口） | §3.6/§4.4 的报告出口：K 情景 × T 轮 → 次生灾害概率矩阵、关键时间线（**每个在场角色一列票** + 本轮汇聚生效的预案）、预案对比、成本降档说明；页顶写"角色档位"是 `rule` 还是 `llm`、实问几次回落几次，缺键报告在边界上判读失败而不是画空表；未点"发起推演"时页面一个概率数字都不出现 |
 
@@ -451,9 +460,15 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 "没装 extra / 连不上后端 / 配置关闭"三种情况都不改变链路语义，只改变状态表里的一行事实——
 **"装配时跳过"与"跑起来后降级"必须是两行不同的事实**，否则运维只能靠猜。
 
+下表是 `/api/v1/integrations` 报出的**十一条装配腿**（store / analytics / knowledge / retrieval /
+memory / mcp / mqtt / weather / outbound / delivery / tracing）——前端有一道对账门禁钉住这组名字。
+**`agents` 不在其中**：它是**运行时三态**（`mock` / `real` / `off`），不是装配腿——
+`real` 装配真实本体（LLM 凭据可留空——平台与灾种各自独立，缺凭据的那一腿走确定性兜底）且与 mock
+互斥（同一订阅面只挂一副）；智能体缺位/超时/产出不合契约时按段降级规则轨并写入 `degradations`；
+`off` 时五段全部走平台降级轨。
+
 | 腿 | 驱动取值 | 关闭 / 降级时的行为 |
 | --- | --- | --- |
-| `agents` | `mock` \| `real` \| `off` | `real` 装配真实本体（LLM 凭据可留空——平台与灾种各自独立，缺凭据的那一腿走确定性兜底）且与 mock 互斥（同一订阅面只挂一副）；智能体缺位/超时/产出不合契约时按段降级规则轨并写入 `degradations`；`off` 时五段全部走平台降级轨 |
 | `store` | `memory` \| `postgres` | 落库失败不换实现：内存读视图照常服务，写侧进有界缓冲重试并按计数暴露。读视图是进程内的，但**启动时回填最近 N 条**（`read_backfill_limit`，默认 500）；超出的历史与 `chains` 仍查不到，需走直查库的出口，见 2.3 第 7 条 |
 | `analytics` | `off` \| `clickhouse` \| `duckdb` | `off` 时链路里根本不出现 OLAP 代码路径；启用时只 write-behind 入队，热路径永不等 OLAP |
 | `knowledge` | `in_memory` \| `graphiti` | 图谱缺位时召回自动落到内置预案库（性质与逐条出处随召回结果一起外显），预案生成照旧完成。写入侧有生产调用点：单条 `POST /api/v1/knowledge/cases` 与整批 `scripts.ingest_cases`，两者响应里的 `driver/degraded/reason` 说清这条案例究竟落在图谱还是只在内存；启动期建一次图谱索引（失败作为 `schema_error`），停服期关一次图谱连接（关不上作为 `close_error`），两件事都出现在这一行 |

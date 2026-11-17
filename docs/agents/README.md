@@ -38,7 +38,7 @@
 
 三条要说清的事实：① 它的数据工具目前是**内存 Mock 源**，结论带
 `source=hazard.factor_engine` 与 `data_provenance.is_mock=true`，不冒充平台实测数据；
-② 它的凭据只从环境变量读（`AEGIS_EXT_LLM_API_KEY`），源码里没有密钥；
+② 它的凭据只从环境变量读（`AEGIS_HAZARD_LLM_API_KEY`；旧名 `AEGIS_EXT_LLM_API_KEY` 仍兼容读取并记 deprecation 日志），源码里没有密钥；
 ③ **它能交结论**——平台把窗口观测 + 区域画像组成 `AssessEvidence` 随请求推送
 （出进程部署也可经 `GET /api/v1/assess/evidence` 拉取），因子引擎按确定性策略自产
 `confidence`（`0.15 + 0.40×coverage + 0.05×validation`，封顶 0.60）并返回定级结论。

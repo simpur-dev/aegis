@@ -10,10 +10,24 @@
 | L0 领域内核 | 枚举、契约镜像（与 `contracts/*.schema.json` 严格同构）、**定级结论 `RiskVerdict`**、**链路产物 `ChainResult` 族**、契约校验器、错误码、配置——**不 import 任何上层包**，所有人都可依赖它 | `domain/`、`contracts.py`、`errors.py`、`config.py` |
 | L1 感知接入 | 多源采集、协议适配、时空归一、质量标记、**人工上报（群防群治）** | `connectors/`、`api/routers/drill.py`（`POST /api/v1/reports`）、`pipeline/report_intake.py`（`ReportIntake.submit`） |
 | L2 数据层 | 遥测/预警/任务/链路运行态存储；图谱与向量检索（M2 接入 Neo4j+Graphiti）；**预警规则库（版本化三态）** | `backend/src/aegis/storage/`、`persistence/sql/005_trigger_rules.sql`、`persistence/rulebook.py` |
-| L3 智能层 | 五大智能体（**外部实现**，经契约接入）；**两套并存**：平台自建内环 + 外部交付模块（**两端共用 `assess.v1` 契约，无适配层**，`AEGIS_AGENT_IMPL=builtin\|ext` 选择，默认 builtin；外部那一侧**当前只接通了研判段**） | `contracts/`、`docs/agents/`（交付落点索引与接入指引）、`backend/src/aegis/agents/`（自建内环 + 契约壳 `agentkit.py`）、`backend/src/aegis/agents_ext/`（外部交付模块，`risk_agent/agent.py` 直接实现 `AgentKit` + `aegis.domain.assess`） |
+| L3 智能层 | **一套统一的智能体层**（2026-11-11 起，`docs/adr/0016`）：平台自建五段内环 + 灾种闭环六体，共 **11 个本体**同挂一条总线（**两端共用 `assess.v1` 契约，无适配层**；**不存在实现选择开关**，`AEGIS_AGENT_IMPL` 已删）；能力与归属的单一真源是 `agents/capabilities.py` | `contracts/`、`docs/agents/`（交付落点索引与接入指引）、`backend/src/aegis/agents/`（自建内环 + 契约壳 `agentkit.py` + 能力矩阵 `capabilities.py` + 共享 LLM 内核 `core/`）、`backend/src/aegis/agents/hazards/`（灾种闭环六体，`risk_agent/agent.py` 直接继承 `AgentKit` + `aegis.domain.assess`） |
 | L4 服务层 | 触发规则、定级、任务拆解、**三路融合解析（规则/检索佐证/LLM）**、预警生成、靶向触达（mock + **真实 HTTP 通道**）、**语义交互（白名单动作 + 认知镜像）**、**阈值标定闭环**、链路编排、HTTP API | `services/`、`pipeline/`、`api/` |
-| L5 应用层 | 纯 Web：态势总览 / 一张图 / 监测预警 / 预警发布 / 流程编排 / 指标量测 / **智能助手**（Vue3 + Vite + TS + AntD + ECharts） | `frontend/src/views/` |
+| L5 应用层 | 纯 Web **8 页**：态势总览 / 监测预警 / 预警发布 / 一张图 / 流程编排（沉浸式）/ 指标量测 / 推演沙盒 / **智能助手**（Vue3 + Vite + TS + AntD + ECharts）；外壳是**透明顶栏**（导航真源 `router.ts` 的 `NAV_GROUPS`）+ 全站右下悬浮助手抽屉（2026-10-30 `46bf57a` 起侧栏已整块退役） | `frontend/src/views/`、`frontend/src/App.vue`、`frontend/src/router.ts` |
 | 基座 | 总线、能力注册、时延账本、指标导出、配置与日志 | `bus/`、`observability/`、`config.py`、`logging.py` |
+
+## 1.1 前端外壳（2026-10-30 起）
+
+- **透明顶栏**（`46bf57a` 起；10-17 那版可折叠侧栏已整块退役）。导航横向一排，
+  按 `router.ts` 导出的 `NAV_GROUPS` 分组渲染（值班主线 4 + 系统 1），`App.vue` 只 import 不抄；
+  当前项是半透明白色圆角胶囊，窄屏由顶栏自身横向滚动承接。
+- **助手是全站右下角的悬浮入口 + 右侧抽屉**（`833fed9` / `608e8e8`）：56px 图标可竖直拖拽，
+  打开时主内容让位而不是被盖住；宽度可拖 320–480px 并持久化（`aegis.assistant.dock`）。
+  抽屉形态 2026-11-14 起改**会话优先**——告警与处置收进两枚图标（带实时计数徽标），
+  点开滑出、一次一块、Esc 先收层再关抽屉，问答框常驻栏底。
+- **助手页（`/assistant`）是值班台布局**（2026-11-13 `84f1a65` 起）：左会话占满全高、
+  右栏告警/处置竖排互补拉杆（左:右 ≈ 2:1），整页可滚并带整页拉杆。
+- **顶栏下方有Ⅰ/Ⅱ级告警常驻横幅**，抽屉关着也看得见。
+- 沉浸式页面：`/workflow` 的顶栏/令牌条/页脚整块不渲染，改用 56px 编辑器头；`/map` 铺满顶栏以下全屏。
 
 ## 2. 一次灾害事件的真实数据流
 
@@ -78,7 +92,7 @@ L3 是**一套统一的智能体层**：平台自建五段内环 + 灾种闭环�
 进 `unmapped_metrics` 并写原因，禁止近似。证据包自限 48 条观测 / 48KB，超限置 `truncated=True`。
 
 **出处与置信度**：`data_provenance` / `confidence_basis` / `assessment` 是 `RiskVerdict` 一等字段，
-随 API 与 `chain_runs.risk` 落台账。`confidence` 由生产方自产（平台不代填）：外部实现用
+随 API 与 `chain_runs.risk` 落台账。`confidence` 由生产方自产（平台不代填）：灾种因子引擎用
 `min(0.60, 0.15 + 0.40×coverage + 0.05×validation)`，并恒置 `human_review_suggested=True`。
 
 **当前接通范围（2026-11-11）**：六体全部注册、能力互不重叠。生产链路的四条腿——
@@ -105,6 +119,8 @@ L3 是**一套统一的智能体层**：平台自建五段内环 + 灾种闭环�
 |---|---|
 | `breaker.py` | 熔断状态机（`closed→open→half_open`，带冷却窗口）+ 失败分类口径 |
 | `prompts.py` | 提示词注册表（**唯一真源**，21 条：平台 6 + 灾种 15） |
+| `prompt_texts_platform.py` | 平台 6 条提示词正文 |
+| `prompt_texts_hazard.py` | 灾种 15 条提示词正文 |
 | `ledger.py` | 调用台账（`LlmCallRecord` + `LlmUsageLedger`） |
 | `meta.py` | 调用元数据与 trace_id 的跨线程上下文 |
 
@@ -144,13 +160,13 @@ GLM 的 quirk，搬进通用网关等于让网关背上某厂商分支）。
   不因输入数据变真而洗白）——两件事分开，口径不互相污染。
 - **冰湖溃决可能长期"数据不足"**：它的三个事件标志当前没有遥测来源，会诚实返回
   `E_ASSESS_INSUFFICIENT`（不是"无风险"）；补齐事件标志遥测后才能得分。
-- **线程里的图取消不掉**：外部入口是同步函数，放在 `asyncio.to_thread` 里跑；
+- **线程里的图取消不掉**：灾种入口是同步函数，放在 `asyncio.to_thread` 里跑；
   `AgentKit` 的 deadline 只取消协程，超时后那张图仍在跑（内部还有重试环），继续烧 CPU 与模型调用。
 - ~~**外部的 LLM 绕开平台网关**~~（2026-11-11 部分解决）：自建 `ChatOpenAI` 直连，
   **不经 `services/llm/llm_gateway.py`**——不经提示注入围栏、不走网关的模型路由，
   这两条仍在；但**"不进平台模型台账"已不成立**：灾种调用落共享台账并在治理出口里
   与网关那本合并（用量/模型/prompt 版本/首过率都统计得到，见上段）。
-- **共享记忆未打通**：平台 `services/memory/` 与外部自己那份反馈记忆 JSON 是两套，互不可见。
+- **共享记忆未打通**：平台 `services/memory/` 与灾种自己那份反馈记忆 JSON 是两套，互不可见。
 - ~~113 处 `print()` 噪声~~（2026-11-11 已解决）：生产可达的 print 全部改走 logging，
   剩余 print 只在 `__main__` 演示块与演示函数内（CLI 演示的输出本体）。
 - ~~manager 编排能力未接入~~（2026-11-11 已解决）：闭环编排已是总线上的一个本体
@@ -247,25 +263,37 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
   含离线与底图守卫的前端测试。
 - **弱网链路（P1 POC）**：Eclipse Zenoh 站端↔网关通道，边缘有界缓冲 + 按序重放 +
   重放前可查（store/query at edge）；真运行时用例见 `tests/integration/test_edge_zenoh_live.py`。
-- **外部交付智能体模块并入（2026-11-09，ADR-0011；同日 ADR-0012 收口）**：一份外部交付的
-  LangGraph 多智能体实现并入 `backend/src/aegis/agents_ext/`（在 `aegis` 包内，随 wheel/镜像发布），
-  **两端共用 `aegis.domain` 的 `assess.v1` 契约**（无适配层；并入时的三层适配已删除）；
-  `AEGIS_AGENT_IMPL=builtin|ext` 选择，**默认 builtin 不变**，缺可选依赖时如实退回 builtin 并记 warning。
-  **当前只注册了研判段的 `assess.hazard`**，其余动作不注册（网关记 `no_agent`，平台走本地降级轨）；
-  外部结论为 demo 级（MOCK 权重、`is_mock=true`、置信度封顶 0.6），已知限制见 §3.1。
+- **灾种闭环六体统一进智能体层（2026-11-11，ADR-0016；LLM 通路同日统一，ADR-0017）**：
+  11 个本体（平台五段 + 灾种六体）同挂一条总线，**两端共用 `aegis.domain` 的 `assess.v1` 契约**
+  （无适配层；并入时的三层适配与 `AEGIS_AGENT_IMPL` 开关都已删除），能力矩阵是单一真源；
+  灾种六体随 `AEGIS_AGENT_RUNTIME=real` 与平台五段同装，缺可选依赖时如实留痕跳过。
+  灾种结论仍是 demo 级（MOCK 权重、`is_mock=true`、置信度封顶 0.6），已知限制见 §3.1。
+  沿革：11-09 并入外部交付的 LangGraph 实现（ADR-0011/0012），11-11 统一为一套智能体层（ADR-0016）——
+  **`agents_ext/` 目录已不存在**，现居 `agents/hazards/`。
+
+- **告警与处置面（P2，2026-11-04～08）**：`domain/alert.py` + `persistence/alerts.py`（UNIQUE 去重、
+  原子迁移）+ `services/alerting/`（分级打断、台账、站内通知、外发 webhook）+ `services/collab/tasks.py`
+  （处置空间与任务乐观锁）；读面 `/api/v1/alerts`、`/api/v1/spaces`、`/api/v1/notifications`，
+  迁移 `010`–`013`；强认证与审计读面见 ADR 与助手设计文档 §14。
+- **外部公开数据目录（2026-11-12～17）**：`data/external/` 五套数据集（公开灾情/普查/点位/冰湖），
+  统一抓取入口 `python -m scripts.external_data --check|--refresh`（`backend/scripts/external_data/`），
+  许可准入规则见 `data/external/README.md`；**五套均未接入生产链路**。
+- **前端形态三批（2026-11-13～14）**：首屏智能体面板可折叠 + 底缘拉杆调高；助手页值班台两栏 +
+  整页拉杆；助手抽屉改会话优先（告警/处置收进图标栏、问答框常驻底）。
 
 未完成或待取证（诚实标注，完整清单以 `docs/REPORT.md` 的"还没测到的"为准）：
 
 ### 架构升级（MA/MB/MC）到哪一步了
 
-《课题6_架构升级方案》的 §6 里程碑**从来没有在仓库里有过状态位**：方案本身仍是"草案，待评审"、
-`adr/0007` 仍是"提议"，而 `AGENT_PROGRESS.md` 那张 M0–M4 表是**前端 UI 重设计**的里程碑，
+《课题6_架构升级方案》的 §6 里程碑**从来没有在仓库里有过状态位**：方案本身当时是"草案，待评审"、
+`adr/0007` 当时是"提议"（两者都已随落地回填为已采纳，见 ADR-0007 的状态横幅），
+而 `AGENT_PROGRESS.md` 那张 M0–M4 表是**前端 UI 重设计**的里程碑，
 与 MA/MB/MC 同名不同物。所以下面这张表是这份文档第一次替三个阶段记账——
 判据只有一个：**代码在，且被生产路径调用**，才算做了。
 
 | 阶段项 | 状态 | 证据 / 缺什么 |
 | --- | --- | --- |
-| §4.1 LLM 网关 v2（路由/结构化输出/用量账本/Prompt 注册表） | 已落地 | `services/llm/llm_gateway.py`、`services/llm/prompt_registry.py`；prompt 版本进 `model_info`，并由链路**逐段转记**到 `chain_runs.stages[].model_info`（2026-10-12 补齐：此前凭证只活在总线信封里，全仓 0 处读取，README 那句"随结论入库"是空的）。口径：智能体不声明就没有这个键（`exclude_none`，平台不代填 "unknown"），execute 段只在【文案真的进了预警】时记——被数字闸全拦回的那一程产出的是平台模板。读面：`GET /api/v1/audit/chain/{trace_id}` 直读库，实测重启后 `/api/v1/events` 读 0 条而它仍 `found=true` |
+| §4.1 LLM 网关 v2（路由/结构化输出/用量账本/Prompt 注册表） | 已落地 | `services/llm/llm_gateway.py`、`agents/core/prompts.py`（提示词注册表 2026-11-11 上移到共享内核，ADR-0017）；prompt 版本进 `model_info`，并由链路**逐段转记**到 `chain_runs.stages[].model_info`（2026-10-12 补齐：此前凭证只活在总线信封里，全仓 0 处读取，README 那句"随结论入库"是空的）。口径：智能体不声明就没有这个键（`exclude_none`，平台不代填 "unknown"），execute 段只在【文案真的进了预警】时记——被数字闸全拦回的那一程产出的是平台模板。读面：`GET /api/v1/audit/chain/{trace_id}` 直读库，实测重启后 `/api/v1/events` 读 0 条而它仍 `found=true` |
 | §3 五智能体上总线（agentkit + 三态运行时） | 已落地 | `backend/src/aegis/agents/`、`AEGIS_AGENT_RUNTIME=mock\|real\|off`，real 与 mock 互斥 |
 | §5 验收口径分档（调度档 / LLM 档 / 端到端） | 已落地 | `sla_agent_txn_ms`，报表带 `口径档` 列；数见 REPORT |
 | §4.5 D9 数据飞轮（采集侧） | 部分落地 | `human_review` 一条已通（核签→真值行，真库验过）；**助手确认、演练两条没接** |
@@ -278,7 +306,7 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
 同一泥位上两档给出 0.1029 与 0.1821 两个触发率——票改表、模型不改数），T=5 与 K 拉满的墙钟/成本未量；
 这一页未纳入 `e2e/ui-overlap` 的逐页版式门禁（真机点验 21 项只覆盖浅色主题一屏） |
 | §4.7 assistant 意图解构 | 已落地（P1 收口） | 意图解构在 `services/assistant/intent.py` + 动作注册表；`/assistant/plan` 已退役（多步分解改由助手的规划动作承接），`/assistant/chat` 只出提案、执行一律走 `/actions/{id}/confirm` |
-| §4.8.1 服务令牌 | 已落地（默认关是配置项，不是缺口） | 数据 API 与 MCP 工具面共用同一个 `_presented_token`，认 `X-Aegis-Token` 与 `Authorization: Bearer` 两种头（头名不一致曾让"配了令牌"与"真的在拦"脱钩，那正是这一节的原始事故）；**智能体真在请求的读端点也进了闸**（`/api/v1/cases/recall`、`/api/v1/retrieval/search`、`/api/v1/memory/shared` 读写删、新增的审计直读面）；闸的形状已从"11 条路由手工挂 `dependencies=`"改成一条 HTTP 中间件，口径只有"路径在 `/api/` 下就要凭据"（`/healthz`、`/readyz`、`/metrics`、`/docs` 不吃闸，`/mcp/` 自成一闸、共用同一枚令牌），判据跟着从路由表取 28 条业务路径逐条指认——新增端点默认被覆盖，"漏挂"这件事结构上不可能再发生；2 条变异（闸一律放行 / 闸永远拒绝）各红一条用例。**Web 端凭据也已接上**：每页内容底部的"服务令牌"一行粘贴一次（存本机 localStorage），6 个 api 模块的 axios 拦截器与两处 `fetch`（事件流、助手 SSE）都带 `X-Aegis-Token`，被 401 时那一行红着提示重填；5 条前端变异（漏装拦截器 / 两处 fetch 不带凭据头 / 存了令牌却不发头 / 401 不吭声）各红一条用例。代价说死：令牌明文存在这台浏览器的 localStorage 里，共用机器上别拿它当账号体系用 |
+| §4.8.1 服务令牌 | 已落地（默认关是配置项，不是缺口） | 数据 API 与 MCP 工具面共用同一个 `_presented_token`，认 `X-Aegis-Token` 与 `Authorization: Bearer` 两种头（头名不一致曾让"配了令牌"与"真的在拦"脱钩，那正是这一节的原始事故）；**智能体真在请求的读端点也进了闸**（`/api/v1/cases/recall`、`/api/v1/retrieval/search`、`/api/v1/memory/shared` 读写删、新增的审计直读面）；闸的形状已从"11 条路由手工挂 `dependencies=`"改成一条 HTTP 中间件，口径只有"路径在 `/api/` 下就要凭据"（`/healthz`、`/readyz`、`/metrics`、`/docs` 不吃闸，`/mcp/` 自成一闸、共用同一枚令牌），判据跟着从路由表取业务路径逐条指认（**现 81 条**，门禁断言 `>=25`）——新增端点默认被覆盖，"漏挂"这件事结构上不可能再发生；2 条变异（闸一律放行 / 闸永远拒绝）各红一条用例。**Web 端凭据也已接上**：每页内容底部的"服务令牌"一行粘贴一次（存本机 localStorage），**令牌拦截器集中在 `api/serviceToken.ts` 一处**（席位头另在 `api/operatorSeat.ts`），api 模块现 11 个（另含 `workflow/` 子包），两处 `fetch`（事件流、助手 SSE）都带 `X-Aegis-Token`，被 401 时那一行红着提示重填；5 条前端变异（漏装拦截器 / 两处 fetch 不带凭据头 / 存了令牌却不发头 / 401 不吭声）各红一条用例。代价说死：令牌明文存在这台浏览器的 localStorage 里，共用机器上别拿它当账号体系用 |
 | §4.5 评测服务与金标集 | 部分落地 | 门禁与出口在（`scripts/quality_gate.py`，`ci.yml` 跑）；表已加第五列**结构化输出首过率**并用真 DeepSeek 实测入基线（0.7838，按 task 分开看才是能行动的那张表）；**另三列仍为 null**：无 `eval/judge.py`、无金标数据 |
 | §4.6 D7 编排归一（chain 退役） | **已落地（四步走完，2026-10-16 收口）** | 段的判定与段的记账一起收进 `pipeline/stages.py`（575 → 756 行，编排的唯一入口是 `run_stage(段名, 盘面)`），根跨度收进 `pipeline/span.py`，跨段中转收进 `pipeline/board.py`，产物形状收进当时的 `pipeline/result.py`（2026-10-16 结构重构 P1 已下沉为 `domain/chain.py`，理由见那一行）；工作流侧新增 `chain_stage` 节点（内部原语：当时引擎注册 17 类、面板可拖 16 类；2026-11 已增至 **19/18**）与"标准五段处置链路"模板（节点超时与 `sla_agent_txn_ms` 同源），`pipeline/workflow_chain.py` 用 DAG 跑同一条链；`chain.py` 859 行（D7 立项实测）→ 321（第一拍）→ 91（第三拍）→ 删除（本拍），只剩"按顺序调段 + 根跨度 + 收盘"。**parity harness 10 条全绿**：同一容器、同一个 `HazardStages`，固定顺序与 DAG 逐项对齐段序/mode/note、定级、任务单元、预警内容、降级与故障清单、D10 凭证落段、以及五段 `stage_*_ms` 各加一次；变异检查打在**单侧**（parity 比的是两条路径的差，改共享实现两边一起变、它本就不该红）——DAG 丢早退红 1 条、DAG 不补 skipped 红 1 条、固定顺序少跑反馈段红 3 条。**第 4 步（本拍）**：`pipeline/chain.py` 已删，`container.chain` 就是 `WorkflowChain`，原有 6 个调用点（`api/app.py` 1、`container.py` 3、`scripts/drill.py` 与 `scripts/metrics_report.py` 各 1）一行没改——"退役不改口径"靠的是形状沿用，不是承诺。护栏换了形式：parity 用例退役成 `tests/unit/test_chain_orchestration_contract.py`（12 条），把当初两路径对齐时量出来的可观测物写成**字面基线**（段序/mode/note、定级、任务单元、预警正文、降级与故障清单、五段样本各 +1、多区域只多一条感知样本），5 个直构链路的测试文件改用一个 `conftest.chain_entry`（真引擎 + 真模板，刻意不留"单测专用的简化路径"）。真栈取证（退役后复跑）：NATS JetStream + Postgres 上跑一条链路，从 `chain_runs` 读回的五段（名/mode/ok/note）与定级五元组逐项等于那份字面基线，引擎留底里五个节点都是 `chain_stage` 且 succeeded，跑完盘面归零；反向对照（故意把基线改一处）当场报"不等"并退出 1。`/readyz` 新增 `chain` 一块（`open_boards`/`traces`/`held`/`capacity`/`evicted`），盘面漏收当场可见。8 条变异全部有牙（三条第一轮是空转或外壳在骗人，换判据/换锚点后才红，过程记在 REPORT）。**仍欠**（该批时的状态）：工作流实例账本本身仍未落库（`save_workflow_instance` 零调用方，ADR-0003 的既定后置项 → 任务 #53）。**已于 2026-10-31 补齐**：定义与实例检查点写穿 PostgreSQL（迁移 009、`aegis.workflow.persistence` 端口 + `persistence/workflow_store.py` 适配器），启动恢复 `waiting` 续跑、`running` 显式中断，细节见 REPORT 的智能体调度修复一节；草稿/预览/版式快照仍属 #53 剩余部分 |
 | MC 模型线（QLoRA/GPTQ/训练集导出/对照实验/论文专利） | 未开工 | 无任何落点 |

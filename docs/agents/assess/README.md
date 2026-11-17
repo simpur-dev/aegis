@@ -22,7 +22,7 @@
 
 ## 平台侧降级（已实现，供对照）
 
-`backend/src/aegis/services/risk_engine.py`：命中折算 1-5 级、加权得分 + 佐证增益置信度、
+`backend/src/aegis/services/rules/risk_engine.py`：命中折算 1-5 级、加权得分 + 佐证增益置信度、
 可解释 rationale。智能体缺位时链路用它定级。
 
 ## 参考

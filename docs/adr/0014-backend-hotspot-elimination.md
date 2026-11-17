@@ -1,5 +1,8 @@
 # ADR-0014：后端观测与存储链路的热点消除——把"每次都全扫一遍"改成"一次算完"
 
+> **状态校准（2026-11-17）**：**已落地**：`observability/tracer.py::stats_all`、`bus/gateway.py::online_count`、`storage/store.py::on_evict`、`llm_gateway.py::first_pass_stats` 均在位。无取代者。
+>
+
 - 状态：已采纳（2026-11-10）
 - 日期：2026-11-10
 - 相关：ADR-0003（内存存储先行）、ADR-0005（性能栈）、

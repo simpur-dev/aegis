@@ -1,5 +1,8 @@
 # ADR-0002：智能体优先、平台降级的双轨链路
 
+> **状态校准（2026-11-17）**：**已落地（机制保留）**："智能体优先、平台降级"仍是链路口径（`pipeline/stages.py`）。本文的理由陈述被 ADR-0007 D1 修订；`pipeline/chain.py` 已退役（本文已记）。无取代者。
+>
+
 - 状态：已采纳
 - 日期：2026-09-29
 - 相关：`pipeline/stages.py`（双轨的段实现）、`pipeline/workflow_chain.py`（编排入口；原 `pipeline/chain.py` 已于 2026-10-16 退役）、`services/`

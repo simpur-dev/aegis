@@ -5,7 +5,7 @@
 > 选型结论与四问口径见 BRIEF §2/§7：组件库已批 **Arco Design Vue**（先探针实测再迁）；旧视觉已批现在停用；
 > 布局骨架 2026-10-17 拍板并实施为可折叠侧栏，**2026-10-30 已整块退役**，改透明顶栏横排（见下方"现状校准"与决策日志）。
 
-## 现状校准（2026-11-12 更新，读台账前先看）
+## 现状校准（2026-11-17 更新，读台账前先看）
 
 > 本看板的"里程碑/任务表"停在早期批次，**下文历史工作日志与决策记录保留原样不改**；
 > 下表以当前代码为准，与它冲突的条目按此读。
@@ -21,20 +21,27 @@
 | 智能助手 P0–P4 | 曾写 in_progress | **已全部完成**（11-04～11-08）：席位/通知/审计/write 动作/强认证/外部通知闭环，见决策日志 11-04～11-08 各条与 `docs/智能助手_设计文档.md` |
 | L3 智能体层 | 平台五段 + 外部实现两套 | **2026-11-11 已统一**（`docs/adr/0016`）：11 本体同挂一条总线、能力矩阵单一真源、`AEGIS_AGENT_IMPL` 已删；灾种六体住在 `agents/hazards/`（原 `agents_ext/`） |
 | LLM 通路 | 平台网关与外部实现各一套 | **2026-11-11 已统一**（`docs/adr/0017`）：熔断/提示词注册表（21 条）/台账/meta 在 `agents/core/` 共用一份实现，只留厂商 quirks；灾种调用已进共享台账并在治理出口合并统计 |
+| 前端首屏与助手抽屉 | — | **2026-11-13／11-14 三批已入账**（`bf5f685`／`84f1a65`／`dd5b576`，见工作日志）：首屏智能体面板可折叠 + 底缘拉杆调高；助手页改值班台两栏 + 整页拉杆；抽屉改会话优先，问答框常驻底、告警/处置收进图标栏。三个提交都带了 spec 改动（`DashboardView.spec.ts` / `AssistantView.spec.ts`） |
+| 外部公开数据目录 | — | **2026-11-17 收口入主线**（`3fa78b1`）：抓取收敛为统一内核 + 每数据集一模块（`backend/scripts/external_data/`），入口 `python -m scripts.external_data --check\|--refresh`；**五套**数据集在库（NASA GLC 中国 426/西藏 16、公路地灾普查 13,768、TPDC 喜马拉雅 525、Zenodo 滑坡 420+MEGAS 411、Zenodo 冰湖 3,224）。**五套都仍未接入任何生产链路**；**触发因子（降雨）仍缺** |
 
-**当前门禁（2026-11-12 实测，junit 计数）**
+**当前门禁（2026-11-17 实测，junit 计数）**
 
 - 后端：`pytest tests/unit tests/api tests/contract tests/e2e tests/integration`
-  **4300 passed / 0 failed / 119 skipped**（391.8 s；`backend/tests` 213 个 `test_*.py`）；
+  **4337 tests / 0 failed / 0 errors / 119 skipped**（550.6 s；`backend/tests` 214 个 `test_*.py`；
+  `backend/src/` 360 个 `.py`、63,493 行）；
   `ruff check` + `ruff format --check` 全绿、`mypy src` 360 文件全绿。
-- 前端：`vitest` 最近一次全量 **87 files / 1278 passed**（11-08 入档）、typecheck 0 error；
+- 前端：`vitest` 最近一次全量 **88 files / 1317 passed**（11-17 实测）、typecheck 0 error；
   颜色棘轮基线现役 **106**（`frontend/src/uiTheme.spec.ts` 的 `COLOR_BASELINE`），正文里的 154 / 139 / 104
   都是历史实量值，别当现行基线读。
+- 外部数据目录：`python -m scripts.external_data --check` **5 个数据集逐项一致**；
+  `tests/unit/test_external_data_catalog.py` **37 项全绿**。
 
-**未清项（截至 2026-11-12，这些账仍在）**
+**未清项（截至 2026-11-17，这些账仍在）**
 
 - e2e 界面自检 122 项：11-01 `0e1b31e` 按实测对比度修完字色后仍留 4 项——地图后端不可达时浮层互压 2、
   深色换肤读不到半透明卡面 1、monitor 图表换肤取样下限 1；口径未定前先留着。
+  11-13／11-14 的三批前端改动**只带了单测**，没有新增 e2e 专档——这三批的画面改动目前
+  没有真机门禁覆盖，属新欠账。
 - `/api/v1/agents` 的 `online`/`items` 口径不一致（README §2.3 第 8 条）仍待复测。
 - `store` 读视图 **已于 P0 接上启动回填**（`read_backfill_limit`，默认 500 条 warnings/tasks；
   `chains` 不回填、`chain.list` 按需查库），README 那条已同步改正；**仍欠**超出窗口的历史查询体验。
@@ -42,6 +49,8 @@
   模型路由；但**已进共享台账**，用量/首过率/时延在治理出口与网关那本合并统计。
 - `AEGIS_EXT_*` 旧名兼容分支仍在（第 2 项后续）：四处兜底都已记 deprecation 日志，
   删不删按"部署面迁移确认 + 一个发布周期内无告警"的证据走，不按时间走。
+- 外部数据目录的**五套数据集都未接入生产链路**（不进预警/研判/知识库），要接得先写导入适配
+  并补契约测试，不能直接把 JSONL 塞进 `agents/hazards/`；**触发因子（降雨）仍缺**。
 
 ## 里程碑
 
@@ -315,8 +324,28 @@
   **门禁（2026-11-12 本机）**：`pytest tests/unit tests/api tests/contract tests/e2e tests/integration` **4300 passed / 0 failed / 119 skipped**（391.8 s）、`ruff check` + `ruff format --check` 全绿、`mypy src` **360 文件**全绿。新增门禁：熔断状态机 19 条、提示词版本 + 正文指纹 3 条、台账口径 10 条、两本台账合并 6 条、旧名可观察 4 条；`test_capability_matrix.py` 钉住"每个登记能力有真实派发点、每个派发点都已登记"。
   **仍未做（不声称）**：灾种 LLM 仍**不走**平台网关——不进平台的提示注入围栏、不走网关的模型路由（这两条是真缺口；"不进模型台账"已不成立，台账已共享）；`AEGIS_EXT_*` 兼容分支仍在，删不删按部署面证据走；prompt 语义演化从此受正文指纹门禁约束（改正文不升版本即红）。
 
-- 2026-11-12｜**外部公开灾情数据目录（`data/external/`，先立规范再放数据）**｜实现落 `data/external/nasa-glc/`、`data/external/sciencedb-tibet-road-geohazard-2022/`、`backend/scripts/fetch_external_disaster_data.py`、`backend/scripts/fetch_tibet_road_geohazard.py`、两组 `test_external_*_catalog.py`。
-  **准入四条**：默认许可允许再分发、每条能回到来源 URL、只收结构化数据、不伪装完整。NC/ND/需登录默认不收；**唯一例外**经项目负责人明确批准：ScienceDB《2022 年度西藏地质灾害普查数据》（**CC BY-NC 4.0**）——独立目录 + 独立许可文件 + manifest `commercial_use: false` + 写明"商用发行前整目录移除"，不与 public-domain 数据混放。NSIDC HMA 目录需 Earthdata Login，仍不收。
-  **入仓数据两套**：① NASA GLC（public domain）中国 426 / 西藏 16（源标注 18，排除 2 条错标：`4392` 印度 Dibang、`7108` 尼泊尔 Tatopani），`raw/` 31 列投影 + `normalized/` JSONL；② 西藏公路地灾普查 13,768 条（崩塌 6,692 / 泥石流 2,909 / 滑坡 1,903 / 沉陷塌陷 1,227 / 水毁 1,037），`raw/` 5 个 GB18030 原始 CSV 按字节保留 + `normalized/` 27 列 UTF-8 CSV。普查数据里 2,070 条 `是否发生灾害=否` 是隐患点，不是已发生事件；没有伤亡/经济损失字段。
-  **可核验**：两个 `manifest.json` 记来源/许可/SHA-256/行数/选择或规范化口径；`--check` 与两组测试（NASA 6 条 + 普查 6 条）把"手改数据、许可漂移、灾种枚举漂移、排序/唯一性、编码被改坏"钉成红。raw CSV 用 `.gitattributes` 的 `-text` 保留原始字节，否则 CRLF→LF 会让 SHA 在新克隆失配。
-  **仍未做（不声称）**：两套都**未接入任何生产链路**；NASA 是历史目录（止于 2016-06、只含降雨触发滑坡），普查是公路口径且无灾损字段。要进预警/研判需另写导入适配并补契约测试。
+- 2026-11-12｜**外部公开数据目录（`data/external/`，先立规范再放数据）**｜实现落 `data/external/` 下 5 个数据集目录、`backend/scripts/external_data/`（统一内核 + 每数据集一模块）、`backend/tests/unit/test_external_data_catalog.py`。
+  **准入四条**：默认许可允许再分发、每条能回到来源 URL、只收结构化数据、不伪装完整。NC/ND/需登录默认不收；**NC 例外**经项目负责人明确批准：ScienceDB《2022 年度西藏地质灾害普查数据》（**CC BY-NC 4.0**）与 TPDC《喜马拉雅山地区重大地质灾害统计数据集》（**CC BY-NC-SA 4.0**）——独立目录 + 独立许可文件 + manifest `commercial_use: false` + 写明"商用发行前整目录移除"。
+  **入仓五套**：① NASA GLC（public domain）中国 426 / 西藏 16；② 公路地灾普查 13,768 条（崩塌 6,692 / 泥石流 2,909 / 滑坡 1,903 / 沉陷塌陷 1,227 / 水毁 1,037），其中 2,070 条 `是否发生灾害=否` 是隐患点、无灾损字段；③ TPDC 喜马拉雅调查 525 点（泥石流 353 / 滑坡 153 / 溃决隐患冰湖 19），带坡度/比降/发育阶段/地层/成灾风险；④ Zenodo 东喜马拉雅 420 点 + 全球巨型滑坡 MEGAS 411 条（**CC BY 4.0**）；⑤ Zenodo 帕隆藏布冰湖 3,224 个（2020/2025 两期，**CC BY 4.0**）。
+  **可核验**：每个数据集一份 `manifest.json`（来源/许可/SHA-256/行数/选择与规范化口径/已知限制）+ `schema.json`；统一入口 `python -m scripts.external_data --check|--refresh [--dataset <id>]`；`test_external_data_catalog.py`（32 条）把完整性、形状、灾种枚举、许可隔离、目录与索引一致性钉成红。两个写盘陷阱已钉住：产物必须显式 `newline="\n"`；CSV 还要 `lineterminator="\n"`（`.gitattributes` 是 `eol=lf`，否则 SHA 在新克隆失配）。
+  **仍未做（不声称）**：五套都**未接入任何生产链路**；**触发因子（降雨）仍缺**——TPDC 有两套逐日降水：全国 0.1° 格点降水 V2（**CC BY 4.0**，46.8 GB，许可干净但体量大）与雅鲁藏布江流域 10km 降水（**CC BY-NC-SA 4.0**，29–62 MB，覆盖对口但许可含 NC）。两者都是气象驱动数据、应落运行态目录而非 git，详见 `data/external/README.md` 的"未收清单"。
+
+- 2026-11-13～14｜**首屏面板可折叠 + 助手页值班台化（三批前端提交，此前未入任何台账，本轮补记）**｜`bf5f685` 首屏面板可折叠与 KPI 条美化，滚动/拖动 rAF 合帧消空白帧；`84f1a65` 值班台布局与整页拉杆，修叠字/hover 写高/对比度三缺陷；`dd5b576` 问答框常驻底部 + 墨色单色边框，抽屉会话优先、告警/处置图标化按需展开。
+  **形态**：总览首屏的智能体面板可折叠、底缘拉杆可调高（折叠态与高度记 localStorage）；助手页改**值班台两栏**（左会话占满全高、右栏告警/处置竖排互补拉杆，左:右 ≈ 2:1），整页可滚并带**整页拉杆**（记忆/复位/键盘）；抽屉形态是**会话优先**——告警与处置收进两枚图标（带实时计数徽标），点开滑出、一次一块、Esc 先收层再关抽屉，问答框常驻栏底。
+  **门禁**：三批都带了 spec 改动（`DashboardView.spec.ts` +127、`AssistantView.spec.ts` +394），前端全量 **88 files / 1317 passed**（11-17 复跑）、typecheck 0 error；颜色棘轮仍 **106**。
+  **新欠账（不掩盖）**：这三批只补了单测，**没有新增 e2e 专档**——画面改动目前没有真机门禁覆盖。
+
+- 2026-11-17｜**外部数据目录收口入主线（`3fa78b1`）**｜抓取从"两支各写一套"收敛为**统一内核 + 每数据集一模块**：`core.py` 持规矩（清单/校验和/规范化写盘/下载），`cli.py` 是唯一入口（`--check` / `--refresh` / `--dataset <id>`）；退役 `fetch_external_disaster_data.py`、`fetch_tibet_road_geohazard.py` 与 `test_external_census_catalog.py`；规范化产物统一到 **JSONL 统一信封**（公路普查此前是 CSV），五个数据集共用同一份 `schema.json`。
+  顺带修掉两处**类型标注错误**（`parse_dms` 形参与返回值同名、`xlsx` 行字典键类型）——`scripts/` 不在 `mypy src` 门禁内，此前没被拦住。
+  **门禁**：`--check` **5 个数据集** manifest 与数据文件逐项一致；`test_external_data_catalog.py` **37 项**全绿；`ruff check` / `format --check` / `mypy scripts/external_data`（10 文件）全绿；后端全量 **4337 tests / 0 failed / 119 skipped**（550.6 s）、`mypy src` 360 文件全绿。
+
+- 2026-11-17｜**文档校准批次（过时的"现在时"表述按代码事实改写）**｜一批并行审计把现行文档逐条对到代码上，发现并修掉的**主要**偏差：
+  ① `docs/architecture.md` 的 L3 行与 §6"外部交付智能体模块并入"整条仍停在 11-09 的 `agents_ext` + `AEGIS_AGENT_IMPL` 双实现口径（与它自己 §3.1、与 README、与 `docs/agents/README.md` 四处互相矛盾），另有一处引用已不存在的 `services/llm/prompt_registry.py`；
+  ② `docs/REPORT.md` 规模数字停在 11-10（4063 passed / 16 类节点），诚实清单里 5 条的前提已被后文或代码推翻（批量回填入口、Playwright 进 CI、LLM 凭据已配、鉴权模型、"没有真实 JSONL"）；
+  ③ `docs/智能助手_设计文档.md` §12 说"实际开关只有两个"却列了四行（实为 11 个），§5.6 的 preview/plan 两帧未做，§3.3 把端点能力当成了注册表动作；
+  ④ `docs/智能助手升级方案.md` §2.3"不让助手发布预警"与本文 §3 D5 正面冲突，§8 的 P4 与 §0 的 P4 是两个定义，FR-1.1／1.3／1.4、FR-2.6、FR-4.5、FR-6.2 有六条**未实现**；
+  ⑤ `docs/UI_UX_REDESIGN_BRIEF.md` §6 待办把侧栏写成"待批准"、§17 决策 12 未标反转、§15/§16 的页面形态落后两代；
+  ⑥ `docs/技术选型与许可证清单.md` 未登记 `[agents]` extra 的四个 langgraph/langchain 依赖（生产镜像已装），另有 orjson 的许可口径写错（是合取不是三选一）；
+  ⑦ 17 份 ADR 补**状态横幅**（0011 被 0012/0016 取代、0013 与 0017 重叠、0007 仍标"提议"实为主体已落地），**论证正文一律不动**；
+  ⑧ `docs/agents/` 索引里的旧变量名与 ADR-0008 搬家后失效的四个服务路径已改。
+  **纪律**：dated 批次记录与 ADR 论证原文保留，只改"现在时"；数据类文档的条数/日期/许可逐条回到 manifest 与实测（NASA GLC 快照止于 2016-10 而非 2016-06、TPDC 525 点、NC 例外是两套）。

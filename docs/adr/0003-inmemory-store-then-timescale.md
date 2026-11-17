@@ -1,5 +1,8 @@
 # ADR-0003：运行态先内存，持久化后置到 PostgreSQL 17 + PostGIS + pgvector
 
+> **状态校准（2026-11-17）**：**已落地**：PostgreSQL 17 + PostGIS + pgvector 直连（asyncpg，无 ORM）已在位；`sqlalchemy` / `aiosqlite` 已不在基础依赖（`aiosqlite` 现作为 `langgraph-checkpoint-sqlite` 的传递依赖重新进入依赖树）。无取代者。
+>
+
 - 状态：已采纳（2026-10-01 修订：落地实现由 TimescaleDB 改为 PostgreSQL 17 + PostGIS + pgvector）
 - 日期：2026-09-29，修订 2026-10-01
 - 相关：`storage/store.py`、`persistence/`、`connectors/base.py`、`deploy/postgres/Dockerfile`

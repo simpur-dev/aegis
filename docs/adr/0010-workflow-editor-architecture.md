@@ -1,5 +1,8 @@
 # ADR-0010：工作流编辑器的分层、状态与 Dify 交互语法迁移
 
+> **状态校准（2026-11-17）**：**已落地（待办项大部分已完成）**：前端 `stores/workflow`、`utils/graph`、`composables/workflow`、`api/workflow`、`components/workflow/editor` 均在位；Dify 衍生代码的合规边界见 `THIRD_PARTY_NOTICES.md`。批次 E（试运行/实例图）与批次 F（版本面板/性能收尾）之后续状态见 `docs/AGENT_PROGRESS.md`。无取代者。
+>
+
 - 状态：已采纳（批次 0 立项，2026-10-22；实现随批次 B/C/D/F 分批落地）
 - 日期：2026-10-22
 - 修订：2026-10-23 用户批准 Dify UI 源码移植，新增 §11，并同步修订 §背景 约束 1、§8 T3 与备选方案表

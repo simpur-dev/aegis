@@ -1,5 +1,8 @@
 # ADR-0001：契约先行的智能体接入边界
 
+> **状态校准（2026-11-17）**：**已落地**：契约文件（`contracts/agent_message.v1.schema.json`、`contracts/AGENT_INTEGRATION_SPEC.v1.md`）、契约门禁（`backend/tests/contract/test_agent_conformance.py`）与契约壳 `agents/agentkit.py` 均在位。无取代者。
+>
+
 - 状态：已采纳
 - 日期：2026-09-29
 - 相关：`contracts/AGENT_INTEGRATION_SPEC.v1.md`

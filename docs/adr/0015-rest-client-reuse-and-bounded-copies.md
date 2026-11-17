@@ -1,5 +1,8 @@
 # ADR-0015：HTTP 客户端复用与"便捷副本"有界化——把每请求的开销从链路挪到进程
 
+> **状态校准（2026-11-17）**：**已落地**：`agents/rest_context.py`（懒建复用 + `aclose()`）、`pipeline/stages.py` 的 `warnings_window=5000` 与 `_evict_warnings` 均在位。无取代者。
+>
+
 - 状态：已采纳（2026-11-10）
 - 日期：2026-11-10
 - 相关：ADR-0014（后端热点消除，本 ADR 是其延续）、

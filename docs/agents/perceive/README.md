@@ -19,7 +19,7 @@
 ## 平台侧降级（已实现，供对照）
 
 智能体缺位/超时/违约时，平台用阈值规则引擎跑触发识别
-（`backend/src/aegis/services/trigger_rules.py`：9 条规则 × 5 灾种，纯函数）。
+（`backend/src/aegis/services/rules/trigger_rules.py`：9 条规则 × 5 灾种，纯函数）。
 **这意味着你的交付质量决定链路走智能路径还是规则路径**——降级事实会记进
 `ChainResult.degradations` 并出现在 `/api/v1/integrations` 与链路 trace 里，按 `agent_id` 归因。
 

@@ -1,5 +1,8 @@
 # ADR-0012：研判契约统一——删除适配层、证据数据面、区域画像与生产方置信度
 
+> **状态校准（2026-11-17）**：**已落地**：`domain/assess.py`、`pipeline/assess_input.py`、`storage/site_profiles.py`、`persistence/sql/014_site_profiles.sql` 均在位；本文提到的 `agents_ext/risk_agent/` 现为 `agents/hazards/risk_agent/`。后续：落位改名与动作注册由 ADR-0016 推进；"外部的 LLM 绕开平台网关"一条由 ADR-0017 关闭（台账部分已共享，提示注入围栏与模型路由仍是真缺口）。
+>
+
 - 状态：已采纳（2026-11-09）
 - 日期：2026-11-09
 - 相关：ADR-0001（契约先行边界）、ADR-0002（智能体优先平台降级）、

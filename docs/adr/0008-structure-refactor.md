@@ -1,5 +1,8 @@
 # ADR-0008：结构重构 P1–P6——模块边界与分层归位
 
+> **状态校准（2026-11-17）**：**已落地**：P1–P6 分六笔落地，`backend/tests/unit/test_architecture_rules.py` 守住边界。**注意**：本 ADR 搬过家，本文提到的 `services/trigger_rules.py` 等路径现为 `services/rules/`、`services/response/`；`docs/agents/` 下四份分段 README 的旧路径已在 2026-11-17 一并更正。无取代者。
+>
+
 - 状态：已采纳（2026-10-16 起分六笔落地，每笔独立提交且门禁全绿）
 - 日期：2026-10-16
 - 相关：ADR-0001（契约优先，本 ADR 强化其方向性）、ADR-0002（双轨机制不动）、

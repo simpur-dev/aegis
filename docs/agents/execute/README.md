@@ -17,7 +17,7 @@
 
 ## 平台侧降级（已实现，供对照）
 
-`backend/src/aegis/services/delivery.py`：通道矩阵按预警等级路由（红色含北斗）、
+`backend/src/aegis/services/response/delivery.py`：通道矩阵按预警等级路由（红色含北斗）、
 Mock 通道适配器（模拟时延/回执/重试）与回执落库（`warning_receipts`）。
 智能体在场时投递由智能体完成后回执给平台，平台侧不再走自己的通道埋点
 （两种模式的触达时延口径不同，横向比较要用同一模式——见 `docs/REPORT.md` 口径提醒）。

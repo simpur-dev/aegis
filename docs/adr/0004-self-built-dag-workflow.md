@@ -1,5 +1,8 @@
 # ADR-0004：工作流引擎自研 DAG + 状态机
 
+> **状态校准（2026-11-17）**：**已落地（本文的数字已过时）**：本文"16 类节点"是 2026-10-01 的数，**现为 19 类**（见 ADR-0009 §8 与 `docs/REPORT.md`）；引擎在 `backend/src/aegis/workflow/engine.py`。无取代者。
+>
+
 - 状态：已采纳（M2 已落地并实测）
 - 日期：2026-09-29，修订 2026-10-01
 - 相关：《课题6_项目架构设计》§4.2、`contracts/stu.v1.schema.json`、`backend/src/aegis/workflow/`

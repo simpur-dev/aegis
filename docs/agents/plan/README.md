@@ -22,7 +22,7 @@ STU 的字段口径（任务 ID / 类型 / 区域 / 优先级 / 责任人 / 时�
 
 ## 平台侧降级（已实现，供对照）
 
-`backend/src/aegis/services/task_parser.py`：灾种 Playbook 剧本拆解
+`backend/src/aegis/services/response/task_parser.py`：灾种 Playbook 剧本拆解
 （5 灾种 × 核查/预警/转移/监测/报告步骤矩阵，低等级不启动转移）。
 智能体缺位/超时/产出不合 Schema 时，平台用它生成 STU——链路不断，但"智能拆解"退化为固定剧本。
 

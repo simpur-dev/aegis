@@ -1,5 +1,8 @@
 # ADR-0005：性能技术栈与并发策略
 
+> **状态校准（2026-11-17）**：**已落地**：fastapi/uvicorn/orjson/uvloop 的选型与 `backend/tests/perf/` 阈值断言均在位。无取代者。
+>
+
 - 状态：已采纳
 - 日期：2026-09-29
 - 相关：`backend/pyproject.toml`、`tests/perf/test_performance.py`
