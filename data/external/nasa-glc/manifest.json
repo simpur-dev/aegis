@@ -1,23 +1,24 @@
 {
   "schema_version": "1.0.0",
-  "generated_at": "2026-11-12T01:09:04.868008+00:00",
+  "generated_at": "2026-11-12T06:16:54.033912+00:00",
   "datasets": [
     {
       "id": "nasa-glc",
       "title": "NASA Global Landslide Catalog (GLC) Export",
       "publisher": "NASA Goddard Space Flight Center",
+      "authors": [
+        "Kirschbaum, D. B., Adler, R., Hong, Y., Hill, S., & Lerner-Lam, A."
+      ],
       "license": {
         "id": "public-domain",
-        "url": "https://www.nasa.gov/nasa-brand-center/images-and-media/"
+        "url": "https://www.nasa.gov/nasa-brand-center/images-and-media/",
+        "commercial_use": true,
+        "note": "NASA 作品不受美国版权保护，可自由再分发；NASA 请求引用（非法律义务）。"
       },
       "citation": "Kirschbaum, D. B., Adler, R., Hong, Y., Hill, S., & Lerner-Lam, A. (2010). A global landslide catalog for hazard applications: method, results, and limitations. Natural Hazards, 52(3), 561-575. doi:10.1007/s11069-009-9401-4",
       "source": {
-        "url": "https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog_Export/Global_Landslide_Catalog_Export_rows.csv",
-        "sha256": "2c4898899dd4f373c4320e121c5b655ebb5394d431fa42e57ec4828d07d48b04",
-        "bytes": 8479717,
-        "rows": 11033,
-        "snapshot_note": "data.nasa.gov 的静态导出快照（事件日期止于 2016-06）；上游最新数据走 COOLR / Landslide Viewer。目录只收**降雨触发**的滑坡事件，且以媒体报道为源，不是完整普查。",
-        "retrieved_at": "2026-11-12T01:09:04.875557+00:00"
+        "landing_url": "https://data.nasa.gov/dataset/global-landslide-catalog-export",
+        "file": "https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog_Export/Global_Landslide_Catalog_Export_rows.csv"
       },
       "selection": {
         "china": "country_name == 'China'",
@@ -33,6 +34,35 @@
           }
         ]
       },
+      "normalization": {
+        "raw_encoding": "utf-8-sig",
+        "date_rule": "event_date 取日期部分（MM/DD/YYYY → YYYY-MM-DD）；时刻原文单列保留",
+        "count_rule": "空字符串 → 空（未报）；0 → 0（明确报了零）",
+        "category_map": {
+          "landslide": "landslide",
+          "translational_slide": "landslide",
+          "mudslide": "debris_flow",
+          "debris_flow": "debris_flow",
+          "rock_fall": "rockfall",
+          "complex": "landslide",
+          "other": "unknown",
+          "unknown": "unknown",
+          "": "unknown"
+        }
+      },
+      "known_limitations": [
+        "data.nasa.gov 的**静态导出快照**，事件日期中国子集止于 2016-10、西藏子集止于 2016-06；上游持续更新版在 COOLR。",
+        "以**降雨触发**的滑坡/泥石流为主（另有地震 7 条、采矿 6 条、冰雪融水 4 条等），以媒体报道为线索；雪崩与冰湖溃决不在覆盖内。",
+        "有报道的事件才进目录——无人区、无通讯、无伤亡的事件系统性缺失。",
+        "坐标精度多为 10–50 km 档（看 location_accuracy），不是点位级。"
+      ],
+      "source_file": {
+        "url": "https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog_Export/Global_Landslide_Catalog_Export_rows.csv",
+        "sha256": "2c4898899dd4f373c4320e121c5b655ebb5394d431fa42e57ec4828d07d48b04",
+        "bytes": 8479717,
+        "rows": 11033
+      },
+      "retrieved_at": "2026-11-12T06:16:54.033912+00:00",
       "files": {
         "raw/glc_export_rows.china.csv": {
           "sha256": "c58883c927ef931d37cae5c1ef49b17cc1f92131bbb72925905b609dd3b44c0a",
@@ -45,13 +75,13 @@
           "rows": 18
         },
         "normalized/china_landslide_events.v1.jsonl": {
-          "sha256": "7dbf909eb4c0f9a501109390fa8ffe4141f4bbc34bf96123b3f4e6e4367c9289",
-          "bytes": 524851,
+          "sha256": "28b2b06e81e294453280fa35be9cab01787deacab82c716ab32d5c3a33bf24dd",
+          "bytes": 531667,
           "rows": 426
         },
         "normalized/tibet_landslide_events.v1.jsonl": {
-          "sha256": "780018ad2fc6902ca68c281201ecfcf9387a1afdd2f2d1af4371eba410a86737",
-          "bytes": 21656,
+          "sha256": "88e77013f777c65fca3fef85f27096551247234d785fa1dcef05b86fe7fbb5d3",
+          "bytes": 21912,
           "rows": 16
         }
       }

@@ -1,0 +1,71 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-11-12T06:21:04.675224+00:00",
+  "datasets": [
+    {
+      "id": "zenodo-himalaya-landslide-inventories",
+      "title": "喜马拉雅大型滑坡清单（Zenodo 两套：东喜马拉雅 420 点 + 全球巨型滑坡 MEGAS 411 条）",
+      "publisher": "Zenodo（individual contributors）",
+      "authors": [
+        "Chen, Penghai",
+        "Wang, Yu-feng",
+        "Peng, Ming",
+        "Lei, Lanfu",
+        "Korup, Oliver",
+        "Pánek, Tomáš",
+        "Břežný, Michal"
+      ],
+      "license": {
+        "id": "cc-by-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "commercial_use": true,
+        "note": "CC BY 4.0：允许署名后的任何用途，含商业使用与再分发（须保留署名与许可链接）。"
+      },
+      "citation": "Large Landslide Inventory of the Eastern Himalaya. Zenodo. https://doi.org/10.5281/zenodo.18931430. CC BY 4.0. Earth's largest terrestrial landslides. Zenodo. https://doi.org/10.5281/zenodo.15908068. CC BY 4.0.",
+      "source": {
+        "landing_url": "https://zenodo.org/records/18931430",
+        "eastern_himalaya_api": "https://zenodo.org/api/records/18931430",
+        "eastern_himalaya_file": "https://zenodo.org/api/records/18931430/files/Large Landslide Location in Eastern Himalaya.kml/content",
+        "megas_api": "https://zenodo.org/api/records/15908068",
+        "megas_file": "https://zenodo.org/api/records/15908068/files/MEGAS_MASTER_02_2025.csv/content"
+      },
+      "selection": {
+        "scope": "两个记录的全部记录（420 点位 + 411 巨型滑坡条目）",
+        "exclusions": []
+      },
+      "normalization": {
+        "east_himalaya": "KML Placemark → 经纬度（WGS84），编号取 Placemark 的 name（EH-n）",
+        "megas": "CSV 为 latin-1/cp1252 编码；**只有地名无坐标**，坐标列留空、原值保留",
+        "date_rule": "两个来源都没有事件日期字段（是空间清单不是事件目录），日期列留空"
+      },
+      "known_limitations": [
+        "**这是空间清单，不是事件目录**：没有发生日期、伤亡、损失字段；不能当灾情事件库用。",
+        "MEGAS 的 411 条只有地名（Location），**没有坐标**；坐标列留空，需另行地名关联。",
+        "MEGAS 源 CSV 有 **14 行缺 ID**（含 6 条中国记录）：用源 ID 会把它们丢掉，所以这 14 条按行序编号并在 `source.event_id` 留 null。",
+        "东喜马拉雅清单的点位是滑坡体位置，不代表其发生时刻或规模。",
+        "KML 覆盖东喜马拉雅—藏东南—尼泊尔东部一带（经度 90.40–97.16，纬度 27.03–30.30），**不覆盖阿里/日喀则西段**。"
+      ],
+      "retrieved_at": "2026-11-12T06:21:04.676241+00:00",
+      "files": {
+        "raw/eastern_himalaya_large_landslides.kml": {
+          "sha256": "954314830f8d9c183710b862abcd06b1f654e41e9b27d5ec828869c13ce897f4",
+          "bytes": 284427
+        },
+        "raw/megas_master_2025.csv": {
+          "sha256": "0e24fadf9a993f62430899a0a63025203f44e5f5251991d6521d5eef3160ac01",
+          "bytes": 52481
+        },
+        "normalized/eastern_himalaya_large_landslides.v1.jsonl": {
+          "sha256": "f54768c9186502b2e61e8fd162d9ed41d9040bdbe7482beb6e5fd7a7b62f9240",
+          "bytes": 287286,
+          "rows": 420
+        },
+        "normalized/megas_largest_landslides.v1.jsonl": {
+          "sha256": "3acf7d8361a4d94057c791de80b34ebd1dd8b53fbb13c852c47dd33258683180",
+          "bytes": 386187,
+          "rows": 411
+        }
+      }
+    }
+  ]
+}

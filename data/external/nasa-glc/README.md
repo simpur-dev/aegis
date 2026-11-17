@@ -3,8 +3,9 @@
 NASA 哥达德太空飞行中心维护的全球降雨触发滑坡事件目录（GLC）的静态导出快照，
 本目录保存**中国子集**与**西藏子集**的原始投影与规范化版本。
 
-**这不是西藏灾情的完整普查**：GLC 只收降雨触发的滑坡/泥石流事件，以媒体报道为线索，
-没有报道的事件不在里面；快照的事件日期止于 **2016-06**。用它做历史基线可以，
+**这不是西藏灾情的完整普查**：GLC 以**降雨触发**的滑坡/泥石流事件为主（另有少量地震、采矿、
+融雪触发），以媒体报道为线索，没有报道的事件不在里面；快照的事件日期**中国子集止于 2016-10、
+西藏子集止于 2016-06**。用它做历史基线可以，
 用它宣称"西藏滑坡全量"或"平台预测准确率"不行。
 
 ## 文件
@@ -13,8 +14,8 @@ NASA 哥达德太空飞行中心维护的全球降雨触发滑坡事件目录（
 |---|---|
 | `raw/glc_export_rows.china.csv` | 源数据 `country_name == "China"` 的 426 行，**原始 31 列一个不改** |
 | `raw/glc_export_rows.tibet_admin_labeled.csv` | 其中 `admin_division_name == "Tibet Autonomous Region"` 的 18 行（含 2 条源标注错误，见下） |
-| `normalized/china_landslide_events.v1.jsonl` | 426 条规范化记录 |
-| `normalized/tibet_landslide_events.v1.jsonl` | 16 条规范化记录（已排除 2 条源标注错误） |
+| `normalized/china_landslide_events.v1.jsonl` | 426 条规范化记录（统一信封） |
+| `normalized/tibet_landslide_events.v1.jsonl` | 16 条规范化记录（统一信封；已排除 2 条源标注错误） |
 | `schema.json` | 单条记录的 JSON Schema（与 `backend/tests/unit/test_external_data_catalog.py` 联动） |
 | `manifest.json` | 来源 URL、SHA-256、抓取时间、行数、选择规则、排除项 |
 
@@ -24,7 +25,7 @@ NASA 哥达德太空飞行中心维护的全球降雨触发滑坡事件目录（
   （NASA Open Data Portal，静态导出快照；全表 11,033 行、8,479,717 字节、SHA-256 见 `manifest.json`）
 - **许可**：**public domain**。NASA 作品不受美国版权保护，可再分发；NASA 请求引用（非法律义务）。
 - **上游现状**：COOLR / Landslide Viewer（`https://landslides.nasa.gov`）是持续更新的版本；
-  本目录用的是 data.nasa.gov 的冻结快照，事件日期止于 2016-06。要更新到近年数据需走 COOLR，
+  本目录用的是 data.nasa.gov 的冻结快照，事件日期止于 2016-10（中国）/ 2016-06（西藏）。要更新到近年数据需走 COOLR，
   且需另行核对导出格式与许可。
 
 **引用**（对外发表时请同时引用）：
@@ -70,7 +71,7 @@ NASA 哥达德太空飞行中心维护的全球降雨触发滑坡事件目录（
 | `geo.country` / `admin_division` | 同名列 | 源标注，未做边界校正 |
 | `hazard.type` | `landslide_category` | 映射见下表 |
 | `hazard.source_category` | `landslide_category` | 保留原值，映射可逆 |
-| `hazard.trigger` / `size` / `setting` | 同名列 | 原值（含 `unknown`） |
+| `hazard.attributes.trigger` / `.size` / `.setting` | 同名列 | 原值（含 `unknown`）；**三列都在 `hazard.attributes` 下**，不是 `hazard` 同级 |
 | `impact.fatalities` / `injuries` | `fatality_count` / `injury_count` | **空字符串 → `null`（未报）；`0` → `0`（明确报了零）** |
 
 类别映射：
@@ -111,13 +112,13 @@ NASA 哥达德太空飞行中心维护的全球降雨触发滑坡事件目录（
 cd backend
 
 # 只校验：manifest 里每个文件的 SHA-256 / 字节数 / 行数是否仍一致（CI 跑这个）
-uv run python -m scripts.fetch_external_disaster_data --check
+uv run python -m scripts.external_data --check --dataset nasa-glc
 
-# 重新抓取并重写 raw / normalized / manifest（联网；或 --input 指定已下载的源 CSV）
-uv run python -m scripts.fetch_external_disaster_data --refresh
+# 重新抓取并重写 raw / normalized / manifest（联网）
+uv run python -m scripts.external_data --refresh --dataset nasa-glc
 
-# 用本地副本重跑（不联网）
-uv run python -m scripts.fetch_external_disaster_data --refresh --input /path/to/rows.csv
+# 用本地已下载的源 CSV 重跑（不联网）
+uv run python -m scripts.external_data --refresh --dataset nasa-glc --source /path/to/rows.csv
 ```
 
 `--refresh` 会改写 `manifest.json`（含源文件 SHA-256 与抓取时间）。源文件变了要**人看 diff**：

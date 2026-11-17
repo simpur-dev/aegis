@@ -22,8 +22,8 @@ Science Data Bank 数据集（DOI [`10.57760/sciencedb.27813`](https://doi.org/1
 | `raw/沉陷塌陷.csv` | 1,227 行 |
 | `raw/泥石流.csv` | 2,909 行 |
 | `raw/滑坡.csv` | 1,903 行 |
-| `normalized/tibet_road_geohazard_2022.v1.csv` | 13,768 行，UTF-8 + LF，27 列（见下） |
-| `schema.json` | 规范化 CSV 的列契约（类型/枚举/范围/主键） |
+| `normalized/tibet_road_geohazard_2022.v1.jsonl` | 13,768 条，UTF-8 + LF，统一信封（见下） |
+| `schema.json` | 规范化记录的 JSON Schema（统一信封，与其余四个数据集同一份） |
 | `manifest.json` | 来源、许可、DOI、SHA-256、行数、规范化口径、已知限制 |
 | `LICENSE-CC-BY-NC-4.0.md` | 数据许可与商用限制 |
 
@@ -37,7 +37,7 @@ Science Data Bank 数据集（DOI [`10.57760/sciencedb.27813`](https://doi.org/1
 - DOI：`10.57760/sciencedb.27813`；CSTR：`31253.11.sciencedb.27813`
 - 下载入口：<https://www.scidb.cn/doi/10.57760/sciencedb.27813>
 - 抓取方式：Science Data Bank 公开文件树 API（无需登录），5 个 CSV 原始字节下载；
-  脚本 `backend/scripts/fetch_tibet_road_geohazard.py` 可复跑。
+  脚本 `backend/scripts/external_data/scidb_census.py` 可复跑。
 
 **引用**：
 
@@ -49,31 +49,35 @@ CSTR:31253.11.sciencedb.27813. CC BY-NC 4.0.
 
 ## 规范化口径（raw → normalized）
 
-| 规范化列 | 源字段 | 处理 |
+normalized 是**统一信封**（`schema_version` / `record_id` / `source` / `event` / `geo` /
+`hazard` / `impact`），数据集特有的列进 `hazard.attributes`：
+
+| 信封位置 | 源字段 | 处理 |
 |---|---|---|
 | `record_id` | `灾害编号` | `sciencedb-tibet-road-geohazard-2022:<灾害编号>`；全表唯一 |
-| `source_category` | 文件名 | 崩塌 / 水毁 / 沉陷塌陷 / 泥石流 / 滑坡 |
-| `hazard_type` | 文件名 | 映射到项目 `HazardType`（见下表） |
-| `disaster_code` | `灾害编号` | 去首尾空白 |
-| `name` | `灾害名称` | 原值 |
-| `road_class` / `road_name` / `road_code` | `道路类别` / `线路名称` / `线路编号` | 原值，去空白 |
-| `admin_code` | `区划代码` | 6 位县级代码 |
-| `maintainer` | `管养单位` | 原值 |
-| `occurred` | `是否发生灾害` | `是`→`true`、`否`→`false`；**false = 隐患点** |
-| `last_event_date` | `最近发生时间` | 统一 `YYYY-MM-DD`；解析不了留空 |
-| `last_event_date_raw` | `最近发生时间` | 原文保留 |
-| `blocked_status` | `断通状况` | 原值 |
-| `severity` | `危害程度` | 原值 |
-| `damage_level` | `灾害等级` | 原值 |
-| `development_degree` | `灾害发育程度` | 原值 |
-| `tech_level` | `技术等级` | 原值 |
-| `occurrence_window_years` | `近十年发生次数` / `近五年发生次数` | 有"近十年"列则 `10`，否则 `5` |
-| `occurrence_count` | 同上 | 原值 |
-| `treatment` | `灾害处治情况` 或 `灾害修复情况` | 沉陷塌陷用"修复情况"，其余用"处治情况" |
-| `check_status` | `核查状态` | 原值 |
-| `start_stake` / `end_stake` | `起点桩号` / `止点桩号` | 原值 |
-| `longitude` / `latitude` | `经纬度CGCS2K` | 取**第一个点**（原串是 `lon,lat;lon,lat;` 折线），6 位小数 |
-| `geometry_points` | `经纬度CGCS2K` | 折线点数 |
+| `source.event_id` | `灾害编号` | 去首尾空白 |
+| `source.source_name` | 文件名 | 崩塌 / 水毁 / 沉陷塌陷 / 泥石流 / 滑坡 |
+| `hazard.type` | 文件名 | 映射到项目 `HazardType`（见下表） |
+| `hazard.source_category` | 文件名 | 原文保留 |
+| `event.title` | `灾害名称` | 原值 |
+| `event.date` / `event.date_raw` | `最近发生时间` | 统一 `YYYY-MM-DD`；解析不了留 null，原文另存 |
+| `geo.admin_division` | `区划代码` | 6 位县级代码 |
+| `geo.latitude` / `geo.longitude` | `经纬度CGCS2K` | 取**第一个点**（原串是 `lon,lat;lon,lat;` 折线） |
+| `hazard.attributes.occurred` | `是否发生灾害` | `是`→`true`、`否`→`false`；**false = 隐患点** |
+| `hazard.attributes.road_class` / `road_name` / `road_code` | `道路类别` / `线路名称` / `线路编号` | 原值，去空白 |
+| `hazard.attributes.maintainer` | `管养单位` | 原值 |
+| `hazard.attributes.blocked_status` | `断通状况` | 原值 |
+| `hazard.attributes.severity` | `危害程度` | 原值 |
+| `hazard.attributes.damage_level` | `灾害等级` | 原值 |
+| `hazard.attributes.development_degree` | `灾害发育程度` | 原值 |
+| `hazard.attributes.tech_level` | `技术等级` | 原值 |
+| `hazard.attributes.occurrence_window_years` | `近十年发生次数` / `近五年发生次数` | 有"近十年"列则 `10`，否则 `5` |
+| `hazard.attributes.occurrence_count` | 同上 | 原值 |
+| `hazard.attributes.treatment` | `灾害处治情况` 或 `灾害修复情况` | 沉陷塌陷用"修复情况"，其余用"处治情况" |
+| `hazard.attributes.check_status` | `核查状态` | 原值 |
+| `hazard.attributes.start_stake` / `end_stake` | `起点桩号` / `止点桩号` | 原值 |
+| `hazard.attributes.geometry_points` | `经纬度CGCS2K` | 折线点数 |
+| `impact.fatalities` / `injuries` | — | **源数据没有这两个字段**，留 null（不补造） |
 
 类别映射（**沉陷塌陷与水毁在项目枚举里没有对应类，落 `unknown`，原文保留在 `source_category`**）：
 
@@ -113,13 +117,13 @@ CSTR:31253.11.sciencedb.27813. CC BY-NC 4.0.
 cd backend
 
 # 只校验：manifest 里每个文件的 SHA-256 / 字节数 / 行数是否仍一致（CI 跑这个）
-uv run python -m scripts.fetch_tibet_road_geohazard --check
+uv run python -m scripts.external_data --check --dataset sciencedb-tibet-road-geohazard-2022
 
 # 重新下载并重写 raw / normalized / manifest（联网）
-uv run python -m scripts.fetch_tibet_road_geohazard --refresh
+uv run python -m scripts.external_data --refresh --dataset sciencedb-tibet-road-geohazard-2022
 
 # 用本地已下载的 5 个 CSV 重跑（不联网）
-uv run python -m scripts.fetch_tibet_road_geohazard --refresh --source-dir /path/to/csv-dir
+uv run python -m scripts.external_data --refresh --dataset sciencedb-tibet-road-geohazard-2022 --source /path/to/csv-dir
 ```
 
 `raw/` 按字节原样保存（GB18030 + CRLF），`--check` 按字节校验；不要用文本编辑器打开后再保存，
