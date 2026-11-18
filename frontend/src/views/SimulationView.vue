@@ -121,28 +121,30 @@ async function run(): Promise<void> {
       </template>
     </PageHero>
 
-    <a-card size="small" title="情景参数（全部由调用方给定，平台不臆造锚定遥测的默认）">
+    <a-card size="small" title="推演参数（都由你给定，平台不编默认值）">
+      <!-- 数字框不收上下步进钮：那两枚 22×15 的小钮在值班台上点不准（真机探针量到），
+           与"随机种子"同口径直接键入，方向键 ↑↓ 仍可步进。 -->
       <a-form layout="inline" class="sim-form" data-testid="sim-form">
         <a-form-item label="情景条数 K">
-          <a-input-number v-model:value="draft.scenarios" :min="1" :max="64" />
+          <a-input-number v-model:value="draft.scenarios" :min="1" :max="64" :controls="false" aria-label="情景条数 K" />
         </a-form-item>
         <a-form-item label="轮数 T">
-          <a-input-number v-model:value="draft.rounds" :min="1" :max="24" />
+          <a-input-number v-model:value="draft.rounds" :min="1" :max="24" :controls="false" aria-label="轮数 T" />
         </a-form-item>
         <a-form-item label="基准降雨 mm">
-          <a-input-number v-model:value="draft.rain_base_mm" :min="0" :max="500" />
+          <a-input-number v-model:value="draft.rain_base_mm" :min="0" :max="500" :controls="false" aria-label="基准降雨 mm" />
         </a-form-item>
         <a-form-item label="降雨浮动 mm">
-          <a-input-number v-model:value="draft.rain_spread_mm" :min="0" :max="200" />
+          <a-input-number v-model:value="draft.rain_spread_mm" :min="0" :max="200" :controls="false" aria-label="降雨浮动 mm" />
         </a-form-item>
         <a-form-item label="预案档位">
-          <a-select v-model:value="draft.playbook" :options="PLAYBOOK_ACTIONS.map((item) => ({ value: item, label: item }))" style="width: 110px" />
+          <a-select v-model:value="draft.playbook" :options="PLAYBOOK_ACTIONS.map((item) => ({ value: item, label: item }))" style="width: 110px" aria-label="预案档位" />
         </a-form-item>
         <a-form-item label="令牌预算">
-          <a-input-number v-model:value="draft.token_budget" :min="1" :max="10000000" :step="10000" />
+          <a-input-number v-model:value="draft.token_budget" :min="1" :max="10000000" :step="10000" :controls="false" aria-label="令牌预算" />
         </a-form-item>
         <a-form-item label="随机种子">
-          <a-input-number v-model:value="draft.seed" :controls="false" style="width: 130px" />
+          <a-input-number v-model:value="draft.seed" :controls="false" style="width: 130px" aria-label="随机种子" />
         </a-form-item>
       </a-form>
       <p class="sim-hint">

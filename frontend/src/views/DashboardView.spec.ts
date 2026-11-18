@@ -139,14 +139,14 @@ describe('态势总览的取数', () => {
    * "西藏泥石流预警（橙色）"，这张表第一页一个字没变——刚发生的那条在第 2 页，
    * "最近做了什么"要翻到最后一页才看得见。
    */
-  it('链路执行记录把最新一条排在最前，标题也这么说', async () => {
+  it('事件处置记录把最新一条排在最前，标题也这么说', async () => {
     responses()
     mocked.events.mockResolvedValue({ items: [chainOf('trc_a'), chainOf('trc_b'), chainOf('trc_c')] } as never)
     const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
     await flushPromises()
     const rows = wrapper.findAll('[data-testid="chain-row"]').map((row) => row.attributes('data-trace'))
     expect(rows).toEqual(['trc_c', 'trc_b', 'trc_a'])
-    expect(wrapper.text()).toContain('最新在上')
+    expect(wrapper.text()).toContain('新的在上')
   })
 
   /**
@@ -256,7 +256,7 @@ function chainTraces(wrapper: ReturnType<typeof mount>): string[] {
   return wrapper.findAll('[data-testid="chain-row"]').map((row) => row.attributes('data-trace') ?? '')
 }
 
-describe('链路执行记录的两个写手不许互相抹', () => {
+describe('事件处置记录的两个写手不许互相抹', () => {
   it('轮询的旧快照迟到时，不许把刚补上的那条新链路又抹掉', async () => {
     responses()
     let releaseRefresh: (value: unknown) => void = () => {}
@@ -328,7 +328,7 @@ describe('空表要说人话也要说下一步', () => {
     await flushPromises()
     const empty = wrapper.find('[data-testid="chains-empty"]')
     expect(empty.exists(), '不能只剩 antd 默认的英文 "No data"').toBe(true)
-    expect(empty.text()).toContain('还没有链路执行记录')
+    expect(empty.text()).toContain('还没有处置记录')
     expect(empty.text()).toContain('演练')
     expect(wrapper.text()).not.toContain('No data')
     wrapper.unmount()
@@ -371,7 +371,7 @@ describe('链路表的窗口口径', () => {
       wrapper
         .findAllComponents({ name: 'ACard' })
         .map((card) => String(card.props('title')))
-        .find((t) => t.startsWith('链路执行记录')) ?? ''
+        .find((t) => t.startsWith('事件处置记录')) ?? ''
     expect(title).toContain('最近 20 条')
     expect(title).toContain('共 108 条')
     wrapper.unmount()
@@ -390,7 +390,7 @@ describe('链路表的窗口口径', () => {
       wrapper
         .findAllComponents({ name: 'ACard' })
         .map((card) => String(card.props('title')))
-        .find((t) => t.startsWith('链路执行记录')) ?? ''
+        .find((t) => t.startsWith('事件处置记录')) ?? ''
     expect(title).toContain('最近 20 条')
     expect(title).not.toContain('共')
     wrapper.unmount()
@@ -405,7 +405,7 @@ describe('链路表的窗口口径', () => {
  * `stu_5401210abcd` 会截出 `540121`：一个长得完全像真区划代码的数，摆进"风险区域网格"里，
  * 读的人没有任何办法知道这是拼出来的。
  */
-describe('风险区域网格不许拼出假的区划代码', () => {
+describe('风险区域一览不许拼出假的区划代码', () => {
   it('没研判出风险的链路标成"未标注区域"，而不是从任务单元号里截一段', async () => {
     responses()
     mocked.events.mockResolvedValue({
@@ -432,7 +432,7 @@ describe('风险区域网格不许拼出假的区划代码', () => {
       wrapper
         .findAllComponents({ name: 'ACard' })
         .map((card) => String(card.props('title')))
-        .find((t) => t.startsWith('风险区域网格')) ?? ''
+        .find((t) => t.startsWith('风险区域一览')) ?? ''
     expect(title, '链路表已经写"最近 20 条"，紧挨着的网格不能什么都别说').toContain('最近 20 条')
     expect(title).toContain('共 108 条')
     wrapper.unmount()

@@ -85,11 +85,9 @@ const statusLine = computed<string>(() => {
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 999px;
   background: rgba(15, 23, 42, 0.85);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
   color: #cbd5e1;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.08em;
   cursor: pointer;
   transition: background var(--aeg-motion-base) ease, border-color var(--aeg-motion-base) ease;
@@ -138,9 +136,7 @@ const statusLine = computed<string>(() => {
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-top: 1px solid rgba(59, 130, 246, 0.5);
   border-radius: 16px;
-  background: rgba(15, 23, 42, 0.85);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
+  background: #0f172a;
   box-shadow: 0 20px 50px rgba(15, 23, 42, 0.3);
   font-family: 'JetBrains Mono', monospace;
 }

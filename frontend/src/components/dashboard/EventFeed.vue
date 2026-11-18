@@ -74,8 +74,8 @@ function toneOf(event: StreamEvent): 'bad' | 'warn' | 'muted' {
     <div v-if="!events.length" class="empty-hero empty-hero--compact" data-testid="events-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
       <div>
-        <div class="empty-hero__title">事件流还没有消息</div>
-        <div class="empty-hero__desc">SSE 连上后链路每一步都会落在这里；一直空白就先跑一次演练看链路是否启动。</div>
+        <div class="empty-hero__title">还没有新动态</div>
+        <div class="empty-hero__desc">处置链每走一步都会落在这里；一直空白就先跑一次演练看链路是否启动。</div>
         <router-link class="empty-hero__action empty-hero__cta" to="/workflow">去流程编排跑一次链路 →</router-link>
       </div>
     </div>
@@ -118,7 +118,7 @@ function toneOf(event: StreamEvent): 'bad' | 'warn' | 'muted' {
   flex-direction: column;
   gap: var(--aeg-space-s1);
   padding: var(--aeg-space-s2) 10px;
-  border: 1px solid var(--aeg-color-glass-border);
+  border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-md);
   background: var(--aeg-color-sunken);
   transition:

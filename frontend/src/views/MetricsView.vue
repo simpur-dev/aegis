@@ -379,22 +379,20 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--aeg-space-s2);
   padding: var(--aeg-space-s4);
-  border: 1px solid var(--aeg-color-glass-border);
+  border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-xl);
-  background: var(--aeg-color-glass-bg);
+  background: var(--aeg-color-card);
   box-shadow: var(--aeg-shadow-md);
-  backdrop-filter: blur(var(--aeg-glass-blur));
 }
 .metrics-top-pair .metrics-card {
   margin-top: 0;
 }
 .metrics-card {
   margin-top: var(--aeg-space-s4);
-  border: 1px solid var(--aeg-color-glass-border);
+  border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-xl);
-  background: var(--aeg-color-glass-bg);
+  background: var(--aeg-color-card);
   box-shadow: var(--aeg-shadow-md);
-  backdrop-filter: blur(var(--aeg-glass-blur));
 }
 .metrics-card :deep(.ant-card-head) {
   min-height: 0;

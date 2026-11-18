@@ -331,7 +331,7 @@ onBeforeUnmount(() => {
   background: transparent;
   cursor: grab;
   touch-action: none;
-  filter: drop-shadow(0 6px 16px var(--aeg-color-accent-ball-glow));
+  filter: drop-shadow(0 6px 16px var(--aeg-color-overlay-scrim));
   transition:
     right var(--aeg-motion-base) ease,
     top var(--aeg-motion-base) ease;
@@ -363,9 +363,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   width: var(--assistant-drawer-w, clamp(320px, 25vw, 520px));
-  border-left: 1px solid var(--aeg-color-glass-border);
-  background: var(--aeg-color-glass-bg);
-  backdrop-filter: blur(var(--aeg-glass-blur));
+  border-left: 1px solid var(--aeg-color-border);
+  background: var(--aeg-color-card);
   box-shadow: var(--aeg-shadow-lg);
   transform: translateX(100%);
   visibility: hidden;
@@ -414,7 +413,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: var(--aeg-space-s3);
   padding: var(--aeg-space-s4);
-  border-bottom: 1px solid var(--aeg-color-glass-border);
+  border-bottom: 1px solid var(--aeg-color-border);
 }
 .assistant-drawer__title {
   font-size: var(--aeg-font-md);
@@ -425,7 +424,7 @@ onBeforeUnmount(() => {
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid var(--aeg-color-glass-border);
+  border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-pill);
   background: transparent;
   color: var(--aeg-color-text-secondary);

@@ -609,6 +609,20 @@ function selectBlock(type: NodeType): void {
 
 onMounted(() => {
   void bootstrap()
+  // 库给的缩放/适配按钮只有图标没有名字：读屏与 axe 都读不出这是什么（真机扫到 critical）
+  const controlNames: Record<string, string> = {
+    'vue-flow__controls-zoomin': '放大',
+    'vue-flow__controls-zoomout': '缩小',
+    'vue-flow__controls-fitview': '适应画布',
+    'vue-flow__controls-interactive': '锁定交互',
+  }
+  for (const [cls, label] of Object.entries(controlNames)) {
+    const btn = document.querySelector(`.${cls}`)
+    if (btn !== null) {
+      btn.setAttribute('aria-label', label)
+      btn.setAttribute('title', label)
+    }
+  }
   // 队列要自己长出新单子：值班员盯着这一页等工单时，页面不能一直是开页那一刻的快照
   run.startQueuePolling()
   // 「服务端已存定义」那一列同理：助手或同事刚存的那一版，不该靠刷新整页才看得见

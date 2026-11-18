@@ -208,17 +208,20 @@ export function isHtmlResponse(headers?: { get(name: string): string | null }): 
  * 单路探针：HEAD 成功或 405（不少静态服务器不接 HEAD）都算可用，
  * **但响应是 HTML 就不算**（见 `isHtmlResponse`）；
  * 任何异常/超时/404 都算不可用（探针**永不抛错**——弱网下探测失败是常态而不是事故）。
+ * 瓦片/地形用 HEAD 省传输；健康出口（/healthz）是 GET-only 的小 JSON，用 GET——
+ * 对它发 HEAD 会被 vite/后端回 405，浏览器把这条记成控制台红字（真机 map 页量到两条）。
  */
 export async function probeSource(
   fetchLike: ProbeFetch,
   url: string,
   timeoutMs: number = PROBE_TIMEOUT_MS,
+  method: 'HEAD' | 'GET' = 'HEAD',
 ): Promise<boolean> {
   if (!url) return false
   const controller = typeof AbortController === 'undefined' ? null : new AbortController()
   const timer = setTimeout(() => controller?.abort(), Math.max(1, timeoutMs))
   try {
-    const response = await fetchLike(url, { method: 'HEAD', signal: controller?.signal })
+    const response = await fetchLike(url, { method, signal: controller?.signal })
     return (response.ok || response.status === 405) && !isHtmlResponse(response.headers)
   } catch {
     return false
@@ -236,7 +239,7 @@ export async function collectFacts(deps: {
 }): Promise<SourceFacts> {
   const timeout = deps.timeoutMs ?? PROBE_TIMEOUT_MS
   const [api, basemap, terrain, localBasemap] = await Promise.all([
-    probeSource(deps.fetch, deps.targets.api, timeout),
+    probeSource(deps.fetch, deps.targets.api, timeout, 'GET'),
     probeSource(deps.fetch, tileUrlForTemplate(deps.targets.basemapTemplate), timeout),
     probeSource(deps.fetch, deps.targets.terrain, timeout),
     probeSource(deps.fetch, deps.targets.localBasemap, timeout),

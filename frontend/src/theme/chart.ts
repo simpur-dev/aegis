@@ -34,7 +34,7 @@ const axis = (mode: ThemeMode) => {
     axisLine: { lineStyle: { color: c['border-strong'] } },
     axisTick: { lineStyle: { color: c['border-strong'] } },
     axisLabel: { color: c['text-muted'], fontSize: font.size.sm },
-    splitLine: { lineStyle: { color: c['border-subtle'] } },
+    splitLine: { lineStyle: { color: c['border-subtle'], type: 'dashed' } },
     splitArea: { show: false },
   }
 }
@@ -69,7 +69,7 @@ export function chartTheme(mode: ThemeMode): Record<string, unknown> {
     logAxis: axis(mode),
     grid: { borderColor: c['border-strong'] },
     line: { lineStyle: { width: 2 }, symbolSize: 6 },
-    bar: { barMaxWidth: space.s8 },
+    bar: { barMaxWidth: space.s8, itemStyle: { borderRadius: [radius.sm, radius.sm, 0, 0] } },
   }
 }
 

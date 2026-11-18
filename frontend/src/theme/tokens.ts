@@ -90,20 +90,6 @@ export const colorSlots = {
     'editor-accent-slate': '#475569',
     'editor-state-running': '#0E7490',
     'editor-state-awaiting': '#7C3AED',
-    // 「雾底 + 玻璃」用的一组槽位：背景图之上还要有一层可读的底，玻璃卡才不像打翻的牛奶
-    'canvas-from': '#EAF4FF',
-    'canvas-via': '#F5FAFF',
-    'canvas-to': '#E8F1FF',
-    'glass-bg': 'rgba(255, 255, 255, 0.62)',
-    'glass-border': 'rgba(255, 255, 255, 0.78)',
-    'ball-surface': 'rgba(255, 255, 255, 0.86)',
-    'ball-ring': 'rgba(255, 255, 255, 0.92)',
-    'accent-ball-from': '#9B8CFF',
-    'accent-ball-to': '#6D5AE0',
-    'accent-ball-glow': 'rgba(139, 124, 246, 0.45)',
-    /* 大数字压在球的亮心（#9B8CFF）上：白字实测 2.77，连大字号那档 3:1 都不过。
-       深墨同底 6.76:1；两主题同值，免得浅深各走一支把层级做歪。 */
-    'accent-ball-text': '#100C33',
     // 一张图「深空皮肤」的太空底：两主题同值——那是"宇宙"，不随页面主题翻面
     'space-globe': '#061326',
     'deep-space': '#05030E',
@@ -127,7 +113,11 @@ export const colorSlots = {
        主/次两档因此几乎同色，层级退回字号撑。 */
     'map-panel-text': '#FFFFFF',
     'map-panel-text-muted': '#FAFCFF',
-    'map-floatbar-bg': 'rgba(218, 236, 255, 0.82)',
+    'map-floatbar-bg': '#E9F1FB',
+    // 悬浮胶囊（顶栏/底栏/浮注）坐在**浅**底上，与左右深色面板相反：
+    // 字色不能跟面板反转那一套走，否则浅主题下是近白字压浅胶囊（真机 axe 量到对比度不足）。
+    'map-floatbar-text': '#0A0A0C',
+    'map-floatbar-text-muted': '#5A6072',
     // 监测页「时序曲线」重点卡：蓝底白线（白字压两端渐变都要过 AA，见 tokens.spec）
     'chart-hero-from': '#2C56A8',
     'chart-hero-to': '#3A6FC4',
@@ -190,19 +180,6 @@ export const colorSlots = {
     'editor-accent-slate': '#94A3B8',
     'editor-state-running': '#22D3EE',
     'editor-state-awaiting': '#C4B5FD',
-    'canvas-from': '#0A1020',
-    'canvas-via': '#0B1220',
-    'canvas-to': '#0A0F1C',
-    'glass-bg': 'rgba(20, 30, 48, 0.55)',
-    'glass-border': 'rgba(120, 150, 200, 0.22)',
-    'ball-surface': 'rgba(30, 44, 68, 0.82)',
-    'ball-ring': 'rgba(140, 170, 220, 0.35)',
-    'accent-ball-from': '#8B7CF6',
-    'accent-ball-to': '#5B49C8',
-    'accent-ball-glow': 'rgba(139, 124, 246, 0.5)',
-    /* 与浅主题同一支深墨（口径只留一份）：白字在球的亮心上只有 3.30:1，大字号勉强过、
-       但两主题数字颜色不一致会被读成"状态变了"。 */
-    'accent-ball-text': '#100C33',
     'space-globe': '#061326',
     'deep-space': '#05030E',
     // 深色主题下"最强的动作"是提亮：浅底深字（若沿用黑底，必须换成亮字，见提示词 §4.1）
@@ -220,7 +197,9 @@ export const colorSlots = {
     /* 深主题这张卡是浅玻璃（合成底 rgb(153,166,185)）：#33415A 实测 4.16，差 4.5 一点点；
        再深一档到 #273349 拿到 5.14，主/次两档的色差仍然看得出。 */
     'map-panel-text-muted': '#273349',
-    'map-floatbar-bg': 'rgba(18, 28, 46, 0.72)',
+    'map-floatbar-bg': '#151D30',
+    'map-floatbar-text': '#E6EDF7',
+    'map-floatbar-text-muted': '#A7B4C9',
     // 深色主题的重点卡换成靛蓝渐变；白线/近白字仍要过 3:1 / 4.5:1
     'chart-hero-from': '#16294D',
     'chart-hero-to': '#24497F',

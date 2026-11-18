@@ -34,8 +34,11 @@ import { readRepoFile, repoRoot } from '@/testing/repoSource'
  *  `RunTimeline.vue` 13、`utils/graph.ts` 12（T09 的欠项：画布内部接令牌）。**
  *  → 106（2026-10-24 批次 D3：节点参数表单换控件时把 `ConfigFields.vue` 2→0、`JsonField.vue` 2→0
  *  （`#d9d9d9` 描边 → `--aeg-color-border-strong`，`#cf1322` 红字 → `--aeg-color-status-danger`），
- *  新落地的 7 个编辑器组件从第一行起就没写字面色。口径不变，探针同脚本实量。 */
-const COLOR_BASELINE = 106
+ *  新落地的 7 个编辑器组件从第一行起就没写字面色。口径不变，探针同脚本实量。
+ *  → 98（2026-11-18 UI 修复批：玻璃层整层退役——KpiStrip 球→统计格、App 壳模糊照片底删除、
+ *  DashboardView/MonitorView/MapView/AssistantDock 的 glass/blur 清除，tokens 删 12 个装饰槽位。
+ *  口径不变，同脚本实量；SystemTerminal 的 rgba 半透明底改实色 hex，计数不变。） */
+const COLOR_BASELINE = 98
 
 function fontsCss(): string {
   return readRepoFile('frontend', 'src', 'styles', 'fonts.css')
@@ -226,6 +229,40 @@ describe('UI 基座', () => {
     expect(css, 'theme.css 里还留着为深底反提亮的特例色').not.toMatch(/#fbbf24|#6ee7b7|#fca5a5|#93c5fd/)
     expect(head.toLowerCase(), 'PageHero.vue 自己写了 hex：页头只能读 --aeg-* 槽位').not.toMatch(/#[0-9a-f]{6}/)
     for (const [name, pattern] of retired) expect(pattern.test(head), `页头里又出现 ${name}`).toBe(false)
+    /* 页题是一级标题：8 页真机 axe 扫到全没有 h1（页题曾是 h2），读屏与层级都缺顶层 */
+    expect(head, 'PageHero 的页题不是 h1').toMatch(/<h1 class="page-head__title"/)
+  })
+
+  /**
+   * 2026-11-18 视觉裁决的门禁化：玻璃拟态残留层与装饰渐变整层退役。
+   * 原先渐变/模糊禁令只扫 theme.css 与 PageHero，App 壳/KPI 球/新鲜度条/运行时间线
+   * 成了盲区——真机审计量到页面底仍是模糊照片+蓝紫渐变、KPI 是四颗球。
+   * 三条判据：
+   * 1. 玻璃/球/画布雾底槽位与 glass-blur 变量全仓零引用（槽位已从 tokens 删除，再引就是破绽回潮）；
+   * 2. backdrop-filter 全仓零（底已平涂/实色，模糊没有功能目的，只付重绘代价）；
+   * 3. 装饰性宿主点名禁渐变。监测重点卡的压暗渐变与地图暗角是**可读性层**
+   *    （压在影像上保白线/保球缘），有功能目的，不在装饰名单里。
+   */
+  it('玻璃层与装饰渐变退役：槽位零引用、模糊零、装饰宿主无渐变', () => {
+    const srcDir = join(repoRoot(), 'frontend', 'src')
+    const files = readdirSync(srcDir, { recursive: true })
+      .map((p) => String(p))
+      .filter((p) => /\.(vue|css|ts)$/.test(p) && !p.includes('uiTheme.spec'))
+      .sort()
+    const retiredVars = /--aeg-color-glass-|--aeg-color-ball-|--aeg-color-accent-ball|--aeg-color-canvas-|--aeg-glass-blur/
+    const decorativeHosts = ['App.vue', 'KpiStrip.vue', 'FreshnessBar.vue', 'RunTimeline.vue']
+    const offenders: string[] = []
+    for (const rel of files) {
+      const text = readFileSync(join(srcDir, rel), 'utf-8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/<!--[\s\S]*?-->/g, '')
+      if (retiredVars.test(text)) offenders.push(`${rel}: 退役的玻璃/球/雾底槽位`)
+      if (/backdrop-filter/.test(text)) offenders.push(`${rel}: backdrop-filter`)
+      if (decorativeHosts.some((host) => rel.endsWith(host)) && /(linear|radial)-gradient\s*\(/.test(text)) {
+        offenders.push(`${rel}: 装饰宿主里的渐变`)
+      }
+    }
+    expect(offenders, `玻璃层/装饰渐变回潮：\n${offenders.join('\n')}`).toEqual([])
   })
 
   /**
@@ -290,7 +327,9 @@ describe('UI 基座', () => {
       .sort()
     const offenders: string[] = []
     for (const rel of files) {
-      const text = readFileSync(join(srcDir, rel), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '')
+      const text = readFileSync(join(srcDir, rel), 'utf-8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/<!--[\s\S]*?-->/g, '')
       for (const match of text.matchAll(/animation:[^;]*infinite[^;]*/g)) {
         const head = text.slice(0, match.index)
         const open = head.lastIndexOf('{')
@@ -341,7 +380,9 @@ describe('UI 基座', () => {
     const doubles: string[] = []
     let tokened = 0
     for (const rel of files) {
-      const text = readFileSync(join(srcDir, rel), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '')
+      const text = readFileSync(join(srcDir, rel), 'utf-8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/<!--[\s\S]*?-->/g, '')
       for (const match of text.matchAll(/transition:[^;]*;/g)) {
         const decl = match[0]
         /* 先查字面时长再数令牌：一条 `transition:` 里常常并列四五个属性，
@@ -399,7 +440,7 @@ describe('UI 基座', () => {
       if (hits.length > 0) counted.set(rel, hits.length)
     }
     const total = [...counted.values()].reduce((sum, n) => sum + n, 0)
-    expect(total, '真源外的色值一个都没数到——判据失效').toBeGreaterThanOrEqual(100)
+    expect(total, '真源外的色值一个都没数到——判据失效').toBeGreaterThanOrEqual(90)
     const heaviest = [...counted.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)

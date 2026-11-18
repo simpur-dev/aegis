@@ -248,6 +248,22 @@ describe('探针', () => {
     })
     expect(classifyFacts(result)).toBe('degraded')
   })
+
+  it('健康出口用 GET、瓦片/地形仍用 HEAD（HEAD 打 GET-only 的 /healthz 会回 405 记控制台红字）', async () => {
+    const methods: Record<string, string | undefined> = {}
+    const fake: ProbeFetch = async (url, init) => {
+      methods[url] = init?.method
+      return { ok: true, status: 200 }
+    }
+    await collectFacts({
+      fetch: fake,
+      browserOnline: true,
+      targets: { api: '/healthz', basemapTemplate: '/b/{z}/{x}/{y}.png', terrain: '/t/layer.json', localBasemap: '/b/x.pmtiles' },
+    })
+    expect(methods['/healthz']).toBe('GET')
+    expect(methods['/b/0/0/0.png']).toBe('HEAD')
+    expect(methods['/t/layer.json']).toBe('HEAD')
+  })
 })
 
 /** navigator.onLine 的读取口径由调用方注入，这里只确认探针本身不依赖全局状态。 */

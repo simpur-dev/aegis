@@ -95,6 +95,44 @@ function useExample(spec: ActionSpecDto): void {
 }
 
 /**
+ * 能力面按动作域分组呈现：二十几条平铺是一面墙，每条还拖着同一句"需要 duty 及以上角色"。
+ * 分组后值班员先找"哪一类"再找"哪一条"；权限门槛压成四个字缀注，完整原因进 tooltip。
+ * 域的真源在后端注册表（ActionDomain），这里只给中文标签与展示顺序；新域落进"其他"不丢条。
+ */
+const DOMAIN_GROUPS: ReadonlyArray<{ domain: string; label: string }> = [
+  { domain: 'query', label: '查询与解读' },
+  { domain: 'drill', label: '演练与上报' },
+  { domain: 'warning', label: '预警处置' },
+  { domain: 'task', label: '处置任务' },
+  { domain: 'notify', label: '通知' },
+  { domain: 'workflow', label: '流程' },
+  { domain: 'rule', label: '规则' },
+  { domain: 'device', label: '设备' },
+]
+const ROLE_LABELS: Record<string, string> = { duty: '值班员', lead: '值班长', admin: '管理员' }
+
+const groupedCaps = computed(() => {
+  const actions = capabilities.value?.actions ?? []
+  const groups = DOMAIN_GROUPS.map((group) => ({ ...group, items: actions.filter((a) => a.domain === group.domain) })).filter(
+    (group) => group.items.length > 0,
+  )
+  const known = new Set(DOMAIN_GROUPS.map((group) => group.domain))
+  const rest = actions.filter((a) => !known.has(a.domain))
+  if (rest.length > 0) groups.push({ domain: 'other', label: '其他', items: rest })
+  return groups
+})
+
+function roleNote(spec: ActionSpecDto): string {
+  return ROLE_LABELS[spec.required_role] ?? spec.required_role
+}
+
+function chipTitle(spec: ActionSpecDto): string {
+  const parts = [spec.example === '' ? '能力面没给这条动作的示例句' : `填入：${spec.example}`]
+  if (!spec.allowed) parts.push(spec.denied_reason || '当前席位无权限')
+  return parts.join('｜')
+}
+
+/**
  * 幂等键跟着"这一句草稿"走，不是每次发送新造：
  * 断线重发或双击时同一句会命中同一行动作台账，不会多出一张待确认卡片。
  * 成功收尾才清掉；失败保留，让重试仍然是"同一次意图"。
@@ -658,22 +696,41 @@ onBeforeUnmount(() => {
           <div class="chat__greeting">有什么可以帮你？</div>
           <p class="chat__hint">查询预警与态势、发起演练、上报险情。执行类动作先提案，经你确认才落地。</p>
           <div v-if="capabilities" class="caps" data-testid="caps-actions">
-            <button
-              v-for="spec in capabilities.actions"
-              :key="spec.action"
-              type="button"
-              class="caps__chip"
-              :class="spec.allowed ? 'is-available' : 'is-denied'"
-              :data-testid="`action-${spec.action}`"
-              :disabled="spec.example === ''"
-              :title="spec.example === '' ? '能力面没给这条动作的示例句' : `填入：${spec.example}`"
-              @click="useExample(spec)"
-            >
-              {{ spec.title }}<span v-if="spec.needs_confirm" class="caps__chip__note">需确认</span><span
-                v-if="!spec.allowed"
-                class="caps__chip__note is-warn"
-              >{{ spec.denied_reason || '当前席位无权限' }}</span>
-            </button>
+            <section v-for="group in groupedCaps" :key="group.domain" class="caps__group">
+              <p class="caps__label">{{ group.label }}</p>
+              <div class="caps__row">
+                <button
+                  v-for="spec in group.items"
+                  :key="spec.action"
+                  type="button"
+                  class="caps__chip"
+                  :class="spec.allowed ? 'is-available' : 'is-denied'"
+                  :data-testid="`action-${spec.action}`"
+                  :disabled="spec.example === ''"
+                  :title="chipTitle(spec)"
+                  @click="useExample(spec)"
+                >
+                  <svg
+                    v-if="!spec.allowed"
+                    class="caps__lock"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="5" y="11" width="14" height="9" rx="2" />
+                    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                  </svg>
+                  {{ spec.title }}<span v-if="spec.needs_confirm" class="caps__chip__note">需确认</span><span
+                    v-if="!spec.allowed"
+                    class="caps__chip__note is-warn"
+                  >需{{ roleNote(spec) }}</span>
+                </button>
+              </div>
+            </section>
           </div>
           <div v-if="capabilities" class="chat__ttl" data-testid="caps-ttl">
             会话保留 {{ Math.round(capabilities.session_ttl_seconds / 60) }} 分钟
@@ -771,7 +828,7 @@ onBeforeUnmount(() => {
             data-testid="field-region"
           />
           <a-button size="small" data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
-          <span class="muted" data-testid="session-id">会话 {{ sessionId ?? '未开始（由后端 meta 帧给出）' }}</span>
+          <span class="muted" data-testid="session-id" :title="sessionId ? '' : '会话号由后端首帧给出'">{{ sessionId ? `会话 ${sessionId}` : '会话未开始' }}</span>
         </div>
         <div class="composer__box">
           <a-textarea
@@ -1007,7 +1064,7 @@ onBeforeUnmount(() => {
 }
 .muted {
   color: var(--aeg-color-text-secondary);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
 }
 .chat {
   margin: 0 auto;
@@ -1130,7 +1187,9 @@ onBeforeUnmount(() => {
 }
 .chat__empty {
   margin: auto;
-  text-align: center;
+  width: 100%;
+  max-width: 600px;
+  text-align: left;
   padding: var(--aeg-space-s6) var(--aeg-space-s5);
 }
 .chat__greeting {
@@ -1138,7 +1197,7 @@ onBeforeUnmount(() => {
   font-weight: var(--aeg-weight-semibold);
 }
 .chat__hint {
-  margin: var(--aeg-space-s2) auto 0;
+  margin: var(--aeg-space-s2) 0 0;
   max-width: 48ch;
   color: var(--aeg-color-text-secondary);
   font-size: var(--aeg-font-sm);
@@ -1147,16 +1206,34 @@ onBeforeUnmount(() => {
 .caps {
   margin-top: var(--aeg-space-s5);
   display: flex;
+  flex-direction: column;
+  gap: var(--aeg-space-s4);
+}
+.caps__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--aeg-space-s2);
+}
+.caps__label {
+  margin: 0;
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  color: var(--aeg-color-text-muted);
+}
+.caps__row {
+  display: flex;
   flex-wrap: wrap;
   gap: var(--aeg-space-s2);
-  justify-content: center;
-  max-width: 560px;
-  margin-left: auto;
-  margin-right: auto;
+}
+.caps__lock {
+  flex: none;
+  width: 12px;
+  height: 12px;
 }
 /*
  * 芯片改中性：可用的就是一块安静的表面，点上去才知道；「需确认」「无权限」降为小字缀注。
- * 无权限那一档保住红字——它是"量出来的状态"，不是装饰。
+ * 2026-11-18 视觉裁决：无权限缀注不再用红字——角色门槛是说明信息不是故障，
+ * 二十几条红字排在一起就是一面报警墙，把真正的告警淹掉。红只留给量出来的失败态。
  */
 .caps__chip {
   display: inline-flex;
@@ -1186,7 +1263,7 @@ onBeforeUnmount(() => {
   font-weight: var(--aeg-weight-regular);
 }
 .caps__chip__note.is-warn {
-  color: var(--aeg-color-status-danger);
+  color: var(--aeg-color-text-muted);
 }
 .caps__chip.is-denied {
   border-style: dashed;
@@ -1194,7 +1271,7 @@ onBeforeUnmount(() => {
   color: var(--aeg-color-text-secondary);
 }
 .caps__chip.is-denied:hover:not(:disabled) {
-  border-color: var(--aeg-color-status-danger);
+  border-color: var(--aeg-color-border-strong);
 }
 .caps__chip:disabled {
   cursor: not-allowed;
@@ -1202,7 +1279,7 @@ onBeforeUnmount(() => {
 }
 .chat__ttl {
   margin-top: var(--aeg-space-s4);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-secondary);
 }
 .turn {

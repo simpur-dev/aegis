@@ -138,7 +138,7 @@ function outputOf(nodeId: string): string {
 }
 .wf-tl__step.is-active {
   border-color: rgba(37, 99, 235, 0.3);
-  background: linear-gradient(135deg, rgba(239, 246, 255, 0.95) 0%, rgba(219, 234, 254, 0.8) 100%);
+  background: var(--aeg-color-alter);
 }
 .wf-tl__step.is-bad {
   border-color: rgba(185, 28, 28, 0.28);

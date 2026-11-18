@@ -105,8 +105,8 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
     <div v-if="!chains.length" class="empty-hero empty-hero--compact" data-testid="chains-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
       <div>
-        <div class="empty-hero__title">还没有链路执行记录</div>
-        <div class="empty-hero__desc">在监测页发起一次演练（激增/背景任一），五段链路就会跑起来并出现在这里。</div>
+        <div class="empty-hero__title">还没有处置记录</div>
+        <div class="empty-hero__desc">在监测页发起一次演练（激增/背景任一），整条处置链就会跑起来并出现在这里。</div>
         <router-link class="empty-hero__action empty-hero__cta" to="/monitor">去监测页发起演练 →</router-link>
       </div>
     </div>
@@ -126,7 +126,7 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--aeg-space-s1) var(--aeg-space-s2);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-muted);
 }
 .legend-item {
@@ -165,7 +165,7 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
   flex-direction: column;
   gap: var(--aeg-space-s2);
   padding: 10px 12px;
-  border: 1px solid var(--aeg-color-glass-border);
+  border: 1px solid var(--aeg-color-border);
   border-left: 3px solid transparent;
   border-radius: var(--aeg-radius-md);
   background: var(--aeg-color-sunken);

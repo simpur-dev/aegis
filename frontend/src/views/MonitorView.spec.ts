@@ -195,7 +195,7 @@ describe('监测页的人工上报入口（B5）', () => {
     await wrapper.find('[data-testid="open-report"]').trigger('click')
     await flushPromises()
     const labels = wrapper.findAll('.button').map((button) => button.text())
-    expect(labels).toEqual(expect.arrayContaining(['刷新', '人工上报', '发起灾害演练（激增）', '发起背景演练（正常）']))
+    expect(labels).toEqual(expect.arrayContaining(['刷新', '人工上报', '发起演练：雨强激增', '发起演练：正常背景']))
   })
 })
 

@@ -93,14 +93,18 @@ const unlocatedGroups = computed(() => groupUnlocatedByReason(props.unlocated))
       </div>
     </a-card>
 
-    <a-card v-if="props.rejected.length" size="small" title="未渲染的几何">
-      <a-list size="small" :data-source="props.rejected">
-        <template #renderItem="{ item }">
-          <a-list-item>
-            <span class="note">#{{ item.index }} {{ item.id }} — {{ item.reason }}（{{ item.detail }}）</span>
-          </a-list-item>
-        </template>
-      </a-list>
+    <a-card v-if="props.rejected.length" size="small" title="未上图的要素">
+      <!-- 原始拒绝原因是诊断信息：默认收进折叠，值班员第一眼不该读引擎内部串 -->
+      <details class="rejected-diag">
+        <summary>诊断详情（{{ props.rejected.length }} 条）</summary>
+        <a-list size="small" :data-source="props.rejected">
+          <template #renderItem="{ item }">
+            <a-list-item>
+              <span class="note">#{{ item.index }} {{ item.id }} — {{ item.reason }}（{{ item.detail }}）</span>
+            </a-list-item>
+          </template>
+        </a-list>
+      </details>
     </a-card>
   </div>
 </template>

@@ -243,21 +243,21 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
-    <PageHero title="监测与演练" badge="实时接入" caption="实时遥测与劣化缺口；演练一键触发五段链路。">
+    <PageHero title="监测与演练" badge="实时接入" caption="现场读数与坏数据缺口；一键演练跑通整条处置链。">
       <template #actions>
         <a-button data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
-        <a-button type="primary" :loading="drilling" :disabled="drilling" data-testid="drill-surge" @click="drill('surge')">发起灾害演练（激增）</a-button>
-        <a-button :loading="drilling" :disabled="drilling" data-testid="drill-normal" @click="drill('normal')">发起背景演练（正常）</a-button>
+        <a-button type="primary" :loading="drilling" :disabled="drilling" data-testid="drill-surge" @click="drill('surge')">发起演练：雨强激增</a-button>
+        <a-button :loading="drilling" :disabled="drilling" data-testid="drill-normal" @click="drill('normal')">发起演练：正常背景</a-button>
       </template>
     </PageHero>
 
     <a-card class="monitor-card" size="small" title="数据接入与监测">
       <a-space wrap>
-        <a-select v-model:value="region" style="width: 180px" placeholder="区域">
+        <a-select v-model:value="region" style="width: 180px" placeholder="区域" aria-label="区域">
           <a-select-option value="">全部区域</a-select-option>
           <a-select-option v-for="code in regions" :key="code" :value="code">{{ code }}</a-select-option>
         </a-select>
-        <a-select v-model:value="metric" style="width: 220px" placeholder="指标">
+        <a-select v-model:value="metric" style="width: 220px" placeholder="指标" aria-label="指标">
           <a-select-option v-for="name in metrics" :key="name" :value="name">{{ name }}</a-select-option>
         </a-select>
         <a-button @click="load">刷新</a-button>
@@ -272,7 +272,12 @@ onBeforeUnmount(() => {
 
     <a-row :gutter="12" style="margin-top: 12px">
       <a-col :xs="24" :xl="10">
-        <a-card class="monitor-card monitor-chart-hero" size="small" title="时序曲线（劣化读数以缺口显示，不参与判定）">
+        <a-card
+          class="monitor-card"
+          :class="{ 'monitor-chart-hero': readings.length > 0 }"
+          size="small"
+          title="读数曲线（坏读数留缺口，不参与判定）"
+        >
           <!-- 右上角报"最新一条有效读数"：画布上可能全是断点，这块只报能用的数 -->
           <template #extra>
             <div class="chart-latest">
@@ -283,7 +288,14 @@ onBeforeUnmount(() => {
               <span class="chart-latest__time">{{ latestOk ? operatingClock(latestOk.observed_at) : '尚无有效读数' }}</span>
             </div>
           </template>
-          <EChart :option="chartOption" height="360px" />
+          <!-- 没读数时不挂蓝底重点卡：一块空色板看着像坏了，空态才告诉值班员下一步做什么 -->
+          <EChart v-if="readings.length > 0" :option="chartOption" height="360px" />
+          <div v-else class="empty-hero">
+            <span class="empty-hero__icon" aria-hidden="true">◇</span>
+            <p class="empty-hero__title">还没有读数</p>
+            <p class="empty-hero__desc">发起一次演练或人工上报，曲线就会在这里长出来。</p>
+            <a class="empty-hero__action" href="#" @click.prevent="drill('surge')">发起一次演练 →</a>
+          </div>
         </a-card>
       </a-col>
       <a-col :xs="24" :xl="14">
@@ -303,11 +315,13 @@ onBeforeUnmount(() => {
                    值班员站在这儿想知道的是"那我做什么才会有数"。 -->
               <div class="empty-hero">
                 <span class="empty-hero__icon" aria-hidden="true">◇</span>
-                <p class="empty-hero__title">这个筛选下没有遥测读数</p>
-                <p class="empty-hero__desc">
-                  换区域或指标看看；也可以直接发起一次演练，链路跑起来就会往这里写读数。
-                </p>
-                <a class="empty-hero__action" href="#" @click.prevent="drill('surge')">发起一次激增演练 →</a>
+                <div>
+                  <p class="empty-hero__title">这个筛选下没有遥测读数</p>
+                  <p class="empty-hero__desc">
+                    换区域或指标看看；也可以直接发起一次演练，链路跑起来就会往这里写读数。
+                  </p>
+                  <a class="empty-hero__action" href="#" @click.prevent="drill('surge')">发起一次激增演练 →</a>
+                </div>
               </div>
             </template>
             <template #bodyCell="{ column, record }">
@@ -344,11 +358,10 @@ onBeforeUnmount(() => {
  * 内边距用 16px（≈ 一个正文字的距离），卡片之间靠留白分开、不靠重边框。
  */
 .monitor-card {
-  border: 1px solid var(--aeg-color-glass-border);
+  border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-xl);
-  background: var(--aeg-color-glass-bg);
+  background: var(--aeg-color-card);
   box-shadow: var(--aeg-shadow-md);
-  backdrop-filter: blur(var(--aeg-glass-blur));
 }
 .monitor-card :deep(.ant-card-head) {
   min-height: 0;
@@ -377,7 +390,7 @@ onBeforeUnmount(() => {
 .monitor-chart-hero {
   position: relative;
   overflow: hidden;
-  border: 1px solid var(--aeg-color-glass-border);
+  border: 1px solid var(--aeg-color-border);
   background: var(--aeg-color-chart-hero-from);
   box-shadow: var(--aeg-shadow-lg);
 }
@@ -439,7 +452,7 @@ onBeforeUnmount(() => {
   opacity: 0.85;
 }
 .chart-latest__time {
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   opacity: 0.8;
   color: var(--aeg-color-chart-hero-text);
 }
@@ -475,7 +488,7 @@ onBeforeUnmount(() => {
 .monitor-table :deep(.ant-table-thead > tr > th) {
   /* 表头压一层比卡片略深的底色，和明细行分开；仍是令牌色，不是纯白 */
   background: var(--aeg-color-sunken);
-  border-bottom-color: var(--aeg-color-glass-border);
+  border-bottom-color: var(--aeg-color-border);
 }
 .monitor-table :deep(.ant-table-tbody > tr > td) {
   border-bottom-color: var(--aeg-color-border-subtle);

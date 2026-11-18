@@ -163,7 +163,7 @@ function run(action: () => void): void {
   border-radius: 999px;
   color: var(--aeg-color-text-muted);
   font-family: var(--aeg-font-mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 .ed-head__save {
   display: inline-flex;
@@ -172,7 +172,7 @@ function run(action: () => void): void {
   gap: 5px;
   margin-left: 4px;
   color: var(--aeg-color-text-muted);
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .ed-head__save-dot {

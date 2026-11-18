@@ -13,6 +13,7 @@ import { useHandlingSpace } from '@/composables/useHandlingSpace'
 import { antdTheme } from '@/theme/antd'
 import { NAV_GROUPS } from '@/router'
 import { useTheme } from '@/theme/useTheme'
+import { installSelectA11y } from '@/utils/selectA11y'
 
 /**
  * 外壳（2026-10-30 起）：透明顶栏 + 全站悬浮助手抽屉，没有侧栏。
@@ -46,6 +47,7 @@ attachSpaceStream({ events, connected })
 void refreshSpaces()
 
 let timer: number | undefined
+let uninstallSelectA11y: (() => void) | undefined
 
 async function probe(): Promise<void> {
   try {
@@ -57,6 +59,7 @@ async function probe(): Promise<void> {
 
 onMounted(() => {
   void probe()
+  uninstallSelectA11y = installSelectA11y()
   timer = window.setInterval(() => {
     if (document.visibilityState !== 'visible') return
     void probe()
@@ -65,6 +68,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
+  uninstallSelectA11y?.()
 })
 
 /**
@@ -137,7 +141,8 @@ const statusTitle = computed<string>(() =>
                 :aria-current="currentKey === item.key ? 'page' : undefined"
                 :data-testid="`nav-${item.key}`"
               >
-                {{ item.label }}
+                <span class="topnav__full">{{ item.label }}</span>
+                <span class="topnav__short">{{ item.short }}</span>
               </router-link>
             </template>
             <!-- 智能助手是常驻工具，不占一级导航分组；仍是 App.vue 里唯一的字面跳转目标 -->
@@ -149,7 +154,8 @@ const statusTitle = computed<string>(() =>
               aria-label="智能助手"
               data-testid="assistant-entry"
             >
-              智能助手
+              <span class="topnav__full">智能助手</span>
+              <span class="topnav__short">助手</span>
             </router-link>
           </nav>
 
@@ -165,7 +171,7 @@ const statusTitle = computed<string>(() =>
               </span>
               <span class="status-fact" data-testid="events-badge" title="最近事件条数">
                 <span class="events-count">{{ events.length }}</span>
-                <span>事件</span>
+                <span class="status-pill__text">事件</span>
               </span>
             </div>
             <div class="theme-switch" role="group" aria-label="主题">
@@ -212,7 +218,7 @@ const statusTitle = computed<string>(() =>
           <!-- 页脚跟着内容走，不钉在视口底：钉着的话每一页都永久吃掉一条，
                而编排页那种"占满一屏"的布局还要去猜它的高度 -->
           <footer v-if="!immersive" class="footer">
-            AEGIS · Adaptive Emergency Geo-hazard Intelligence System ｜ 西藏山地灾害多智能体协同调控技术与平台
+            AEGIS · 山地灾害协同调控平台 ｜ 值班 · 监测 · 处置 · 复盘
           </footer>
         </main>
       </div>
@@ -268,7 +274,7 @@ const statusTitle = computed<string>(() =>
 }
 .topnav__item.is-on {
   background: var(--aeg-color-topbar-pill-bg);
-  box-shadow: inset 0 0 0 1px var(--aeg-color-glass-border);
+  box-shadow: inset 0 0 0 1px var(--aeg-color-border);
   color: var(--aeg-color-text);
 }
 
@@ -279,7 +285,7 @@ const statusTitle = computed<string>(() =>
   align-items: center;
   gap: var(--aeg-space-s2);
   padding-left: var(--aeg-space-s3);
-  border-left: 1px solid var(--aeg-color-glass-border);
+  border-left: 1px solid var(--aeg-color-border);
 }
 .brand-logo {
   display: flex;
@@ -306,7 +312,7 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text);
 }
 .brand-sub {
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-secondary);
   white-space: nowrap;
 }
@@ -453,7 +459,7 @@ const statusTitle = computed<string>(() =>
 .theme-switch__btn.is-on {
   /* 半透明白色胶囊：压在雾底上有层次，但不像实心白块那样抢戏 */
   background: var(--aeg-color-topbar-pill-bg);
-  box-shadow: inset 0 0 0 1px var(--aeg-color-glass-border);
+  box-shadow: inset 0 0 0 1px var(--aeg-color-border);
   color: var(--aeg-color-text);
 }
 
@@ -543,10 +549,21 @@ html.assistant-resizing .main-content {
 /* 助手入口现在是顶栏导航里的一项（.topnav__item），不再有单独的悬浮/侧栏按钮。 */
 
 /* 窄档只收状态文字：少显示一点，不是互相压上去。
-   侧栏是定宽的，顶栏右列在 ≤1290 把胶囊文字收成圆点即可，页名不受影响。 */
+   侧栏是定宽的，顶栏右列在 ≤1290 把胶囊文字收成圆点即可，页名不受影响。
+   收文字用读屏可见的裁剪而不是 display:none——状态是信息，视觉收了读屏不该跟着丢。 */
+.topnav__short {
+  display: none;
+}
 @media (max-width: 1290px) {
   .status-pill__text {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   /* 文字收了，分隔线与它的留白也得跟着收——不然三个点之间空荡荡，看着像坏了 */
   .status-fact + .status-fact {
@@ -559,11 +576,26 @@ html.assistant-resizing .main-content {
     padding: 8px 10px;
   }
 }
+/* 手机档：导航用短名、品牌副标题让位，顶栏才装得下（真机 390px 量到互相挤压截断） */
+@media (max-width: 640px) {
+  .topnav__full {
+    display: none;
+  }
+  .topnav__short {
+    display: inline;
+  }
+  .topnav__item {
+    padding: 6px 10px;
+  }
+  .brand-sub {
+    display: none;
+  }
+}
 
-/* ——— 全局雾底（玻璃拟态的"底"） ———
-   素材是离线资产 `public/backgrounds/aegis-horizon.webp`（不外链任何 CDN）：
-   淡蓝→粉紫的地平线渐变，模糊 46px + 放大 1.1 后只剩柔和的色团，不抢卡片的字。
-   渐变兜底用画布令牌，两主题各一套。所有页面共用（含一张图与流程编排）。 */
+/* ——— 页面底：平涂令牌色 ———
+   2026-11-18 视觉裁决：模糊地平线照片 + 渐变兜底 + 两团柔光整层退役。
+   灾害防护界面的饱和色只留给预警四色与状态；底噪越安静，告警越响。
+   浅色=纸灰、深色=墨蓝黑，两主题都走 --aeg-color-page，不再各写一支。 */
 .app-shell {
   background: transparent;
 }
@@ -573,38 +605,7 @@ html.assistant-resizing .main-content {
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  background: linear-gradient(135deg, var(--aeg-color-canvas-from) 0%, var(--aeg-color-canvas-via) 45%, var(--aeg-color-canvas-to) 100%);
-}
-.app-backdrop::before {
-  content: '';
-  position: absolute;
-  inset: -48px;
-  background-image: url('/backgrounds/aegis-horizon.webp');
-  background-size: cover;
-  background-position: center;
-  filter: blur(46px) saturate(1.12);
-  transform: scale(1.1);
-  opacity: 0.95;
-}
-/* 柔光：左上偏白、右侧一点淡蓝，和参考图的光斑同向；深色主题换成紫蓝 */
-.app-backdrop::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at 18% 8%, var(--aeg-color-ball-surface), transparent 55%),
-    radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 60%);
-  opacity: 0.55;
-}
-html[data-theme='dark'] .app-backdrop::before {
-  filter: blur(46px) brightness(0.4) saturate(1.35);
-  opacity: 0.85;
-}
-html[data-theme='dark'] .app-backdrop::after {
-  background:
-    radial-gradient(circle at 18% 8%, var(--aeg-color-accent-ball-glow), transparent 58%),
-    radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 62%);
-  opacity: 0.45;
+  background: var(--aeg-color-page);
 }
 
 /* 顶栏透明：不再盖玻璃底（导航文字直接落在雾底上）；只保留层级，压住雾底 */

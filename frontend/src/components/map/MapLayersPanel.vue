@@ -60,7 +60,7 @@ const detailHazard = computed(() => (props.detail ? hazardLabel(props.detail.haz
         <div v-for="entry in layerRows" :key="entry.layer" class="row">
           <a-switch
             :checked="props.visibility[entry.layer]"
-            size="small"
+            :aria-label="entry.label"
             @update:checked="(value: boolean) => onToggle(entry.layer, value)"
           />
           <span class="label">{{ entry.label }}</span>
@@ -69,7 +69,7 @@ const detailHazard = computed(() => (props.detail ? hazardLabel(props.detail.haz
         <div class="row">
           <a-switch
             :checked="props.visibility.clusters"
-            size="small"
+            aria-label="聚合计数"
             @update:checked="(value: boolean) => onToggle('clusters', value)"
           />
           <span class="label">{{ LAYER_LABELS.clusters }}</span>
@@ -176,6 +176,10 @@ const detailHazard = computed(() => (props.detail ? hazardLabel(props.detail.haz
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* 图层开关用默认档并抬到 24px 点击面：small 档 16px 高在值班台上点不准（真机探针量到 28×16）。 */
+.row :deep(.ant-switch) {
+  min-height: 24px;
 }
 .row .label {
   flex: 1;

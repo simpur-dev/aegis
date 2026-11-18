@@ -75,10 +75,10 @@ const rightLabel = computed<string>(() => {
   flex: 1 1 auto;
   height: 1px;
   min-width: 12px;
-  background: linear-gradient(90deg, rgba(37, 99, 235, 0.22), rgba(37, 99, 235, 0.06));
+  background: var(--aeg-color-brand-line);
 }
 .fresh.is-stale {
-  color: #8a4005;
+  color: var(--aeg-tag-orange-text);
 }
 /* 竖排：窄栏里横排必然截掉一端（编排页右栏 ~316px，两端加起来 330+）。
    宁可多占一行，也不把"每 15 秒自刷"或"多久之前"省略号吃掉。 */
@@ -98,6 +98,6 @@ const rightLabel = computed<string>(() => {
   width: 100%;
 }
 .fresh.is-stale .fresh__rule {
-  background: linear-gradient(90deg, rgba(245, 158, 11, 0.35), rgba(245, 158, 11, 0.1));
+  background: var(--aeg-tag-orange-line);
 }
 </style>

@@ -24,7 +24,7 @@ defineProps<{
 <template>
   <header class="page-head">
     <div class="page-head__row">
-      <h2 class="page-head__title">{{ title }}</h2>
+      <h1 class="page-head__title">{{ title }}</h1>
       <span v-if="badge" class="page-head__badge">{{ badge }}</span>
       <span v-if="status" class="page-head__status" :class="`is-${status.tone}`" :title="status.text">
         <span class="page-head__status-dot" aria-hidden="true"></span>
@@ -67,7 +67,7 @@ defineProps<{
   background: var(--aeg-color-sunken);
   color: var(--aeg-color-text-secondary);
   font-family: var(--aeg-font-mono);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-bold);
   letter-spacing: 0.06em;
 }

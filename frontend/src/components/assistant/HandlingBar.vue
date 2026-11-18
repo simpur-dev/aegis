@@ -193,7 +193,7 @@ onMounted(() => {
   padding: var(--aeg-space-s3);
   background: var(--aeg-color-card);
   border-bottom: 1px solid var(--aeg-color-border);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-secondary);
 }
 .handling__bar {
@@ -286,7 +286,8 @@ onMounted(() => {
   background: var(--aeg-color-card);
   color: var(--aeg-color-text);
   padding: var(--aeg-space-s1) var(--aeg-space-s2);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
+  min-height: 24px;
   cursor: pointer;
 }
 .handling__btn:disabled {

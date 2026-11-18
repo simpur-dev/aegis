@@ -86,16 +86,16 @@ const recentChains = computed<ChainSummary[]>(() => [...chains.value].reverse())
  * 卡片只说"最新在上"，看不出 88 条在表外（`/readyz` 的 chain_count 才是总数）。
  */
 const chainsTitle = computed<string>(() => {
-  const base = `链路执行记录（最近 ${CHAIN_WINDOW} 条，最新在上；感知→研判→决策→执行→反馈）`
+  const base = `事件处置记录（最近 ${CHAIN_WINDOW} 条，新的在上）`
   const total = ready.value?.store?.chain_count ?? null
-  return total !== null && total > CHAIN_WINDOW ? `${base}｜服务端共 ${total} 条` : base
+  return total !== null && total > CHAIN_WINDOW ? `${base}｜共 ${total} 条` : base
 })
 
 /** 网格吃的是同一个 20 条窗口，标题就得和旁边的表说同一句实话。 */
 const gridTitle = computed<string>(() => {
-  const base = `风险区域网格（按最近 ${CHAIN_WINDOW} 条链路归集）`
+  const base = `风险区域一览（按最近 ${CHAIN_WINDOW} 条处置归集）`
   const total = ready.value?.store?.chain_count ?? null
-  return total !== null && total > CHAIN_WINDOW ? `${base}｜服务端共 ${total} 条` : base
+  return total !== null && total > CHAIN_WINDOW ? `${base}｜共 ${total} 条` : base
 })
 
 const regionGrid = computed(() => {
@@ -364,28 +364,29 @@ watch(
       class="dash-error"
     />
     <!--
-      玻璃拟态三栏骨架（2026-10-25）：
-      - KPI 球带放进主内容列：它的右边缘要和下方「链路执行记录」对齐，
-        同时右侧智能体栏从这一行就起头（与球带齐平），所以球带不能再横跨整页。
-      - 主内容 40:60 放「风险区域网格 + 链路执行记录」（原来的 10/14 栅格），事件流通栏；
+      三栏骨架（2026-10-25 定，2026-11-18 换实色卡语言）：
+      - KPI 统计格放进主内容列：它的右边缘要和下方「事件处置记录」对齐，
+        同时右侧智能体栏从这一行就起头（与统计格齐平），所以统计格不能再横跨整页。
+      - 主内容 40:60 放「风险区域一览 + 事件处置记录」（原来的 10/14 栅格），事件流通栏；
         理由是这两块是同一件事的两面（哪片区域危险 → 平台怎么处理），并排才好对读；
         事件流是时间轴，横着铺一行比挤在半栏里更好扫。
       - 智能体在线状态放右侧常驻栏：它是"平台还活着吗"的背景信息，
         不该抢占主内容的首屏，但又必须一直看得见，所以 sticky。
-      - 全部面板共用 .glass-panel，不各写一份 backdrop-filter。
+      - 全部面板共用 .glass-panel 这套实色卡样式（类名沿用，玻璃层已退役），不各写一份装饰。
     -->
     <div class="dash-layout">
       <KpiStrip class="dash-kpi" :items="kpis">
-        <!-- 页头并进第一块玻璃卡：标题/徽标/说明/更新时间/刷新都与四颗球同属"值班员的第一屏"。
+        <!-- 页头并进第一块卡：标题/徽标/说明/更新时间/刷新都与统计格同属"值班员的第一屏"。
              仍然用统一的 PageHero 组件（uiTheme 门禁要求常规页面必须接它），只是换个宿主。 -->
         <template #header>
           <div class="dash-hero">
             <PageHero
               title="态势总览"
               badge="实时"
-              caption="值班员的第一屏：要人处理的待办、现场读数、风险瓦片、链路记录与实时事件流。"
+              caption="值班第一屏：等人处理的待办、现场读数、风险区域与最新处置。"
             >
               <template #actions>
+                <a-button type="primary" data-testid="dashboard-drill" @click="$router.push('/monitor')">发起演练</a-button>
                 <span data-testid="dashboard-updated">
                   {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
                 </span>
@@ -405,7 +406,7 @@ watch(
         :style="panelStyle"
         data-testid="agent-panel"
       >
-        <a-card title="智能体在线状态（经总线契约注册）" size="small">
+        <a-card title="智能体在线状态" size="small">
           <template #extra>
             <span class="dash-agent__summary" data-testid="agent-panel-summary">{{ agentSummary }}</span>
             <button
@@ -420,7 +421,7 @@ watch(
               {{ panelCollapsed ? '展开' : '收起' }}
             </button>
           </template>
-          <div id="agent-panel-body" class="dash-agent__body" :aria-hidden="panelCollapsed">
+          <div id="agent-panel-body" class="dash-agent__body" :aria-hidden="panelCollapsed" :tabindex="panelCollapsed ? -1 : 0">
             <AgentBoard :agents="agents" />
           </div>
         </a-card>
@@ -462,7 +463,7 @@ watch(
 
       <!-- 第二行右：实时事件流（与上方智能体卡同宽） -->
       <section class="glass-panel dash-events">
-        <a-card title="实时事件流（SSE）" size="small">
+        <a-card title="实时动态" size="small">
           <EventFeed :events="events.slice(0, 20)" />
         </a-card>
       </section>
@@ -513,7 +514,8 @@ watch(
   grid-area: kpi;
   /* KpiStrip 自带 margin-bottom，网格 gap 已经负责间距，这里吃掉避免双倍 */
   margin-bottom: 0;
-  /* 第一行两块卡等高：态势总览的底边与智能体在线状态齐平 */
+  /* 不再与智能体栏强行等高：读数卡按内容收高，智能体栏纵跨两行自己滚动，
+     左列 KPI→风险/链路 顺排，避免卡内或行内出现纯白空洞（真机首屏量到过）。 */
   align-self: stretch;
 }
 .dash-layout > .dash-agent {
@@ -564,7 +566,7 @@ watch(
 }
 .dash-agent__summary {
   margin-right: var(--aeg-space-s2);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   font-variant-numeric: tabular-nums;
   color: var(--aeg-color-text-secondary);
 }
@@ -576,7 +578,8 @@ watch(
   border: none;
   background: transparent;
   color: var(--aeg-color-brand);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
+  min-height: 24px;
   cursor: pointer;
 }
 .dash-agent__toggle:hover {
@@ -669,18 +672,15 @@ watch(
   }
 }
 
-/* 玻璃卡：一张半透明板 + 细白边；里层 antd 卡片的 chrome 全部让位，
-   只留标题的字距与小号字。所有面板共用这一个类。
-   不做面板级 backdrop-filter：全局雾底已预模糊 46px，再 blur 视觉无差（A/B 截图验过），
-   却要在滚动/拖动时每帧对六块面重采样重模糊——空白帧的主因。 */
+/* 面板卡：实色卡底 + 细描边（2026-11-18 玻璃层退役：页面底已平涂，半透板只会发闷）。
+   里层 antd 卡片的 chrome 全部让位，只留标题的字距与小号字。所有面板共用这一个类。 */
 .glass-panel {
   padding: var(--aeg-space-s4);
-  border: 1px solid var(--aeg-color-glass-border);
+  border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-xl);
-  background: var(--aeg-color-glass-bg);
+  background: var(--aeg-color-card);
   box-shadow: var(--aeg-shadow-md);
-  /* 独立合成层：滚动时整块搬已栅格化的纹理，不重 raster 整页内容层。
-     原先这层隔离是 backdrop-filter 顺带给的，blur 退役后必须自己留住。 */
+  /* 独立合成层：滚动时整块搬已栅格化的纹理，不重 raster 整页内容层。 */
   transform: translateZ(0);
 }
 .glass-panel :deep(.ant-card) {
@@ -694,7 +694,7 @@ watch(
      这样同一行卡片的标题顶边与分隔线都齐平；4 + 56 + 8 + 1 = 69 */
   min-height: 69px;
   padding: 4px 0 var(--aeg-space-s2);
-  border-bottom: 1px solid var(--aeg-color-glass-border);
+  border-bottom: 1px solid var(--aeg-color-border);
   background: transparent;
   align-items: flex-start;
   /* antd 的卡头是 flex-column + 垂直居中；改成靠上，标题才和 KPI 卡页头同一水平 */

@@ -1,13 +1,10 @@
 <script setup lang="ts">
 /**
- * 态势总览的读数带（spike：dashboard 顶部的四个球）。
+ * 态势总览的读数带：四格紧凑统计格（数字在上、名称在下）。
  *
- * 2026-10-25 玻璃拟态改版：从「四张并排白卡」改成「一张玻璃卡里四颗球」。
- * - 最后一颗（协同成功率）是系统健康度的主指标，用紫色实心渐变球、直径大一号；
- *   判定靠 `index === items.length - 1` 而不是 label 字符串——DashboardView 的 kpis
- *   顺序就是业务顺序，改文案不该改视觉重点。
- * - 其余三颗是半透明白球；tone=warn/bad 时只把外圈光晕换成状态色，不整颗涂色
- *   （状态色只占边缘一小圈）。
+ * 2026-11-18 视觉裁决：球体退役。圆球把数字包在装饰里、无数据时是一颗紫渐变球摆"—"，
+ * 首屏约 300px 高度花在球面而不是读数上。灾害防护界面的饱和色只留给预警四色与状态，
+ * 读数格走墨色+纸白：大数字等宽、名称 12px、状态只占名称前一颗小点。
  *
  * 两条诚实性规矩原样保留：取不到写 `—`（调用方算好值传进来）；有口径的数把口径写进 note。
  * `data-testid="stat-${label}"` 仍然只包数字 + 单位，`DashboardView.spec.ts` 靠它精确断言 "—个"。
@@ -27,24 +24,20 @@ defineProps<{ items: KpiItem[] }>()
 
 <template>
   <div class="kpi-strip">
-    <!-- 页头（标题/说明/更新时间/刷新）由调用方塞进来：它和四颗球同属"第一屏的那张卡" -->
+    <!-- 页头（标题/说明/更新时间/刷新）由调用方塞进来：它和四格读数同属"第一屏的那张卡" -->
     <div v-if="$slots.header" class="kpi-strip__header">
       <slot name="header" />
     </div>
-    <div
-      v-for="(item, index) in items"
-      :key="item.label"
-      class="kpi"
-      :class="[`is-${item.tone ?? 'idle'}`, { 'is-accent': index === items.length - 1 }]"
-    >
-      <div class="kpi__ball">
-        <!-- 这一层只放数字 + 单位：测试靠它精确读出 "—个" / "137 条" -->
-        <div class="kpi__row" :data-testid="`stat-${item.label}`">
-          <span class="kpi__value">{{ item.value }}</span>
-          <span v-if="item.suffix" class="kpi__suffix">{{ item.suffix }}</span>
-        </div>
+    <div v-for="item in items" :key="item.label" class="kpi" :class="`is-${item.tone ?? 'idle'}`">
+      <!-- 这一层只放数字 + 单位：测试靠它精确读出 "—个" / "137 条" -->
+      <div class="kpi__row" :data-testid="`stat-${item.label}`">
+        <span class="kpi__value" :class="{ 'is-empty': item.value === '—' }">{{ item.value }}</span>
+        <span v-if="item.suffix" class="kpi__suffix">{{ item.suffix }}</span>
       </div>
-      <div class="kpi__label">{{ item.label }}</div>
+      <div class="kpi__label">
+        <span v-if="item.tone && item.tone !== 'idle'" class="kpi__dot" aria-hidden="true"></span>
+        {{ item.label }}
+      </div>
       <div v-if="item.note" class="kpi__note">{{ item.note }}</div>
     </div>
   </div>
@@ -54,161 +47,104 @@ defineProps<{ items: KpiItem[] }>()
 .kpi-strip {
   display: flex;
   flex-wrap: wrap;
-  /* 四颗球在卡片里均匀铺开：左右内缩相等，中间三处空隙由 space-between 均分 */
-  justify-content: space-between;
-  gap: 0;
-  /* 卡片被拉伸到与右侧等高时，标题仍贴顶（与右侧标题齐），多出的高度落在标题与球之间 */
-  align-items: flex-start;
+  align-items: stretch;
+  /* 行与行靠顶排：横幅在上、读数紧跟其下，不被拉伸到卡中部留下悬空数字 */
+  align-content: flex-start;
   margin-bottom: var(--aeg-space-s4);
-  /* 与右侧 .glass-panel 的 16px 内边距对齐：两边卡片内容从同一条竖线起 */
   padding: var(--aeg-space-s4);
-  border: 1px solid var(--aeg-color-glass-border);
-  border-radius: var(--aeg-radius-xl);
-  background: var(--aeg-color-glass-bg);
-  box-shadow: var(--aeg-shadow-md);
-  /* 与 .glass-panel 同一口径：雾底已预模糊，面板级 blur 只付每帧重采样成本，不产生视觉差；
-     合成层隔离用 translateZ(0) 自己留住，滚动搬纹理不重 raster */
-  transform: translateZ(0);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-card);
+  box-shadow: var(--aeg-shadow-sm);
+  container-type: inline-size;
 }
 
-/* 页头占满一整行，四颗球在它下面另起一行 */
+/* 页头占满一整行，四格读数在它下面另起一行 */
 .kpi-strip__header {
   flex: 1 0 100%;
-  margin-bottom: var(--aeg-space-s2);
+  margin-bottom: var(--aeg-space-s3);
 }
 
 .kpi {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 0;
   flex-direction: column;
-  align-items: center;
-  gap: var(--aeg-space-s2);
-  min-width: 128px;
-  text-align: center;
+  align-items: flex-start;
+  gap: var(--aeg-space-s1);
+  min-width: 120px;
+  padding: 0 var(--aeg-space-s4);
 }
-
-/* 球：白球 = 顶部高光 + 细描边 + 很淡的外投影；紫球 = 实心径向渐变，直径大一号。 */
-.kpi__ball {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 128px;
-  height: 128px;
-  /* 白球比紫球小一号：上边留 24px 让四颗球的"底"对齐，下面的标签才在同一水平线 */
-  margin-top: var(--aeg-space-s5);
-  border: 1px solid var(--aeg-color-ball-ring);
-  border-radius: 50%;
-  background: radial-gradient(circle at 32% 26%, var(--aeg-color-ball-ring), var(--aeg-color-ball-surface) 68%);
-  box-shadow:
-    inset 0 1px 0 var(--aeg-color-ball-ring),
-    0 18px 32px -20px var(--aeg-color-accent-ball-glow);
+.kpi:first-of-type {
+  padding-left: 0;
 }
-
-.kpi.is-accent .kpi__ball {
-  width: 152px;
-  height: 152px;
-  margin-top: 0;
-  border-color: var(--aeg-color-accent-ball-from);
-  background: radial-gradient(circle at 32% 26%, var(--aeg-color-accent-ball-from), var(--aeg-color-accent-ball-to) 70%);
-  box-shadow:
-    inset 0 2px 14px var(--aeg-color-glass-border),
-    0 26px 48px -22px var(--aeg-color-accent-ball-glow);
-}
-
-/* 状态色只上外圈：warn/bad 时把描边与外圈光晕换成对应语义色，球体本身仍是白的。 */
-.kpi.is-warn .kpi__ball {
-  border-color: var(--aeg-color-status-warning);
-  box-shadow:
-    inset 0 1px 0 var(--aeg-color-ball-ring),
-    0 0 0 3px var(--aeg-tag-orange-bg),
-    0 18px 32px -20px var(--aeg-color-accent-ball-glow);
-}
-.kpi.is-bad .kpi__ball {
-  border-color: var(--aeg-color-status-danger);
-  box-shadow:
-    inset 0 1px 0 var(--aeg-color-ball-ring),
-    0 0 0 3px var(--aeg-tag-red-bg),
-    0 18px 32px -20px var(--aeg-color-accent-ball-glow);
-}
-.kpi.is-ok .kpi__ball {
-  border-color: var(--aeg-color-status-success);
+.kpi + .kpi {
+  border-left: 1px solid var(--aeg-color-border-subtle);
 }
 
 .kpi__row {
   display: flex;
   align-items: baseline;
-  justify-content: center;
 }
 .kpi__value {
   font-family: var(--aeg-font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: var(--aeg-font-xl);
+  font-size: var(--aeg-font-2xl);
   font-weight: var(--aeg-weight-bold);
   line-height: var(--aeg-lh-tight);
   color: var(--aeg-color-text);
 }
-.kpi.is-accent .kpi__value {
-  font-size: var(--aeg-font-2xl);
-  color: var(--aeg-color-accent-ball-text);
+/* 没取到就是没取到：灰掉，不拿装饰球把它扮成"一个状态" */
+.kpi__value.is-empty {
+  color: var(--aeg-color-text-muted);
 }
 .kpi__suffix {
   margin-left: var(--aeg-space-s1);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
   color: var(--aeg-color-text-muted);
 }
-/* 球里那颗"个/条"实测只有 2.87:1（深主题合成底 rgb(59,75,104) 上的 #8595AD，11px/600 要 4.5）。
-   球面是全站最亮的一块，页级 muted 搬进来必然读不清——回到球自己的主字色，层级靠字号（11 vs 28）。 */
-.kpi__ball .kpi__suffix {
-  color: var(--aeg-color-text);
-}
-.kpi.is-accent .kpi__suffix {
-  color: var(--aeg-color-accent-ball-text);
-}
 
 .kpi__label {
-  font-size: var(--aeg-font-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--aeg-space-s1);
+  font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
-  letter-spacing: 0.08em;
   color: var(--aeg-color-text-secondary);
 }
+.kpi__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-border-strong);
+}
+.kpi.is-ok .kpi__dot {
+  background: var(--aeg-color-status-success);
+}
+.kpi.is-warn .kpi__dot {
+  background: var(--aeg-color-status-warning);
+}
+.kpi.is-bad .kpi__dot {
+  background: var(--aeg-color-status-danger);
+}
 .kpi__note {
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-muted);
   line-height: var(--aeg-lh-snug);
 }
 
-@media (max-width: 900px) {
-  .kpi-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-/* 卡片自身被挤窄时（例如助手抽屉拖宽）球体自动缩一档，避免四颗球换行；
-   断点按卡片内容宽度算，不跟视口走——抽屉挤压不会触发 @media。 */
-.kpi-strip {
-  container-type: inline-size;
-}
+/* 窄屏与抽屉挤压：2×2，分隔线只留竖的那条 */
 @container (max-width: 620px) {
-  .kpi__ball {
-    width: 112px;
-    height: 112px;
+  .kpi {
+    flex: 1 1 40%;
+    padding: 0 var(--aeg-space-s3);
   }
-  .kpi.is-accent .kpi__ball {
-    width: 132px;
-    height: 132px;
+  .kpi:nth-of-type(odd) {
+    padding-left: 0;
+    border-left: none;
   }
-}
-@container (max-width: 520px) {
-  .kpi__ball {
-    width: 96px;
-    height: 96px;
-    margin-top: var(--aeg-space-s4);
-  }
-  .kpi.is-accent .kpi__ball {
-    width: 112px;
-    height: 112px;
-    margin-top: 0;
+  .kpi:nth-of-type(n + 3) {
+    margin-top: var(--aeg-space-s3);
   }
 }
 </style>

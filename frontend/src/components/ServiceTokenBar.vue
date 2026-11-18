@@ -78,6 +78,7 @@ function wipe(): void {
 }
 .tok__label {
   flex: 0 0 auto;
+  font-size: var(--aeg-font-sm);
   letter-spacing: 0.04em;
 }
 .tok__input {
@@ -102,9 +103,9 @@ function wipe(): void {
 }
 .tok__btn {
   flex: 0 0 auto;
-  height: 24px;
+  height: 28px;
   padding: 0 var(--aeg-space-s3);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-inverse);
   background: var(--aeg-color-brand);
   border: none;
@@ -125,6 +126,7 @@ function wipe(): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--aeg-font-sm);
 }
 .is-rejected .tok__hint {
   color: var(--aeg-color-status-danger);

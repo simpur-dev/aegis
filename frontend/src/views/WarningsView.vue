@@ -252,7 +252,7 @@ function onDrawerVisible(visible: boolean): void {
       </a-table>
     </a-card>
 
-    <a-drawer v-model:open="open" :width="720" title="预警详情与处置任务" @after-visible-change="onDrawerVisible">
+    <a-drawer v-model:open="open" :width="720" title="预警详情与处置任务" @after-open-change="onDrawerVisible">
       <template v-if="current">
         <a-descriptions :column="1" bordered size="small">
           <!-- 助手页的「解释一条预警」要 wrn_ 编号，此前整个界面没有一处显示它，

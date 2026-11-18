@@ -116,6 +116,7 @@ function capabilities(overrides: Partial<CapabilitiesDto> = {}): CapabilitiesDto
         action: 'drill.start',
         title: '发起一次演练',
         domain: 'drill',
+        required_role: 'lead',
         needs_confirm: true,
         allowed: false,
         denied_reason: '需要 lead 及以上角色',
@@ -236,7 +237,9 @@ describe('能力面：读不到与没配置都不许显示成正常', () => {
 
   it('角色不够的动作照样列出，但标出缺什么并置灰', async () => {
     const wrapper = await renderView()
-    expect(byTestid(wrapper, 'action-drill.start').text()).toContain('需要 lead')
+    // 芯片上压成四字缀注（需值班长），完整原因进 tooltip——不再每条拖同一句十字长文
+    expect(byTestid(wrapper, 'action-drill.start').text()).toContain('需值班长')
+    expect(byTestid(wrapper, 'action-drill.start').attributes('title')).toContain('需要 lead')
     expect(byTestid(wrapper, 'action-drill.start').classes()).toContain('is-denied')
     expect(byTestid(wrapper, 'action-warning.list').classes()).toContain('is-available')
     expect(byTestid(wrapper, 'action-warning.list').text()).toContain('查询预警')

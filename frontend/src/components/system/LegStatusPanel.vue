@@ -123,7 +123,7 @@ onBeforeUnmount(() => {
 }
 .leg-detail {
   font-family: var(--aeg-font-mono);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-secondary);
 }
 .leg-facts {
@@ -134,7 +134,7 @@ onBeforeUnmount(() => {
 }
 .leg-facts span {
   font-family: var(--aeg-font-mono);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-muted);
 }
 .leg-empty {

@@ -37,8 +37,8 @@ function loadRatio(agent: AgentInfo): number {
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
       <div>
         <div class="empty-hero__title">还没有智能体注册上来</div>
-        <div class="empty-hero__desc">智能体经总线契约注册；后端起来后它们会逐个出现在这里，跑一次演练即可看到它们接活。</div>
-        <router-link class="empty-hero__action" to="/monitor">去监测页发起演练 →</router-link>
+        <div class="empty-hero__desc">后端起来后它们会逐个上线；跑一次演练即可看到它们接活。</div>
+        <router-link class="empty-hero__action" to="/monitor">跑一次演练看谁接活 →</router-link>
       </div>
     </div>
   </div>
@@ -57,7 +57,7 @@ function loadRatio(agent: AgentInfo): number {
   align-items: center;
   gap: var(--aeg-space-s2);
   padding: var(--aeg-space-s2) 10px;
-  border: 1px solid var(--aeg-color-glass-border);
+  border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-md);
   background: var(--aeg-color-sunken);
   transition:
@@ -98,7 +98,7 @@ function loadRatio(agent: AgentInfo): number {
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-sm);
   background: var(--aeg-color-sunken);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-secondary);
 }
 .agent__caps {
@@ -107,7 +107,7 @@ function loadRatio(agent: AgentInfo): number {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-muted);
 }
 .agent__load {
@@ -129,7 +129,7 @@ function loadRatio(agent: AgentInfo): number {
   background: var(--aeg-color-brand);
 }
 .agent__loadnum {
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   font-variant-numeric: tabular-nums;
   color: var(--aeg-color-text-secondary);
 }
@@ -148,7 +148,7 @@ function loadRatio(agent: AgentInfo): number {
   background: var(--aeg-color-stat-chip-bg);
   text-align: center;
   white-space: nowrap;
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   font-variant-numeric: tabular-nums;
   color: var(--aeg-color-stat-chip-text);
 }

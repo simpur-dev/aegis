@@ -97,7 +97,7 @@ body .ant-tag {
   border-style: solid;
   border-radius: var(--aeg-radius-pill);
   padding: 1px 10px;
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
 }
 body .ant-tag-green,
@@ -222,7 +222,9 @@ body .empty-hero__desc {
   color: var(--aeg-color-text-secondary);
 }
 body .empty-hero__action {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
   margin-top: 8px;
   font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
@@ -232,6 +234,18 @@ body .empty-hero__action {
 }
 body .empty-hero__action:hover {
   text-decoration: underline;
+}
+/* 窄屏：空态出口整行成按钮。真机量到 390px 下链接被挤成 23px 宽、一字一行竖排。 */
+@media (max-width: 640px) {
+  body .empty-hero__action {
+    display: flex;
+    width: 100%;
+    justify-content: center;
+    border: 1px solid var(--aeg-color-border);
+    border-radius: var(--aeg-radius-pill);
+    background: var(--aeg-color-card);
+    text-decoration: none;
+  }
 }
 
 /* —— 态势总览三块空态的「紧凑档」+ 实心动作按钮 ——
@@ -315,7 +329,7 @@ body .pill-dashed {
   border-radius: var(--aeg-radius-pill);
   background: transparent;
   color: var(--aeg-color-text-secondary);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
   letter-spacing: 0.04em;
 }
@@ -362,7 +376,7 @@ body .stat-cell .ant-statistic {
 }
 body .stat-cell .ant-statistic-title {
   margin: 2px 0 0;
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
   letter-spacing: 0.06em;
   color: var(--aeg-color-text-secondary);

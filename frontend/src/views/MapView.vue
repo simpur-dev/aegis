@@ -396,13 +396,13 @@ watch(visibility, (value) => {
           <a-radio-button value="offline">离线自托管</a-radio-button>
           <a-radio-button value="amap">高德在线</a-radio-button>
         </a-radio-group>
-        <a-select v-model:value="regionCode" style="width: 150px" placeholder="全部区域" size="small" @change="load">
+        <a-select v-model:value="regionCode" style="width: 150px" placeholder="全部区域" size="small" aria-label="区域" @change="load">
           <a-select-option value="">全部区域</a-select-option>
           <a-select-option v-for="code in regionOptions" :key="code" :value="code">{{ code }}</a-select-option>
         </a-select>
         <a-button size="small" :loading="loading" @click="load">刷新</a-button>
         <a-button size="small" @click="focusAll">定位到有点的区域</a-button>
-        <a-switch v-model:checked="autoRefresh" size="small" />
+        <a-switch v-model:checked="autoRefresh" aria-label="自动刷新" />
         <span class="muted">自动刷新 30s</span>
       </a-space>
     </div>
@@ -421,15 +421,26 @@ watch(visibility, (value) => {
       <template v-else>
         <div ref="host" class="map-host" />
         <div v-if="!sceneInfo && !sceneError" class="map-placeholder">
-          正在加载三维场景（地图引擎独立分块，按需下载）…
+          <div class="map-placeholder__card">
+            <p class="map-placeholder__title">三维场景未就绪</p>
+            <p class="map-placeholder__desc">离线底图与地形尚未建场；图层面板与要素清单仍可用。</p>
+            <p class="hint">
+              首次部署：把地图引擎静态资源（Workers / Assets / ThirdParty / Widgets）拷到
+              <code>public/cesium/</code>，并按 public/basemaps/README.md、public/terrain/README.md
+              烘焙底图与地形资产。
+            </p>
+          </div>
         </div>
         <div v-if="sceneError" class="map-placeholder">
-          <div>三维场景不可用：{{ sceneError }}</div>
-          <div class="hint">
-            右侧面板与清单仍可用。首次部署需把 需把地图引擎的静态资源目录（Workers / Assets / ThirdParty /
-            Widgets）拷到
-            <code>public/cesium/</code>，并烘焙底图与地形资产（清单见
-            public/basemaps/README.md、public/terrain/README.md）。
+          <div class="map-placeholder__card">
+            <p class="map-placeholder__title">三维场景不可用</p>
+            <p class="map-placeholder__desc">{{ sceneError }}</p>
+            <p class="hint">
+              右侧面板与清单仍可用。首次部署需把地图引擎的静态资源目录（Workers / Assets / ThirdParty /
+              Widgets）拷到
+              <code>public/cesium/</code>，并烘焙底图与地形资产（清单见
+              public/basemaps/README.md、public/terrain/README.md）。
+            </p>
           </div>
         </div>
       </template>
@@ -534,7 +545,6 @@ watch(visibility, (value) => {
   border: 1px solid var(--aeg-color-map-panel-border);
   border-radius: var(--aeg-radius-pill);
   background: var(--aeg-color-map-floatbar-bg);
-  backdrop-filter: blur(var(--aeg-glass-blur));
   box-shadow: var(--aeg-shadow-md);
 }
 .map-floatbar__hero {
@@ -557,6 +567,10 @@ watch(visibility, (value) => {
 .map-floatbar__tools {
   flex: 0 0 auto;
 }
+/* 自动刷新开关抬到 24px 点击面（small 档 16px 高在值班台上点不准）。 */
+.map-floatbar__tools :deep(.ant-switch) {
+  min-height: 24px;
+}
 
 /* 告警与定位提示：条下方浮一小块，不挡地图拖拽 */
 .map-floatnotes {
@@ -577,7 +591,6 @@ watch(visibility, (value) => {
   border: 1px solid var(--aeg-color-map-panel-border);
   border-radius: var(--aeg-radius-pill);
   background: var(--aeg-color-map-floatbar-bg);
-  backdrop-filter: blur(var(--aeg-glass-blur));
 }
 
 /* 地图铺满整块 */
@@ -591,6 +604,16 @@ watch(visibility, (value) => {
   width: 100%;
   height: 100%;
   background: #101923;
+}
+/* Cesium 版权行默认 10px、展开链接 14px 高：抬到 12px 字与 24px 点击面（真机探针量到 10px / 81×14）。
+   颜色留给 Cesium 自带的深底白字，不动它以免改出对比度回归。 */
+.map-host :deep(.cesium-credit-wrapper),
+.map-host :deep(.cesium-credit-expand-link) {
+  font-size: 12px;
+}
+.map-host :deep(.cesium-credit-expand-link) {
+  display: inline-block;
+  padding: 5px 0;
 }
 /*
  * 「深空皮肤」的暗角：只在看得见地球弧线时压一圈，让球体边缘"浮"在星空里。
@@ -608,18 +631,37 @@ watch(visibility, (value) => {
   position: absolute;
   inset: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  color: #d9d9d9;
-  font-size: 13px;
-  text-align: center;
   padding: 0 24px;
   pointer-events: none;
 }
+/* 黑洞里放一张体面的卡：未就绪/不可用都说清楚下一步，不摆一句永远转圈的"正在加载" */
+.map-placeholder__card {
+  pointer-events: auto;
+  max-width: 520px;
+  padding: var(--aeg-space-s5) var(--aeg-space-s6);
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-map-panel-bg);
+  box-shadow: var(--aeg-shadow-md);
+  color: var(--aeg-color-map-panel-text);
+  text-align: left;
+}
+.map-placeholder__title {
+  margin: 0 0 var(--aeg-space-s2);
+  font-size: var(--aeg-font-md);
+  font-weight: var(--aeg-weight-bold);
+}
+.map-placeholder__desc {
+  margin: 0 0 var(--aeg-space-s2);
+  font-size: var(--aeg-font-sm);
+  line-height: var(--aeg-lh-normal);
+  color: var(--aeg-color-map-panel-text-muted);
+}
 .map-placeholder .hint {
-  color: var(--aeg-color-text-secondary);
+  margin: 0;
+  color: var(--aeg-color-map-panel-text-muted);
   font-size: 12px;
   line-height: 1.7;
 }
@@ -685,7 +727,6 @@ watch(visibility, (value) => {
   z-index: 7;
   border-color: var(--aeg-color-map-panel-border);
   background: var(--aeg-color-map-floatbar-bg);
-  backdrop-filter: blur(var(--aeg-glass-blur));
 }
 /* 面板本体：半透明玻璃，卡内白底一律去掉 */
 .map-float-col :deep(.ant-card) {
@@ -693,7 +734,6 @@ watch(visibility, (value) => {
   background: var(--aeg-color-map-panel-bg);
   border: 1px solid var(--aeg-color-map-panel-border);
   border-radius: var(--aeg-radius-lg);
-  backdrop-filter: blur(var(--aeg-glass-blur));
   box-shadow: var(--aeg-shadow-md);
   color: var(--aeg-color-map-panel-text);
 }
@@ -729,9 +769,8 @@ watch(visibility, (value) => {
   border: 1px solid var(--aeg-color-map-panel-border);
   border-radius: var(--aeg-radius-pill);
   background: var(--aeg-color-map-floatbar-bg);
-  backdrop-filter: blur(var(--aeg-glass-blur));
   font-size: 12px;
-  color: var(--aeg-color-text-secondary);
+  color: var(--aeg-color-map-floatbar-text-muted);
 }
 .scene-bar .hint {
   /* 这条 hint 坐在**浅色**悬浮胶囊上（合成底实测 rgb(222,237,254)）：
@@ -742,7 +781,7 @@ watch(visibility, (value) => {
 }
 .muted {
   font-size: 12px;
-  color: var(--aeg-color-text-secondary);
+  color: var(--aeg-color-map-floatbar-text-muted);
 }
 
 /* 1024 档：两列收窄，把中间的地图让出来 */

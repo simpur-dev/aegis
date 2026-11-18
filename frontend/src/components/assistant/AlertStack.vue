@@ -196,7 +196,8 @@ const shown = computed(() => openCards.value)
   border-radius: var(--aeg-radius-sm);
   background: transparent;
   color: var(--aeg-color-text-secondary);
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
+  min-height: 24px;
   padding: 2px 8px;
   cursor: pointer;
 }
@@ -207,7 +208,7 @@ const shown = computed(() => openCards.value)
   gap: var(--aeg-space-s2);
 }
 .alerts__seat-label {
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-secondary);
   white-space: nowrap;
 }
@@ -379,7 +380,7 @@ const shown = computed(() => openCards.value)
 
 .alerts__empty {
   margin: 0;
-  font-size: var(--aeg-font-xs);
+  font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-muted);
 }
 </style>

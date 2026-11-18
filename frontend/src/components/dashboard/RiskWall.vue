@@ -71,8 +71,8 @@ const mockNotice = computed<string>(() => {
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
       <div>
         <div class="empty-hero__title">还没有研判结论</div>
-        <div class="empty-hero__desc">这面墙按最近 {{ windowSize }} 条链路归集，跑一次演练就会落点。</div>
-        <router-link class="empty-hero__action empty-hero__cta" to="/monitor">去监测页发起演练 →</router-link>
+        <div class="empty-hero__desc">按最近 {{ windowSize }} 条处置归集，跑一次演练就会落点。</div>
+        <router-link class="empty-hero__action empty-hero__cta" to="/monitor">发起演练看风险落点 →</router-link>
       </div>
     </div>
   </div>
