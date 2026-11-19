@@ -358,6 +358,12 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
   const navTruncated: string[] = []
   if (innerWidth >= 1280) {
     for (const el of [...document.querySelectorAll('.nav-status .status-pill__text')]) {
+      /* ≤1290 档的收字是 1px clip-path 裁剪（读屏仍可见，2dcec21 的有意收字）。
+         旧 display:none 时 scrollWidth=0 不触发本条；换 clip 后 scrollWidth 仍是全文宽，
+         1280–1290 档会被误判成"省略号截断"。有意收字按 clip-path+1px 识别放过；
+         真截断（可见宽度里 scrollWidth 超出去）照旧钉。 */
+      const cs = getComputedStyle(el)
+      if (el.clientWidth <= 1 && cs.clipPath !== 'none') continue
       if (el.scrollWidth > el.clientWidth + 1) {
         navTruncated.push(`"${(el.textContent ?? '').trim()}" 需要 ${el.scrollWidth}px 只有 ${el.clientWidth}px`)
       }

@@ -93,6 +93,21 @@ export const colorSlots = {
     // 一张图「深空皮肤」的太空底：两主题同值——那是"宇宙"，不随页面主题翻面
     'space-globe': '#061326',
     'deep-space': '#05030E',
+    /* 雾底 + KPI 球（2026-11-19 用户裁决恢复：背景与球是用户认定的产品观感，
+       2dcec21 的其余改进——a11y/短名/12px prose/GET 探针——原样保留）。
+       画布雾底是渐变兜底，照片素材在 public/backgrounds/aegis-horizon.webp；
+       球面/球环是白球的两档，紫球走 accent-ball 四档。 */
+    'canvas-from': '#EAF4FF',
+    'canvas-via': '#F5FAFF',
+    'canvas-to': '#E8F1FF',
+    'glass-bg': 'rgba(255, 255, 255, 0.62)',
+    'glass-border': 'rgba(255, 255, 255, 0.78)',
+    'ball-surface': 'rgba(255, 255, 255, 0.86)',
+    'ball-ring': 'rgba(255, 255, 255, 0.92)',
+    'accent-ball-from': '#9B8CFF',
+    'accent-ball-to': '#6D5AE0',
+    'accent-ball-glow': 'rgba(139, 124, 246, 0.45)',
+    'accent-ball-text': '#100C33',
     // 空态里的强动作按钮（黑底白字）；两主题各自一套，不复用 text-inverse（深色主题里它是深色字）
     'action-bg': '#1A1A1C',
     'action-bg-hover': '#2C2C31',
@@ -182,6 +197,17 @@ export const colorSlots = {
     'editor-state-awaiting': '#C4B5FD',
     'space-globe': '#061326',
     'deep-space': '#05030E',
+    'canvas-from': '#0A1020',
+    'canvas-via': '#0B1220',
+    'canvas-to': '#0A0F1C',
+    'glass-bg': 'rgba(20, 30, 48, 0.55)',
+    'glass-border': 'rgba(120, 150, 200, 0.22)',
+    'ball-surface': 'rgba(30, 44, 68, 0.82)',
+    'ball-ring': 'rgba(140, 170, 220, 0.35)',
+    'accent-ball-from': '#8B7CF6',
+    'accent-ball-to': '#5B49C8',
+    'accent-ball-glow': 'rgba(139, 124, 246, 0.5)',
+    'accent-ball-text': '#100C33',
     // 深色主题下"最强的动作"是提亮：浅底深字（若沿用黑底，必须换成亮字，见提示词 §4.1）
     'action-bg': '#E8EDF7',
     'action-bg-hover': '#F7FAFF',

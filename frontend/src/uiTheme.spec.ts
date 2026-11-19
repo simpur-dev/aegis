@@ -37,7 +37,9 @@ import { readRepoFile, repoRoot } from '@/testing/repoSource'
  *  新落地的 7 个编辑器组件从第一行起就没写字面色。口径不变，探针同脚本实量。
  *  → 98（2026-11-18 UI 修复批：玻璃层整层退役——KpiStrip 球→统计格、App 壳模糊照片底删除、
  *  DashboardView/MonitorView/MapView/AssistantDock 的 glass/blur 清除，tokens 删 12 个装饰槽位。
- *  口径不变，同脚本实量；SystemTerminal 的 rgba 半透明底改实色 hex，计数不变。） */
+ *  口径不变，同脚本实量；SystemTerminal 的 rgba 半透明底改实色 hex，计数不变。
+ *  2026-11-19 用户裁决恢复雾底与 KPI 球：恢复层全部走 var(--aeg-*) 槽位引用，
+ *  真源外零新增字面色，基线 98 不动。） */
 const COLOR_BASELINE = 98
 
 function fontsCss(): string {
@@ -234,35 +236,51 @@ describe('UI 基座', () => {
   })
 
   /**
-   * 2026-11-18 视觉裁决的门禁化：玻璃拟态残留层与装饰渐变整层退役。
-   * 原先渐变/模糊禁令只扫 theme.css 与 PageHero，App 壳/KPI 球/新鲜度条/运行时间线
-   * 成了盲区——真机审计量到页面底仍是模糊照片+蓝紫渐变、KPI 是四颗球。
-   * 三条判据：
-   * 1. 玻璃/球/画布雾底槽位与 glass-blur 变量全仓零引用（槽位已从 tokens 删除，再引就是破绽回潮）；
-   * 2. backdrop-filter 全仓零（底已平涂/实色，模糊没有功能目的，只付重绘代价）；
-   * 3. 装饰性宿主点名禁渐变。监测重点卡的压暗渐变与地图暗角是**可读性层**
-   *    （压在影像上保白线/保球缘），有功能目的，不在装饰名单里。
+   * 2026-11-19 用户裁决的门禁化：雾底与 KPI 球恢复（2026-11-18 的整层退役裁决被用户
+   * 对这两层推翻——"把我之前做的背景和球的效果加上去"；2dcec21 的其余改进原样保留）。
+   * 口径换了但职责没松，原判据各找新宿主：
+   * 1. 雾底/球槽位必须住在 tokens.ts 真源（两主题同名同集合由 tokens.spec 钉），
+   *    照片素材必须在磁盘上——离线部署 P0，外链 CDN 或删素材都会让首屏掉回白底；
+   * 2. backdrop-filter 仍全仓零——雾底走背景图自身 filter 的一次性栅格化，
+   *    不是每帧重采样；这条性能判据不因恢复而放宽；
+   * 3. 装饰渐变只许出现在用户点名的两个宿主（App.vue 雾底、KpiStrip 球），
+   *    FreshnessBar/RunTimeline 仍禁——监测页的饱和色留给预警四色与状态。
    */
-  it('玻璃层与装饰渐变退役：槽位零引用、模糊零、装饰宿主无渐变', () => {
+  it('雾底与 KPI 球按裁决恢复：槽位在真源、素材在盘、模糊零、渐变只在点名宿主', () => {
+    const tokens = readRepoFile('frontend', 'src', 'theme', 'tokens.ts')
+    for (const slot of ['canvas-from', 'glass-bg', 'ball-surface', 'accent-ball-from', 'accent-ball-text']) {
+      expect(tokens, `雾底/球槽位 ${slot} 不在真源（恢复的层也必须走令牌）`).toContain(`'${slot}'`)
+    }
+    const app = appVue()
+    expect(app, '雾底的照片层不见了').toMatch(/\.app-backdrop::before/)
+    expect(app, '雾底没引离线素材').toContain("url('/backgrounds/aegis-horizon.webp')")
+    expect(
+      existsSync(join(repoRoot(), 'frontend', 'public', 'backgrounds', 'aegis-horizon.webp')),
+      '雾底素材不在磁盘上（离线部署会掉回渐变兜底）',
+    ).toBe(true)
+    const kpi = readRepoFile('frontend', 'src', 'components', 'dashboard', 'KpiStrip.vue')
+    expect(kpi, 'KPI 球不见了').toMatch(/\.kpi__ball/)
+    expect(kpi, '紫球不再按业务顺序判定（改文案不该改视觉重点）').toContain(
+      "'is-accent': index === items.length - 1",
+    )
+
     const srcDir = join(repoRoot(), 'frontend', 'src')
     const files = readdirSync(srcDir, { recursive: true })
       .map((p) => String(p))
       .filter((p) => /\.(vue|css|ts)$/.test(p) && !p.includes('uiTheme.spec'))
       .sort()
-    const retiredVars = /--aeg-color-glass-|--aeg-color-ball-|--aeg-color-accent-ball|--aeg-color-canvas-|--aeg-glass-blur/
-    const decorativeHosts = ['App.vue', 'KpiStrip.vue', 'FreshnessBar.vue', 'RunTimeline.vue']
+    const decorativeHosts = ['FreshnessBar.vue', 'RunTimeline.vue']
     const offenders: string[] = []
     for (const rel of files) {
       const text = readFileSync(join(srcDir, rel), 'utf-8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/<!--[\s\S]*?-->/g, '')
-      if (retiredVars.test(text)) offenders.push(`${rel}: 退役的玻璃/球/雾底槽位`)
       if (/backdrop-filter/.test(text)) offenders.push(`${rel}: backdrop-filter`)
       if (decorativeHosts.some((host) => rel.endsWith(host)) && /(linear|radial)-gradient\s*\(/.test(text)) {
         offenders.push(`${rel}: 装饰宿主里的渐变`)
       }
     }
-    expect(offenders, `玻璃层/装饰渐变回潮：\n${offenders.join('\n')}`).toEqual([])
+    expect(offenders, `性能/装饰判据回潮：\n${offenders.join('\n')}`).toEqual([])
   })
 
   /**

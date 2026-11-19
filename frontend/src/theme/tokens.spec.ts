@@ -205,4 +205,17 @@ describe('设计令牌真源', () => {
       }
     }
   })
+
+  /* 紫球读数（2026-11-19 恢复球体时补钉）：数字坐在径向渐变的高光中心（32% 26%），
+     那一档就是 accent-ball-from；to 档落在球缘右下，远离数字，不拿它判读数。
+     32px/700 属大字号，但这里按正文 4.5 钉——球是首屏主指标，读不清就是事故。 */
+  it('协同成功率紫球：球心高光档上的深字过 AA（两主题各算一遍）', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      const slots = colorSlots[mode]
+      expect(
+        ratio(slots['accent-ball-text'], slots['accent-ball-from']),
+        `${mode} 主题：紫球读数在球心高光档读不清`,
+      ).toBeGreaterThanOrEqual(4.5)
+    }
+  })
 })

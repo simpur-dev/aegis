@@ -274,7 +274,7 @@ const statusTitle = computed<string>(() =>
 }
 .topnav__item.is-on {
   background: var(--aeg-color-topbar-pill-bg);
-  box-shadow: inset 0 0 0 1px var(--aeg-color-border);
+  box-shadow: inset 0 0 0 1px var(--aeg-color-glass-border);
   color: var(--aeg-color-text);
 }
 
@@ -285,7 +285,7 @@ const statusTitle = computed<string>(() =>
   align-items: center;
   gap: var(--aeg-space-s2);
   padding-left: var(--aeg-space-s3);
-  border-left: 1px solid var(--aeg-color-border);
+  border-left: 1px solid var(--aeg-color-glass-border);
 }
 .brand-logo {
   display: flex;
@@ -459,7 +459,7 @@ const statusTitle = computed<string>(() =>
 .theme-switch__btn.is-on {
   /* 半透明白色胶囊：压在雾底上有层次，但不像实心白块那样抢戏 */
   background: var(--aeg-color-topbar-pill-bg);
-  box-shadow: inset 0 0 0 1px var(--aeg-color-border);
+  box-shadow: inset 0 0 0 1px var(--aeg-color-glass-border);
   color: var(--aeg-color-text);
 }
 
@@ -592,10 +592,11 @@ html.assistant-resizing .main-content {
   }
 }
 
-/* ——— 页面底：平涂令牌色 ———
-   2026-11-18 视觉裁决：模糊地平线照片 + 渐变兜底 + 两团柔光整层退役。
-   灾害防护界面的饱和色只留给预警四色与状态；底噪越安静，告警越响。
-   浅色=纸灰、深色=墨蓝黑，两主题都走 --aeg-color-page，不再各写一支。 */
+/* ——— 全局雾底（2026-11-19 用户裁决恢复） ———
+   素材是离线资产 `public/backgrounds/aegis-horizon.webp`（不外链任何 CDN）：
+   淡蓝→粉紫的地平线渐变，模糊 46px + 放大 1.1 后只剩柔和的色团，不抢卡片的字。
+   渐变兜底用画布令牌，两主题各一套。所有页面共用（含一张图与流程编排）。
+   模糊走背景图自身的 filter（一次性栅格化），不用 backdrop-filter——后者每帧重采样。 */
 .app-shell {
   background: transparent;
 }
@@ -605,7 +606,38 @@ html.assistant-resizing .main-content {
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  background: var(--aeg-color-page);
+  background: linear-gradient(135deg, var(--aeg-color-canvas-from) 0%, var(--aeg-color-canvas-via) 45%, var(--aeg-color-canvas-to) 100%);
+}
+.app-backdrop::before {
+  content: '';
+  position: absolute;
+  inset: -48px;
+  background-image: url('/backgrounds/aegis-horizon.webp');
+  background-size: cover;
+  background-position: center;
+  filter: blur(46px) saturate(1.12);
+  transform: scale(1.1);
+  opacity: 0.95;
+}
+/* 柔光：左上偏白、右侧一点淡蓝，和参考图的光斑同向；深色主题换成紫蓝 */
+.app-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 18% 8%, var(--aeg-color-ball-surface), transparent 55%),
+    radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 60%);
+  opacity: 0.55;
+}
+html[data-theme='dark'] .app-backdrop::before {
+  filter: blur(46px) brightness(0.4) saturate(1.35);
+  opacity: 0.85;
+}
+html[data-theme='dark'] .app-backdrop::after {
+  background:
+    radial-gradient(circle at 18% 8%, var(--aeg-color-accent-ball-glow), transparent 58%),
+    radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 62%);
+  opacity: 0.45;
 }
 
 /* 顶栏透明：不再盖玻璃底（导航文字直接落在雾底上）；只保留层级，压住雾底 */
