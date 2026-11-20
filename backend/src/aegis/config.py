@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     # 与逐日腿分工见 `aegis/connectors/precip_hourly.py` 的模块注释；同样默认关。
     precip_hourly_enabled: bool = False
     precip_hourly_file: str = ""
+    # 研判证据包落库导出（校准观测采集）：填目录才装配，默认关。
+    # 产出给 scripts/calibrate_factor_weights.py 的 --observations 直读；见 pipeline/evidence_export.py。
+    evidence_export_dir: str = ""
     # 工作流节点外呼（api_call / device_control）的主机白名单，逗号分隔。
     # 留空 = 这两类节点在产品形态下不可用（装配桥不注入 http_call，节点响亮失败）；
     # 之所以默认关：URL 由编排画布填写，放开就是把平台变成任意内网地址的代理。

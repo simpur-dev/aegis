@@ -4337,3 +4337,60 @@ MCP 的顾虑（会话状态、重连语义）在这里不存在。
 `backend/scripts/calibrate_factor_weights.py`（CLI：`--labels` / `--observations` / `--out`，
 报告落 `backend/reports/weight_calibration/`，`newline="\n"`）+ 7 条离线用例
 （无输入 / 缺观测 / 样本不足 / 足量归一 / 零区分度 / 落盘形状 / 灾种不串台）。
+
+## 数据层夜间批次（2026-11-21 凌晨）：站点表与证据导出
+
+两个断点补掉，数据层"采集 → 派生 → 校准"三段第一次全部有真实输入。
+
+### 一、站点表：县域降水代理点（Wikidata CC0）
+
+两条降水腿（Open-Meteo 逐小时、CHM_PRE 逐日派生）都要站点表，而仓里**没有任何带
+真实坐标的站点台账**——编一个经纬度，被当成实测证据就是事故（`import_stations` 红线）。
+
+- 来源：**Wikidata（CC0，无需署名）**——`wbsearchentities` 只挑描述含「西藏」的实体
+  （含糊即整份失败，不猜），`P625` 取 preferred-rank 坐标、`P2044` 取海拔；
+- 县名从演示区域档案剥（`林芝市巴宜区（演示）`→`巴宜区`），区划码与灾种关注同源，
+  脚本里不另写映射；
+- 产出：`stations.csv`（两条降水腿共用列契约）+ `stations.provenance.jsonl`
+  （逐行 Q 号 / `wiki/…` URL / CC0 / 取数时间）——**任何坐标都能回到实体页复核**；
+- 诚实定位写进每行 provenance：**县域降水代理点（区划代表点），非实测站**；
+  站端设备接入后替换坐标，表结构不变；
+- 首跑实测：3 站落表——巴宜 `Q519708`（29.638/94.368/2900m）、定结（28.368/87.766）、
+  八宿（30.056/96.918）。
+
+### 二、Open-Meteo 首跑：144 行真实小时降水
+
+实跑抓到一个真边界：**archive 可及上界随 UTC 推进**——本地已过午夜（11-21）时
+`end_date=2026-11-21` 被 400 拒（allowed range 到 11-20）。修法是解析 400 的
+allowed range 并把窗口收敛进去重试一次（不是硬编码"昨天"——上界本身在动）。
+收敛后 3 站 × 48h = **144 行真实小时降水**落 `backend/data/precip/openmeteo/`。
+`precip_hourly` 腿的开关仍是默认关：数据在位，开腿是部署动作。
+
+### 三、证据包落库导出：校准的输入侧打通
+
+`calibrate_factor_weights.py` 需要**逐案例因子观测**，而证据包此前只活在
+`AssessRequest.evidence` 里。新增 `pipeline/evidence_export.py`：
+
+- 研判段证据构建后旁路落盘（`AEGIS_EVIDENCE_EXPORT_DIR`，**默认关**——校准采集是
+  显式动作不是常驻开销）；
+- 每行 = 一次证据事实：`case_id`（= 链路 `event_id`，**真值标注表 `case_id` 就是它**——
+  校准配对键从此天然对上）、`region_code`、`candidate_hazards`、`observations`
+  （`FactorObservation` 原样）、`unmapped_metrics`；
+- append-only 不追改（改历史等于伪造观测）；写盘失败只计数不炸链路（旁路纪律）；
+- **一对契约有测试钉着**：导出行直接喂 `calibrate_factor_weights._read_observations`
+  （单测）+ e2e 真跑链路后 `case_id` 对得上链路事实、`rainfall_mm_h` 在观测里
+  （`test_evidence_export_e2e.py`）。
+
+### 门禁与用例
+
+全量 **4,479 / 0 failed / 119 skipped（49.7s）**；新增：站点表生成器 12、
+取数收敛 2、导出器 4、导出 e2e 1。ruff / mypy 367 文件全绿。
+
+### 仍未做（不声称）
+
+- CHM_PRE 2020–2025 取数仍在后台（约 100 KB/s，过夜）；落地后跑
+  `derive_precip_station_daily.py --stations data/precip/stations.csv` 出派生表；
+- 校准从 `not_measured` 变 `measured` 还差**真值标注积累**（数据问题，不是代码问题）；
+- 代理点坐标是县治（Wikidata），雨强的空间代表性未现场核对；接入实测站后应
+  用 `import_stations` 把同一份表登记进站点维表（列名 lon/lat，导入器会拒多余列，
+  生成器当前不产出维表形态）。

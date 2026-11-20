@@ -49,6 +49,7 @@ from aegis.observability import instrumentation
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.assess_input import AssessEvidenceBuilder
 from aegis.pipeline.board import ChainBoard
+from aegis.pipeline.evidence_export import EvidenceExporter
 from aegis.pipeline.publisher import WarningPublisher
 from aegis.services.interpret.text_guard import invented_numbers
 from aegis.services.response.delivery import AllChannelsFailedError, DeliveryDispatcher
@@ -167,6 +168,7 @@ class HazardStages:
         retrieval: HybridRetrievalService | None = None,
         suggestions: SuggestionSink | None = None,
         assess_evidence: AssessEvidenceBuilder | None = None,
+        evidence_exporter: EvidenceExporter | None = None,
     ) -> None:
         self._gateway = gateway
         self._registry = registry
@@ -193,6 +195,8 @@ class HazardStages:
         self._retrieval = retrieval
         self._suggestions = suggestions
         self._assess_evidence = assess_evidence
+        # 校准观测采集（默认关）：证据构建时把 assess.v1 证据包旁路落盘，供权重校准直读。
+        self._evidence_exporter = evidence_exporter
 
     @property
     def settings(self) -> Settings:
@@ -530,6 +534,17 @@ class HazardStages:
 
         window = self._assess_evidence.window if self._assess_evidence is not None else f"{self._settings.assess_window_minutes}m"
         candidates = self._candidate_hazards(hits)
+        if evidence is not None and self._evidence_exporter is not None:
+            # 校准观测采集是旁路：写盘失败只计数不炸段（导出器自己告警日志）。
+            # 挂在 window/candidates 都算完之后——导出行要的就是这次研判真正用的口径。
+            self._evidence_exporter.export(
+                case_id=result.event_id,
+                trace_id=trace,
+                region_code=region,
+                evidence=evidence,
+                candidate_hazards=[hazard.value for hazard in candidates],
+                window=window,
+            )
         request = AssessRequest(
             region_code=region,
             window=window,

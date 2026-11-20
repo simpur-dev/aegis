@@ -65,6 +65,7 @@ from aegis.observability.metrics import MetricsExporter
 from aegis.observability.telemetry import telemetry_status
 from aegis.observability.tracer import Tracer
 from aegis.pipeline.assess_input import AssessEvidenceBuilder
+from aegis.pipeline.evidence_export import EvidenceExporter
 from aegis.pipeline.publisher import WarningPublisher
 from aegis.pipeline.report_intake import ReportIntake
 from aegis.pipeline.stages import HazardStages
@@ -885,6 +886,8 @@ def create_container(
     suggestions = ThresholdSuggestionService(store=store, rule_engine=rule_engine)
     # 证据包与 dev 环境同源：窗口取配置，存储不可达时 builder 自己降级成"只有 board 读数"。
     assess_evidence = AssessEvidenceBuilder(store, window_minutes=cfg.assess_window_minutes)
+    # 校准观测采集（默认关）：填了导出目录才把研判证据旁路落盘——校准骨架的 --observations 直读它。
+    evidence_exporter = EvidenceExporter(cfg.evidence_export_dir) if (cfg.evidence_export_dir or "").strip() else None
     # D7 §4.6 第 4 步：段的判定与记账在 `HazardStages`，段的先后由标准五段模板的边决定。
     # 这里刻意不再另建一个"固定顺序编排器"——两条路径并存的那段日子，parity 用例是唯一的护栏，
     # 而护栏不该是常驻成本（退役过程见 REPORT 的 D7 第 4 步一节）。
@@ -903,6 +906,7 @@ def create_container(
         retrieval=retrieval,
         suggestions=suggestions,
         assess_evidence=assess_evidence,
+        evidence_exporter=evidence_exporter,
     )
     # 段的执行口先于引擎：引擎的服务里要摆这个可调用，而它只依赖段与盘面，不依赖引擎本身。
     stations = ChainStations(stages)
