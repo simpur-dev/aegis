@@ -33,7 +33,7 @@ from scripts.external_data.core import (
     write_jsonl,
     write_manifest,
 )
-from scripts.external_data.xlsx import read_first_sheet
+from scripts.external_data.table import read_first_sheet
 
 DATASET_ID = "zenodo-parlung-zangbo-glacial-lakes"
 ZENODO_RECORD = 20305493
@@ -58,13 +58,34 @@ def _record_meta() -> dict[str, Any]:
 
 
 def _to_float(value: Any) -> float | None:
-    text = str(value or "").strip()
+    """数值转换：**只有空值/非数值才返回 None**。
+
+    注意不能用 `value or ""`——数值 `0.0` 是 falsy，会被当成"缺失"。
+    "测到是 0" 与 "没测到" 是两件事，后者才是 None。
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
     if not text:
         return None
     try:
         return float(text)
     except ValueError:
         return None
+
+
+def _text(value: Any) -> str:
+    """表格数值 → 文本：整数值不带 `.0`（`0.0` → `"0"`）。
+
+    calamine 把 Excel 数值一律读成 float，而历史产物是按单元格原始文本写的
+    （`0`、`4864`）。不做这一步，刷新一次 3,224 条记录的 `source_name` 就会从
+    `"0"` 变成 `"0.0"`——语义没变，但 diff 全是噪声。
+    """
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
 
 
 def _records_from_sheet(rows: list[dict[str, Any]], year: int) -> list[dict[str, Any]]:
@@ -82,13 +103,13 @@ def _records_from_sheet(rows: list[dict[str, Any]], year: int) -> list[dict[str,
                 "source": {
                     "dataset": DATASET_ID,
                     "inventory_year": year,
-                    "source_name": str(row.get("FID", "")) or None,
+                    "source_name": _text(row.get("FID")) or None,
                     "source_url": f"https://zenodo.org/records/{ZENODO_RECORD}",
                     "license": LICENSE_ID,
                 },
                 "event": {
                     "date": None,
-                    "title": str(row.get("Nearest glacier", "") or "") or None,
+                    "title": _text(row.get("Nearest glacier")) or None,
                     "description": None,
                     "location": "帕隆藏布流域（雅鲁藏布江支流，藏东南）",
                     "location_accuracy": None,
@@ -115,9 +136,9 @@ def _records_from_sheet(rows: list[dict[str, Any]], year: int) -> list[dict[str,
                         "slope_max_deg": _to_float(row.get("Max_Slope")),
                         "slope_avg_deg": _to_float(row.get("Avg_Slope")),
                         "nearest_glacier_m": _to_float(row.get("Nearest glacier")),
-                        "glacier_contact": str(row.get("Presence", "") or "") or None,
-                        "lake_type": str(row.get("Glacial lake type", "") or "") or None,
-                        "lake_classification": str(row.get("Glacial lake classification", "") or "") or None,
+                        "glacier_contact": _text(row.get("Presence")) or None,
+                        "lake_type": _text(row.get("Glacial lake type")) or None,
+                        "lake_classification": _text(row.get("Glacial lake classification")) or None,
                         "projected_x": _to_float(row.get("Centroid X coordinate")),
                         "projected_y": _to_float(row.get("Centroid Y coordinate")),
                     },

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "generated_at": "2026-11-12T06:22:53.807773+00:00",
+  "generated_at": "2026-11-20T13:36:40.397258+00:00",
   "datasets": [
     {
       "id": "zenodo-parlung-zangbo-glacial-lakes",
@@ -35,7 +35,7 @@
         "只覆盖帕隆藏布流域（藏东南），**不覆盖全藏冰湖**。",
         "两期清单的字段不完全一致（2025 版多了体积与冰湖分类），缺失项留 null。"
       ],
-      "retrieved_at": "2026-11-12T06:22:53.807773+00:00",
+      "retrieved_at": "2026-11-20T13:36:40.397258+00:00",
       "files": {
         "raw/parlung_zangbo_glacial_lakes.zip": {
           "sha256": "60b91332942e567ce0c0ebc3bc4e58f5da269c258ba0826be9b9cb2de33e686c",
@@ -50,8 +50,8 @@
           "bytes": 1018584
         },
         "normalized/parlung_zangbo_glacial_lakes.v1.jsonl": {
-          "sha256": "3168c5c6ce234e57094429a38454da10aea13ed31fe70b957b7d4180ab5affd5",
-          "bytes": 3951991,
+          "sha256": "c6dc25a098374bf9ffcdad52de341998c6ed509918171a47dd401bf58f436cb1",
+          "bytes": 3951713,
           "rows": 3224
         }
       }
