@@ -60,13 +60,15 @@ data/external/
 | [`zenodo-himalaya-landslide-inventories`](zenodo-himalaya-landslide-inventories/README.md) | 东喜马拉雅大型滑坡 420 点 + 全球巨型滑坡 MEGAS 411 条 | **灾害本体** | **CC BY 4.0** | 831 | 藏东南—尼泊尔东部；MEGAS 中国 26 条 |
 | [`sciencedb-tibet-road-geohazard-2022`](sciencedb-tibet-road-geohazard-2022/README.md) | 西藏公路地质灾害普查（崩塌/水毁/沉陷塌陷/泥石流/滑坡） | **事件 + 隐患点** | **CC BY-NC 4.0** | 13,768 | 公路沿线普查；事件时间 2012-07 至 2022-09 |
 | [`nasa-glc`](nasa-glc/README.md) | NASA 全球滑坡目录（中国 / 西藏子集） | **历史事件** | public domain（NASA） | 中国 426 / 西藏 16 | 2007-01 至 2016-10；以降雨触发为主（另有地震 7 / 采矿 6 / 融雪 4 等），媒体源 |
+| [`pangaea-debris-flow-magnitude`](pangaea-debris-flow-magnitude/README.md) | 全球泥石流规模目录（体积/面积/火后/成因） | **规模编目（非事件）** | **CC BY 3.0** | 988 | 全球；无坐标，只有地名与文献出处 |
 
-**现在仓里能回答的问题**（说明为什么是这五套）：
+**现在仓里能回答的问题**（说明为什么是这六套）：
 
 - "**某地有没有滑坡体**" → tpdc + zenodo 两套点位；
 - "**冰湖在哪、多大、离冰川多远**" → zenodo 冰湖清单（3,224 个，两期可比较）；
 - "**滑坡的坡度/地层/泥石流的比降与发育阶段**" → tpdc 的专业属性；
 - "**发生过什么、死了多少人**" → 公路普查 + NASA GLC；
+- "**一次泥石流有多大（体积/面积/是否火后）**" → PANGAEA 规模目录（988 条，无坐标）；
 - "**触发因子（降雨）**" → **目录里没有**，但**平台已经接上了外部降水**：
   TPDC 全国 0.1° 格点降水 V2（**CC BY 4.0**，逐日 1960–2025，全藏，46.8 GB）落**运行态目录**
   （`backend/data/precip/`，不进 git），取件与派生由

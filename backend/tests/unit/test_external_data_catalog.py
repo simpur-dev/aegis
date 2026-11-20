@@ -32,12 +32,13 @@ from aegis.domain.enums import HazardType
 DATA_ROOT = Path(__file__).resolve().parents[3] / "data" / "external"
 
 #: 允许随仓库再分发的许可；`nc-*` 是**例外**，必须同时满足 NC 隔离四条。
-REDISTRIBUTABLE_LICENSES = {"public-domain", "cc0-1.0", "cc-by-4.0"}
+REDISTRIBUTABLE_LICENSES = {"public-domain", "cc0-1.0", "cc-by-3.0", "cc-by-4.0"}
 NON_COMMERCIAL_LICENSES = {"cc-by-nc-4.0", "cc-by-nc-sa-4.0"}
 
 #: 各数据集的实测条数（源数据变动时必须在这里显式改，防止"悄悄换了数据"）。
 EXPECTED_ROWS: dict[str, int] = {
     "nasa-glc": 426,
+    "pangaea-debris-flow-magnitude": 988,
     "sciencedb-tibet-road-geohazard-2022": 13_768,
     "tpdc-himalaya-geohazard-2006-2009": 525,
     "zenodo-himalaya-landslide-inventories": 831,
@@ -168,6 +169,30 @@ def test_nasa_glc_条数与类型分布() -> None:
     assert all(row["geo"]["longitude"] is not None and row["geo"]["latitude"] is not None for row in china), "NASA 子集每条都有坐标"
     # 空值语义：未报 ≠ 0
     assert any(row["impact"]["fatalities"] is None for row in china), "未报的死亡数应是 null 而不是 0"
+
+
+# ============================================================
+# PANGAEA 全球泥石流规模目录（CC BY 3.0）
+# ============================================================
+
+
+def test_pangaea_规模目录条数与空值语义() -> None:
+    rows = _rows("pangaea-debris-flow-magnitude", "normalized/global_debris_flow_magnitude.v1.jsonl")
+    assert len(rows) == EXPECTED_ROWS["pangaea-debris-flow-magnitude"]
+    # 规模目录没有坐标：全部 null（不臆造）
+    assert all(row["geo"]["latitude"] is None and row["geo"]["longitude"] is None for row in rows)
+    # 体积全部有值；面积大量缺失（源目录只对部分事件估算）
+    attributes = [row["hazard"]["attributes"] for row in rows]
+    assert all(item["volume_m3"] is not None for item in attributes)
+    assert sum(1 for item in attributes if item["area_m2"] is None) == 860
+    # Post-fire 三段值 + 空：264 yes / 663 no / 9 "no evidence…" / 52 空
+    post = Counter(item["post_fire"] for item in attributes)
+    assert post["yes"] == 264 and post["no"] == 663 and post[None] == 52
+    assert sum(1 for item in attributes if (item["post_fire"] or "").startswith("no evidence")) == 9
+    # 与 GLC 泥石流事件分表：source_category 固定，不混进事件计数
+    assert {row["hazard"]["source_category"] for row in rows} == {"debris_flow_magnitude_catalog"}
+    # 主键 Ord No 1..988 唯一
+    assert sorted(int(row["source"]["event_id"]) for row in rows) == list(range(1, 989))
 
 
 # ============================================================

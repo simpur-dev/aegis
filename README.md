@@ -45,7 +45,7 @@ aegis/
 │   ├── stu.v1.schema.json
 │   └── AGENT_INTEGRATION_SPEC.v1.md
 ├── archive/                   # 存档区（不进主线构建）：外部模块并入前的原始物料与占位说明的溯源副本
-├── data/                      # 外部公开数据（5 套：NASA GLC public domain / 公路地灾普查 CC BY-NC / TPDC 喜马拉雅 CC BY-NC-SA / Zenodo 滑坡与冰湖 CC BY；许可与校验见 data/external/README.md）
+├── data/                      # 外部公开数据（6 套：NASA GLC public domain / PANGAEA 泥石流规模 CC BY 3.0 / 公路地灾普查 CC BY-NC / TPDC 喜马拉雅 CC BY-NC-SA / Zenodo 滑坡与冰湖 CC BY；许可与校验见 data/external/README.md）
 ├── backend/
 │   ├── src/aegis/
 │   │   ├── config.py          # 运行配置与考核指标阈值口径（唯一配置面）
@@ -99,13 +99,13 @@ aegis/
 > ADR 按惯例不移动；`docs/` 下的外部论文 PDF 是参考文献，无过时性。
 
 > **两类数据目录别混**：`data/external/` 放**外部公开数据**（随仓库发布，每个数据集带
-> `manifest.json` / `schema.json` / 可复跑抓取脚本）。共 5 套：NASA GLC（public domain）、
+> `manifest.json` / `schema.json` / 可复跑抓取脚本）。共 6 套：NASA GLC（public domain）、PANGAEA 泥石流规模目录（**CC BY 3.0**）、
 > 公路地灾普查（**CC BY-NC 4.0**）、TPDC 喜马拉雅调查（**CC BY-NC-SA 4.0**）、
 > Zenodo 滑坡与冰湖清单（**CC BY 4.0**）。默认只收许可允许再分发的数据；**NC 两套是
 > 经批准的唯一例外**——独立目录、独立许可文件、manifest 标 `commercial_use: false`，
 > **商用发行前必须整目录移除**。运行态数据（遥测、预警、模型权重、反馈记忆）在
 > `backend/data/`，不入库。NC/ND/需登录的数据默认不收，只在 `data/external/README.md`
-> 的"未收清单"里记录原因（含**触发因子降水**仍缺这一事实）。
+> 的"未收清单"里记录原因（触发因子降水走**运行态目录**、不入本目录）。
 
 ## 2. 部署与运行
 

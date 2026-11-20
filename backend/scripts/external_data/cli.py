@@ -26,6 +26,7 @@ from typing import Any
 #: 数据集 id → 模块名。顺序即目录索引顺序。
 MODULES: dict[str, str] = {
     "nasa-glc": "nasa_glc",
+    "pangaea-debris-flow-magnitude": "pangaea_debris_flow",
     "sciencedb-tibet-road-geohazard-2022": "scidb_census",
     "tpdc-himalaya-geohazard-2006-2009": "tpdc_himalaya",
     "zenodo-himalaya-landslide-inventories": "zenodo_himalaya",

@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-11-20T13:44:49.438824+00:00",
+  "datasets": [
+    {
+      "id": "pangaea-debris-flow-magnitude",
+      "title": "Debris flow magnitudes: a global catalog（全球泥石流规模目录）",
+      "publisher": "PANGAEA",
+      "authors": [
+        "Riley, Karin L",
+        "Bendick, Rebecca",
+        "Hyde, Kevin D"
+      ],
+      "license": {
+        "id": "cc-by-3.0",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "commercial_use": true,
+        "note": "CC BY 3.0：允许署名后的再分发与商业使用（须保留署名与许可链接）。"
+      },
+      "citation": "Riley, Karin L; Bendick, Rebecca; Hyde, Kevin D (2012): Debris flow magnitudes: a global catalog. PANGAEA. https://doi.org/10.1594/PANGAEA.783654. CC BY 3.0.",
+      "source": {
+        "landing_url": "https://doi.pangaea.de/10.1594/PANGAEA.783654",
+        "textfile": "https://doi.pangaea.de/10.1594/PANGAEA.783654?format=textfile"
+      },
+      "doi": "10.1594/PANGAEA.783654",
+      "selection": {
+        "scope": "目录全部 988 条记录（无筛选）",
+        "exclusions": []
+      },
+      "normalization": {
+        "read_stack": "polars（全列字符串读入 → 显式 cast）+ pandera（polars 后端）列/类型/值域校验",
+        "date_rule": "Sampling date 尝试 %B %d, %Y 等格式；解析不了留 null，原文在 event.date_raw",
+        "geo_rule": "源目录只有地名（Area 列）没有坐标——lat/lon 留 null，不臆造",
+        "category_rule": "与 NASA GLC 的泥石流**事件**分目录：本目录是规模编目，不是事件表"
+      },
+      "known_limitations": [
+        "**规模目录，不是事件表**：没有坐标、没有伤亡、没有逐条发生时间；不能当灾情事件库用。",
+        "采样日期约一半为空（517/988）；`Post-fire` 有 52 条为空、9 条是『no evidence for fire (charcoal not found…)』——按原值保留，`post_fire_flag` 只对 yes/no 给布尔。",
+        "面积缺失 860/988（源目录只对部分事件估算了堆积面积）。",
+        "与 GLC 的泥石流事件可能有重叠，但两者口径不同（GLC 是媒体报道事件，本目录是文献规模汇编），本目录不做去重合并。"
+      ],
+      "retrieved_at": "2026-11-20T13:44:49.438824+00:00",
+      "files": {
+        "raw/pangaea_783654_debris_flow_magnitude.tsv": {
+          "sha256": "de7146be12a23187c63444a9a8cce7ae9560f584ad69e3ab0c14df448a0bc38a",
+          "bytes": 265528
+        },
+        "normalized/global_debris_flow_magnitude.v1.jsonl": {
+          "sha256": "ec8339ad3551b3ca7d9504009f0e36daf8d9387c547dee07256905b2c658f40a",
+          "bytes": 1098558,
+          "rows": 988
+        }
+      }
+    }
+  ]
+}

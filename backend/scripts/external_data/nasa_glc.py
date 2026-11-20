@@ -12,10 +12,11 @@
 
 from __future__ import annotations
 
-import csv
 import io
 from pathlib import Path
 from typing import Any
+
+import polars as pl
 
 from scripts.external_data.core import (
     DatasetSpec,
@@ -157,75 +158,83 @@ def spec(source_sha256: str, source_bytes: int, source_rows: int) -> DatasetSpec
     )
 
 
+def by_date(row: dict[str, str]) -> tuple[str, int]:
+    return (_date(row["event_date"]), int(row["event_id"]))
+
+
+def _normalize_rows(selected: list[dict[str, str]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for row in sorted(selected, key=by_date):
+        category = (row["landslide_category"] or "").strip()
+        raw_date = (row["event_date"] or "").strip()
+        out.append(
+            {
+                "schema_version": "1.0.0",
+                "record_id": f"{DATASET_ID}:{row['event_id']}",
+                "source": {
+                    "dataset": DATASET_ID,
+                    "event_id": row["event_id"],
+                    "source_name": (row["source_name"] or "").strip() or None,
+                    "source_url": (row["source_link"] or "").strip() or None,
+                    "license": LICENSE_ID,
+                },
+                "event": {
+                    "date": _date(row["event_date"]),
+                    "time_raw": raw_date.partition(" ")[2] or None,
+                    "title": (row["event_title"] or "").strip() or None,
+                    "description": (row["event_description"] or "").strip() or None,
+                    "location": (row["location_description"] or "").strip() or None,
+                    "location_accuracy": (row["location_accuracy"] or "").strip() or None,
+                    "storm_name": (row["storm_name"] or "").strip() or None,
+                    "notes": (row["notes"] or "").strip() or None,
+                },
+                "geo": {
+                    "latitude": float(row["latitude"]),
+                    "longitude": float(row["longitude"]),
+                    "country": (row["country_name"] or "").strip() or None,
+                    "admin_division": (row["admin_division_name"] or "").strip() or None,
+                },
+                "hazard": {
+                    "type": CATEGORY_MAP.get(category, "unknown"),
+                    "source_category": category or None,
+                    "attributes": {
+                        "trigger": (row["landslide_trigger"] or "").strip() or None,
+                        "size": (row["landslide_size"] or "").strip() or None,
+                        "setting": (row["landslide_setting"] or "").strip() or None,
+                    },
+                },
+                "impact": {
+                    "fatalities": _count(row["fatality_count"]),
+                    "injuries": _count(row["injury_count"]),
+                },
+            }
+        )
+    return out
+
+
 def refresh(source: Path | None = None) -> Path:
     """重抓并重写 raw / normalized / manifest。
 
     `source` 给定时从本地副本读（离线复跑用），不给则联网下载。
     """
     raw = source.read_bytes() if source is not None else download(SOURCE_URL)
-    text = raw.decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text))
-    fields = list(reader.fieldnames or [])
+    # polars 严格读：全列按字符串读入（infer_schema_length=0）——源文件的描述字段里有
+    # 内嵌换行，标准 CSV 解析器（polars/csv 模块）都按引号规则处理，数行才会数错。
+    frame = pl.read_csv(
+        io.BytesIO(raw),
+        separator=",",
+        infer_schema_length=0,
+        null_values=[""],
+    )
+    fields = frame.columns
     missing = [name for name in RAW_FIELDS if name not in fields]
     if missing:
         raise SystemExit(f"源文件缺列: {missing}；上游字段变了，先核对再改脚本")
-    rows = list(reader)
+    rows = frame.to_dicts()
 
     china = [row for row in rows if (row["country_name"] or "").strip() == "China"]
     tibet_raw = [row for row in china if (row["admin_division_name"] or "").strip() == "Tibet Autonomous Region"]
     tibet_kept = [row for row in tibet_raw if row["event_id"] not in TIBET_EXCLUSIONS]
-
-    def by_date(row: dict[str, str]) -> tuple[str, int]:
-        return (_date(row["event_date"]), int(row["event_id"]))
-
-    def normalize(selected: list[dict[str, str]]) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for row in sorted(selected, key=by_date):
-            category = (row["landslide_category"] or "").strip()
-            raw_date = (row["event_date"] or "").strip()
-            out.append(
-                {
-                    "schema_version": "1.0.0",
-                    "record_id": f"{DATASET_ID}:{row['event_id']}",
-                    "source": {
-                        "dataset": DATASET_ID,
-                        "event_id": row["event_id"],
-                        "source_name": (row["source_name"] or "").strip() or None,
-                        "source_url": (row["source_link"] or "").strip() or None,
-                        "license": LICENSE_ID,
-                    },
-                    "event": {
-                        "date": _date(row["event_date"]),
-                        "time_raw": raw_date.partition(" ")[2] or None,
-                        "title": (row["event_title"] or "").strip() or None,
-                        "description": (row["event_description"] or "").strip() or None,
-                        "location": (row["location_description"] or "").strip() or None,
-                        "location_accuracy": (row["location_accuracy"] or "").strip() or None,
-                        "storm_name": (row["storm_name"] or "").strip() or None,
-                        "notes": (row["notes"] or "").strip() or None,
-                    },
-                    "geo": {
-                        "latitude": float(row["latitude"]),
-                        "longitude": float(row["longitude"]),
-                        "country": (row["country_name"] or "").strip() or None,
-                        "admin_division": (row["admin_division_name"] or "").strip() or None,
-                    },
-                    "hazard": {
-                        "type": CATEGORY_MAP.get(category, "unknown"),
-                        "source_category": category or None,
-                        "attributes": {
-                            "trigger": (row["landslide_trigger"] or "").strip() or None,
-                            "size": (row["landslide_size"] or "").strip() or None,
-                            "setting": (row["landslide_setting"] or "").strip() or None,
-                        },
-                    },
-                    "impact": {
-                        "fatalities": _count(row["fatality_count"]),
-                        "injuries": _count(row["injury_count"]),
-                    },
-                }
-            )
-        return out
 
     root = dataset_dir(DATASET_ID)
     china_path = root / "raw" / "glc_export_rows.china.csv"
@@ -235,10 +244,10 @@ def refresh(source: Path | None = None) -> Path:
         "raw/glc_export_rows.tibet_admin_labeled.csv": write_bytes(_csv_bytes(fields, tibet_raw), tibet_path),
     }
     files["normalized/china_landslide_events.v1.jsonl"] = write_envelope(
-        normalize(china), root / "normalized" / "china_landslide_events.v1.jsonl"
+        _normalize_rows(china), root / "normalized" / "china_landslide_events.v1.jsonl"
     )
     files["normalized/tibet_landslide_events.v1.jsonl"] = write_envelope(
-        normalize(tibet_kept), root / "normalized" / "tibet_landslide_events.v1.jsonl"
+        _normalize_rows(tibet_kept), root / "normalized" / "tibet_landslide_events.v1.jsonl"
     )
     # raw 投影的行数也登记进去（走真正的 CSV 解析：描述字段里有内嵌换行，数行会数错）。
     for key in ("raw/glc_export_rows.china.csv", "raw/glc_export_rows.tibet_admin_labeled.csv"):
