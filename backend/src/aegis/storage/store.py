@@ -75,16 +75,37 @@ class BoundedCollection(Generic[T]):
 
 class TelemetryStore:
     def __init__(self, maxlen: int = 50_000) -> None:
-        self._collection: BoundedCollection[TelemetryReading] = BoundedCollection(maxlen)
+        # 按 region_code 分桶：窗口查询（`AssessEvidenceBuilder._collect`）总是带 region，
+        # 全表扫 5 万条换成只扫该区那一段。桶内保持全局追加顺序，`rows[-limit:]` 语义不变。
+        # 淘汰同步靠 `on_evict`：deque(maxlen) 挤条目是静默的，桶不跟着弹就会无界增长。
+        self._by_region: dict[str, deque[TelemetryReading]] = {}
+        self._collection: BoundedCollection[TelemetryReading] = BoundedCollection(maxlen, on_evict=self._evict)
         # 站点存在性台账：station_id -> region_code（首次见到该站读数时登记）。
         # 读数被有界淘汰时这条登记**不撤回**——"这个站报过数"是发生过的事实，不该随窗口滑动消失。
         self._stations: dict[str, str] = {}
+
+    def _evict(self, reading: TelemetryReading) -> None:
+        """读数被挤出上限时，从它所属的 region 桶里同步移除（deque 最左端）。"""
+        key = reading.region_code or ""
+        bucket = self._by_region.get(key)
+        if bucket is None:
+            return
+        if bucket and bucket[0] is reading:
+            bucket.popleft()
+        else:  # pragma: no cover - 桶序与全局序不一致时才走到；按身份兜底删一次
+            from contextlib import suppress
+
+            with suppress(ValueError):
+                bucket.remove(reading)
+        if not bucket:
+            self._by_region.pop(key, None)
 
     async def add(self, readings: Iterable[TelemetryReading]) -> int:
         items = list(readings)
         for reading in items:
             if reading.station_id:
                 self._stations.setdefault(reading.station_id, reading.region_code or "")
+            self._by_region.setdefault(reading.region_code or "", deque()).append(reading)
         return await self._collection.add_many(items)
 
     def observed_stations(self) -> list[tuple[str, str]]:
@@ -105,8 +126,10 @@ class TelemetryStore:
             raise ValueError("limit 必须为正")
         since_iso = _to_iso(since)
         until_iso = _to_iso(until)
+        # 带 region 的查询走 region 桶（窗口查询总是带 region）；不带才退到全量快照。
+        candidates = self._by_region.get(region_code, ()) if region_code else self._collection.snapshot()
         rows = []
-        for reading in self._collection.snapshot():
+        for reading in candidates:
             if station_id and reading.station_id != station_id:
                 continue
             if metric and reading.metric != metric:

@@ -272,11 +272,17 @@ def compute_factor_assessment(observations, region: str, config: dict) -> dict:
             }
 
     # ---------- 权重确定（含路由变体） ----------
+    # 默认权重按组预计算：此前每个因子都 `next()` 线性扫一遍组内因子（O(F²)，
+    # 组内 2–6 个因子时很小，但没有任何理由留着）。
+    default_weights: dict[str, dict[str, float]] = {
+        group: {f["key"]: f["weight"] for f in factors} for group, factors in groups_cfg.items()
+    }
+
     def group_weight(group, key):
         if key in weights_override.get(group, {}):
             return weights_override[group][key], "route_variant"
-        factor = next((f for f in groups_cfg.get(group, []) if f["key"] == key), None)
-        return (factor["weight"], "default") if factor else (None, "default")
+        weight = default_weights.get(group, {}).get(key)
+        return (weight, "default") if weight is not None else (None, "default")
 
     # ---------- 分组评分（缺失重归一 + 覆盖率门控） ----------
     group_scores, completeness, missing_required = {}, {}, []

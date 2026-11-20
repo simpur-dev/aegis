@@ -183,19 +183,24 @@ class AssessEvidenceBuilder:
         raw, store_capped = self._collect(region, readings or (), since, moment)
         notes: list[str] = []
 
-        dropped_quality = sum(1 for reading in raw if reading.quality_flag != "ok")
-        dropped_region = sum(1 for reading in raw if reading.region_code != region)
-        in_scope = [reading for reading in raw if reading.region_code == region and reading.quality_flag == "ok"]
-        finite: list[TelemetryReading] = []
+        # 单趟过滤 + 分组：此前对 raw 走了 5 趟（两个 sum、一个 listcomp、一个有限值循环、
+        # 一个分组循环）。窗口上限 5,000 条时这些全pass 是白花的；结果口径逐项不变。
+        dropped_quality = 0
+        dropped_region = 0
         non_finite = 0
-        for reading in in_scope:
-            if self._is_finite(reading.value):
-                finite.append(reading)
-            else:
-                non_finite += 1
-
+        finite: list[TelemetryReading] = []
         by_metric: dict[str, list[TelemetryReading]] = {}
-        for reading in finite:
+        for reading in raw:
+            if reading.quality_flag != "ok":
+                dropped_quality += 1
+            if reading.region_code != region:
+                dropped_region += 1
+            if reading.region_code != region or reading.quality_flag != "ok":
+                continue
+            if not self._is_finite(reading.value):
+                non_finite += 1
+                continue
+            finite.append(reading)
             by_metric.setdefault(reading.metric, []).append(reading)
 
         observations: list[FactorObservation] = []
@@ -362,12 +367,16 @@ class AssessEvidenceBuilder:
 
     @staticmethod
     def _derive_displacement(group: list[TelemetryReading]) -> FactorObservation | None:
+        # 先按站分一次组，再逐站排序：此前是"每个站都把整组重扫一遍"的 O(站×组)。
+        by_station: dict[str, list[TelemetryReading]] = {}
+        for reading in group:
+            by_station.setdefault(reading.station_id, []).append(reading)
         rates: list[float] = []
         samples = 0
         stations: set[str] = set()
         latest = ""
-        for station in sorted({reading.station_id for reading in group}):
-            ordered = sorted((reading for reading in group if reading.station_id == station), key=lambda reading: reading.observed_at)
+        for station in sorted(by_station):
+            ordered = sorted(by_station[station], key=lambda reading: reading.observed_at)
             if len(ordered) < 2:
                 continue
             elapsed_h = (parse_iso(ordered[-1].observed_at) - parse_iso(ordered[0].observed_at)).total_seconds() / 3_600
@@ -493,11 +502,20 @@ class AssessEvidenceBuilder:
             return evidence
         notes = list(evidence.notes)
         observations = list(evidence.observations)
-        while observations and self._payload_size(evidence) > self._max_payload_bytes:
-            observations.pop()
-            evidence = evidence.model_copy(update={"observations": observations})
-        notes.append(f"证据包超过 {self._max_payload_bytes} 字节，已裁剪到 {len(observations)} 条观测")
-        return evidence.model_copy(update={"notes": notes[:16], "truncated": True})
+        # 二分找"还能装下的最长前缀"：此前是每弹一条就把整份证据包重新 json.dumps 一遍
+        # （O(裁剪数 × 包体)）。观测被移除时包体单调减小，所以二分与逐条弹的**落点数相同**，
+        # 只是序列化次数从 O(k) 降到 O(log k)。
+        low, high = 0, len(observations)
+        while low < high:
+            middle = (low + high + 1) // 2
+            candidate = evidence.model_copy(update={"observations": observations[:middle]})
+            if self._payload_size(candidate) <= self._max_payload_bytes:
+                low = middle
+            else:
+                high = middle - 1
+        kept = observations[:low]
+        notes.append(f"证据包超过 {self._max_payload_bytes} 字节，已裁剪到 {len(kept)} 条观测")
+        return evidence.model_copy(update={"observations": kept, "notes": notes[:16], "truncated": True})
 
 
 __all__ = ["DERIVATIONS", "UNMAPPED_REASONS", "AssessEvidenceBuilder", "Derivation"]
