@@ -446,8 +446,11 @@ async def run(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
         print(f"\n[已写入] {out}", file=sys.stderr)
-    # 只有"现场标注数据集判出不达标"才算这次报表失败；未量测不是失败，是如实的空结论
-    return 1 if fatal or accuracy.indicator in {"not_met", "insufficient_sample"} else 0
+    # 只有"现场标注数据集判出不达标"才算这次报表失败；未量测（not_measured）不是失败，
+    # 是如实的空结论——Indicator 的值域是 {not_measured, synthetic_only, met, not_met}，
+    # 此前死条件里的 "insufficient_sample" 是 Status 字面量，永远取不到（样本不足时
+    # indicator 是 not_measured）。
+    return 1 if fatal or accuracy.indicator == "not_met" else 0
 
 
 def main() -> int:

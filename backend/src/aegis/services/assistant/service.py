@@ -422,6 +422,10 @@ class AssistantService:
     ) -> dict[str, Any]:
         """不经对话直接创建动作（供 UI 按钮与多步执行）。读动作会直接执行，写动作落 `proposed`。"""
         action = self._registry.require(action_name)
+        # 写频控与对话路径同一口径（此前直建路径绕过 `_writes`，UI 按钮可以无限建提案）：
+        # 匿名写动作不占频控（执行器处会以 E_OPERATOR_REQUIRED 拒绝），与对话路径一致。
+        if action.spec.writes and operator is not None and not self._writes.allow(operator.operator_id):
+            return {"status": "rate_limited", "action_id": None, "action": action_name, "result": {}}
         ctx = ActionContext(
             session_id="",
             utterance=utterance,
