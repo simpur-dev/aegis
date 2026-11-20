@@ -12,11 +12,15 @@ Publisher 反握 `WarningPort` 会让主链路那条只写段缓存的路径无�
 
 from __future__ import annotations
 
+import logging
+
 from aegis.bus import subjects
 from aegis.bus.gateway import AgentGateway
 from aegis.domain.enums import Action, RiskLevel
-from aegis.domain.messages import WarningRecord, make_event, now_iso
+from aegis.domain.messages import DeliveryAttempt, WarningRecord, make_event, now_iso
 from aegis.services.response.delivery import DeliveryDispatcher
+
+log = logging.getLogger("aegis.pipeline.publisher")
 
 
 class WarningPublisher:
@@ -39,12 +43,26 @@ class WarningPublisher:
         """下发并广播。`AllChannelsFailedError` 抛给调用方，由它按自己的链路语义记账。
 
         主链路要把失败写进 `ChainResult.errors`，动作要变成一次 4xx，两边不该被 Publisher 吞掉。
+        **广播失败不在此列**：dispatch 成功后通道账已落（`deliveries`/`released_at`），
+        总线广播（SSE/告警事件面）炸了不该把已送达的预警整条丢账——降级为一条
+        `channel="broadcast"` 的 failed 回执，账面看得到、调用方按成功发布记账。
         """
         if self._dispatcher is None:
             record.released_at = now_iso()
         else:
             await self._dispatcher.dispatch(record)
-        await self._broadcast(record, trace or record.trace_id, drill=drill)
+        try:
+            await self._broadcast(record, trace or record.trace_id, drill=drill)
+        except Exception as exc:
+            log.warning("预警总线广播失败（下发已成功，账不丢）: %s: %s", type(exc).__name__, exc)
+            record.deliveries.append(
+                DeliveryAttempt(
+                    channel="broadcast",
+                    audience_count=0,
+                    status="failed",
+                    attempted_at=now_iso(),
+                )
+            )
         return record
 
     async def _broadcast(self, record: WarningRecord, trace: str, *, drill: bool) -> None:

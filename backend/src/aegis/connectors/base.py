@@ -142,6 +142,11 @@ class IngestService:
             except AegisError as exc:
                 log.warning("遥测发布被拒", extra={"error": exc.message, "station": reading.station_id})
                 return False
+            except Exception as exc:
+                # 传输层的 RuntimeError（如 NATS 断连重连窗口）不是 AegisError——但隔离承诺
+                # 是按"单条读数"立的：一条发不出去只丢这一条的回执，不炸整轮 gather。
+                log.warning("遥测发布失败（传输层）", extra={"error": f"{type(exc).__name__}: {exc}", "station": reading.station_id})
+                return False
 
         outcomes = await asyncio.gather(*(_one(r) for r in readings))
         return sum(1 for o in outcomes if o)
@@ -161,11 +166,21 @@ class IngestService:
         return worst
 
     async def run_loop(self, stop: asyncio.Event, *, interval_seconds: float | None = None) -> int:
-        """周期摄取。返回执行轮次，供测试与优雅关停使用。"""
+        """周期摄取。返回执行轮次，供测试与优雅关停使用。
+
+        每轮自带异常守护：一轮失败（总线断连、存储瞬时故障）记数后继续下一轮，
+        **不允许任务带着未处理异常死掉**——那是"平台活着但再也不进数"的静默停摆
+        （对照 `_escalate_forever` 同一口径；此前 run_loop 无守护，实测口径不一致）。
+        """
         period = interval_seconds or self._settings.simulator_interval_seconds
         rounds = 0
+        failures = 0
         while not stop.is_set():
-            await self.ingest_once()
+            try:
+                await self.ingest_once()
+            except Exception as exc:
+                failures += 1
+                log.exception("摄取轮次失败（第 %d 次）：%s: %s", failures, type(exc).__name__, exc)
             rounds += 1
             try:
                 await asyncio.wait_for(stop.wait(), timeout=period)

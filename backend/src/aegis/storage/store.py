@@ -35,12 +35,22 @@ class BoundedCollection(Generic[T]):
     淘汰通知放在这里，是因为**只有这一处知道上限是多少**。
     """
 
-    def __init__(self, maxlen: int = 10_000, *, on_evict: Callable[[T], None] | None = None) -> None:
+    def __init__(
+        self,
+        maxlen: int = 10_000,
+        *,
+        on_evict: Callable[[T], None] | None = None,
+        on_add: Callable[[T], None] | None = None,
+    ) -> None:
         if maxlen <= 0:
             raise ValueError("maxlen 必须为正")
         self._items: deque[T] = deque(maxlen=maxlen)
         self._lock = asyncio.Lock()
         self._on_evict = on_evict
+        # on_add 在锁内逐条触发：旁路索引（region 桶等）要求数组序 == 集合序。
+        # 此前 TelemetryStore.add 在拿锁**之前**建桶，两个并发 add 的桶序会与集合序分叉，
+        # 淘汰快路径（`bucket[0] is reading`）失配退化成 O(桶) 的等值扫描。
+        self._on_add = on_add
 
     def _append_locked(self, item: T) -> None:
         """在锁内追加一条；满了先通知"即将被挤掉的那条"。"""
@@ -48,6 +58,8 @@ class BoundedCollection(Generic[T]):
             # deque(maxlen) 追加时会静默丢掉最左端 —— 通知必须在 append 之前发。
             self._on_evict(self._items[0])
         self._items.append(item)
+        if self._on_add is not None:
+            self._on_add(item)
 
     async def add(self, item: T) -> None:
         async with self._lock:
@@ -79,7 +91,8 @@ class TelemetryStore:
         # 全表扫 5 万条换成只扫该区那一段。桶内保持全局追加顺序，`rows[-limit:]` 语义不变。
         # 淘汰同步靠 `on_evict`：deque(maxlen) 挤条目是静默的，桶不跟着弹就会无界增长。
         self._by_region: dict[str, deque[TelemetryReading]] = {}
-        self._collection: BoundedCollection[TelemetryReading] = BoundedCollection(maxlen, on_evict=self._evict)
+        self._collection: BoundedCollection[TelemetryReading] = BoundedCollection(maxlen, on_evict=self._evict, on_add=self._index_add)
+        self._moment_cache: dict[str, datetime] = {}
         # 站点存在性台账：station_id -> region_code（首次见到该站读数时登记）。
         # 读数被有界淘汰时这条登记**不撤回**——"这个站报过数"是发生过的事实，不该随窗口滑动消失。
         self._stations: dict[str, str] = {}
@@ -101,12 +114,14 @@ class TelemetryStore:
             self._by_region.pop(key, None)
 
     async def add(self, readings: Iterable[TelemetryReading]) -> int:
-        items = list(readings)
-        for reading in items:
-            if reading.station_id:
-                self._stations.setdefault(reading.station_id, reading.region_code or "")
-            self._by_region.setdefault(reading.region_code or "", deque()).append(reading)
-        return await self._collection.add_many(items)
+        # 站点表与 region 桶都经 on_add 在集合锁内登记（BoundedCollection._append_locked），
+        # 保证"桶序 = 全局序"——并发 add 也不再分叉。
+        return await self._collection.add_many(readings)
+
+    def _index_add(self, reading: TelemetryReading) -> None:
+        if reading.station_id:
+            self._stations.setdefault(reading.station_id, reading.region_code or "")
+        self._by_region.setdefault(reading.region_code or "", deque()).append(reading)
 
     def observed_stations(self) -> list[tuple[str, str]]:
         """报过数的站点，按 station_id 升序：这是"清单"的唯一稳定顺序口径。"""
@@ -124,8 +139,8 @@ class TelemetryStore:
     ) -> list[TelemetryReading]:
         if limit <= 0:
             raise ValueError("limit 必须为正")
-        since_iso = _to_iso(since)
-        until_iso = _to_iso(until)
+        since_moment = _to_utc_moment(since)
+        until_moment = _to_utc_moment(until)
         # 带 region 的查询走 region 桶（窗口查询总是带 region）；不带才退到全量快照。
         candidates = self._by_region.get(region_code, ()) if region_code else self._collection.snapshot()
         rows = []
@@ -136,12 +151,30 @@ class TelemetryStore:
                 continue
             if region_code and reading.region_code != region_code:
                 continue
-            if since_iso and reading.observed_at < since_iso:
+            # 时间窗用 datetime 比较，不用字符串：字符串序会把 +08:00 偏移当成钟表序、
+            # 把毫秒/微秒混精度比错（"...500Z" > "...500000Z"），等时刻边界整批判反。
+            moment = self._moment_of(reading.observed_at)
+            if since_moment is not None and moment < since_moment:
                 continue
-            if until_iso and reading.observed_at > until_iso:
+            if until_moment is not None and moment > until_moment:
                 continue
             rows.append(reading)
         return rows[-limit:]
+
+    def _moment_of(self, observed_at: str) -> datetime:
+        """observed_at → UTC datetime（带缓存：同一时间戳在整表里反复出现）。"""
+        cached = self._moment_cache.get(observed_at)
+        if cached is None:
+            moment = parse_iso(observed_at)
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=UTC)
+            moment = moment.astimezone(UTC)
+            # 缓存随库有界：distinct 时间戳 ≤ 库上限，超限整体清一次（脏一点但不会涨）。
+            if len(self._moment_cache) >= 100_000:
+                self._moment_cache.clear()
+            self._moment_cache[observed_at] = moment
+            return moment
+        return cached
 
     @property
     def size(self) -> int:
@@ -293,7 +326,11 @@ class ControlActionStore:
 
     def __init__(self, maxlen: int = 2_000, *, audit_maxlen: int = 10_000) -> None:
         self._rows: dict[str, dict[str, Any]] = {}
-        self._order: deque[str] = deque(maxlen=maxlen)
+        # 顺序队列不设 maxlen：有界 deque 满员会静默丢最左端，那行还活在 _rows 里却
+        # 永远不在队列上（list 看不见、get 仍能捞到、escalate_due 仍会迭代到）——孤儿行。
+        # 与 WarningStore 同法：显式淘汰。
+        self._order: deque[str] = deque()
+        self._maxlen = max(1, int(maxlen))
         self._idempotency: dict[str, str] = {}
         # 审计流水与动作记录分开有界：审计一行比动作一行小，但写入频次更高（每次写动作两行）。
         self._audit: deque[dict[str, Any]] = deque(maxlen=audit_maxlen)
@@ -357,7 +394,7 @@ class ControlActionStore:
         }
         self._rows[action_id] = row
         self._order.append(action_id)
-        while len(self._rows) > (self._order.maxlen or 0):
+        while len(self._rows) > self._maxlen:
             oldest = self._order.popleft()
             dropped = self._rows.pop(oldest, None)
             if dropped is not None and dropped["idempotency_key"]:
@@ -503,7 +540,9 @@ class AlertStore:
     def __init__(self, maxlen: int = 2_000) -> None:
         self._rows: dict[str, dict[str, Any]] = {}
         self._by_warning: dict[str, str] = {}
-        self._order: deque[str] = deque(maxlen=maxlen)
+        # 与 WarningStore 同法：显式淘汰（有界 deque 会留孤儿行，见 ControlActionStore）。
+        self._order: deque[str] = deque()
+        self._maxlen = max(1, int(maxlen))
 
     @staticmethod
     def _now() -> datetime:
@@ -523,7 +562,7 @@ class AlertStore:
         }
 
     def _evict(self) -> None:
-        while len(self._rows) > (self._order.maxlen or 0):
+        while len(self._rows) > self._maxlen:
             oldest = self._order.popleft()
             dropped = self._rows.pop(oldest, None)
             if dropped is not None:
@@ -650,7 +689,9 @@ class HandlingTaskStore:
         self._spaces: dict[str, dict[str, Any]] = {}
         self._space_order: deque[str] = deque(maxlen=maxlen)
         self._by_stu: dict[tuple[str, str], str] = {}
-        self._order: deque[str] = deque(maxlen=maxlen)
+        # 与 WarningStore 同法：显式淘汰（有界 deque 会留孤儿行）。
+        self._order: deque[str] = deque()
+        self._maxlen = max(1, int(maxlen))
 
     @staticmethod
     def _now() -> datetime:
@@ -744,7 +785,7 @@ class HandlingTaskStore:
         self._rows[stu_id] = row
         self._by_stu[key] = stu_id
         self._order.append(stu_id)
-        while len(self._rows) > (self._order.maxlen or 0):
+        while len(self._rows) > self._maxlen:
             dropped = self._rows.pop(self._order.popleft(), None)
             if dropped is not None:
                 self._by_stu.pop((dropped["space_id"], dropped["stu_id"]), None)
@@ -819,7 +860,9 @@ class NotificationStore:
 
     def __init__(self, maxlen: int = 2_000) -> None:
         self._rows: dict[int, dict[str, Any]] = {}
-        self._order: deque[int] = deque(maxlen=maxlen)
+        # 与 WarningStore 同法：显式淘汰（有界 deque 会留孤儿行）。
+        self._order: deque[int] = deque()
+        self._maxlen = max(1, int(maxlen))
         self._next_id = 1
 
     @staticmethod
@@ -859,7 +902,7 @@ class NotificationStore:
         self._next_id += 1
         self._rows[row["id"]] = row
         self._order.append(row["id"])
-        while len(self._rows) > (self._order.maxlen or 0):
+        while len(self._rows) > self._maxlen:
             self._rows.pop(self._order.popleft(), None)
         return self._public(row)
 
@@ -1604,9 +1647,11 @@ def alert_ledger_port(store: object) -> SupportsAlerts | None:
     return store if isinstance(store, SupportsAlerts) else None
 
 
-def _to_iso(moment: datetime | str | None) -> str | None:
+def _to_utc_moment(moment: datetime | str | None) -> datetime | None:
+    """查询边界统一成 UTC datetime：字符串边界先 parse；naive 当 UTC（旧口径），非 UTC 偏移归一。"""
     if moment is None:
         return None
-    if isinstance(moment, str):
-        return parse_iso(moment).isoformat().replace("+00:00", "Z")
-    return moment.isoformat().replace("+00:00", "Z")
+    parsed = parse_iso(moment) if isinstance(moment, str) else moment
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

@@ -370,7 +370,24 @@ class HazardStages:
         adopted = self._adopt_agent_hits(merged, seen, self._drain_agent_hits(region, trace), trace)
         reply_hits = await self._request_agent_hits(readings, region, trace, result, local_hits=local_hits, intake=intake)
         adopted += self._adopt_agent_hits(merged, seen, reply_hits, trace)
-        return merged, adopted
+        return self._cap_hits(merged, adopted, trace, result)
+
+    #: assess.v1 契约的 hits 上限（`AssessRequest.hits` max_length=64）。超限不是"少发几条"
+    #: 的问题——ValidationError 会穿透研判段把整条链路打死，恰好发生在"多站 × 多规则
+    #: 同时命中"这种最该发预警的场景。截断按确定性口径（分数降序，同分按 rule_id/station
+    #: 稳定排序），溢出量进降级留痕。
+    _HITS_CAP = 64
+
+    def _cap_hits(self, merged: list[TriggerHit], adopted: int, trace: str, result: ChainResult) -> tuple[list[TriggerHit], int]:
+        if len(merged) <= self._HITS_CAP:
+            return merged, adopted
+        ordered = sorted(merged, key=lambda h: (-h.score, h.rule_id, h.hazard_type, h.observed_at))
+        overflow = len(merged) - self._HITS_CAP
+        kept = ordered[: self._HITS_CAP]
+        note = f"命中超过契约上限 {self._HITS_CAP}（实测 {len(merged)}），按分数保留前 {self._HITS_CAP} 条、丢弃 {overflow} 条"
+        result.degradations.append(note)
+        self._tracer.record("perceive_hits_capped", float(overflow), trace_id=trace, outcome="capped")
+        return kept, adopted
 
     def _adopt_agent_hits(self, merged: list[TriggerHit], seen: set[str], candidates: list[TriggerHit], trace: str) -> int:
         """把智能体命中并入本地命中，返回真正被采纳的条数（重复的不算）。"""
@@ -537,7 +554,7 @@ class HazardStages:
         if evidence is not None and self._evidence_exporter is not None:
             # 校准观测采集是旁路：写盘失败只计数不炸段（导出器自己告警日志）。
             # 挂在 window/candidates 都算完之后——导出行要的就是这次研判真正用的口径。
-            self._evidence_exporter.export(
+            await self._evidence_exporter.export(
                 case_id=result.event_id,
                 trace_id=trace,
                 region_code=region,

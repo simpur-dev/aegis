@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -48,7 +49,7 @@ class EvidenceExporter:
     def status(self) -> dict[str, Any]:
         return {"written": self.written, "failures": self.failures, "dir": self._directory.name}
 
-    def export(
+    async def export(
         self,
         *,
         case_id: str,
@@ -58,7 +59,10 @@ class EvidenceExporter:
         candidate_hazards: list[str],
         window: str,
     ) -> bool:
-        """一行证据事实。返回是否落盘成功；失败只计数并告警日志，不抛——主链不为之停。"""
+        """一行证据事实。返回是否落盘成功；失败只计数并告警日志，不抛——主链不为之停。
+
+        写盘走 `asyncio.to_thread`：研判段跑在事件循环上，慢盘/网络盘不能把每轮 assess 卡住。
+        """
         record = {
             "schema_version": SCHEMA_VERSION,
             "case_id": case_id,
@@ -71,20 +75,23 @@ class EvidenceExporter:
             "unmapped_metrics": [item.model_dump(mode="json") for item in evidence.unmapped_metrics],
         }
         try:
-            self._directory.mkdir(parents=True, exist_ok=True)
-            name = f"evidence_export-{datetime.now(UTC).strftime('%Y%m%d')}.jsonl"
-            path = self._directory / name
-            existed = path.exists()
-            with path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-            if not existed:
-                log.info("证据导出落盘：%s（校准观测采集已启用）", path)
+            await asyncio.to_thread(self._append, record)
             self.written += 1
             return True
         except Exception as exc:
             self.failures += 1
             log.warning("证据导出失败（第 %d 次）：%s: %s", self.failures, type(exc).__name__, exc)
             return False
+
+    def _append(self, record: dict[str, Any]) -> None:
+        self._directory.mkdir(parents=True, exist_ok=True)
+        name = f"evidence_export-{datetime.now(UTC).strftime('%Y%m%d')}.jsonl"
+        path = self._directory / name
+        existed = path.exists()
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        if not existed:
+            log.info("证据导出落盘：%s（校准观测采集已启用）", path)
 
 
 __all__ = ["SCHEMA_VERSION", "EvidenceExporter"]

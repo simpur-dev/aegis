@@ -43,11 +43,12 @@ def _evidence(region: str = "540121", rain: float = 12.5) -> AssessEvidence:
 
 
 class TestExporter:
-    def test_导出行形状与校准脚本直读对得上(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_导出行形状与校准脚本直读对得上(self, tmp_path: Path) -> None:
         """一对契约：校准脚本的 `--observations` 就是这份导出。"""
         exporter = EvidenceExporter(tmp_path)
         evidence = _evidence(rain=12.5)
-        ok = exporter.export(
+        ok = await exporter.export(
             case_id="evt-0001",
             trace_id="trc_" + "a" * 16,
             region_code="540121",
@@ -68,11 +69,12 @@ class TestExporter:
         observations = _read_observations(files[0])
         assert observations["evt-0001"]["rainfall_mm_h"] == pytest.approx(12.5)
 
-    def test_写盘失败只计数不抛(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_写盘失败只计数不抛(self, tmp_path: Path) -> None:
         # 先造一个同名**文件**占住目录位，mkdir 会失败
         (tmp_path / "file_blocker").write_text("occupied", encoding="utf-8")
         exporter = EvidenceExporter(tmp_path / "file_blocker")
-        ok = exporter.export(
+        ok = await exporter.export(
             case_id="evt-0002",
             trace_id="trc_" + "b" * 16,
             region_code="540121",
@@ -83,11 +85,12 @@ class TestExporter:
         assert ok is False
         assert exporter.status()["failures"] == 1 and exporter.status()["written"] == 0
 
-    def test_重复研判重复落行(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_重复研判重复落行(self, tmp_path: Path) -> None:
         """append-only 事实：同一 event 重复研判重复落行，去重合并是校准侧的事。"""
         exporter = EvidenceExporter(tmp_path)
         for _ in range(2):
-            exporter.export(
+            await exporter.export(
                 case_id="evt-0003",
                 trace_id="trc_" + "c" * 16,
                 region_code="540121",

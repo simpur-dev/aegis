@@ -45,7 +45,8 @@ def build_router() -> APIRouter:
             await queue.put(item)
 
         subs = [
-            await ctn.transport.subscribe(subjects.alert(1, ">"), _on_message),
+            # 只订宽主题一条：`platform.alert.>` 已覆盖全部等级（含 RED）。此前两条并存，
+            # `platform.alert.1.>` 与宽主题重叠，红级预警每事件推两帧（大屏同卡闪两次）。
             await ctn.transport.subscribe("platform.alert.>", _on_message),
             await ctn.transport.subscribe(subjects.ops("feedback", "status"), _on_message),
             await ctn.transport.subscribe(subjects.ops("assistant", "notify"), _on_message),

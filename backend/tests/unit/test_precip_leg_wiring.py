@@ -80,11 +80,11 @@ def test_容器装配面认这条腿(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_这条腿产的是二十四小时累计不是小时雨强(tmp_path: Path) -> None:
     """日累计与小时雨强是两个口径——这条腿只给前者，不冒充后者。"""
-    from datetime import date
+    from datetime import UTC, datetime
 
     path = tmp_path / "station_daily.csv"
     path.write_text(
-        f"date,station_id,region_code,latitude,longitude,precip_mm\n{date.today().isoformat()},RG-540121-01,540121,28.1,94.1,12.5\n",
+        f"date,station_id,region_code,latitude,longitude,precip_mm\n{datetime.now(UTC).date().isoformat()},RG-540121-01,540121,28.1,94.1,12.5\n",
         encoding="utf-8",
     )
     source, _ = build_precip(_settings(tmp_path, enabled=True, file=str(path)))

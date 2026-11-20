@@ -103,7 +103,9 @@ class PrecipDailySource(DataSource):
         }
 
     def _read(self) -> list[TelemetryReading]:
-        today = date.today()
+        # "当天"按 UTC：派生表的日期列按 UTC epoch 解码（derive 脚本同口径），本地时区
+        # 的 date.today() 在 UTC+8 的 00:00–08:00 会超前一天，把 UTC 当日行整批判"非当天"。
+        today = datetime.now(UTC).date()
         readings: list[TelemetryReading] = []
         with self._path.open(encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
@@ -164,7 +166,7 @@ class PrecipDailySource(DataSource):
 
 def yesterday_iso() -> str:
     """昨天的 UTC 日期（派生脚本与排程用得上）。"""
-    return (date.today() - timedelta(days=1)).isoformat()
+    return (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
 
 
 __all__ = ["MAX_DAILY_MM", "METRIC", "PrecipDailySource"]

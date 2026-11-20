@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -28,11 +28,12 @@ def _csv(tmp_path: Path, rows: list[str]) -> Path:
 
 
 def _today() -> str:
-    return date.today().isoformat()
+    # 连接器的"当天"按 UTC（与派生表日期列同口径）
+    return datetime.now(UTC).date().isoformat()
 
 
 def _yesterday() -> str:
-    return (date.today() - timedelta(days=1)).isoformat()
+    return (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
 
 
 @pytest.mark.asyncio
