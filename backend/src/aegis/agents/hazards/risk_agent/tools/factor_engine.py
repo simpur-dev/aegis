@@ -65,8 +65,39 @@ def literature_weight_source(reference: str = "藏东南文献（转引自《5�
     }
 
 
+def mock_boundary_source(valid_region: str = "西藏（未校准）") -> dict:
+    """Mock 归一化边界的来源登记（每次调用返回新 dict，避免共享可变状态）。
+
+    归一化边界（`normalize.L/U`）此前是**裸字面量**——它落在 `weight_source`（标了 mock）
+    与 `spec_reference`（指向规范但规范里没有这个数）之间的缝里：既没标 mock，
+    也没给条款号。于是"150 mm/h 到底哪来的"没人答得上，而它恰恰决定了雨量因子
+    什么时候饱和。登记一条出来，比让读者猜好。
+    """
+    return {
+        "source_reference": "项目原型自拟归一化边界（无专业来源）",
+        "method": "mock",
+        "valid_region": valid_region,
+        "validation_status": "mock_assumption",
+    }
+
+
 def _clip01(x):
     return max(0.0, min(1.0, float(x)))
+
+
+def _saturate_note(value: float, lo: float, hi: float) -> str:
+    """越出归一化边界时的说明。
+
+    此前越界**静默饱和**（note 是空串）：一个 330 mm/h 的读数在 150 的上界下拿满分因子，
+    而证据包、因子分、覆盖率、告警里都看不出任何异常——它长得像一个"刚好 150 的正常值"。
+    边界是方法的标定带，越界只说明方法在外推（不是读数坏了），所以**不拒**，
+    但要说出来：谁看因子分都能看见"这一项是外推出来的"。
+    """
+    if value < lo:
+        return f"取值 {value:g} 低于归一化下界 {lo:g}，已截到 0"
+    if value > hi:
+        return f"取值 {value:g} 高于归一化上界 {hi:g}，已饱和到 1"
+    return ""
 
 
 # ============================================================
@@ -104,24 +135,24 @@ def normalize_value(value, norm: dict):
         lo, hi = norm["L"], norm["U"]
         if hi <= lo:
             return None, "归一化边界配置错误 (U<=L)"
-        return _clip01((x - lo) / (hi - lo)), ""
+        return _clip01((x - lo) / (hi - lo)), _saturate_note(x, lo, hi)
     if method == "linear_neg":
         lo, hi = norm["L"], norm["U"]
         if hi <= lo:
             return None, "归一化边界配置错误 (U<=L)"
-        return _clip01((hi - x) / (hi - lo)), ""
+        return _clip01((hi - x) / (hi - lo)), _saturate_note(x, lo, hi)
     if method == "log_pos":
         lo, hi = norm["L"], norm["U"]
         if x <= 0:
             return None, "对数归一化要求取值>0"
         if lo <= 0 or hi <= lo:
             return None, "归一化边界配置错误"
-        return _clip01((math.log10(x) - math.log10(lo)) / (math.log10(hi) - math.log10(lo))), ""
+        return _clip01((math.log10(x) - math.log10(lo)) / (math.log10(hi) - math.log10(lo))), _saturate_note(x, lo, hi)
     if method == "sqrt_pos":
         u = norm["U"]
         if u <= 0:
             return None, "归一化边界配置错误"
-        return _clip01(math.sqrt(max(0.0, x)) / math.sqrt(u)), ""
+        return _clip01(math.sqrt(max(0.0, x)) / math.sqrt(u)), _saturate_note(x, 0.0, u)
     if method == "band_pos":
         lo, b_lo, b_hi, hi = norm["L"], norm["band_lo"], norm["band_hi"], norm["U"]
         if b_hi <= b_lo:

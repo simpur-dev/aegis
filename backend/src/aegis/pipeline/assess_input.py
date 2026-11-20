@@ -6,6 +6,16 @@
 浊度 NTU 不是序数等级，就不能冒充 `seepage_level`。进 `unmapped_metrics` 并写原因，
 比造一个看着合理的数诚实——伪装的因子会一路走到预警里。
 
+**换算系数与值域写在声明里，不写在代码分支里**（`Derivation`）。此前 ×6 是 `_aggregate` 里
+一行 `metric == "rain_10min"`：新数据源若直接给 mm/h 或日累计，会被静默放大 6 倍——
+不报错、不越界，一路走进因子分。声明式之后，"这个源的节拍是什么"是表里的一行。
+
+**值域越界按三档处置**（与仓里既有的分工同构）：物理不可能线越界 → 剔除该读数并在 notes 报数；
+换算后仍越出物理线 → **拒绝**（不产因子，进 `unmapped_metrics` 并写明原因）；
+量纲本身没把握 → 早已在 `UNMAPPED_REASONS` 里。**方法标定带不是物理线**（气温 -40–20 ℃ 是
+融雪算法的标定带、池水位比上界 1 是"漫顶"），越了不剔——那是方法外推，由风险侧的归一化处理。
+因子登记的唯一真源在 `aegis.domain.factors` 的因子目录里，与数据侧、风险侧共用一份。
+
 证据包自限（条数与字节数）：网关与总线的信封有上限，超限必须显式置 `truncated=True` 并留 note，
 不做静默截断。
 """
@@ -15,9 +25,11 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from aegis.domain.assess import AssessEvidence, FactorObservation, UnmappedMetric
+from aegis.domain.factors import factor_physical_bound, factor_unit, factor_valid_range
 from aegis.domain.messages import TelemetryReading, TriggerHit, now_iso, parse_iso
 from aegis.domain.provenance import DataKind, DataProvenance
 from aegis.domain.site import SiteProfile
@@ -25,13 +37,90 @@ from aegis.storage.store import StoreProtocol
 
 log = logging.getLogger("aegis.pipeline.assess_input")
 
-#: 遥测 metric -> (因子, 单位, 派生说明)。顺序即证据包里派生因子的出场顺序。
-DERIVATIONS: dict[str, tuple[str, str, str]] = {
-    "rain_10min": ("rainfall_mm_h", "mm/h", "窗口内 max(rain_10min)×6（10 分钟→小时）"),
-    "displacement_mm": ("displacement_mm_day", "mm/day", "每站 (last-first)/elapsed_h×24，跨站取最大"),
-    "crack_aperture_mm": ("crack_width_mm", "mm", "窗口内 max(crack_aperture_mm)"),
-    "air_temperature_c": ("air_temp_c", "°C", "窗口内 max(air_temperature_c)"),
-    "lake_level_m": ("water_level_ratio", "1", "max(lake_level_m)/site.dam_height_m"),
+
+def _within(value: float, bounds: tuple[float, float] | None) -> bool:
+    """值是否落在登记值域内；`bounds` 为 None 表示这一项没有登记值域（不判）。"""
+    if bounds is None:
+        return True
+    return bounds[0] <= value <= bounds[1]
+
+
+@dataclass(frozen=True, slots=True)
+class Derivation:
+    """一条遥测 metric → 物理因子的派生声明。
+
+    换算系数写在声明里，不写在代码分支里。此前 ×6 是 `_aggregate` 里一行
+    `metric == "rain_10min"` 的硬编码：任何新数据源若直接给 mm/h 或日累计，都会被
+    **静默放大 6 倍**——不报错、不越界，一路走进因子分与预警正文。声明式之后，
+    "这个源的节拍是什么"是表里的一行，换错系数就是改错一行，而不是改错一个分支。
+    """
+
+    #: 目标因子名（登记在 `aegis.domain.factors` 的目录里，单位与值域从那里取）。
+    factor: str
+    #: 源口径 → 因子口径的换算系数（10 分钟累计 → 小时雨强 = 6.0）。
+    scale: float = 1.0
+    #: 换算说明，进派生说明文字。
+    scale_note: str = ""
+    #: 源口径的合法值域；越界的读数在**换算前**就剔掉（换算只会把错值放大）。
+    source_range: tuple[float, float] | None = None
+    #: 聚合方式（进派生说明文字）。
+    agg: str = "max"
+
+    @property
+    def unit(self) -> str:
+        """因子的规范单位串（唯一真源在 `aegis.domain.factors`）。"""
+        return factor_unit(self.factor)
+
+    @property
+    def valid_range(self) -> tuple[float, float] | None:
+        """因子的登记区间（唯一真源在 `aegis.domain.factors`）。"""
+        return factor_valid_range(self.factor)
+
+    @property
+    def physical_bound(self) -> bool:
+        """登记区间是不是**物理不可能线**（越了就是坏读数，必须拒）。
+
+        标定带不是物理线：气温 -40–20 ℃ 是融雪算法的标定带（西藏河谷 25 ℃ 是正常读数），
+        池水位比上界 1 是"漫顶"这个最危险的状态。拿标定带当物理线，会把真实极端当坏数据丢掉。
+        """
+        return factor_physical_bound(self.factor)
+
+    def describe(self, metric: str) -> str:
+        """派生说明（进 `FactorObservation.derivation`）：要能读懂为什么是这个系数。"""
+        if self.scale == 1.0:
+            return f"窗口内 {self.agg}({metric})"
+        return f"窗口内 {self.agg}({metric})×{self.scale:g}（{self.scale_note}）"
+
+    def source_range_reason(self, metric: str) -> str:
+        """**换算前**越界的措辞（进 `unmapped_metrics.reason`）。"""
+        source = self.source_range
+        if source is None:
+            return f"{metric} 越出物理不可能线"
+        return f"{metric} 源口径越出物理不可能线 {source[0]}–{source[1]}"
+
+    def range_reason(self, metric: str) -> str:
+        """**换算后**越界的措辞（进 `unmapped_metrics.reason`）：说清是换算后越界。"""
+        valid = self.valid_range
+        if valid is None:
+            return f"{metric} 越出登记值域"
+        return f"{metric} 换算后越出 {self.factor} 的物理不可能线 {valid[0]}–{valid[1]}{self.unit}"
+
+
+#: 遥测 metric → 派生声明。顺序即证据包里派生因子的出场顺序。
+DERIVATIONS: dict[str, Derivation] = {
+    # 10 分钟累计雨量 → 小时雨强。源口径上界 50 mm/10min（= 300 mm/h ÷ 6）：
+    # 日累计值误填进这个 metric 时，换算前就该被拦住。
+    "rain_10min": Derivation(
+        factor="rainfall_mm_h",
+        scale=6.0,
+        scale_note="10 分钟→小时",
+        source_range=(0.0, 50.0),
+    ),
+    # 位移速率按每站首末差折算，值域在折算后判（见 `_derive_displacement`）。
+    "displacement_mm": Derivation(factor="displacement_mm_day"),
+    "crack_aperture_mm": Derivation(factor="crack_width_mm"),
+    "air_temperature_c": Derivation(factor="air_temp_c"),
+    "lake_level_m": Derivation(factor="water_level_ratio"),
 }
 
 #: 平台有、但因子体系里没有同一口径承接的遥测：显式列原因，禁止近似。
@@ -111,25 +200,42 @@ class AssessEvidenceBuilder:
 
         observations: list[FactorObservation] = []
         unmapped: list[tuple[str, int, str]] = []
-        for metric, (factor, unit, derivation) in DERIVATIONS.items():
+        out_of_range = 0
+        for metric, declaration in DERIVATIONS.items():
             group = by_metric.get(metric, [])
             if not group:
                 continue
+            # 物理线越界 → 剔（换算只会把错值放大，剔晚了就是 6 倍的错值）。
+            # 标定带越界不剔：那是方法外推，不是坏读数——由风险侧的归一化处理（并留 note）。
+            if declaration.physical_bound:
+                kept = [reading for reading in group if _within(reading.value, declaration.source_range)]
+                out_of_range += len(group) - len(kept)
+                if not kept:
+                    unmapped.append((metric, len(group), declaration.source_range_reason(metric)))
+                    continue
+            else:
+                kept = group
             if metric == "displacement_mm":
-                derived = self._derive_displacement(group)
+                derived = self._derive_displacement(kept)
                 if derived is None:
                     unmapped.append((metric, len(group), "每站至少需要 2 个 ok 样本且时间递增，否则算不出 mm/day"))
                 else:
                     observations.append(derived)
             elif metric == "lake_level_m":
-                derived = self._derive_water_level_ratio(group, profile)
+                derived = self._derive_water_level_ratio(kept, profile)
                 if derived is None:
                     reason = "缺少 site_profile.dam_height_m（或值<=0），无法派生水位/坝高比"
                     unmapped.append((metric, len(group), reason))
                 else:
                     observations.append(derived)
             else:
-                observations.append(self._aggregate(metric, factor, unit, derivation, group))
+                derived, dropped = self._aggregate(metric, declaration, kept)
+                out_of_range += dropped
+                if derived is None:
+                    # 整批都越出因子物理值域 → 拒绝，不产因子（引擎的覆盖率门控会接手判定"够不够"）
+                    unmapped.append((metric, len(group), declaration.range_reason(metric)))
+                else:
+                    observations.append(derived)
 
         for metric, group in by_metric.items():
             if metric in DERIVATIONS:
@@ -147,6 +253,8 @@ class AssessEvidenceBuilder:
             notes.append(f"剔除 quality_flag≠ok 的读数 {dropped_quality} 条")
         if non_finite:
             notes.append(f"剔除非有限值读数 {non_finite} 条")
+        if out_of_range:
+            notes.append(f"剔除源口径越界读数 {out_of_range} 条")
         if not finite and not observations:
             notes.append("窗口内没有可用的 ok 遥测，也未配置站点画像：证据为空")
 
@@ -217,24 +325,40 @@ class AssessEvidenceBuilder:
         return value == value and value not in (float("inf"), float("-inf"))
 
     @staticmethod
-    def _aggregate(metric: str, factor: str, unit: str, derivation: str, group: list[TelemetryReading]) -> FactorObservation:
-        values = [reading.value for reading in group]
-        latest = max(group, key=lambda reading: reading.observed_at)
-        scaled = metric == "rain_10min"
-        scale = 6.0 if scaled else 1.0
-        return FactorObservation(
-            factor=factor,
-            unit=unit,
-            samples=len(group),
-            min_value=min(values) * scale,
-            max_value=max(values) * scale,
-            mean_value=sum(values) / len(values) * scale,
+    def _aggregate(metric: str, declaration: Derivation, group: list[TelemetryReading]) -> tuple[FactorObservation | None, int]:
+        """按声明换算并聚合窗口内的读数。
+
+        换算系数从声明里取（不再由 metric 名硬编码），换算后再判因子口径的值域——
+        **逐条剔**：越界的那一条丢掉，同指标的合法读数照常成因子；整批都越界才拒绝
+        （返回 None），由调用方写明原因。
+
+        逐条剔而不是整批拒，理由是方向：越界读数通常是传感器坏了（不是真的极端），
+        丢掉它让因子回到真实量级；整批拒会把整段窗口的量一并丢掉，缺口更大。
+        """
+        scale = declaration.scale
+        kept: list[tuple[TelemetryReading, float]] = []
+        for reading in group:
+            value = reading.value * scale
+            if not declaration.physical_bound or _within(value, declaration.valid_range):
+                kept.append((reading, value))
+        if not kept:
+            return None, len(group)
+        kept_values = [value for _, value in kept]
+        latest = max((reading for reading, _ in kept), key=lambda reading: reading.observed_at)
+        observation = FactorObservation(
+            factor=declaration.factor,
+            unit=declaration.unit,
+            samples=len(kept),
+            min_value=min(kept_values),
+            max_value=max(kept_values),
+            mean_value=sum(kept_values) / len(kept_values),
             observed_at=latest.observed_at,
-            station_ids=sorted({reading.station_id for reading in group})[:32],
+            station_ids=sorted({reading.station_id for reading, _ in kept})[:32],
             quality="ok",
-            sources=sorted({reading.source for reading in group})[:8],
-            derivation=derivation,
+            sources=sorted({reading.source for reading, _ in kept})[:8],
+            derivation=declaration.describe(metric),
         )
+        return observation, len(group) - len(kept)
 
     @staticmethod
     def _derive_displacement(group: list[TelemetryReading]) -> FactorObservation | None:
@@ -255,9 +379,14 @@ class AssessEvidenceBuilder:
             latest = max(latest, ordered[-1].observed_at)
         if not rates:
             return None
+        declaration = DERIVATIONS["displacement_mm"]
+        valid = declaration.valid_range
+        rates = [rate for rate in rates if not declaration.physical_bound or _within(rate, valid)]
+        if not rates:
+            return None
         return FactorObservation(
-            factor="displacement_mm_day",
-            unit="mm/day",
+            factor=declaration.factor,
+            unit=declaration.unit,
             samples=samples,
             min_value=min(rates),
             max_value=max(rates),
@@ -266,7 +395,7 @@ class AssessEvidenceBuilder:
             station_ids=sorted(stations)[:32],
             quality="ok",
             sources=sorted({reading.source for reading in group})[:8],
-            derivation=DERIVATIONS["displacement_mm"][2],
+            derivation="每站 (last-first)/elapsed_h×24，跨站取最大",
         )
 
     @staticmethod
@@ -276,20 +405,27 @@ class AssessEvidenceBuilder:
         dam_height = profile.value_of("dam_height_m")
         if isinstance(dam_height, bool) or not isinstance(dam_height, (int, float)) or dam_height <= 0:
             return None
-        latest = max(group, key=lambda reading: reading.observed_at)
-        ratio = max(reading.value for reading in group) / float(dam_height)
+        declaration = DERIVATIONS["lake_level_m"]
+        valid = declaration.valid_range
+        ratios = [(reading, reading.value / float(dam_height)) for reading in group]
+        # 水位比 >1 是"漫顶"（溃决）——最危险的状态，不是坏读数，不剔。
+        ratios = [(reading, ratio) for reading, ratio in ratios if not declaration.physical_bound or _within(ratio, valid)]
+        if not ratios:
+            return None
+        values = [ratio for _, ratio in ratios]
+        latest = max((reading for reading, _ in ratios), key=lambda reading: reading.observed_at)
         return FactorObservation(
-            factor="water_level_ratio",
-            unit="1",
-            samples=len(group),
-            min_value=min(reading.value for reading in group) / float(dam_height),
-            max_value=ratio,
-            mean_value=sum(reading.value for reading in group) / len(group) / float(dam_height),
+            factor=declaration.factor,
+            unit=declaration.unit,
+            samples=len(ratios),
+            min_value=min(values),
+            max_value=max(values),
+            mean_value=sum(values) / len(values),
             observed_at=latest.observed_at,
-            station_ids=sorted({reading.station_id for reading in group})[:32],
+            station_ids=sorted({reading.station_id for reading, _ in ratios})[:32],
             quality="ok",
-            sources=sorted({reading.source for reading in group})[:8],
-            derivation=DERIVATIONS["lake_level_m"][2],
+            sources=sorted({reading.source for reading, _ in ratios})[:8],
+            derivation="max(lake_level_m)/site.dam_height_m",
         )
 
     @staticmethod
@@ -364,4 +500,4 @@ class AssessEvidenceBuilder:
         return evidence.model_copy(update={"notes": notes[:16], "truncated": True})
 
 
-__all__ = ["DERIVATIONS", "UNMAPPED_REASONS", "AssessEvidenceBuilder"]
+__all__ = ["DERIVATIONS", "UNMAPPED_REASONS", "AssessEvidenceBuilder", "Derivation"]

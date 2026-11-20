@@ -202,7 +202,10 @@ HAZARD_DATA_REQUIREMENTS: dict[str, dict[str, Any]] = {
             "snow_depth_cm": _num("积雪厚度", "cm", 0.0, 300.0, "雪深计", spec=MATRIX_REF),
             "new_snow_24h_cm": _num("24小时新雪量（加载触发）", "cm", 0.0, 100.0, "雪深计", spec=MATRIX_REF),
         },
-        "required_observation_fields": ["release_volume_m3", "vertical_drop_m"],
+        # 必需字段与风险侧的 `required_factors` 同一套（2026-11-17 对齐）：引擎的覆盖率门控
+        # 按 `required_factors` 判"缺必需因子 → 数据不足"，数据侧报另一套会让两条腿对
+        # "什么才算够"各说各话。
+        "required_observation_fields": ["slope_angle_deg", "snow_depth_cm"],
         "normalize_precision": {
             "release_volume_m3": 1,
             "vertical_drop_m": 1,
@@ -244,7 +247,8 @@ HAZARD_DATA_REQUIREMENTS: dict[str, dict[str, Any]] = {
             "seepage_level": _cls("坝体渗漏/管涌等级", ["none", "mild", "severe"], "渗压计/巡检", SPEC_DZT),
             "landslide_into_lake": _cls("滑坡入湖", ["no", "yes"], "联动判定", SPEC_DZT),
         },
-        "required_observation_fields": ["lake_volume_m3", "dam_height_m"],
+        # 同一套口径（见雪崩那条）：风险侧要求 `lake_volume_m3` 与 `water_level_ratio`。
+        "required_observation_fields": ["lake_volume_m3", "water_level_ratio"],
         "normalize_precision": {"lake_volume_m3": 1, "dam_height_m": 1, "water_level_ratio": 2, "downstream_distance_km": 2},
         "data_source_tool": glacial_lake_data_tool,
         "query_param_menu": [

@@ -105,7 +105,9 @@ class TestDerivations:
 
         disp = _factor(evidence, "displacement_mm_day")
         assert disp.max_value == pytest.approx(24.0)
-        assert disp.unit == "mm/day"
+        # 单位串统一到因子目录的规范写法（2026-11-17）：此前派生侧写 "mm/day"，
+        # 数据侧与风险侧写 "mm/d"，三处各说各话且没有对账门禁。
+        assert disp.unit == "mm/d"
         assert "×24" in disp.derivation
 
     async def test_位移单点样本不猜速率(self) -> None:
@@ -143,6 +145,79 @@ class TestDerivations:
 
         assert _factor(evidence, "crack_width_mm").max_value == pytest.approx(4.5)
         assert _factor(evidence, "air_temp_c").max_value == pytest.approx(6.5)
+
+    async def test_换算系数对最小值与均值同样生效(self) -> None:
+        """此前只有 max_value 钉住了 ×6，min/mean 是盲区——换算漏一处就是三种数不一致。"""
+        evidence = await _build(
+            [
+                _reading("rain_10min", 1.0, minutes_ago=10),
+                _reading("rain_10min", 2.0, minutes_ago=5),
+            ]
+        )
+
+        rain = _factor(evidence, "rainfall_mm_h")
+        assert rain.min_value == pytest.approx(6.0)
+        assert rain.max_value == pytest.approx(12.0)
+        assert rain.mean_value == pytest.approx(9.0)
+
+
+class TestValueRange:
+    """值域的两类边界：**物理不可能线**要拒，**方法标定带**不拒。
+
+    此前没有这道闸：`rain_10min=300`（上报解析层的上限）换算后是 1800 mm/h，
+    而 `rainfall_mm_h` 的物理上界是 300——越界 6 倍的值会**静默**进因子。
+    另一头也不能收紧过头：气温 -40–20 ℃ 是融雪算法的标定带（不是西藏气温的物理极限），
+    池水位比的上界 1 是"漫顶"（溃决）这个最危险的状态——拿标定带当物理线，
+    会把真实极端当坏数据丢掉。
+    """
+
+    async def test_物理线越界的读数被剔除而不是换算(self) -> None:
+        evidence = await _build([_reading("rain_10min", 300.0)])
+
+        assert not [obs for obs in evidence.observations if obs.factor == "rainfall_mm_h"]
+        unmapped = {row.metric: row for row in evidence.unmapped_metrics}
+        assert "rain_10min" in unmapped
+        assert "物理不可能线" in unmapped["rain_10min"].reason
+        assert any("剔除源口径越界读数" in note for note in evidence.notes)
+
+    async def test_物理线边界值仍算合法(self) -> None:
+        """50 mm/10min 换算后是 300 mm/h，正好在因子的物理上界——闭区间，不该被剔。"""
+        evidence = await _build([_reading("rain_10min", 50.0)])
+
+        rain = _factor(evidence, "rainfall_mm_h")
+        assert rain.max_value == pytest.approx(300.0)
+
+    async def test_标定带越界的读数仍然成因子(self) -> None:
+        """裂缝开度的登记区间 0–200 mm 是**方法标定带**，不是物理线：250 mm 不该被丢。
+
+        丢了的代价是整段窗口少一个因子——而引擎的覆盖率门控本来就会因为因子缺失
+        给出"数据不足"，那才是正确的表达方式。
+        """
+        evidence = await _build([_reading("crack_aperture_mm", 250.0)])
+
+        crack = _factor(evidence, "crack_width_mm")
+        assert crack.max_value == pytest.approx(250.0)
+
+    async def test_池水位比超过一不被当成坏读数(self) -> None:
+        """水位/坝高比 >1 是"漫顶"（溃决）——最危险的状态，不是越界。"""
+        profile = _demo_profile(dam_height_m=3.5)
+        evidence = await _build([_reading("lake_level_m", 4.2)], profile=profile)
+
+        ratio = _factor(evidence, "water_level_ratio")
+        assert ratio.max_value == pytest.approx(4.2 / 3.5)
+
+    async def test_越界的读数不拖累同指标的合法读数(self) -> None:
+        """一批读数里有一条越界，不该把整批都丢掉——只剔那一条。"""
+        evidence = await _build(
+            [
+                _reading("rain_10min", 10.0, minutes_ago=10),
+                _reading("rain_10min", 300.0, minutes_ago=5),
+            ]
+        )
+
+        rain = _factor(evidence, "rainfall_mm_h")
+        assert rain.max_value == pytest.approx(60.0)
+        assert rain.samples == 1
 
 
 class TestNoApproximation:

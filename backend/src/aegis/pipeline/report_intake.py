@@ -109,7 +109,12 @@ class ReportIntake:
             # 事后没人能回答"这条等级凭什么"——R-REPORT-* 前缀就是"非阈值测量"的标记。
             verdict.hits = list(hits)
         result = await self.chain.process(
-            [],
+            # 上报解析出的读数（雨量、位移等）随链路进去：它们是这次上报**带回来的观测**，
+            # 此前只用来打规则轨，从不进证据包——于是"值班员报的雨"规则轨用得上、
+            # 因子引擎用不上（证据包里没有 rainfall_mm_h），两条腿看的是两批数据。
+            # 放在链路的 readings 里（不落遥测库）：只有这一条链路看得到这次上报的观测，
+            # 不让一次人工上报污染同区域的其它链路。
+            list(parsed.readings),
             region_code=region,
             preset_hits=hits,
             preset_verdict=verdict,

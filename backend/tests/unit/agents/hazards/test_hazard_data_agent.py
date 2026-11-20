@@ -84,12 +84,18 @@ def test_registry_normalization():
 
 
 def test_registry_field_spec_per_hazard():
-    """注册表：五灾种必需观测字段互不相同（按各自致灾机理声明）。"""
+    """注册表：五灾种必需观测字段互不相同（按各自致灾机理声明）。
+
+    **必需字段 = 风险侧 `required_factors` 那一套**（2026-11-17 对齐）：引擎的覆盖率门控
+    按风险侧判"缺必需因子 → 数据不足"，数据侧报另一套会让两条腿对"什么才算够"各说各话。
+    雪崩此前要求 `release_volume_m3`/`vertical_drop_m`——那两个字段**引擎根本不消费**，
+    要求它们等于向数据侧要一份用不上的数据。
+    """
     req_sets = {k: frozenset(HAZARD_DATA_REQUIREMENTS[k]["required_observation_fields"]) for k in ALL_HAZARDS}
     assert req_sets["landslide"] != req_sets["debris_flow"]
     assert req_sets["rockfall"] != req_sets["lake_outburst"]
     assert "lake_volume_m3" in req_sets["lake_outburst"]
-    assert "release_volume_m3" in req_sets["avalanche"]
+    assert "snow_depth_cm" in req_sets["avalanche"]
     assert "block_volume_m3" in req_sets["rockfall"]
     print("  √ test_registry_field_spec_per_hazard")
 

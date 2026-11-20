@@ -25,6 +25,7 @@
 
 from aegis.agents.hazards.risk_agent.tools.factor_engine import (
     compute_factor_assessment,
+    mock_boundary_source,
     mock_weight_source,
 )
 
@@ -83,7 +84,12 @@ FACTOR_CONFIG = {
                 "source_field": "rainfall_mm_h",
                 "unit": "mm/h",
                 "agg": "max",
-                "normalize": {"method": "linear_pos", "L": 0.0, "U": 150.0},
+                "normalize": {
+                    "method": "linear_pos",
+                    "L": 0.0,
+                    "U": 150.0,
+                    "boundary_source": mock_boundary_source(),
+                },
                 "weight": 0.45,
                 "weight_source": mock_weight_source(),
                 "data_status": "mock",
