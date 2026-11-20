@@ -90,6 +90,10 @@ def build_artifacts(files: Iterable[str], years: Iterable[int]) -> list[Artifact
     if "monthly" in wanted:
         items.append(Artifact("CHM_PRE_V2_monthly.nc", "monthly/CHM_PRE_V2_monthly.nc"))
     if "daily" in wanted:
+        if not years:
+            # daily 是按年切分的：不给 --years 会生成空清单，报"没有要取的文件"
+            # 会把人引去查 --files，而真正缺的是年份。
+            raise SystemExit("daily 分组必须给 --years（如 --years 2020-2025）；整包 46.8 GB，子集取年即可")
         items.extend(_daily_artifacts(years))
     if not items:
         raise SystemExit(f"没有要取的文件；--files 可选：{list(FILE_GROUPS)}")
