@@ -4073,6 +4073,67 @@ MCP 的顾虑（会话状态、重连语义）在这里不存在。
 
 **仍未做（不声称）**：五套**都未接入任何生产链路**（不进预警/研判/知识库）——
 要接得先写导入适配并补契约测试，不能直接把 JSONL 塞进 `agents/hazards/`；
-**触发因子（降雨）仍缺**（TPDC 全国 0.1° 逐日降水 CC BY 4.0 / 46.8 GB，
-雅鲁藏布江 10km 降水 CC BY-NC-SA 4.0 / 29–62 MB——都是气象驱动数据，应落运行态目录而非 git）；
 **预警准确率仍是 `not_measured`**（这些数据不是回放口径的 `{truth_warning, predicted_warning}` 成对案例）。
+（**触发因子（降雨）已另走一条路**，见下一节：落运行态目录、不进本目录。）
+
+## 触发因子（降雨）线实测（2026-11-17）
+
+这一批把"链路完整但数据全假"拆成三件事分别做掉：**安全默认**、**口径单一真源**、**真实数据接入点**。
+
+### ① 演练腿默认关（修掉一处会持续自产预警的默认配置）
+
+**改前实测**（默认配置：`AEGIS_SIMULATOR_ENABLED=true`、场景 `surge`、节拍 2 s）：
+
+| 项 | 实测值 | 证据 |
+| --- | --- | --- |
+| 演练雨量 | `rain_10min` ∈ [32, 55] mm/10min | `connectors/simulator.py:44` |
+| 规则轨阈值 | `R-DEBRIS-RAIN-1`：`rain_10min >= 30.0` → 橙 | `services/rules/trigger_rules.py:300-306` |
+| 结论 | **每一轮摄取都越过阈值**——平台以 2 秒一次的节奏自己给自己发橙色预警 | 同上 |
+| 状态面可见性 | `/api/v1/integrations` **没有 `simulator` 这一行** | `container.py` 的 `integration_status()` |
+
+**改后**：代码默认 `False`；`.env.example` 与 `deploy/docker-compose.yml` 都钉 `false`；
+演示档由 `scripts/dev.mjs` 显式注入 `AEGIS_SIMULATOR_ENABLED=true`；状态面新增 `simulator` 行
+（`enabled=False, driver="off"` ↔ `enabled=True, driver="simulator"`，带 `scenario` 说明）；
+`env=prod` 且开着时启动期**响亮警告**（不拒绝启动——带演练数据做验收是正当用法）。
+
+### ② 量纲与值域的单一真源
+
+**改前**：×6 是 `_aggregate` 里一行 `metric == "rain_10min"` 的硬编码分支；同一因子的单位串在三处
+各写各的（派生侧 `mm/day` / `°C` / `1`，数据侧与风险侧 `mm/d` / `℃` / `""`），**三处之间零对账门禁**。
+
+**改后**：
+- 换算系数进声明（`Derivation.scale`），`_aggregate` 读表不认 metric 名；
+- 单位与值域收敛到 `domain/factors.py` 的**因子目录**，三处共用一份；
+- 值域分两类：**物理不可能线**（雨量 >300 mm/h、含水率 >1 → 剔读数）与**方法标定带**
+  （气温 -40–20 ℃ 是融雪算法的标定带、池水位比上界 1 是"漫顶"→ **不剔**）；
+- 新增对账门禁 17 条：三处单位一致、必需字段两侧一致、归一化边界三处一致、
+  源口径上界 = 因子上界 ÷ 换算系数、只有物理线才声明源口径值域。
+
+**边界实测**（新用例）：`rain_10min = 50` → 300 mm/h 恰好在上界（闭区间，**不拒**）；
+`rain_10min = 300` → 1800 mm/h 越界 6 倍（**拒**，进 `unmapped_metrics` 并写明"物理不可能线"）；
+`crack_aperture_mm = 250`（标定带上界 200）→ **仍成因子**（标定带不是物理线）；
+池水位比 4.2/3.5 = 1.2（>1，漫顶）→ **仍成因子**（那是最危险的状态，不是坏读数）。
+
+### ③ 真实雨量：第一个接入点
+
+| 件 | 状态 | 说明 |
+| --- | --- | --- |
+| `scripts/fetch_precip_chmpre.py` | **就绪**（离线用例 11 条） | 双通道：TPDC 匿名 FTP 优先、Zenodo 镜像兜底；幂等 + sha256 清单 + `--verify-only` |
+| `scripts/derive_precip_station_daily.py` | **就绪**（离线用例 5 条，合成 NetCDF） | NetCDF → 站点逐日 CSV；按物理量纲找变量、最近格点取值、缺测不补 |
+| `connectors/precip_daily.py` + `integrations/precip.py` | **就绪**（用例 9 + 6 条） | 平台第一个真实雨量来源；默认关；只产 `rain_cumulative_24h` |
+| **实际取数** | **未取到** | 本机通道不通：Zenodo 实测 7.5 分钟仅约 4 MB（限流/断开）、TPDC FTP 返回 `421 500 users`（并发上限）。派生表与入仓摘要数据集**尚未产出** |
+
+**口径边界（说死）**：这条腿只给 24 小时累计，直接喂规则轨 `R-DEBRIS-RAIN-2`
+（`rain_cumulative_24h >= 80` 且 `debris_level >= 1` → 红，口径正好一致）；
+**不喂因子引擎**——`rainfall_mm_h` 是小时雨强，与日累计口径不同，平台派生表里对后者有明确的
+不映射处置（`assess_input.UNMAPPED_REASONS`）。**小时雨强仍无真实来源**。
+
+### 门禁（2026-11-17 本机）
+
+后端全量数字见本文件「环境与口径」一节；本批新增用例：派生对账 17、值域行为 6、
+上报读数进链路 3、取件离线 11、派生离线 5、连接器 9、装配腿 6。
+前端 **88 files / 1317 passed**（`integrations.spec.ts` 的两条新腿标签对账）。
+新依赖 `h5py`（BSD-3）装在 **`[precip]` extra**，**不进生产镜像**。
+
+**仍未做（不声称）**：小时雨强无真实源；CHM_PRE V2 原件未取到；因子权重与归一化边界**仍是 MOCK**
+（本批只立出处登记与门禁，不发明数字）。

@@ -239,9 +239,10 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
   NexusMind 干预库），其性质与逐条出处随 `/api/v1/integrations` 与每条召回命中一起外显。
 - **分析旁路**：ClickHouse 分钟级物化与 DuckDB 边缘单文件离线分析（write-behind，热路径不等 OLAP）。
 - **可观测**：OpenTelemetry 链路（应用生命周期装配）+ 自研时延账本 + Prometheus 规则求值 +
-  Alertmanager 分发与抑制；`GET /api/v1/integrations` 把十一条腿
-  （store/analytics/knowledge/retrieval/mqtt/weather/outbound/delivery/tracing/memory/mcp）的启用与降级事实对外报出
-  （`mcp` 行在未开启时也保留，用来区分"没有工具面"和"有但没开"）。
+  Alertmanager 分发与抑制；`GET /api/v1/integrations` 把十三条腿
+  （store/analytics/knowledge/retrieval/mqtt/weather/**precip**/**simulator**/outbound/delivery/tracing/memory/mcp）的启用与降级事实对外报出
+  （`mcp` 行在未开启时也保留，用来区分"没有工具面"和"有但没开"；`simulator` 与 `precip` 是 2026-11-17 新增的两条
+  ——前者此前在状态面上**完全不存在**，运维读不出演练腿开没开）。
 - **语义交互与人工上报（批次 B）**：`services/assistant/` 四类任务（查询 / 预案问答 / 演练 / 上报）
   走白名单动作注册表，执行类必须经 `POST /api/v1/assistant/actions/{id}/confirm` 人工确认
   （一次性、带期、限本会话；`/assistant/chat` 只出提案，不执行）。

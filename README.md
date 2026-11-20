@@ -460,12 +460,17 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 "没装 extra / 连不上后端 / 配置关闭"三种情况都不改变链路语义，只改变状态表里的一行事实——
 **"装配时跳过"与"跑起来后降级"必须是两行不同的事实**，否则运维只能靠猜。
 
-下表是 `/api/v1/integrations` 报出的**十一条装配腿**（store / analytics / knowledge / retrieval /
-memory / mcp / mqtt / weather / outbound / delivery / tracing）——前端有一道对账门禁钉住这组名字。
+下表是 `/api/v1/integrations` 报出的**十三条装配腿**（store / analytics / knowledge / retrieval /
+memory / mcp / mqtt / weather / **precip** / **simulator** / outbound / delivery / tracing）——前端有一道对账门禁钉住这组名字。
 **`agents` 不在其中**：它是**运行时三态**（`mock` / `real` / `off`），不是装配腿——
 `real` 装配真实本体（LLM 凭据可留空——平台与灾种各自独立，缺凭据的那一腿走确定性兜底）且与 mock
 互斥（同一订阅面只挂一副）；智能体缺位/超时/产出不合契约时按段降级规则轨并写入 `degradations`；
 `off` 时五段全部走平台降级轨。
+
+`precip`（外部逐日降水腿，2026-11-17 起）是平台**第一个真实雨量来源**：读
+`scripts/derive_precip_station_daily.py` 产出的站点逐日表，只产 `rain_cumulative_24h`
+（24 小时累计，喂规则轨），**不产** `rainfall_mm_h`（日累计与小时雨强口径不同，禁止近似折算）。
+默认关，填 `AEGIS_PRECIP_DAILY_FILE` 且文件在位才有这条腿。
 
 | 腿 | 驱动取值 | 关闭 / 降级时的行为 |
 | --- | --- | --- |
@@ -511,6 +516,13 @@ uv run python -m scripts.ingest_cases              # 整库回填，逐条报落
 客户端与导出器仍拿到完整值。
 
 ## 4. 一键演练
+
+> **演练腿默认关**（2026-11-17 起）：`AEGIS_SIMULATOR_ENABLED` 代码默认与 `.env.example`、
+> compose 一处为 `false`。开着它按 surge 场景自产读数时，雨量会越过规则轨
+> `R-DEBRIS-RAIN-1` 的阈值——平台会**自己给自己发橙色预警**。本机跑演示用 `npm run dev`
+> （本地编排显式注入开启），或手动 `AEGIS_SIMULATOR_ENABLED=true`；
+> 开没开由 `/api/v1/integrations` 的 `simulator` 行说明。
+> 下面的 `scripts.drill` 自己造读数，不依赖这条腿的开关。
 
 ```bash
 cd backend
