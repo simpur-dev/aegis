@@ -125,6 +125,54 @@ class TestFetchOne:
             fetch_one("https://archive-api.open-meteo.com/v1/archive?x=1")
 
 
+class TestClampRetry:
+    def test_日期越界收敛窗口重试一次(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """archive 可及上界随 UTC 推进：本地深夜跑会 400（end_date 越界）——收敛到 allowed max 重试。"""
+        import email.message
+        import io
+        import urllib.error
+
+        attempts: list[str] = []
+
+        def _http_error(body: bytes) -> urllib.error.HTTPError:
+            return urllib.error.HTTPError("url", 400, "Bad Request", email.message.Message(), io.BytesIO(body))
+
+        def fake_urlopen(request, timeout):
+            url = request.full_url
+            attempts.append(url)
+            if "end_date=2026-11-21" in url:
+                reason = "Parameter 'end_date' is out of allowed range from 1940-01-01 to 2026-11-20"
+                raise _http_error(json.dumps({"error": True, "reason": reason}).encode())
+            payload = {"hourly": {"time": ["2026-11-20T13:00"], "precipitation": [1.2]}}
+            response = type(
+                "R",
+                (),
+                {"__enter__": lambda self: self, "__exit__": lambda self, *a: False, "read": lambda self: json.dumps(payload).encode()},
+            )()
+            return response
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        series = fetch_one(
+            "https://archive-api.open-meteo.com/v1/archive?latitude=29.6&longitude=94.3&start_date=2026-11-19&end_date=2026-11-21&hourly=precipitation&timezone=UTC"
+        )
+        assert len(attempts) == 2, "越界一次 + 收敛重试一次"
+        assert "end_date=2026-11-20" in attempts[1]
+        assert series == {"2026-11-20T13:00Z": 1.2}
+
+    def test_解析不出允许范围就如实失败(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import urllib.error
+
+        def fake_urlopen(request, timeout):
+            import email.message
+            import io
+
+            raise urllib.error.HTTPError("url", 400, "Bad Request", email.message.Message(), io.BytesIO(b'{"reason":"unknown"}'))
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        with pytest.raises(SystemExit, match="HTTP 400"):
+            fetch_one("https://archive-api.open-meteo.com/v1/archive?start_date=2026-11-19&end_date=2026-11-21")
+
+
 class TestMainFlow:
     def test_dry_run只打印url不落盘(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         stations = _stations_csv(tmp_path)

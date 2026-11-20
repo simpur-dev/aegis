@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -104,6 +105,22 @@ def build_url(station: Station, start: date, end: date) -> str:
     return f"{ARCHIVE_URL}?{query}"
 
 
+def _clamp_url_to_allowed(url: str, reason: str) -> str | None:
+    """archive 对 `end_date` 越界（本地日期已超过 UTC 数据可及日）会回 400 并带允许范围——
+    从 reason 里解析上界，把窗口收敛进去后重试；解析不出来就放弃（返回 None）。"""
+    match = re.search(r"from (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})", reason)
+    if match is None:
+        return None
+    allowed_max = match.group(2)
+    parsed = urllib.parse.urlparse(url)
+    params = dict(urllib.parse.parse_qsl(parsed.query))
+    if params.get("end_date", "") > allowed_max:
+        params["end_date"] = allowed_max
+    if params.get("start_date", "") > params["end_date"]:
+        params["start_date"] = params["end_date"]
+    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(params)))
+
+
 def fetch_one(url: str, timeout_seconds: float = 30.0) -> dict:
     """拉一个站的小时序列并解析成 `{iso_hour: mm}`；HTTP/解析错误说人话。"""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -113,6 +130,11 @@ def fetch_one(url: str, timeout_seconds: float = 30.0) -> dict:
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
             raise SystemExit("Open-Meteo 限流（429）：加大 --sleep 后重试；免费口子不建议并发") from exc
+        if exc.code == 400:
+            # archive 的可及上界随 UTC 推进（本地深夜已越界时最常见）：收敛窗口重试一次
+            clamped = _clamp_url_to_allowed(url, exc.read().decode("utf-8", errors="replace"))
+            if clamped is not None and clamped != url:
+                return fetch_one(clamped, timeout_seconds)
         raise SystemExit(f"Open-Meteo HTTP {exc.code}：{exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise SystemExit(f"Open-Meteo 网络错误：{exc.reason}") from exc
