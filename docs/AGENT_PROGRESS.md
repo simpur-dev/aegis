@@ -24,7 +24,7 @@
 | 前端首屏与助手抽屉 | — | **2026-11-13／11-14 三批已入账**（`bf5f685`／`84f1a65`／`dd5b576`，见工作日志）：首屏智能体面板可折叠 + 底缘拉杆调高；助手页改值班台两栏 + 整页拉杆；抽屉改会话优先，问答框常驻底、告警/处置收进图标栏。三个提交都带了 spec 改动（`DashboardView.spec.ts` / `AssistantView.spec.ts`） |
 | 外部公开数据目录 | — | **2026-11-17 收口入主线**（`3fa78b1`）：抓取收敛为统一内核 + 每数据集一模块（`backend/scripts/external_data/`），入口 `python -m scripts.external_data --check\|--refresh`；**七套**数据集在库（GLOF 溃决事件 3,151、NASA GLC 中国 426/西藏 16、PANGAEA 泥石流规模 988、公路地灾普查 13,768、TPDC 喜马拉雅 525、Zenodo 滑坡 420+MEGAS 411、Zenodo 冰湖 3,224）。**七套都仍未接入任何生产链路**；GLOF DB 补上 `lake_outburst` 的事件维度（此前只有清单与隐患点） |
 | 数据处理栈与门禁 | 手搓 xlsx/DBF/SHP 解析器、裸 h5py；门禁单进程 419s | **2026-11-20 收口**：`[data]` extra（xarray/calamine/pyshp/polars/pandera）替换手搓解析器并修两个真 bug（CF 时间偏移 10 年、`0.0` 被当缺失）；信封改 pydantic **写入时**校验；生产热路径零依赖算法修复（store region 索引、builder 单趟化）；门禁 **xdist 并行 + e2e 预算注入**：419.3s → **60.7s**（3 轮全绿） |
-| **触发因子（降雨）** | 台账写"仍缺" | **2026-11-17 起不再"链路全假"**：① 演练腿**默认关**（此前默认开 + surge 场景会持续自产橙色预警），状态面新增 `simulator` 行；② 派生表改成**声明式量纲**（×6 从硬编码分支提到表里）+ 物理不可能线拦截；③ 单位收敛到 `domain/factors.py` 一处，三处对账门禁；④ **外部逐日降水腿**（`precip`，默认关）——平台第一个**真实**雨量来源，产 `rain_cumulative_24h` 走规则轨。**仍缺**：① **小时雨强（`rainfall_mm_h`）没有真实源**（日累计不可近似折算）；② 因子权重与归一化边界仍是 MOCK；③ CHM_PRE V2 原件在本机取数通道不通（Zenodo 限流 / TPDC FTP 421 并发上限），**派生数据集尚未入仓** |
+| **触发因子（降雨）** | 台账写"仍缺" | **2026-11-17 起不再"链路全假"**：① 演练腿**默认关**（此前默认开 + surge 场景会持续自产橙色预警），状态面新增 `simulator` 行；② 派生表改成**声明式量纲**（×6 从硬编码分支提到表里）+ 物理不可能线拦截；③ 单位收敛到 `domain/factors.py` 一处，三处对账门禁；④ **外部逐日降水腿**（`precip`，默认关）——平台第一个**真实**雨量来源，产 `rain_cumulative_24h` 走规则轨；⑤ **外部逐小时降水腿**（`precip_hourly`，2026-11-20 起，默认关）——Open-Meteo archive（**CC BY 4.0**，匿名）逐小时 `precipitation`，产 `precip_mm_h` 经派生表恒等换算成因子 `rainfall_mm_h`（此前因子引擎的雨量只能吃 MOCK）。两腿一口径一件事不重叠。**仍缺**：① 因子权重与归一化边界仍是 MOCK；② CHM_PRE V2 原件在本机取数通道不通（Zenodo 限流 / TPDC FTP 421 并发上限），**派生数据集尚未入仓**；③ Open-Meteo 腿的**真实站点表与首跑取数**未落（脚本/连接器/用例已就绪，跑 `fetch_precip_hourly_openmeteo.py` 需要站点表 CSV） |
 
 **当前门禁（2026-11-20 实测，junit 计数；xdist 默认并行）**
 
@@ -42,10 +42,10 @@
 
 **未清项（截至 2026-11-20，这些账仍在）**
 
-- **小时雨强（`rainfall_mm_h`）仍无真实数据源**：外部逐日降水只能给 24 小时累计
-  （`rain_cumulative_24h`，走规则轨），日累计与小时雨强口径不同、**禁止近似折算**；
-  真要有小时雨强，得靠站端设备（MQTT）或气象 API（`AEGIS_WEATHER_API_BASE_URL`）——
-  两者都还没有现场凭据/设备。
+- ~~**小时雨强（`rainfall_mm_h`）无真实数据源**~~ **2026-11-20 已接 Open-Meteo archive**（CC BY 4.0、匿名、逐小时 `precipitation`）：
+  新腿 `precip_hourly` 默认关，取数脚本 `backend/scripts/fetch_precip_hourly_openmeteo.py` 落运行态 CSV，
+  连接器只产 `precip_mm_h`、经派生表恒等换算成因子；**源停更 >6h 整轮不产**（陈年数据冒充当前雨情比没数据更危险）。
+  待办：真实站点表 + 首跑取数（见触发行）。日累计与小时雨强**禁止近似折算**的规矩不变，两口径分腿。
 - **CHM_PRE V2 原件未取到**（本机取数通道不通：Zenodo 限流、TPDC FTP 421 并发上限），
   所以**派生表与入仓的降水摘要数据集都还没产出**。取件脚本与派生脚本都已就绪并有离线用例，
   换一台网络条件允许的机器跑 `fetch_precip_chmpre.py` → `derive_precip_station_daily.py` 即可。

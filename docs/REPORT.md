@@ -4262,3 +4262,49 @@ MCP 的顾虑（会话状态、重连语义）在这里不存在。
 - 体积/洪峰多为估算（源库另有 `VL_calculation`/`Qp_calculation` 口径，未逐条附带）；
   `Date_Min`/`Date_Max` 区间只保留原文，不取中点。
 - **未接入生产链路**（七套均未接入），不得用作预测能力证据。
+
+## Open-Meteo 小时降水腿批次（2026-11-20）
+
+因子引擎的 `rainfall_mm_h`（小时雨强）此前**没有任何真实源**——逐日格点只能给 24 小时累计，
+"日累计不可近似折算"写死在派生表的 UNMAPPED_REASONS 里。本批把小时口径第一次接上真数据。
+
+### 源与许可
+
+| 项 | 实测 |
+|---|---|
+| API | `archive-api.open-meteo.com/v1/archive`，`hourly=precipitation`（单位 mm，即 mm/h），`timezone=UTC`，匿名可调 |
+| 许可 | **CC BY 4.0**（非商业免费、商用需订阅；引用要求见 open-meteo.com/en/license） |
+| 落盘 | `backend/data/precip/openmeteo/openmeteo_hourly.csv`（运行态目录，不进 git；与 CHM_PRE 同一条纪律） |
+
+### 关键口径决策（说死）
+
+1. **遥测 metric 叫 `precip_mm_h`，不叫 `rainfall_mm_h`**：平台规矩是"遥测是站点原始量，
+   因子是物理量，换算只发生在派生表"。小时雨强恰好是 scale=1.0 的恒等派生，也要登记进
+   `DERIVATIONS`（`source_range=(0, 300)` 由对账门禁 `test_源口径上界等于因子上界折回`
+   自动钉住）——×6 那类口径错换对这条腿同样有闸，而不是绕开表。
+2. **两条腿一个口径一件事，不重叠**：24h 累计归逐日腿（喂规则轨 `R-DEBRIS-RAIN-2`），
+   小时雨强归这条腿（喂因子引擎）。**没有做"滚动 24h"**：同一 `rain_cumulative_24h`
+   两条腿同时供数会双计；要用小时值重算 24h，是将来另一条腿的事。
+3. **源停更 >6h 整轮不产读数**（`stale_rounds` 计数 + 状态面如实报）：陈年数据冒充
+   当前雨情比没数据更危险——这是逐日腿"只取当天"在小时口径下的等价物。
+4. **只产文件里最新一小时**，更早的小时不倒灌；缺测跳过不补；越物理线（300 mm/h）标
+   `suspect` 不静默丢。
+
+### 交付物
+
+| 件 | 内容 |
+|---|---|
+| `scripts/fetch_precip_hourly_openmeteo.py` | 按站点表逐站取数（sleep 0.3s 不加压免费口子）、`(datetime_utc, station_id)` 幂等合并（旧值保留、只补缺）、`--dry-run`；站点表缺列/坐标越界/重复 id 当场停 |
+| `connectors/precip_hourly.py` | 读运行态 CSV → `precip_mm_h` 遥测；缺列上抛 `SchemaInvalidError` |
+| `integrations/precip_hourly.py` + container | 装配腿 **默认关**（`AEGIS_PRECIP_HOURLY_ENABLED` + `AEGIS_PRECIP_HOURLY_FILE`）；状态面 13 行 → **14 行**（`precip_hourly`），frontend 对账门禁同步 |
+| 派生表 | `DERIVATIONS["precip_mm_h"]` 恒等行；三处对账门禁原样通过 |
+| 用例 | 连接器 8、装配 6、取数脚本离线 11（假 `fetch_one` 替身，不测 socket）；`test_integrations.py` 状态面集合更新 |
+
+### 仍未做（不声称）
+
+- **真实站点表与首跑取数未落**：脚本/连接器/用例已就绪，但跑 `fetch_precip_hourly_openmeteo.py`
+  需要一份 `station_id, region_code, latitude, longitude` 站点表——落了之后才有真实
+  `rainfall_mm_h` 因子观测；
+- Open-Meteo archive 的实况延迟与站点所在格点的代表性未做现场核对（离线口径已钉，
+  现场核对属部署期动作）；
+- 商用部署若持续用 Open-Meteo，需按其条款订阅——本研究/教学口径按免费档与署名要求执行。

@@ -30,6 +30,7 @@ from aegis.integrations.mcp import McpAssembly, build_mcp
 from aegis.integrations.memory import build_memory
 from aegis.integrations.mqtt import build_mqtt
 from aegis.integrations.precip import build_precip
+from aegis.integrations.precip_hourly import build_precip_hourly
 from aegis.integrations.retrieval import build_retrieval, warm_retrieval
 from aegis.integrations.sandbox import AssembledScenarios, sandbox_runner
 from aegis.integrations.shared import target_of
@@ -52,6 +53,7 @@ __all__ = [
     "build_memory",
     "build_mqtt",
     "build_precip",
+    "build_precip_hourly",
     "build_retrieval",
     "build_simulator",
     "build_store",

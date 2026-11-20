@@ -116,7 +116,8 @@ data/external/
   不能直接把 JSONL/CSV 塞进 `agents/hazards/` 或 `knowledge/data/`。
 - 引用要求见各数据集 README；对外发表时同时引用原始数据提供方。
 - **触发因子（降雨）走的是另一条路**：不进本目录、落运行态目录，见上面"现在仓里能回答的
-  问题"那一节与 `backend/scripts/fetch_precip_chmpre.py`。**小时雨强仍无真实源**——
-  格点日值只能给 24 小时累计，两者口径不同、禁止近似折算。
+  问题"那一节与 `backend/scripts/fetch_precip_chmpre.py`。逐日累计由 CHM_PRE 派生腿供给；
+  小时雨强 2026-11-20 起由 Open-Meteo 逐小时腿供给（`backend/scripts/fetch_precip_hourly_openmeteo.py`，
+  两口径分腿、禁止近似折算的规矩不变）。
 - 数据集之间的口径不可直接合并（事件定义、时空粒度、去重规则都不同），
   要合并先在 `normalized/` 之上另做映射层。

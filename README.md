@@ -461,8 +461,8 @@ MCP 工具面（默认关）`http://localhost:8000/mcp/`——**尾斜杠是必�
 "没装 extra / 连不上后端 / 配置关闭"三种情况都不改变链路语义，只改变状态表里的一行事实——
 **"装配时跳过"与"跑起来后降级"必须是两行不同的事实**，否则运维只能靠猜。
 
-下表是 `/api/v1/integrations` 报出的**十三条装配腿**（store / analytics / knowledge / retrieval /
-memory / mcp / mqtt / weather / **precip** / **simulator** / outbound / delivery / tracing）——前端有一道对账门禁钉住这组名字。
+下表是 `/api/v1/integrations` 报出的**十四条装配腿**（store / analytics / knowledge / retrieval /
+memory / mcp / mqtt / weather / **precip** / **precip_hourly** / **simulator** / outbound / delivery / tracing）——前端有一道对账门禁钉住这组名字。
 **`agents` 不在其中**：它是**运行时三态**（`mock` / `real` / `off`），不是装配腿——
 `real` 装配真实本体（LLM 凭据可留空——平台与灾种各自独立，缺凭据的那一腿走确定性兜底）且与 mock
 互斥（同一订阅面只挂一副）；智能体缺位/超时/产出不合契约时按段降级规则轨并写入 `degradations`；
@@ -472,6 +472,13 @@ memory / mcp / mqtt / weather / **precip** / **simulator** / outbound / delivery
 `scripts/derive_precip_station_daily.py` 产出的站点逐日表，只产 `rain_cumulative_24h`
 （24 小时累计，喂规则轨），**不产** `rainfall_mm_h`（日累计与小时雨强口径不同，禁止近似折算）。
 默认关，填 `AEGIS_PRECIP_DAILY_FILE` 且文件在位才有这条腿。
+
+`precip_hourly`（外部逐小时降水腿，2026-11-20 起）补的正是因子引擎的 `rainfall_mm_h`：
+读 `scripts/fetch_precip_hourly_openmeteo.py` 从 Open-Meteo archive API（**CC BY 4.0**，
+匿名可调）合并出的站点逐小时表，只产 `precip_mm_h`（经派生表恒等换算成因子，连接器不绕开口径）。
+两条腿一个口径一件事：24h 累计归逐日腿、小时雨强归这条腿，不重叠、不双计。
+同样默认关，填 `AEGIS_PRECIP_HOURLY_FILE` 且文件在位才有；源停更超过 6 小时整轮不产读数
+（陈年数据冒充当前雨情比没数据更危险），状态面用 `stale_rounds` 如实报。
 
 | 腿 | 驱动取值 | 关闭 / 降级时的行为 |
 | --- | --- | --- |

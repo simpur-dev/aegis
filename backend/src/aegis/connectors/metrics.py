@@ -12,6 +12,7 @@ from collections.abc import Mapping
 METRIC_UNITS: Mapping[str, str] = {
     "rain_10min": "mm",
     "rain_cumulative_24h": "mm",
+    "precip_mm_h": "mm/h",
     "debris_level": "m",
     "displacement_mm": "mm",
     "lake_level_m": "m",

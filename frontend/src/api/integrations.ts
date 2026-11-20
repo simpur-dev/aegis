@@ -42,6 +42,7 @@ export const LEG_LABELS: Record<string, string> = {
   mqtt: 'MQTT 推送腿',
   weather: '气象拉取腿',
   precip: '外部逐日降水腿',
+  precip_hourly: '外部逐小时降水腿',
   simulator: '演练腿',
   outbound: '工作流外呼腿',
   delivery: '触达通道腿',

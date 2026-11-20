@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     # 落在运行态目录（不进仓库）。默认关：没派生表就不该有这条腿。
     precip_enabled: bool = False
     precip_daily_file: str = ""
+    # 外部逐小时降水腿（Open-Meteo archive）：因子引擎的 `rainfall_mm_h` 从这里来。
+    # 与逐日腿分工见 `aegis/connectors/precip_hourly.py` 的模块注释；同样默认关。
+    precip_hourly_enabled: bool = False
+    precip_hourly_file: str = ""
     # 工作流节点外呼（api_call / device_control）的主机白名单，逗号分隔。
     # 留空 = 这两类节点在产品形态下不可用（装配桥不注入 http_call，节点响亮失败）；
     # 之所以默认关：URL 由编排画布填写，放开就是把平台变成任意内网地址的代理。

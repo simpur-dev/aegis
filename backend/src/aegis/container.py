@@ -25,6 +25,7 @@ from aegis.config import Settings, get_settings
 from aegis.connectors.base import DataSource, IngestService
 from aegis.connectors.mqtt import MqttSource
 from aegis.connectors.precip_daily import PrecipDailySource
+from aegis.connectors.precip_hourly import PrecipHourlySource
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.connectors.weather_api import WeatherApiSource
 from aegis.contracts import ContractRegistry
@@ -44,6 +45,7 @@ from aegis.integrations import (
     build_memory,
     build_mqtt,
     build_precip,
+    build_precip_hourly,
     build_retrieval,
     build_simulator,
     build_store,
@@ -207,6 +209,8 @@ class PlatformContainer:
     weather_state: IntegrationState | None = None
     precip: PrecipDailySource | None = None
     precip_state: IntegrationState | None = None
+    precip_hourly: PrecipHourlySource | None = None
+    precip_hourly_state: IntegrationState | None = None
     outbound: OutboundCaller | None = None
     simulator: HazardScenarioSimulator | None = None
     simulator_state: IntegrationState | None = None
@@ -671,6 +675,12 @@ class PlatformContainer:
         if self.precip is not None:
             precip_state = replace(precip_state, detail={**precip_state.detail, **self.precip.status()})
         rows.append(precip_state)
+        # 外部逐小时降水腿：因子引擎的 rainfall_mm_h 从这里来；"源停更几轮"是这条腿特有的事实
+        # （Open-Meteo 断更时整轮不产读数，状态面要能读出"为什么因子分里没雨"）。
+        precip_hourly_state = self.precip_hourly_state or IntegrationState(name="precip_hourly", enabled=False, driver="off")
+        if self.precip_hourly is not None:
+            precip_hourly_state = replace(precip_hourly_state, detail={**precip_hourly_state.detail, **self.precip_hourly.status()})
+        rows.append(precip_hourly_state)
         # 演练腿也要有一行：它是**会自产预警的读数源**（surge 场景的 `rain_10min` 越过
         # `R-DEBRIS-RAIN-1` 阈值），运维要能从状态面一眼读出"演练腿开着还是关着"，
         # 而不是从"预警突然变多"倒推。此前这条腿在状态面上完全不存在。
@@ -826,6 +836,7 @@ def create_container(
     mqtt_source, mqtt_state = build_mqtt(cfg)
     weather_source, weather_state = build_weather(cfg, client=weather_client)
     precip_source, precip_state = build_precip(cfg)
+    precip_hourly_source, precip_hourly_state = build_precip_hourly(cfg)
     outbound = OutboundCaller(OutboundPolicy.from_settings(cfg), client=outbound_client)
     if not outbound.enabled:
         # 不是错误，但必须说清楚：画布上摆了 api_call/device_control 却没人配白名单时，
@@ -907,7 +918,7 @@ def create_container(
         store=store,
         tracer=tracer,
         settings=cfg,
-        sources=[source for source in (simulator, mqtt_source, weather_source, precip_source) if source is not None],
+        sources=[source for source in (simulator, mqtt_source, weather_source, precip_source, precip_hourly_source) if source is not None],
         on_readings=on_readings if analytics is not None else None,
     )
 
@@ -984,6 +995,8 @@ def create_container(
         weather_state=weather_state,
         precip=precip_source,
         precip_state=precip_state,
+        precip_hourly=precip_hourly_source,
+        precip_hourly_state=precip_hourly_state,
         outbound=outbound,
         labels=LabelFlywheel(store),
         suggestions=suggestions,

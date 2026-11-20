@@ -116,6 +116,14 @@ DERIVATIONS: dict[str, Derivation] = {
         scale_note="10 分钟→小时",
         source_range=(0.0, 50.0),
     ),
+    # Open-Meteo 逐小时降水腿（`precip_hourly`）的原始量：小时值即小时雨强，恒等派生。
+    # 也要登记在这张表里（而不是连接器直供因子名），×6 那类口径错换对这条腿同样有闸。
+    "precip_mm_h": Derivation(
+        factor="rainfall_mm_h",
+        scale=1.0,
+        scale_note="逐小时值即小时雨强",
+        source_range=(0.0, 300.0),
+    ),
     # 位移速率按每站首末差折算，值域在折算后判（见 `_derive_displacement`）。
     "displacement_mm": Derivation(factor="displacement_mm_day"),
     "crack_aperture_mm": Derivation(factor="crack_width_mm"),

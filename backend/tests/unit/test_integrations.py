@@ -364,6 +364,7 @@ class TestContainerWiring:
             "mqtt",
             "weather",
             "precip",
+            "precip_hourly",
             "simulator",
             "outbound",
             "delivery",
