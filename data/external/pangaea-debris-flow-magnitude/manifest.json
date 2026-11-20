@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "generated_at": "2026-11-20T13:44:49.438824+00:00",
+  "generated_at": "2026-11-20T13:59:07.021336+00:00",
   "datasets": [
     {
       "id": "pangaea-debris-flow-magnitude",
@@ -39,7 +39,7 @@
         "面积缺失 860/988（源目录只对部分事件估算了堆积面积）。",
         "与 GLC 的泥石流事件可能有重叠，但两者口径不同（GLC 是媒体报道事件，本目录是文献规模汇编），本目录不做去重合并。"
       ],
-      "retrieved_at": "2026-11-20T13:44:49.438824+00:00",
+      "retrieved_at": "2026-11-20T13:59:07.021336+00:00",
       "files": {
         "raw/pangaea_783654_debris_flow_magnitude.tsv": {
           "sha256": "de7146be12a23187c63444a9a8cce7ae9560f584ad69e3ab0c14df448a0bc38a",

@@ -30,7 +30,7 @@ from scripts.external_data.core import (
     download,
     parse_dms,
     write_bytes,
-    write_jsonl,
+    write_envelope,
     write_manifest,
 )
 from scripts.external_data.table import read_first_sheet
@@ -198,7 +198,7 @@ def refresh() -> Path:
             files[f"raw/parlung_glacial_lakes_{year}.xlsx"] = write_bytes(inner_bytes, root / "raw" / f"parlung_glacial_lakes_{year}.xlsx")
             rows = read_first_sheet(inner_bytes)
             records.extend(_records_from_sheet(rows, year))
-    files["normalized/parlung_zangbo_glacial_lakes.v1.jsonl"] = write_jsonl(
+    files["normalized/parlung_zangbo_glacial_lakes.v1.jsonl"] = write_envelope(
         records, root / "normalized" / "parlung_zangbo_glacial_lakes.v1.jsonl"
     )
     manifest_path = write_manifest(spec(meta), files)

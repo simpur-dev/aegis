@@ -29,7 +29,9 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 USER_AGENT = "aegis-data-fetch/1.0 (research)"
 
@@ -205,31 +207,123 @@ def verify_all(dataset_ids: Iterable[str]) -> list[str]:
     return problems
 
 
+class EnvelopeSource(BaseModel):
+    """来源块：谁给的、什么许可。数据集特有的键（event_id/layer/collection…）允许扩展。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    dataset: str = Field(min_length=1)
+    license: str = Field(min_length=1)
+
+
+class EnvelopeEvent(BaseModel):
+    """事件块：日期/标题/地点等。数据集特有的键（date_start/date_end…）允许扩展。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    date: str | None = None
+    date_raw: str | None = None
+    time_raw: str | None = None
+    title: str | None = None
+    description: str | None = None
+    location: str | None = None
+    location_accuracy: str | None = None
+    storm_name: str | None = None
+    notes: str | None = None
+    date_start: str | None = None
+    date_end: str | None = None
+
+
+class EnvelopeGeo(BaseModel):
+    """地理块：经纬度可空（有的数据源只有地名），非空时必须在合法值域内。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    latitude: float | None = None
+    longitude: float | None = None
+    country: str | None = None
+    admin_division: str | None = None
+    quality_flags: list[str] | None = None
+
+    @field_validator("latitude")
+    @classmethod
+    def _latitude_range(cls, value: float | None) -> float | None:
+        if value is not None and not (-90.0 <= value <= 90.0):
+            raise ValueError(f"latitude 越界: {value}")
+        return value
+
+    @field_validator("longitude")
+    @classmethod
+    def _longitude_range(cls, value: float | None) -> float | None:
+        if value is not None and not (-180.0 <= value <= 180.0):
+            raise ValueError(f"longitude 越界: {value}")
+        return value
+
+
+class EnvelopeHazard(BaseModel):
+    """灾种块：type 必须是项目 HazardType；数据集特有属性进 attributes 或扩展键。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    source_category: str | None = None
+    scale: str | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("type")
+    @classmethod
+    def _known_hazard(cls, value: str) -> str:
+        from aegis.domain.enums import HazardType
+
+        allowed = {hazard.value for hazard in HazardType}
+        if value not in allowed:
+            raise ValueError(f"未知灾种 {value!r}（允许：{sorted(allowed)}）")
+        return value
+
+
+class EnvelopeImpact(BaseModel):
+    """影响块：0 是"测到是 0"，None 是"没测到"——两者不可混。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    fatalities: int | None = Field(default=None, ge=0)
+    injuries: int | None = Field(default=None, ge=0)
+
+
+class EnvelopeRecord(BaseModel):
+    """统一信封：整个 `data/external/` 只有这一种 normalized 形状。
+
+    写入时校验（而不是只在测试里用 jsonschema 校验）：形状/类型/值域错了，
+    `--refresh` 当场失败，不会先把坏数据落盘再等门禁发现。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0.0"]
+    record_id: str = Field(min_length=1)
+    source: EnvelopeSource
+    event: EnvelopeEvent
+    geo: EnvelopeGeo
+    hazard: EnvelopeHazard
+    impact: EnvelopeImpact
+
+
 def write_envelope(
     records: Sequence[dict[str, Any]],
     path: Path,
-    *,
-    extra_keys: Sequence[str] = (),
 ) -> FileMeta:
-    """写统一信封的 JSONL。
+    """写统一信封的 JSONL：**先过 pydantic 模型**，再把**原字典**落盘（LF）。
 
-    信封字段固定七个：`schema_version` / `record_id` / `source` / `event` / `geo` /
-    `hazard` / `impact`；数据集特有的列进 `extra`（键名在 `extra_keys` 里登记，
-    门禁会检查"登记了但没出现"或"出现了但没登记"）。
+    为什么写原字典而不是 `model_dump()`：pydantic 按模型定义顺序输出嵌套键，
+    会把各数据集原有的键序重排——语义没变，但刷新一次就是几千行 diff 噪声。
+    校验的目的（形状/类型/值域）在 `model_validate` 里已经达到。
     """
-    required = ("schema_version", "record_id", "source", "event", "geo", "hazard", "impact")
-    for index, record in enumerate(records):
-        missing = [key for key in required if key not in record]
-        if missing:
-            raise SystemExit(f"记录 {record.get('record_id', index)} 缺信封字段: {missing}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="\n") as fh:
-        for record in records:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-    return file_meta(path, rows=len(records))
-
-
-def write_jsonl(records: Sequence[dict[str, Any]], path: Path) -> FileMeta:
+    for record in records:
+        try:
+            EnvelopeRecord.model_validate(record)
+        except ValidationError as exc:
+            record_id = record.get("record_id", "(无 record_id)")
+            raise SystemExit(f"信封校验失败 {record_id}: {exc.errors()[:3]}") from exc
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="\n") as fh:
         for record in records:
@@ -312,6 +406,7 @@ def parse_dms(raw: str) -> float | None:
 
 __all__ = [
     "DatasetSpec",
+    "EnvelopeRecord",
     "FileMeta",
     "count_rows",
     "data_root",
@@ -330,6 +425,5 @@ __all__ = [
     "write_bytes",
     "write_csv",
     "write_envelope",
-    "write_jsonl",
     "write_manifest",
 ]

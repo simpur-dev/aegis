@@ -35,7 +35,7 @@ from scripts.external_data.core import (
     dataset_dir,
     download,
     write_bytes,
-    write_jsonl,
+    write_envelope,
     write_manifest,
 )
 
@@ -233,10 +233,10 @@ def refresh() -> Path:
     files: dict[str, FileMeta] = {
         "raw/eastern_himalaya_large_landslides.kml": write_bytes(eastern_raw, root / "raw" / "eastern_himalaya_large_landslides.kml"),
         "raw/megas_master_2025.csv": write_bytes(megas_raw, root / "raw" / "megas_master_2025.csv"),
-        "normalized/eastern_himalaya_large_landslides.v1.jsonl": write_jsonl(
+        "normalized/eastern_himalaya_large_landslides.v1.jsonl": write_envelope(
             eastern_records, root / "normalized" / "eastern_himalaya_large_landslides.v1.jsonl"
         ),
-        "normalized/megas_largest_landslides.v1.jsonl": write_jsonl(
+        "normalized/megas_largest_landslides.v1.jsonl": write_envelope(
             megas_records, root / "normalized" / "megas_largest_landslides.v1.jsonl"
         ),
     }

@@ -31,7 +31,7 @@ from scripts.external_data.core import (
     dataset_dir,
     post_json,
     write_bytes,
-    write_jsonl,
+    write_envelope,
     write_manifest,
 )
 
@@ -241,7 +241,7 @@ def refresh() -> Path:
     with zipfile.ZipFile(root / "raw" / "tpdc_himalaya_geohazard.zip") as archive:
         for layer in LAYER_TYPES:
             records.extend(_records_from_layer(layer, archive, prefix))
-    normalized = write_jsonl(records, root / "normalized" / "himalaya_geohazard_sites.v1.jsonl")
+    normalized = write_envelope(records, root / "normalized" / "himalaya_geohazard_sites.v1.jsonl")
 
     metadata_path = root / "raw" / "tpdc_metadata.json"
     try:

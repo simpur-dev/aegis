@@ -30,7 +30,7 @@ from scripts.external_data.core import (
     dataset_dir,
     download,
     write_bytes,
-    write_jsonl,
+    write_envelope,
     write_manifest,
 )
 
@@ -261,7 +261,7 @@ def refresh(source: Path | None = None) -> Path:
     root = dataset_dir(DATASET_ID)
     files: dict[str, FileMeta] = {
         "raw/pangaea_783654_debris_flow_magnitude.tsv": write_bytes(raw, root / "raw" / "pangaea_783654_debris_flow_magnitude.tsv"),
-        "normalized/global_debris_flow_magnitude.v1.jsonl": write_jsonl(
+        "normalized/global_debris_flow_magnitude.v1.jsonl": write_envelope(
             records, root / "normalized" / "global_debris_flow_magnitude.v1.jsonl"
         ),
     }

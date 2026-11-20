@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "generated_at": "2026-11-12T06:21:04.675224+00:00",
+  "generated_at": "2026-11-20T13:59:33.819611+00:00",
   "datasets": [
     {
       "id": "zenodo-himalaya-landslide-inventories",
@@ -45,7 +45,7 @@
         "东喜马拉雅清单的点位是滑坡体位置，不代表其发生时刻或规模。",
         "KML 覆盖东喜马拉雅—藏东南—尼泊尔东部一带（经度 90.40–97.16，纬度 27.03–30.30），**不覆盖阿里/日喀则西段**。"
       ],
-      "retrieved_at": "2026-11-12T06:21:04.676241+00:00",
+      "retrieved_at": "2026-11-20T13:59:33.819611+00:00",
       "files": {
         "raw/eastern_himalaya_large_landslides.kml": {
           "sha256": "954314830f8d9c183710b862abcd06b1f654e41e9b27d5ec828869c13ce897f4",
