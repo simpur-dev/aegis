@@ -164,8 +164,17 @@ def build_trace_warning_count(
     sql = (
         "SELECT count(*) AS n, coalesce(array_agg(w.warning_id), '{}') AS warning_ids\n"
         "FROM warnings w\n"
-        "WHERE w.region_code IN (\n"
-        "  SELECT region_code FROM monitoring_stations s WHERE s.geom IS NOT NULL AND ST_Covers(ST_GeogFromText($1), s.geom)\n"
+        "WHERE (\n"
+        # 多区域发布（region_codes 数组）也要算进来——与内存读视图（store.py 的
+        # `region_code in r.region_codes`）和准确率配对（accuracy.py 的
+        # `region_code = l.region_code OR l.region_code = ANY(w.region_codes)`）同一口径，
+        # 否则同一事件在轨迹汇总页与预警清单/回放里对不上数。
+        "  w.region_code IN (\n"
+        "    SELECT region_code FROM monitoring_stations s WHERE s.geom IS NOT NULL AND ST_Covers(ST_GeogFromText($1), s.geom)\n"
+        "  )\n"
+        "  OR w.region_codes && ARRAY(\n"
+        "    SELECT region_code FROM monitoring_stations s WHERE s.geom IS NOT NULL AND ST_Covers(ST_GeogFromText($1), s.geom)\n"
+        "  )\n"
         ")\n"
         f"  AND {' AND '.join(where)}\n"
     )

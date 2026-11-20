@@ -209,9 +209,14 @@ class TpdcFtpChannel(Channel):
             if existing:
                 # 续传防线：问服务端文件大小。REST 被忽略时服务端会从 0 重传，客户端按
                 # "ab" 追加就把两份内容拼在一起——损坏且 --verify-only 永远绿灯。
-                server_size = int(ftp.size(artifact.name))
-                if server_size <= existing:
-                    existing = 0  # 服务端比本地还小 = 源变了或续传无意义，按全新下载
+                server_size_raw = ftp.size(artifact.name)  # SIZE 不可用/文件缺失时为 None
+                if server_size_raw is None:
+                    # 拿不到服务端大小就不续传：宁可重下，不拼损坏。
+                    existing = 0
+                    dest.unlink(missing_ok=True)
+                elif int(server_size_raw) <= existing:
+                    # 服务端不比本地大 = 源变了或续传无意义，按全新下载
+                    existing = 0
                     dest.unlink(missing_ok=True)
                 else:
                     ftp.sendcmd(f"REST {existing}")

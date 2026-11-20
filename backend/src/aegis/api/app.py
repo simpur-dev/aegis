@@ -52,6 +52,16 @@ from aegis.observability import telemetry
 from aegis.persistence.errors import QueryArgumentError
 from aegis.workflow.errors import WorkflowAppError
 
+
+def _token_matches(presented: str, expected: str) -> bool:
+    """常量时间比对；非 ASCII 字节（compare_digest 对 str 要求双参 ASCII）按未授权处理，
+    而不是让 TypeError 把 401 变成 500。"""
+    try:
+        return secrets.compare_digest(presented, expected)
+    except TypeError:
+        return False
+
+
 log = logging.getLogger("aegis.api")
 
 
@@ -119,7 +129,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
         if not cfg.service_token or request.method == "OPTIONS" or not request.url.path.startswith("/api/"):
             return await call_next(request)
         presented = presented_token(request.headers)
-        if not presented or not secrets.compare_digest(presented, cfg.service_token):
+        if not presented or not _token_matches(presented, cfg.service_token):
             return JSONResponse(
                 status_code=401,
                 content={
@@ -225,7 +235,7 @@ def create_app(settings: Settings | None = None, *, container: PlatformContainer
             if cfg.service_token:
                 headers = {str(key.decode("latin-1")).lower(): value.decode("latin-1") for key, value in scope.get("headers") or []}
                 presented = presented_token(headers)
-                if not presented or not secrets.compare_digest(presented, cfg.service_token):
+                if not presented or not _token_matches(presented, cfg.service_token):
                     await _reject(
                         401,
                         "E_UNAUTHORIZED",

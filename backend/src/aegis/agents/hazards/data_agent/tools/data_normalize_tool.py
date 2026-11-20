@@ -30,7 +30,6 @@ def data_normalize_tool(cleaned_data: dict, normalize_precision: dict) -> dict:
     """
     events = cleaned_data.get("events", [])
     normalized_events = []
-    applied = ["time_iso8601", "coordinate_4dp"]
 
     # normalization_applied 是"应用了哪些规则"的清单，不是逐事件×字段的流水：
     # 此前在事件循环里 append（3 千事件 × 9 字段 ≈ 2.7 万条重复字符串，随 State 传递）。

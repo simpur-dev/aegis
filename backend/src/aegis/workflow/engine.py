@@ -875,8 +875,13 @@ class WorkflowEngine:
         run = instance.runs[node_id]
         spec = self._registry.require(node.type)
 
-        # 节点可能在本轮 collect 之后、handler 启动之前被 abort 波及：先认终态，
-        # 否则下面那句 `run.state = RUNNING` 会把已经 CANCELLED 的节点重新点亮。
+        # 节点可能在本轮 collect 之后、handler 启动之前被 abort **或人工旁路**波及：先复查，
+        # 否则下面那句 `run.state = RUNNING` 会把已经 CANCELLED / BYPASSED 的节点重新点亮——
+        # 旁路的窄竞态窗口（collect 收走 READY → bypass 翻 BYPASSED → handler 照跑、
+        # 终态覆盖旁路账）正是在这里关掉的。
+        if run.state is NodeState.BYPASSED:
+            run.notes.append("旁路生效：节点在启动前被人工放行，未执行")
+            return
         if instance.status is InstanceStatus.ABORTED:
             if run.state not in (NodeState.SUCCEEDED, NodeState.DEGRADED):
                 run.state = NodeState.CANCELLED
@@ -1134,6 +1139,11 @@ class WorkflowEngine:
         states = {run.state for run in instance.runs.values()}
         if states & {NodeState.PENDING, NodeState.READY, NodeState.RUNNING}:
             instance.status = InstanceStatus.RUNNING
+            return
+        if NodeState.AWAITING_HUMAN in states:
+            # 还有节点在等人工决策：实例不是终态（此前漏判 → 并列两个核签叶子的图，
+            # resume 完第一个就把实例判 SUCCEEDED，第二个的决策被记录却永不执行）。
+            instance.status = InstanceStatus.WAITING
             return
         if NodeState.FAILED in states:
             instance.status = InstanceStatus.FAILED

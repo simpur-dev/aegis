@@ -18,6 +18,7 @@ from aegis.services.assistant.base import (
     Action,
     ActionContext,
     ActionDomain,
+    ActionError,
     ActionResult,
     ActionSpec,
     ResolvedTargets,
@@ -346,7 +347,12 @@ class PlanAsk(Action):
 
     async def execute(self, targets: ResolvedTargets, params: BaseModel, ctx: ActionContext) -> ActionResult:
         assert isinstance(params, PlanAskParams)
-        hazard = HazardType(params.hazard_type) if params.hazard_type else HazardType.UNKNOWN
+        try:
+            hazard = HazardType(params.hazard_type) if params.hazard_type else HazardType.UNKNOWN
+        except ValueError as exc:
+            # 非法灾种是调用方错误（确定性拒绝）：翻译成 ActionError，别让 executor 按
+            # 非确定性异常记熔断（3 次错拼灾种就把 plan.ask 断 60 秒，口径自相矛盾）。
+            raise ActionError("E_ACTION_BAD_PARAMS", f"未知灾种 {params.hazard_type!r}") from exc
         steps = [
             {
                 "task_type": step.task_type.value,

@@ -400,7 +400,10 @@ async def _human_review(ctx: NodeContext, config: dict[str, Any]) -> NodeOutcome
     试运行不能真的挂起（那会让预览永远停在 waiting，也不符合"0 HumanRequired"的边界）：
     模拟第一个候选并在产出里写明 simulated，让人知道这不是谁签的字。
     """
-    decision = ctx.decision or ctx.payload.get("decision")
+    # 决策只认 resume 注入的 `ctx.decision`（instance.decisions 由 resume 唯一写入并留账）。
+    # payload 里的 decision 只在**试运行**生效（预演脚本化，无实例账）——否则
+    # `POST /instances {"payload":{"decision":…}}` 会让核签节点首跑直通，人工闸形同虚设。
+    decision = ctx.decision or (ctx.payload.get("decision") if ctx.dry_run else None)
     if not decision and ctx.dry_run:
         options = tuple(config.get("options", ("approve", "reject")))
         choice = str(options[0]) if options else "approve"

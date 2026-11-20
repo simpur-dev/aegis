@@ -75,6 +75,7 @@ def _seed_operators(container: PlatformContainer) -> None:
 
 
 HEADERS = {"X-Aegis-Operator": "duty01"}
+LEAD_HEADERS = {"X-Aegis-Operator": "lead01"}  # 删除记忆需要 LEAD（比 DUTY 的写入更重）
 
 
 @pytest.fixture
@@ -146,10 +147,10 @@ async def test_删掉之后列表里就没有了而再删一次是404(memory_pai
     record_id = (await client.post("/api/v1/memory/shared", headers=HEADERS, json={"kind": "lesson", "content": LESSON})).json()[
         "record_id"
     ]
-    removed = await client.delete(f"/api/v1/memory/shared/{record_id}")
+    removed = await client.delete(f"/api/v1/memory/shared/{record_id}", headers=LEAD_HEADERS)
     assert removed.status_code == 200 and removed.json()["removed"] is True
     assert (await client.get("/api/v1/memory/shared")).json()["count"] == 0
-    again = await client.delete(f"/api/v1/memory/shared/{record_id}")
+    again = await client.delete(f"/api/v1/memory/shared/{record_id}", headers=LEAD_HEADERS)
     assert again.status_code == 404, "没删到回 200 会让脚本把「id 早就不存在」读成「清理完成」"
 
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from aegis.domain.assess import AssessEvidence
 log = logging.getLogger("aegis.pipeline.evidence_export")
 
 SCHEMA_VERSION = "1.0.0"
+_APPEND_LOCK = threading.Lock()
 
 
 class EvidenceExporter:
@@ -84,6 +86,12 @@ class EvidenceExporter:
             return False
 
     def _append(self, record: dict[str, Any]) -> None:
+        # to_thread 是线程池：两条并发研判链会同时进 _append，无锁的 read-append 在
+        # 慢盘/Windows 上可能行交错。旁路写也要账本干净——线程锁串行化。
+        with _APPEND_LOCK:
+            self._write_locked(record)
+
+    def _write_locked(self, record: dict[str, Any]) -> None:
         self._directory.mkdir(parents=True, exist_ok=True)
         name = f"evidence_export-{datetime.now(UTC).strftime('%Y%m%d')}.jsonl"
         path = self._directory / name

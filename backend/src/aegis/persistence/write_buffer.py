@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import random
+from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -121,7 +122,9 @@ class WriteBuffer:
         self._backoff_factor = backoff_factor
         self._jitter_ratio = jitter_ratio
         self._rand = rng.random if rng is not None else random.random
-        self._queue: list[WriteRequest] = []
+        # deque：submit 的溢出驱逐与 _take_locked 的取批都在队首操作，list.pop(0) 是
+        # O(n) 整体搬移——持续溢出 + 单行请求时每次 submit 都搬万级指针。
+        self._queue: deque[WriteRequest] = deque()
         self._depth = 0
         self._counters = BufferCounters()
         self._send_lock = asyncio.Lock()
@@ -178,7 +181,7 @@ class WriteBuffer:
             self._counters.last_error = f"单批 {request.size} 行超出容量 {self._capacity}"
             return 0
         while self._depth + request.size > self._capacity and self._queue:
-            victim = self._queue.pop(0)
+            victim = self._queue.popleft()
             self._depth -= victim.size
             self._counters.dropped += victim.size
         self._queue.append(request)
@@ -258,15 +261,19 @@ class WriteBuffer:
             request = self._queue[0]
             if taken and rows + request.size > self._batch_rows:
                 break
-            self._queue.pop(0)
+            self._queue.popleft()
             self._depth -= request.size
             rows += request.size
             taken.append(request)
         return taken
 
     def _hold_for_retry(self, batch: list[WriteRequest]) -> None:
-        """批次放回队首：保持时间序，避免旧数据被新数据插队后永久落后。"""
-        self._queue[:0] = batch
+        """批次放回队首：保持时间序，避免旧数据被新数据插队后永久落后。
+
+        `extendleft(reversed(batch))` 与 `list[:0] = batch` 等价（batch 原序放回队首），
+        deque 下 O(len(batch)) 而不是 O(队列整体)。
+        """
+        self._queue.extendleft(reversed(batch))
         self._depth += sum(request.size for request in batch)
 
     def _account_flushed(self, batch: list[WriteRequest]) -> int:

@@ -158,15 +158,19 @@ def build_router() -> APIRouter:
         ctn: PlatformContainer = Depends(get_container),
         x_operator: OperatorHeader = None,
     ) -> dict[str, Any]:
+        # 席位闸**先行**（与 alerts.transfer 同序）：先查受理人会让无资格调用者凭
+        # 422（存在）与 403（不存在）的差分枚举席位 ID 与在岗状态。
         operators = _operators(ctn)
-        assignee = await operators.get(payload.assignee)
-        if assignee is None or not assignee.active:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "E_OPERATOR_INVALID", "message": f"受理席位不存在或已停用：{payload.assignee}"},
-            )
+        await require_operator(operators, x_operator, role=OperatorRole.LEAD)
 
         async def run(collab: CollabService, _operator_id: str) -> Any:
+            # 受理人存在性在事务闭包内查：席位闸已过，422 的差分只对有资格者可见。
+            assignee = await operators.get(payload.assignee)
+            if assignee is None or not assignee.active:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "E_OPERATOR_INVALID", "message": f"受理席位不存在或已停用：{payload.assignee}"},
+                )
             return collab.transfer(task_id, assignee.operator_id, expected_version=payload.expected_version)
 
         return await _write(ctn, x_operator, space_id, task_id, role=OperatorRole.LEAD, run=run)

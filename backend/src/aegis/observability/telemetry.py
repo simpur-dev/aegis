@@ -304,13 +304,25 @@ def shutdown_telemetry(*, flush_timeout_ms: int = _SHUTDOWN_FLUSH_TIMEOUT_MS) ->
         log.warning("链路追踪关停异常，已忽略", extra={"stage": "otlp", "error": f"{type(exc).__name__}: {exc}"})
 
 
+_PRE_INIT_TRACERS: dict[str, OtelTracer] = {}
+
+
 def get_tracer(name: str = TRACER_NAME) -> OtelTracer:
-    """取tracer：未装配时返回无操作实现，调用方无需分支判断。"""
+    """取tracer：未装配时返回无操作实现，调用方无需分支判断。
+
+    未装配的 otel 路径按 (name) 缓存：`otel_trace.get_tracer` 每次调用都会新建
+    ProxyTracer（未 init 时 provider 还是代理态），"同一进程取到的 tracer 是同一个"
+    的身份断言与去重口径都依赖它。
+    """
     state = _state
     if state is None:
         if not _OTEL_AVAILABLE:
             return cast("OtelTracer", _NULL_TRACER)
-        return otel_trace.get_tracer(name)
+        cached = _PRE_INIT_TRACERS.get(name)
+        if cached is None:
+            cached = otel_trace.get_tracer(name)
+            _PRE_INIT_TRACERS[name] = cached
+        return cached
     if name != TRACER_NAME and state.provider is not None:
         return state.provider.get_tracer(name)
     return cast("OtelTracer", state.tracer)

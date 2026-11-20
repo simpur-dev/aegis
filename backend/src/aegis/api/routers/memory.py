@@ -140,6 +140,7 @@ def build_router() -> APIRouter:
     async def memory_forget(
         record_id: str,
         ctn: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
     ) -> dict[str, Any]:
         """删除一条记忆（§4.3「记忆可治理」）。没删到就是 404，不回一个 `removed: false` 的 200。
 
@@ -147,6 +148,8 @@ def build_router() -> APIRouter:
         """
         if ctn.memory is None:
             raise HTTPException(status_code=503, detail={"code": "E_MEMORY_UNAVAILABLE", "message": "记忆服务未装配（memory）"})
+        # 删除比写入更重（销毁复盘教训/纠正经验）：席位闸 LEAD 及以上（写入是 DUTY）。
+        await require_operator(_operator_service(ctn), x_operator, role=OperatorRole.LEAD)
         if not await ctn.memory.forget(record_id):
             raise HTTPException(status_code=404, detail=f"共享记忆里没有找到 {record_id}")
         return {"record_id": record_id, "removed": True, "driver": ctn.memory.backend}

@@ -338,6 +338,10 @@ class LlmGateway:
                 # 4xx 与语义错误重试无意义，不该让模型下架）。
                 if is_transport_failure(exc):
                     self._note_failure(model_name)
+                else:
+                    # 不计失败的失败也必须归还半开试探名额：否则一次 401 就把该模型
+                    # 永久卡死在 half_open（available() 恒 False → 被静默剔除候选）。
+                    self._breaker.release_probe(model_name)
                 last_error = exc
                 self._record(
                     LlmCallRecord(
@@ -592,6 +596,9 @@ class LlmGateway:
         except Exception as exc:
             if is_transport_failure(exc):
                 self._note_failure(model_name)
+            else:
+                # 同 dispatch：不计失败的失败也要归还半开试探名额
+                self._breaker.release_probe(model_name)
             self._record(
                 LlmCallRecord(
                     task=task,

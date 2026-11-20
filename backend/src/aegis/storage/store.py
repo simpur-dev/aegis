@@ -161,11 +161,21 @@ class TelemetryStore:
             rows.append(reading)
         return rows[-limit:]
 
+    _UNPARSEABLE = datetime.min.replace(tzinfo=UTC)
+
     def _moment_of(self, observed_at: str) -> datetime:
-        """observed_at → UTC datetime（带缓存：同一时间戳在整表里反复出现）。"""
+        """observed_at → UTC datetime（带缓存：同一时间戳在整表里反复出现）。
+
+        解析失败的行映射到 datetime.min：**跳行比较**（任何 since/until 窗口都把它排掉），
+        而不是抛 ValueError 瘫痪整库查询——旧实现只做字符串比较不抛，assess_input 也把
+        "坏时间戳视为可能发生"。坏行仍保留在库与清单里，只是不进任何时间窗。
+        """
         cached = self._moment_cache.get(observed_at)
         if cached is None:
-            moment = parse_iso(observed_at)
+            try:
+                moment = parse_iso(observed_at)
+            except (ValueError, TypeError):
+                moment = self._UNPARSEABLE
             if moment.tzinfo is None:
                 moment = moment.replace(tzinfo=UTC)
             moment = moment.astimezone(UTC)

@@ -121,8 +121,21 @@ def _normalized(value: float, declaration: dict[str, Any] | None) -> float:
         return max(0.0, min(1.0, value)) if 0.0 <= value <= 1.0 else 0.0
     z = (value - lower) / (upper - lower)
     if method == "band_pos":
-        # 与引擎 normalize_value 同式：带内取 1，带外按到边界的线性距离衰减
-        return 1.0 if 0.0 <= z <= 1.0 else max(0.0, min(1.0, 1.0 - min(abs(z), abs(z - 1.0))))
+        # 与引擎 normalize_value 同式（三段式）：带内 1，带外按 band 边缘向 L/U 线性衰减。
+        # 此前把整个 [L,U] 当带内（x=22 引擎 0.200 / 校准 1.000），区分度是两把尺子。
+        band_lo, band_hi = norm.get("band_lo"), norm.get("band_hi")
+        if not (isinstance(band_lo, int | float) and isinstance(band_hi, int | float)):
+            return max(0.0, min(1.0, z))
+        band_lo, band_hi = float(band_lo), float(band_hi)
+        if band_hi <= band_lo:
+            return max(0.0, min(1.0, z))
+        if band_lo <= value <= band_hi:
+            return 1.0
+        if value < band_lo:
+            span = max(band_lo - lower, 1e-9)
+            return max(0.0, min(1.0, (value - lower) / span))
+        span = max(upper - band_hi, 1e-9)
+        return max(0.0, min(1.0, (upper - value) / span))
     return max(0.0, min(1.0, z))
 
 

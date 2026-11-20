@@ -733,8 +733,6 @@ class AssistantService:
             # TTL 淘汰要同步清队列：否则 _order 只增不减（长跑进程的台账面），
             # 后续按队列淘汰会先撞上一串死 id。
             self._order = deque(sid for sid in self._order if sid in self._sessions)
-            if sid in self._order:
-                self._order.remove(sid)
 
     def _reject(self, session: AssistantSession | None, *, action: str, reason: str, detail: dict[str, Any] | None = None) -> None:
         row: dict[str, Any] = {"action": action, "reason": reason, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}

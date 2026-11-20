@@ -85,7 +85,9 @@ class StartInput(BaseModel):
     workflow_id: str | None = None
     workflow_name: str | None = Field(default=None, max_length=64)
     payload: dict[str, Any] = Field(default_factory=dict)
-    trace_id: str | None = None
+    # 上界与落库 `rows.check_id` 的 64 一致：超长 trace_id 会在检查点落库时被
+    # MappingError 静默丢弃（实例照跑、HTTP 照回，重启后"没发生过"）——入口就拒。
+    trace_id: str | None = Field(default=None, max_length=64)
 
 
 class DecisionInput(BaseModel):
