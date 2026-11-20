@@ -23,6 +23,7 @@ from schemathesis.specs.openapi.checks import positive_data_acceptance
 from aegis.api.app import create_app
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
+from hypothesis_depth import examples
 
 # /readyz 与 /api/v1/retrieval/search 不在模糊集合里：503 是它们自身的语义（未就绪/未启用就该 503），
 # schemathesis 把任何 5xx 记为 ServerError，把它们放进来只会稳定红一条；两者的 503 与 200 分别由
@@ -123,7 +124,7 @@ def _normalize_generated_window(case: schemathesis.Case) -> None:
 
 @pytest.mark.slow
 @SCHEMA.include(path_regex=READ_ONLY).parametrize()
-@settings(max_examples=25, deadline=None)
+@settings(max_examples=examples(25), deadline=None)
 def test_read_operations_satisfy_the_declared_contract(case: schemathesis.Case) -> None:
     """状态码与响应结构必须与声明一致，且不得出现 5xx。
 
@@ -167,7 +168,7 @@ def test_readyz_reports_503_before_the_bus_connects_and_200_after() -> None:
 
 @pytest.mark.slow
 @SCHEMA.include(path_regex=TASK_LOOKUP).parametrize()
-@settings(max_examples=12, deadline=None)
+@settings(max_examples=examples(12), deadline=None)
 def test_task_lookup_accepts_only_declared_shapes(case: schemathesis.Case) -> None:
     """随机 id 查不到是声明过的 404；除此之外的响应必须仍然符合 schema。"""
     response = case.call(base_url=BASE_URL)

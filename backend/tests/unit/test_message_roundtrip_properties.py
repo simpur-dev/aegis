@@ -20,6 +20,7 @@ from aegis.bus.transport import decode, encode
 from aegis.contracts import ContractRegistry
 from aegis.domain.enums import RefType
 from aegis.domain.messages import AgentMessage, Ref, make_event
+from hypothesis_depth import examples
 
 json_values: st.SearchStrategy[Any] = st.recursive(
     st.none()
@@ -48,12 +49,12 @@ def events(draw: st.DrawMethod) -> AgentMessage:
 
 class TestRoundTrip:
     @given(message=events())
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=examples(100), deadline=None)
     def test_encode_decode_is_lossless(self, message: AgentMessage) -> None:
         assert decode(encode(message)) == message
 
     @given(message=events())
-    @settings(max_examples=60, deadline=None)
+    @settings(max_examples=examples(60), deadline=None)
     def test_wire_format_is_json_with_the_frozen_schema_version(self, message: AgentMessage) -> None:
         raw = encode(message)
         assert isinstance(raw, bytes)
@@ -62,14 +63,14 @@ class TestRoundTrip:
         assert document["msg_id"] == message.msg_id
 
     @given(message=events())
-    @settings(max_examples=60, deadline=None)
+    @settings(max_examples=examples(60), deadline=None)
     def test_encoding_is_idempotent(self, message: AgentMessage) -> None:
         """两次编码字节相同：总线重投与去重都依赖这个性质，否则同一条消息会有两个指纹。"""
         once = encode(message)
         assert encode(decode(once)) == once
 
     @given(payload=payloads)
-    @settings(max_examples=60, deadline=None)
+    @settings(max_examples=examples(60), deadline=None)
     def test_arbitrary_json_payload_survives(self, payload: dict[str, Any]) -> None:
         """payload 是开放对象：智能体放什么都必须原样到达，不能因编码选型丢键或改型。"""
         message = make_event(source="platform.agent_mock", action="assess.risk_level", payload=payload, trace_id="trc_" + "0" * 15 + "a")
@@ -77,7 +78,7 @@ class TestRoundTrip:
         assert restored.payload == message.payload
 
     @given(count=st.integers(min_value=0, max_value=4))
-    @settings(max_examples=5, deadline=None)
+    @settings(max_examples=examples(5), deadline=None)
     def test_refs_are_preserved_in_order(self, count: int) -> None:
         refs = [Ref(type=list(RefType)[i % len(RefType)], id=f"ref-{i}") for i in range(count)]
         message = make_event(

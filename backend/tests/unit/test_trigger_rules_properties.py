@@ -14,6 +14,7 @@ from hypothesis import strategies as st
 
 from aegis.domain.messages import TelemetryReading
 from aegis.services.rules.trigger_rules import RuleEngine, RuleEvaluation, default_rulebook
+from hypothesis_depth import examples
 
 METRICS = ["rainfall_mm_h", "mud_level_cm", "soil_moisture_pct", "vibration_count", "displacement_mm"]
 REGIONS = ["540121", "540122", "540127"]
@@ -56,7 +57,7 @@ class TestEvaluationInvariants:
         assert result.stations == 0
 
     @given(items=readings())
-    @settings(max_examples=80, deadline=None)
+    @settings(max_examples=examples(80), deadline=None)
     def test_every_hit_is_traceable_to_the_input(self, items: list[TelemetryReading]) -> None:
         """命中里的区域、证据必须是输入读数给过的，绝不能凭空出现一个没上报过的站点。"""
         result = RuleEngine().evaluate(items, now=T0)
@@ -71,14 +72,14 @@ class TestEvaluationInvariants:
             assert 0.0 <= hit.score <= 1.0
 
     @given(items=readings())
-    @settings(max_examples=60, deadline=None)
+    @settings(max_examples=examples(60), deadline=None)
     def test_only_ok_quality_readings_can_trigger(self, items: list[TelemetryReading]) -> None:
         """质量标志不是装饰：suspect/missing/drift 的读数一律不得参与定级。"""
         clean = [reading for reading in items if reading.quality_flag == "ok"]
         assert not clean or names(RuleEngine().evaluate(clean, now=T0)) == names(RuleEngine().evaluate(items, now=T0))
 
     @given(items=readings())
-    @settings(max_examples=40, deadline=None)
+    @settings(max_examples=examples(40), deadline=None)
     def test_evaluation_is_deterministic(self, items: list[TelemetryReading]) -> None:
         """同一批读数两次求值必须完全一致，否则回放准确率指标不可复现。"""
         engine = RuleEngine()
@@ -89,7 +90,7 @@ class TestEvaluationInvariants:
         ]
 
     @given(items=readings())
-    @settings(max_examples=40, deadline=None)
+    @settings(max_examples=examples(40), deadline=None)
     def test_region_filter_only_narrows(self, items: list[TelemetryReading]) -> None:
         """按区域过滤只能是子集：过滤后冒出别的区域就是过滤器失效。"""
         engine = RuleEngine()
@@ -100,7 +101,7 @@ class TestEvaluationInvariants:
             assert subset <= every
 
     @given(items=readings(), shift_minutes=st.integers(min_value=1, max_value=720))
-    @settings(max_examples=40, deadline=None)
+    @settings(max_examples=examples(40), deadline=None)
     def test_time_translation_with_explicit_now_is_stable(self, items: list[TelemetryReading], shift_minutes: int) -> None:
         """窗口是相对量：整体平移读数与判定时刻，命中集合不应改变。
 

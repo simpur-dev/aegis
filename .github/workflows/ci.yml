@@ -23,6 +23,11 @@ jobs:
       # 而 mock 智能体的一处随机种子也取自 hash()。不钉就是"同一 commit 两次跑结论不同"，
       # 再叠上 --maxfail 就会变成随机截断整场。
       PYTHONHASHSEED: "0"
+      # property 用例样本数封顶（唯一出口在 tests/hypothesis_depth.py）。逐用例
+      # `@settings(max_examples=…)` 会覆盖 hypothesis profile，所以帽走环境变量：
+      # 深用例（120 条）压到 20、冒烟用例（5 条）不动。实测本机收益 ~3-5s（单进程口径；
+      # property 用例不是门禁瓶颈），这里图的是把旋钮立住——要更快的 PR 快档可调低。
+      AEGIS_HYP_EXAMPLES_MAX: "20"
     steps:
       - uses: actions/checkout@v4
 

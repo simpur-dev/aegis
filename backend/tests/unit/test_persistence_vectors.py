@@ -23,6 +23,7 @@ from aegis.persistence.vectors import (
     check_score_threshold,
     search_top_k,
 )
+from hypothesis_depth import examples
 
 
 def _placeholders(sql: str) -> list[int]:
@@ -189,7 +190,7 @@ class TestSearchExecution:
         assert conn.calls == []
 
 
-@settings(max_examples=50, deadline=None)
+@settings(max_examples=examples(50), deadline=None)
 @given(
     k=st.integers(min_value=1, max_value=MAX_K),
     hazard=st.one_of(st.none(), st.sampled_from(["debris_flow", "lake_outburst", "wet_snow_avalanche"])),

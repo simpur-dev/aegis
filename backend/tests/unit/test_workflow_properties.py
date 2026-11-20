@@ -13,6 +13,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from aegis.workflow.model import EdgeDef, NodeDef, WorkflowDef, topological_levels
+from hypothesis_depth import examples
 
 
 def node(index: int) -> NodeDef:
@@ -35,7 +36,7 @@ def acyclic_graph(draw: st.DrawMethod) -> tuple[list[str], list[EdgeDef]]:
 
 class TestTopologicalLevels:
     @given(graph=acyclic_graph())
-    @settings(max_examples=120, deadline=None)
+    @settings(max_examples=examples(120), deadline=None)
     def test_levels_cover_every_node_exactly_once(self, graph: tuple[list[str], list[EdgeDef]]) -> None:
         ids, edges = graph
         levels = topological_levels(ids, edges)
@@ -44,7 +45,7 @@ class TestTopologicalLevels:
         assert len(flattened) == len(set(flattened))
 
     @given(graph=acyclic_graph())
-    @settings(max_examples=120, deadline=None)
+    @settings(max_examples=examples(120), deadline=None)
     def test_every_edge_points_to_a_strictly_later_level(self, graph: tuple[list[str], list[EdgeDef]]) -> None:
         """边的方向必须体现在层级上：源严格早于目标，执行时才不可能"下游先于上游跑"。"""
         ids, edges = graph
@@ -54,7 +55,7 @@ class TestTopologicalLevels:
             assert depth[link.source] < depth[link.target], link
 
     @given(graph=acyclic_graph(), seed=st.integers(min_value=0, max_value=1000))
-    @settings(max_examples=60, deadline=None)
+    @settings(max_examples=examples(60), deadline=None)
     def test_result_is_deterministic_under_input_order(self, graph: tuple[list[str], list[EdgeDef]], seed: int) -> None:
         """同一张图不论节点以什么顺序递交，分层必须一致——调度不能依赖注册顺序。"""
         ids, edges = graph
@@ -66,7 +67,7 @@ class TestTopologicalLevels:
         assert topological_levels(shuffled_ids, shuffled_edges) == reference
 
     @given(graph=acyclic_graph())
-    @settings(max_examples=60, deadline=None)
+    @settings(max_examples=examples(60), deadline=None)
     def test_within_level_nodes_are_independent(self, graph: tuple[list[str], list[EdgeDef]]) -> None:
         """同层即"可并行"：层内任意两点之间不得有边，否则并行执行会读到未完成的上游。"""
         ids, edges = graph

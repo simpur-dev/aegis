@@ -22,6 +22,7 @@ from aegis.persistence.write_buffer import (
     WriteRequest,
     backoff_delay_ms,
 )
+from hypothesis_depth import examples
 
 
 class RecordingSink:
@@ -323,7 +324,7 @@ class TestMetricsSurface:
         assert buf.counters.buffered == 3
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=examples(40), deadline=None)
 @given(
     sizes=st.lists(st.integers(min_value=1, max_value=20), min_size=1, max_size=25),
     capacity=st.integers(min_value=5, max_value=60),

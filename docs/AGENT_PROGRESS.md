@@ -381,4 +381,4 @@
   **D polars+pandera + pydantic 信封**：PANGAEA 988 条严格摄取（全列字符串→显式 cast→schema 校验）；NASA 426+16 条 polars 重算逐字段一致；`write_envelope` 改 pydantic **写入时**校验（越界/未知灾种/负伤亡当场失败），六数据集复跑 normalized 逐字节不变。新数据集 `pangaea-debris-flow-magnitude`（CC BY 3.0，与 GLC 事件分表）。
   **E 门禁提速**：xdist `-n auto --dist loadgroup` + e2e 段预算注入（61s→3s×2）+ slow 补标。**并行暴露真缺陷**：反馈记忆写仓库内共享 JSON，worker 间 read-modify-write 丢更新——conftest 在 aegis import 前按 worker 注入临时路径。三轮 4,422 条：66.5/68.4/**60.7s**，0 失败。
   **生产热路径**（零新依赖）：store 按 region 分桶（窗口查询不再扫 5 万条，淘汰同步）、builder 5 趟→1 趟、位移派生 O(站×组)→O(组)、payload 裁剪二分、因子权重预计算；新增 5 条"分桶 vs 朴素全扫"对账用例。
-  **仍未做（不声称）**：CHM_PRE 原件未取、GLOF 许可未确认、小时雨强无源、因子权重仍 MOCK；hypothesis CI profile 因逐用例 `@settings` 覆盖而无效，未做。
+  **仍未做（不声称）**：CHM_PRE 原件未取、小时雨强无源、因子权重仍 MOCK。**同日补掉两项**：GLOF DB V3.1 入库（CC BY 4.0，3,151 条，见数据目录行）；hypothesis 样本帽 `AEGIS_HYP_EXAMPLES_MAX`（唯一出口 `tests/hypothesis_depth.py`，CI 设 20；实测单进程省 3–5s，property 用例本非瓶颈）。

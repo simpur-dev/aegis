@@ -4213,10 +4213,13 @@ MCP 的顾虑（会话状态、重连语义）在这里不存在。
 ### 仍未做（不声称）
 
 - **CHM_PRE V2 原件未取到**（本机取数通道不通：Zenodo 限流 / TPDC FTP 421），派生表尚未产出；
-- **GLOF DB V3.1 许可未确认**（zip 内无出版方/DOI/许可声明），未入库；
+- **GLOF DB V3.1 许可未确认**（zip 内无出版方/DOI/许可声明），未入库；**同日已入库**，见下一节；
 - **小时雨强（`rainfall_mm_h`）无真实源**；因子权重与归一化边界仍是 MOCK；
-- hypothesis CI profile 未做：各用例用 `@settings(max_examples=…)` 逐条覆盖，
-  注册 profile 不会生效，须逐个改用例——收益 10–20s，不值得动 10 个文件的断言口径。
+- ~~hypothesis CI profile 未做~~ **同日已做，且实测收益比预估小**：`tests/hypothesis_depth.py`
+  成为 `max_examples` 唯一出口（逐用例 `@settings` 覆盖 profile 的问题绕开——帽走
+  `AEGIS_HYP_EXAMPLES_MAX` 环境变量，深用例 120→20、冒烟 5 条不动），CI gate job 已设 20。
+  **实测**：9 个 property 文件单进程封顶省 **~3–5s**，xdist 并行口径下接近 0——
+  property 用例本来就不是瓶颈（此前"收益 10–20s"是拍脑袋，量了才知道）。
 
 ## GLOF DB V3.1 入库批次（2026-11-20）
 

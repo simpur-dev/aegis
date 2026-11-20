@@ -28,6 +28,7 @@ from aegis.persistence.replay import (
     replay,
     tally,
 )
+from hypothesis_depth import examples
 
 
 def case(
@@ -340,7 +341,7 @@ class TestReplayEntryPoint:
             replay(f)
 
 
-@settings(max_examples=80, deadline=None)
+@settings(max_examples=examples(80), deadline=None)
 @given(
     tp=st.integers(0, 40),
     fp=st.integers(0, 40),

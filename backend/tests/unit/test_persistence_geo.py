@@ -33,6 +33,7 @@ from aegis.persistence.geo import (
     stations_within,
     trace_summary,
 )
+from hypothesis_depth import examples
 
 LINZHOU = (91.28, 29.896)
 TRIANGLE = "POLYGON((91.2 29.8, 91.4 29.8, 91.4 30.0, 91.2 29.8))"
@@ -288,7 +289,7 @@ class TestQueryExecution:
             await trace_summary(_FakeConn(), polygon_wkt="BOGUE", since=datetime.now(UTC))
 
 
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=examples(60), deadline=None)
 @given(
     lon=st.floats(min_value=-180, max_value=180, allow_nan=False, allow_infinity=False),
     lat=st.floats(min_value=-90, max_value=90, allow_nan=False, allow_infinity=False),
@@ -306,7 +307,7 @@ def test_stations_within_placeholder_invariant_holds_for_any_valid_input(
     assert "'" not in sql
 
 
-@settings(max_examples=40, deadline=None)
+@settings(max_examples=examples(40), deadline=None)
 @given(bad=st.floats(allow_nan=False).filter(lambda v: not math.isfinite(v) or v <= 0 or v > MAX_RADIUS_M))
 def test_any_illegal_radius_is_rejected(bad: float) -> None:
     with pytest.raises(GeoArgumentError):

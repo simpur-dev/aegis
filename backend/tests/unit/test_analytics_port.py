@@ -30,6 +30,7 @@ from aegis.analytics.port import (
 )
 from aegis.domain.enums import RiskLevel
 from aegis.domain.messages import TelemetryReading, WarningRecord
+from hypothesis_depth import examples
 
 TIBET = timezone(timedelta(hours=8))
 
@@ -360,7 +361,7 @@ class TestMaterializeProperties:
         ),
         seed=st.integers(min_value=0, max_value=10_000),
     )
-    @settings(max_examples=80, deadline=None)
+    @settings(max_examples=examples(80), deadline=None)
     def test_permutation_invariant(self, samples: list[tuple[int, float]], seed: int) -> None:
         rows = [
             row(event_id=f"e{i}", observed_at=BASE + timedelta(seconds=offset), value=value) for i, (offset, value) in enumerate(samples)
@@ -371,7 +372,7 @@ class TestMaterializeProperties:
         assert materialize_minutes(shuffled) == reference
 
     @given(count=st.integers(min_value=0, max_value=30))
-    @settings(max_examples=31, deadline=None)
+    @settings(max_examples=examples(31), deadline=None)
     def test_row_count_is_conserved(self, count: int) -> None:
         rows = [row(event_id=f"e{i}", observed_at=BASE + timedelta(seconds=i), value=float(i)) for i in range(count)]
         facts = materialize_minutes(rows)
