@@ -151,11 +151,11 @@ def risk_assess_node(state: RiskAgentState) -> dict[str, Any]:
 
     # ---------- 情况C：引擎判定数据不足（必需因子缺失/覆盖率低于门控）----------
     if assessment["assessment_status"] == "insufficient_data":
-        missing_info = [
-            f"{k}: {profile['hazard_type_cn']}评估必需因子"
-            for k in assessment["missing_factors"]
-            if k in assessment.get("required_factors", [])
-        ] or [f"{k}: 因子无观测值" for k in assessment["missing_factors"]] + list(assessment.get("insufficient_reasons", []))
+        # 拼接要用显式相加：`A or B + C` 会因 A 非空把 B+C（全量缺失与门控原因）整体丢掉
+        required = set(assessment.get("required_factors", []))
+        missing_info = [f"{k}: {profile['hazard_type_cn']}评估必需因子" for k in assessment["missing_factors"] if k in required]
+        missing_info += [f"{k}: 因子无观测值" for k in assessment["missing_factors"] if k not in required]
+        missing_info += list(assessment.get("insufficient_reasons", []))
         return _insufficient_return(
             hazard_key,
             hazard_raw,

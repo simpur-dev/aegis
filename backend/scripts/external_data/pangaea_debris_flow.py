@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import io
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -77,7 +78,10 @@ RAW_SCHEMA = pa.DataFrameSchema(
     strict=True,
 )
 
-_DATE_FORMATS = ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d", "%Y")
+#: 只有年份的采样日期**不臆造月日**（%"Y" 会在 strptime 里变成 1 月 1 日的假精确日期，
+#: 实测 33 条；口径与 glof_db._iso_date 同一）：年-only 返回 None，原文留在 date_raw。
+_DATE_FORMATS = ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d")
+_YEAR_ONLY = re.compile(r"^(18|19|20)\d{2}$")
 
 #: `Post-fire` 的三段值：yes / no / "no evidence for fire (charcoal not found…)"。
 _POST_FIRE_FLAG = {"yes": True, "no": False}
@@ -152,6 +156,8 @@ def read_catalog(raw: bytes) -> pl.DataFrame:
 def _parse_date(text: str | None) -> str | None:
     value = (text or "").strip()
     if not value:
+        return None
+    if _YEAR_ONLY.match(value):
         return None
     for fmt in _DATE_FORMATS:
         try:
@@ -239,7 +245,7 @@ def spec() -> DatasetSpec:
         },
         normalization={
             "read_stack": "polars（全列字符串读入 → 显式 cast）+ pandera（polars 后端）列/类型/值域校验",
-            "date_rule": "Sampling date 尝试 %B %d, %Y 等格式；解析不了留 null，原文在 event.date_raw",
+            "date_rule": "Sampling date 尝试 %B %d, %Y 等格式；只有年份不留假日期（不臆造 01-01），原文在 event.date_raw",
             "geo_rule": "源目录只有地名（Area 列）没有坐标——lat/lon 留 null，不臆造",
             "category_rule": "与 NASA GLC 的泥石流**事件**分目录：本目录是规模编目，不是事件表",
         },

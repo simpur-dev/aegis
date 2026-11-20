@@ -235,6 +235,20 @@ def compute_factor_assessment(observations, region: str, config: dict) -> dict:
         variants = route_cfg.get("variants", {})
         if route_value in variants:
             weights_override = variants[route_value]
+            # 变体引用了未在组里声明的因子 → 配置错误，响亮失败：评分循环只遍历已声明
+            # 因子，静默吞掉等于"变体永远不生效 + route_note 谎报已启用"（泥石流水源型
+            # 路由踩过这个坑，见 debris_flow_risk_tool T 组的声明注释）。
+            undeclared = [
+                f"{group}.{key}"
+                for group, overrides in weights_override.items()
+                for key in overrides
+                if key not in {f["key"] for f in groups_cfg.get(group, [])}
+            ]
+            if undeclared:
+                raise ValueError(
+                    f"权重变体 '{route_value}' 引用了未声明的因子: {undeclared}"
+                    "（评分只遍历组里声明的因子——请把变体因子补进对应组的声明，权重默认 0）"
+                )
             route_note = f"路由取值 '{route_value}'，启用对应权重变体"
         else:
             route_note = f"路由因子 '{route_key}' 缺失或取值'{route_value}'无对应变体，使用默认权重"
@@ -279,8 +293,15 @@ def compute_factor_assessment(observations, region: str, config: dict) -> dict:
     }
 
     def group_weight(group, key):
-        if key in weights_override.get(group, {}):
-            return weights_override[group][key], "route_variant"
+        override = weights_override.get(group)
+        if override is not None:
+            # 变体是**整组替换**语义：变体给的是该组路由后的完整权重图（作者按 Σ=1 归一，
+            # 如 rockfall 三型、debris_flow 四型）。此前按 key 合并、组内其它因子保留默认
+            # 权重——outburst 路由下"不下雨"的覆盖分母里还躺着 0.8 的降雨权重，
+            # 0.6 的覆盖率门控会把只有联动标志的评估整单拒绝。
+            if key in override:
+                return override[key], "route_variant"
+            return 0.0, "route_variant_zero"
         weight = default_weights.get(group, {}).get(key)
         return (weight, "default") if weight is not None else (None, "default")
 
@@ -307,14 +328,21 @@ def compute_factor_assessment(observations, region: str, config: dict) -> dict:
     if missing_required:
         warnings.append(f"必需因子缺失: {missing_required}")
 
-    # 覆盖率门控
+    # 覆盖率门控：只对**进 R 公式的组**（P/T）当硬门。I 组是"单独输出、不并入 P/T"
+    # 的佐证面（见本文件 docstring 与 glacial_lake_risk_tool 的组注释）——此前它也被
+    # 当硬门，站点画像缺 downstream_distance_km 就把一份完整观测的冰湖评估整单拒绝
+    # （insufficient_data、R=None），而平台观测本就未必带下游距离。I 缺数据只降
+    # 置信度（confidence 只取 P/T 覆盖率），并写 warning 留痕。
     insufficient_reasons = []
     if missing_required:
         insufficient_reasons.append(f"必需因子缺失: {missing_required}")
-    for group_name in groups_cfg:
+    gate_groups = tuple(g for g in groups_cfg if g != "I")
+    for group_name in gate_groups:
         cov = completeness.get(group_name, 0.0)
         if cov < min_coverage:
             insufficient_reasons.append(f"{group_name} 组数据覆盖率 {cov:.0%} 低于门控 {min_coverage:.0%}")
+    if "I" in groups_cfg and completeness.get("I", 0.0) < min_coverage:
+        warnings.append(f"I 组数据覆盖率 {completeness.get('I', 0.0):.0%} 低于门控 {min_coverage:.0%}（佐证面，不作硬门）")
     insufficient = bool(insufficient_reasons)
 
     # ---------- P / T / R ----------

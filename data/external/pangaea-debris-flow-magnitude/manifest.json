@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "generated_at": "2026-11-20T13:59:07.021336+00:00",
+  "generated_at": "2026-11-20T19:34:21.449592+00:00",
   "datasets": [
     {
       "id": "pangaea-debris-flow-magnitude",
@@ -29,7 +29,7 @@
       },
       "normalization": {
         "read_stack": "polars（全列字符串读入 → 显式 cast）+ pandera（polars 后端）列/类型/值域校验",
-        "date_rule": "Sampling date 尝试 %B %d, %Y 等格式；解析不了留 null，原文在 event.date_raw",
+        "date_rule": "Sampling date 尝试 %B %d, %Y 等格式；只有年份不留假日期（不臆造 01-01），原文在 event.date_raw",
         "geo_rule": "源目录只有地名（Area 列）没有坐标——lat/lon 留 null，不臆造",
         "category_rule": "与 NASA GLC 的泥石流**事件**分目录：本目录是规模编目，不是事件表"
       },
@@ -39,15 +39,15 @@
         "面积缺失 860/988（源目录只对部分事件估算了堆积面积）。",
         "与 GLC 的泥石流事件可能有重叠，但两者口径不同（GLC 是媒体报道事件，本目录是文献规模汇编），本目录不做去重合并。"
       ],
-      "retrieved_at": "2026-11-20T13:59:07.021336+00:00",
+      "retrieved_at": "2026-11-20T19:34:21.449592+00:00",
       "files": {
         "raw/pangaea_783654_debris_flow_magnitude.tsv": {
           "sha256": "de7146be12a23187c63444a9a8cce7ae9560f584ad69e3ab0c14df448a0bc38a",
           "bytes": 265528
         },
         "normalized/global_debris_flow_magnitude.v1.jsonl": {
-          "sha256": "ec8339ad3551b3ca7d9504009f0e36daf8d9387c547dee07256905b2c658f40a",
-          "bytes": 1098558,
+          "sha256": "047239d32219d55ad94ea412d1199543f7e965c1e19d3682795eeed1a9bd4b6f",
+          "bytes": 1098294,
           "rows": 988
         }
       }

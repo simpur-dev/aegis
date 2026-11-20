@@ -177,6 +177,10 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
         except Exception as exc:
             if is_transport_failure(exc):
                 breaker.note_failure()
+            else:
+                # 4xx/语义失败不计熔断（ADR-0017），但半开试探名额必须归还——否则一次
+                # 401 就把熔断永久卡死在 half_open。
+                breaker.release_probe()
             self._record_call(
                 meta,
                 latency_ms=(time.perf_counter() - started) * 1000,

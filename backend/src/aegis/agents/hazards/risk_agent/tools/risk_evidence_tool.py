@@ -52,8 +52,9 @@ def risk_evidence_tool(assessment: dict, hazard_limitations: list | None = None)
         if z is None:
             evidence.append(
                 {
-                    "statement": f"因子[{spec.get('label')}]缺失：{spec.get('note', '无观测值')}"
-                    f"（记录覆盖率 {spec.get('record_coverage', 0):.0%}）",
+                    # factor_scores 没有 record_coverage 键（恒取默认 0 → "覆盖率 0%"恒假）；
+                    # 真实可说的是窗口样本数（samples）——0 个样本就是"窗口内没有观测"。
+                    "statement": f"因子[{spec.get('label')}]缺失：{spec.get('note', '无观测值')}（窗口样本 {spec.get('samples', 0)}）",
                     "source": "factor_engine",
                     "type": "limitation",
                 }

@@ -32,7 +32,11 @@ def assess_confidence(completeness: dict, validation: dict) -> tuple[float, str]
         completeness: 因子引擎信封的 `completeness`（P/T 组加权覆盖率，0..1）
         validation: 验证节点写出的 `validation_result`
     """
-    numeric = [float(value) for value in (completeness or {}).values() if isinstance(value, int | float) and math.isfinite(value)]
+    keyed = completeness or {}
+    # 只取进 R 公式的 P/T（docstring 的口径）：I 组是佐证面，不进来拖短板——
+    # 此前 min(全部数值) 让冰湖的 I 组覆盖率把 confidence 拖到下限。
+    prioritized = [float(keyed[g]) for g in ("P", "T") if isinstance(keyed.get(g), int | float) and math.isfinite(float(keyed[g]))]
+    numeric = prioritized or [float(value) for value in keyed.values() if isinstance(value, int | float) and math.isfinite(value)]
     # 两组都在时取较小者（两块短板决定整桶水）；一组缺失就按已覆盖的那组算，不凭空补 0.5。
     coverage = max(0.0, min(1.0, min(numeric) if numeric else 0.0))
     passed = bool((validation or {}).get("is_valid") and (validation or {}).get("evidence_sufficient"))

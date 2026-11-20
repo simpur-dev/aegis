@@ -57,6 +57,9 @@ TPDC_METADATA_ID = "e5c335d9-cbb9-48a6-ba35-d67dd614bb8c"
 TPDC_FTP_PORT = 6201
 #: 服务端并发上限满时返回 421；重试即可（换账号重连，不要改路径）。
 FTP_MAX_ATTEMPTS = 40
+#: FTP **数据通道**的 socket 超时（控制连接的 60s 在 connect 里给了；transfercmd 返回的
+#: 数据 socket 不带超时，服务端挂起会让整个取件永久阻塞——2026-11-20 夜间实测过 4 小时。
+SOCKET_TIMEOUT_SECONDS = 120
 
 #: Zenodo 官方镜像记录（CC BY 4.0、access=open、每文件带 MD5、支持 Range）。
 ZENODO_RECORD = "20378336"
@@ -204,8 +207,16 @@ class TpdcFtpChannel(Channel):
             existing = dest.stat().st_size if dest.exists() else 0
             ftp.sendcmd("TYPE I")  # 二进制模式；ASCII 模式下 REST 会被拒（503 ASCII resume is unsafe）
             if existing:
-                ftp.sendcmd(f"REST {existing}")
+                # 续传防线：问服务端文件大小。REST 被忽略时服务端会从 0 重传，客户端按
+                # "ab" 追加就把两份内容拼在一起——损坏且 --verify-only 永远绿灯。
+                server_size = int(ftp.size(artifact.name))
+                if server_size <= existing:
+                    existing = 0  # 服务端比本地还小 = 源变了或续传无意义，按全新下载
+                    dest.unlink(missing_ok=True)
+                else:
+                    ftp.sendcmd(f"REST {existing}")
             conn = ftp.transfercmd(f"RETR {artifact.name}")
+            conn.settimeout(SOCKET_TIMEOUT_SECONDS)  # 服务端挂起时 recv 不再永久阻塞
             with dest.open("ab" if existing else "wb") as handle:
                 while True:
                     chunk = conn.recv(CHUNK)

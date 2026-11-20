@@ -36,6 +36,11 @@ MAX_NAME_CHARS = 120
 MAX_FOCUS_ITEMS = 12
 MAX_FOCUS_CHARS = 64
 KNOWN_COLUMNS = ("station_id", "region_code", "lon", "lat", "name_zh", "hazard_focus", "elevation_m")
+#: 坐标列的两种拼写都认：降水链的站点表（`build_precip_stations` / 两条降水腿的
+#: `load_stations`）用 `latitude/longitude`，维表导入用 `lon/lat`——同一份站点台账，
+#: 不该因为列名拼写让运维在导入时整份被拒。混用两套拼写仍然拒绝（歧义比报错更糟）。
+_LONGITUDE_ALIASES = {"lon": "lon", "longitude": "lon"}
+_LATITUDE_ALIASES = {"lat": "lat", "latitude": "lat"}
 
 
 @dataclass(frozen=True)
@@ -98,9 +103,12 @@ def _focus(value: Any, *, line: int) -> tuple[str, ...]:
 
 
 def parse_record(raw: dict[str, Any], *, line: int) -> StationRecord:
-    unknown = sorted(key for key in raw if key not in KNOWN_COLUMNS)
+    # 坐标别名先归一（longitude→lon / latitude→lat），再做未知列检查
+    normalized = {(_LONGITUDE_ALIASES.get(key) or _LATITUDE_ALIASES.get(key) or key): value for key, value in raw.items()}
+    unknown = sorted(key for key in normalized if key not in KNOWN_COLUMNS)
     if unknown:
         raise SourceProblem(line, f"未知列 {unknown}：认识的列才允许，拼错的列会被静默丢掉")
+    raw = normalized
 
     station_id = _clean_text(raw.get("station_id"), field="station_id", line=line, max_chars=MAX_ID_CHARS)
     if not station_id:

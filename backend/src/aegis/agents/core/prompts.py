@@ -1,6 +1,6 @@
 """Prompt 注册表（§4.1.6 / D8）：按 task 键存放版本化提示词，产出结论可复现的凭证。
 
-**唯一真源**：平台内环的 6 条与灾种模块的 16 条**同在一个注册表**里（文本分别在
+**唯一真源**：平台内环的 6 条与灾种模块的 15 条**同在一个注册表**里（文本分别在
 `prompt_texts_platform.py` / `prompt_texts_hazard.py`，装配在 `builtin()`）。
 此前是两份：平台侧版本化、灾种侧是模块级 Python 常量（无版本号），于是灾种结论的
 `prompt_version` 恒为 None——"结论可复现"只对一半的智能体成立。
@@ -47,7 +47,7 @@ class PromptRegistry:
 
     @classmethod
     def builtin(cls) -> PromptRegistry:
-        """内置全部已迁入版本化真源的提示词（平台 6 条 + 灾种 16 条）。
+        """内置全部已迁入版本化真源的提示词（平台 6 条 + 灾种 15 条）。
 
         只登记【已迁入】的 task——未迁入的智能体 `version_for_task` 仍返回 None（诚实：没有
         版本化 prompt 就说没有），避免"版本号来自注册表、实际正文却内联在别处"的假可复现。

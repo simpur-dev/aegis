@@ -95,24 +95,35 @@ def _read_observations(path: Path | None) -> dict[str, dict[str, float]]:
     return rows
 
 
-def _factor_range(config: dict[str, Any], factor: str) -> tuple[float, float] | None:
-    """因子声明里的归一化带（P/T 各组同名因子的声明一致，对账门禁钉过）；没有声明就 None。"""
+def _factor_decl(config: dict[str, Any], factor: str) -> dict[str, Any] | None:
+    """因子声明（P/T 各组同名因子的声明一致，对账门禁钉过）；没有声明就 None。"""
     for group in GROUPS:
         for declaration in config["groups"].get(group, []):
             if declaration["key"] == factor:
-                norm = declaration.get("normalize") or {}
-                lower, upper = norm.get("L"), norm.get("U")
-                if isinstance(lower, int | float) and isinstance(upper, int | float) and upper > lower:
-                    return float(lower), float(upper)
-                return None
+                return declaration
     return None
 
 
-def _normalized(value: float, bounds: tuple[float, float] | None) -> float:
-    if bounds is None:
+def _normalized(value: float, declaration: dict[str, Any] | None) -> float:
+    """按引擎同式归一（区分度标尺必须与引擎实际用的 z 同尺度）。
+
+    band_pos（带内=1、带外线性衰减）此前被当 linear_pos 错算——坡度 50° 引擎 z≈0.33、
+    校准脚本算 0.75，区分度不是同一根尺子。"""
+    if declaration is None:
         return max(0.0, min(1.0, value)) if 0.0 <= value <= 1.0 else 0.0
-    lower, upper = bounds
-    return max(0.0, min(1.0, (value - lower) / (upper - lower)))
+    norm = declaration.get("normalize") or {}
+    method = norm.get("method", "linear_pos")
+    if method == "class_map":
+        mapping = norm.get("class_map") or {}
+        return max(0.0, min(1.0, float(mapping.get(str(value), 0.0))))
+    lower, upper = norm.get("L"), norm.get("U")
+    if not (isinstance(lower, int | float) and isinstance(upper, int | float) and upper > lower):
+        return max(0.0, min(1.0, value)) if 0.0 <= value <= 1.0 else 0.0
+    z = (value - lower) / (upper - lower)
+    if method == "band_pos":
+        # 与引擎 normalize_value 同式：带内取 1，带外按到边界的线性距离衰减
+        return 1.0 if 0.0 <= z <= 1.0 else max(0.0, min(1.0, 1.0 - min(abs(z), abs(z - 1.0))))
+    return max(0.0, min(1.0, z))
 
 
 def _pair_cases(labels: list[dict[str, Any]], observations: dict[str, dict[str, float]]) -> list[dict[str, Any]]:
@@ -133,10 +144,12 @@ def _pair_cases(labels: list[dict[str, Any]], observations: dict[str, dict[str, 
     return paired
 
 
-def _separation(paired: list[dict[str, Any]], factor: str, bounds: tuple[float, float] | None) -> float:
+def _separation(paired: list[dict[str, Any]], factor: str, declaration: dict[str, Any] | None) -> float:
     """|均值(正组) − 均值(负组)|（归一化后）；任一组为空 → 0（没有区分证据）。"""
-    positives = [_normalized(item["values"][factor], bounds) for item in paired if item["truth_warning"] and factor in item["values"]]
-    negatives = [_normalized(item["values"][factor], bounds) for item in paired if not item["truth_warning"] and factor in item["values"]]
+    positives = [_normalized(item["values"][factor], declaration) for item in paired if item["truth_warning"] and factor in item["values"]]
+    negatives = [
+        _normalized(item["values"][factor], declaration) for item in paired if not item["truth_warning"] and factor in item["values"]
+    ]
     if not positives or not negatives:
         return 0.0
     return abs(sum(positives) / len(positives) - sum(negatives) / len(negatives))
@@ -185,7 +198,7 @@ def calibrate(labels_path: Path | None, observations_path: Path | None) -> dict[
                 if hits < presence_floor:
                     continue
                 candidates[factor] = {
-                    "discrimination": round(_separation(cases, factor, _factor_range(config, factor)), 6),
+                    "discrimination": round(_separation(cases, factor, _factor_decl(config, factor)), 6),
                     "presence": hits,
                     "mock_weight": declaration["weight"],
                 }

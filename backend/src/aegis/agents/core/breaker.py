@@ -177,6 +177,19 @@ class LlmBreaker:
                 entry.state = "open"
                 entry.opened_at = moment
 
+    def release_probe(self, key: str = DEFAULT_KEY) -> None:
+        """归还半开试探名额（不计失败的那类结果用）。
+
+        半开态的试探名额只有"成功 → note_success / 传输失败 → note_failure / **不计失败
+        的失败（4xx、语义错）**"三种出口——前两者都会复位 probe_in_flight，第三类此前
+        没有任何出口：一次 401 就把熔断**永久**卡在 half_open（后续 acquire 恒 False），
+        只能重启进程。非传输失败不计熔断是口径（ADR-0017），名额泄漏不是。
+        """
+        with self._lock:
+            entry = self._entry(key)
+            if entry.state == "half_open":
+                entry.probe_in_flight = False
+
     def note_success(self, key: str = DEFAULT_KEY) -> None:
         """记一次成功：计数归零、熔断关闭。"""
         with self._lock:

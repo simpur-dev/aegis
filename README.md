@@ -20,7 +20,7 @@
 - **LLM 通路也是一套**（2026-11-11 起）：熔断、提示词注册表、调用台账、调用元数据都在
   `backend/src/aegis/agents/core/`（L3 的契约面，与 `agentkit.py`/`capabilities.py` 同级），
   平台网关与灾种 provider **共用一份实现**；各留的只是厂商 quirks（`json_object` 修复轮 /
-  GLM 的 `function_calling` 双通道）。提示词唯一注册表 **21 条**（平台 6 + 灾种 15），
+  GLM 的 `function_calling` 双通道）。提示词唯一注册表 **20 条**（平台 6 + 灾种 14），
   灾种正文逐字迁移且带版本号，回执带 `model_info`（D10）。决策记录 `docs/adr/0017`
 - 灾种结论目前是 demo 级：因子权重 MOCK、公式原型候选，输出带 `source=hazard.factor_engine`、
   `data_provenance.is_mock=true`、人工核签标记，置信度封顶 0.60——不冒充平台实测结论
@@ -576,7 +576,7 @@ curl -s 'http://localhost:8000/api/v1/accuracy/replay?since=2026-09-01T00:00:00Z
 | LLM 五条安全性质 | LLM 可进关键路径，但每步**可降级**（deadline 到即走规则轨）、**可审计**（各段的模型与 Prompt 版本由智能体自己声明、链路只转记，落在 `chain_runs.stages[].model_info`；`GET /api/v1/audit/chain/{trace_id}` 直读库，重启后仍能查——本地降级腿【不带】这个键，缺席就是"这一程没有模型参与"，不是"走了没记名"）、**可解释**（`rationale`+`evidence_refs` 必填）、**限时**（LLM 档 `sla_agent_txn_ms`，与调度档 ≤2s/≤10s 分档并报表）、**有栅栏**（动作白名单、等级枚举冻结、数字防幻觉闸） |
 | 发送权归属平台 | execute 智能体只产受众差异化文案；真实触达只经平台交付腿（DeliveryDispatcher），回执证据只认交付腿 receipt——智能体自报送达不采信（铁律 7：指标必须实测） |
 | 外部文本必过围栏 | 上报/案例/检索片段/回执进 prompt 前包进不可伪造的分隔围栏（提示注入防线）：内容原样保留，但只是数据、不再是指令 |
-| LLM 横切件唯一实现 | 熔断、提示词注册表（21 条）、调用台账、调用元数据各**只有一份实现**（`agents/core/`），平台网关与灾种 provider 共用；厂商 quirks 留在各自适配器。改提示词正文必须升版本号并同步正文指纹门禁（`tests/unit/agents/test_hazard_prompt_versions.py`），否则 `model_info.prompt_version` 描述的不是实际发送的正文 |
+| LLM 横切件唯一实现 | 熔断、提示词注册表（20 条）、调用台账、调用元数据各**只有一份实现**（`agents/core/`），平台网关与灾种 provider 共用；厂商 quirks 留在各自适配器。改提示词正文必须升版本号并同步正文指纹门禁（`tests/unit/agents/test_hazard_prompt_versions.py`），否则 `model_info.prompt_version` 描述的不是实际发送的正文 |
 | 台账口径两侧一致 | 首过率只算 `attempt=0` 的首答（修复轮不进分母）、传输失败不参与；token 取真实用量（响应 `usage`，缺省退消息 `usage_metadata`，都没有才记 0，不臆造）；治理出口把网关那本与灾种进程级那本**合并统计**——台账实现共享不等于统计共享 |
 | 外部数据可核验 | `data/external/` 的数据必须带 `manifest.json`（来源/许可/SHA-256/条数）、`schema.json` 与可复跑抓取脚本（统一入口 `python -m scripts.external_data`），`--check` 与 `test_external_data_catalog.py` 把"手改数据 / 许可漂移 / 形状漂移 / 目录与索引不一致"钉成红。空值一律 `null`（未报），不用 0 冒充。**CC BY-NC / NC-SA 是经批准的唯一例外**（独立目录 + 独立许可 + `commercial_use: false`），商用发行前必须整目录移除 |
 | 指标必须实测 | `latency_report()` 输出运行时埋点的分位数与 SLA 判定，验收数字全部可追溯到样本 |

@@ -32,6 +32,12 @@ def data_normalize_tool(cleaned_data: dict, normalize_precision: dict) -> dict:
     normalized_events = []
     applied = ["time_iso8601", "coordinate_4dp"]
 
+    # normalization_applied 是"应用了哪些规则"的清单，不是逐事件×字段的流水：
+    # 此前在事件循环里 append（3 千事件 × 9 字段 ≈ 2.7 万条重复字符串，随 State 传递）。
+    # 规则集合不随事件数变化，循环外按"有没有事件命中该规则"收集。
+    has_valid_time = False
+    has_coords = False
+    precision_fields: set[str] = set()
     for event in events:
         normalized = event.copy()
 
@@ -42,6 +48,7 @@ def data_normalize_tool(cleaned_data: dict, normalize_precision: dict) -> dict:
                 dt = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
                 normalized["time"] = dt.isoformat()
                 normalized["time_valid"] = True
+                has_valid_time = True
             except (ValueError, AttributeError):
                 normalized["time_valid"] = False
         else:
@@ -50,8 +57,10 @@ def data_normalize_tool(cleaned_data: dict, normalize_precision: dict) -> dict:
         # 2. 坐标精度标准化：保留4位小数（通用）
         if normalized.get("latitude") is not None:
             normalized["latitude"] = round(float(normalized["latitude"]), 4)
+            has_coords = True
         if normalized.get("longitude") is not None:
             normalized["longitude"] = round(float(normalized["longitude"]), 4)
+            has_coords = True
 
         # 3. 观测字段精度标准化（按灾种注册表声明的精度逐字段处理）
         for field, digits in (normalize_precision or {}).items():
@@ -59,12 +68,14 @@ def data_normalize_tool(cleaned_data: dict, normalize_precision: dict) -> dict:
                 try:
                     value = float(normalized[field])
                     normalized[field] = round(value, int(digits))
-                    applied.append(f"{field}_{int(digits)}dp")
+                    precision_fields.add(f"{field}_{int(digits)}dp")
                 except (TypeError, ValueError):
                     # 非数值字段跳过，交由校验工具报告异常
                     pass
 
         normalized_events.append(normalized)
+
+    applied = (["time_iso8601"] if has_valid_time else []) + (["coordinate_4dp"] if has_coords else []) + sorted(precision_fields)
 
     result = {
         "events": normalized_events,

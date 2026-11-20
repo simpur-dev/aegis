@@ -23,10 +23,11 @@ from aegis.domain.provenance import DataProvenance
 _TELEMETRY_KEYS = frozenset({"event_id", "time", "latitude", "longitude", "region", "source", "hazard_type"})
 
 
-def _observations_from_events(events: list, region: str) -> list[dict]:
+def _observations_from_events(events: list) -> list[dict]:
     """旧 events → `FactorObservation` dump。同名字段跨事件合并成一个窗口聚合。"""
     numeric: dict[str, list[float]] = {}
     classes: dict[str, str] = {}
+    conflicts: set[str] = set()
     latest: dict[str, str] = {}
     total: dict[str, int] = {}
     for event in events:
@@ -41,7 +42,14 @@ def _observations_from_events(events: list, region: str) -> list[dict]:
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 numeric.setdefault(key, []).append(float(value))
             else:
-                classes.setdefault(key, str(value))
+                # 类别因子跨事件取值冲突时**不再静默首值胜出**：路由因子（如
+                # water_source_type）取错会改权重变体。冲突在 quality_flags 里留痕，
+                # 取值仍取首个（维持口径），但下游能看到"这一项有分歧"。
+                text = str(value)
+                if key in classes and classes[key] != text:
+                    conflicts.add(key)
+                else:
+                    classes.setdefault(key, text)
 
     rows: list[dict] = []
     for key in total:
@@ -54,6 +62,8 @@ def _observations_from_events(events: list, region: str) -> list[dict]:
             "sources": ["legacy_events"],
             "derivation": "legacy_data_result",
         }
+        if key in conflicts:
+            row["quality_flags"] = [f"class_conflict:{key}"]
         if values:
             row["min_value"] = min(values)
             row["max_value"] = max(values)
@@ -82,7 +92,7 @@ def run_risk_agent_legacy(task: str, data_result: dict, hazard_type: str, max_re
         "task": task,
         "hazard_type": hazard,
         "region_code": region,
-        "observations": _observations_from_events(events, region),
+        "observations": _observations_from_events(events),
         "site_profile": None,
         "data_provenance": provenance.model_dump(mode="json"),
         "max_retries": max_retries,

@@ -21,7 +21,6 @@ from aegis.agents.core.prompts import PromptRegistry
 #: 改正文必须升版本号并同步更新这里。
 _HAZARD_FINGERPRINTS: dict[str, str] = {
     "hazard.data_plan": "415ff741f02e8f54",
-    "hazard.data_plan.retry": "6840684ea71a203d",
     "hazard.feedback_analyze": "14a33efee39e581d",
     "hazard.feedback_reflection": "d55508e55ad0a0fe",
     "hazard.feedback_suggestion": "be9845586280da95",
@@ -46,7 +45,8 @@ def _fingerprint(system: str, user: str) -> str:
 def test_灾种模板全部登记且版本号非空() -> None:
     registry = PromptRegistry.builtin()
     hazard_tasks = [task for task in registry.tasks() if task.startswith("hazard.")]
-    assert len(hazard_tasks) == 15, f"灾种模板应为 15 条，实际 {len(hazard_tasks)}: {hazard_tasks}"
+    # 2026-11-21 移除不可达的 data_plan.retry：data_agent 的失败回路是 validate→retrieve，从不回 plan
+    assert len(hazard_tasks) == 14, f"灾种模板应为 14 条，实际 {len(hazard_tasks)}: {hazard_tasks}"
     for task in hazard_tasks:
         version = registry.version_for_task(task)
         assert version, f"{task} 没有版本号——D10 的 prompt_version 就无处可写"

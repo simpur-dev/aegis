@@ -300,6 +300,28 @@ class AgentGateway:
             )
             instrumentation.end_span(txn_span)
             raise
+        except Exception as exc:
+            # 其余传输异常（连接断开、发布失败）也要进协同事务台账并闭合跨度：
+            # 此前只有 DeadlineExceededError 有账，success_rate 的分母静默少一行、
+            # txn_span 不闭合（链路证据断头）。记 error 后原样上抛，语义不变。
+            latency = (time.perf_counter() - started) * 1000
+            entry.failed += 1
+            self._record_txn(
+                TxnRecord(
+                    msg_id=request.msg_id,
+                    trace_id=trace_id,
+                    action=action.value,
+                    agent_id=entry.agent_id,
+                    outcome="error",
+                    latency_ms=latency,
+                    at=now_iso(),
+                    error_code=ErrorCode.INTERNAL.value,
+                )
+            )
+            self._tracer.record("collab_txn", latency, trace_id=trace_id, outcome="error", agent_id=entry.agent_id)
+            instrumentation.record_error(txn_span, exc, outcome="error", latency_ms=round(latency, 3))
+            instrumentation.end_span(txn_span)
+            raise
         finally:
             entry.inflight = max(0, entry.inflight - 1)
 

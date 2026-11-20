@@ -24,6 +24,7 @@ Feedback Agent 经验存储工具（第一版：JSON 文件存储）
 """
 
 import json
+import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -111,13 +112,21 @@ def _load_json(path: Path) -> list:
         return []
 
 
+#: JSON 文件是 read-modify-write：共享腿池允许不同事件的反馈闭环并发跑，
+#: 无锁交错时后写整份覆盖前写（实测 xdist 下 feedback_memory 丢过记录）。
+#: 单进程内用线程锁串行化 load→extend→dump；跨进程隔离由部署形态保证
+#: （每进程一份运行态文件），与测试侧 conftest 的 per-worker 路径同一口径。
+_SAVE_LOCK = threading.Lock()
+
+
 def save_feedback_records(records: list) -> dict:
     """追加保存反馈经验记录，返回 {saved_count, record_ids, store_path}。"""
-    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-    existing = _load_json(STORAGE_PATH)
-    existing.extend(records)
-    with open(STORAGE_PATH, "w", encoding="utf-8") as f:
-        json.dump(existing, f, ensure_ascii=False, indent=2)
+    with _SAVE_LOCK:
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        existing = _load_json(STORAGE_PATH)
+        existing.extend(records)
+        with open(STORAGE_PATH, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
     return {
         "saved_count": len(records),
         "record_ids": [r.get("feedback_id") for r in records],
