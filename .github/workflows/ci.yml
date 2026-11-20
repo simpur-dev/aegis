@@ -45,7 +45,9 @@ jobs:
         # 模块已经并入主线，门禁就该对它有约束力，而不是"装不装随你"。
         # `precip`：外部降水派生要读 NetCDF-4/HDF5（h5py）。它**不进生产镜像**（平台只读派生出的
         # CSV，不读原件），但 CI 装它——派生逻辑也得有用例守着。
-        run: uv sync --frozen --extra dev --extra perf --extra postgres --extra iot --extra analytics --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp --extra agents --extra precip
+        # `data`：离线数据链提质（xarray/CF-time、calamine、pyshp、dbfread、polars、pandera）。
+        # 同样**不进生产镜像**：平台只读派生产物；CI 装它让取件/派生逻辑有用例守着。
+        run: uv sync --frozen --extra dev --extra perf --extra postgres --extra iot --extra analytics --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp --extra agents --extra precip --extra data
 
       - name: 装前端源码依赖（两条上游读取器漂移守卫要用）
         # `test_offline_tile_format.py` 里有两条守卫是读 `frontend/node_modules` 里的
