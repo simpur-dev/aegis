@@ -11,15 +11,19 @@
 商用发行前必须整目录移除。
 
 抓取：ScienceDB/TPDC 公开接口（`batchDownloadFile` + `{"noToken":true}`），无需登录。
+读取：pyshp 直读 zip 内的 SHP/SHX/DBF（内存流，不落临时文件）——旧的手写 DBF/SHP
+解析器已删除，见 `[data]` extra 的说明。
 """
 
 from __future__ import annotations
 
+import io
 import json
-import struct
 import zipfile
 from pathlib import Path
 from typing import Any
+
+import shapefile
 
 from scripts.external_data.core import (
     DatasetSpec,
@@ -68,57 +72,56 @@ LAKE_FIELDS = {
 }
 
 
-def _read_dbf(raw: bytes) -> tuple[list[tuple[str, str, int]], list[dict[str, str]]]:
-    """读 DBF：返回 (字段定义, 行字典)。DBF 每条记录首字节是删除标志，别漏。"""
-    record_count = int.from_bytes(raw[4:8], "little")
-    header_len = int.from_bytes(raw[8:10], "little")
-    record_len = int.from_bytes(raw[10:12], "little")
-    fields: list[tuple[str, str, int]] = []
-    pos = 32
-    while raw[pos] != 0x0D:
-        descriptor = raw[pos : pos + 32]
-        name = descriptor[:11].split(b"\x00")[0].decode("gb18030", "replace")
-        fields.append((name, chr(descriptor[11]), descriptor[16]))
-        pos += 32
-    rows: list[dict[str, str]] = []
-    for index in range(record_count):
-        offset = header_len + index * record_len + 1  # +1 跳过删除标志
-        values: dict[str, str] = {}
-        for name, _kind, length in fields:
-            values[name] = raw[offset : offset + length].decode("gb18030", "replace").strip()
-            offset += length
-        rows.append(values)
-    return fields, rows
+def _cleaned_record(record) -> dict[str, Any]:
+    """pyshp 记录 → 字典，**字符值去首尾空白**（与旧读器一致）。
 
-
-def _read_shp_points(raw: bytes) -> list[tuple[float, float]]:
-    """读 shapefile 里的点几何（Point/MultiPoint）。
-
-    记录布局：记录号(4B BE) + 内容长度(4B BE, 以 16-bit 字计) + 内容(内容长度×2 字节)，
-    **内容首 4 字节就是 shape type**。下一条记录从「内容起点 + 内容长度×2」开始。
+    源 DBF 里有字符字段带尾部换行（如滑坡 `地层` 的 `P2k、P3b、T3n\\n`）；
+    旧读器统一 `.strip()` 过，这里保持同一口径——否则只是换了个读取器，
+    产物就多出不可见的尾随空白。
     """
-    points: list[tuple[float, float]] = []
-    offset = 100  # 跳过文件头
-    while offset < len(raw):
-        _record_no, content_len = struct.unpack(">II", raw[offset : offset + 8])
-        content_start = offset + 8
-        shape_type = struct.unpack("<I", raw[content_start : content_start + 4])[0]
-        if shape_type == 1:  # Point
-            x, y = struct.unpack("<dd", raw[content_start + 4 : content_start + 20])
-            points.append((x, y))
-        elif shape_type == 8:  # MultiPoint
-            count = struct.unpack("<I", raw[content_start + 4 : content_start + 8])[0]
-            for i in range(count):
-                base = content_start + 8 + i * 16
-                x, y = struct.unpack("<dd", raw[base : base + 16])
-                points.append((x, y))
-        offset = content_start + content_len * 2
-    return points
+    values = record.as_dict()
+    return {name: value.strip() if isinstance(value, str) else value for name, value in values.items()}
 
 
-def _number(value: str) -> float | None:
-    """DBF 数值字段是科学计数法字符串；空值 → None（源数据没填，不是 0）。"""
-    text = (value or "").strip()
+def _layer_table(name: str, archive: zipfile.ZipFile, prefix: str) -> tuple[list[dict[str, Any]], list[tuple[float, float]]]:
+    """用 pyshp 一次读齐属性与几何（SHP/SHX/DBF 都从 zip 内存直读，不落临时文件）。
+
+    几何只接受**单点**：源数据三个图层都是 Point；旧的手写读器遇到 MultiPoint 会把
+    多点都展开、随后与属性行数对不上而报错——这里把这层隐含契约写成显式断言。
+    """
+    reader = shapefile.Reader(
+        shp=io.BytesIO(archive.read(prefix + name + ".shp")),
+        shx=io.BytesIO(archive.read(prefix + name + ".shx")),
+        dbf=io.BytesIO(archive.read(prefix + name + ".dbf")),
+        encoding="gb18030",
+    )
+    try:
+        shapes = reader.shapes()
+        rows = [_cleaned_record(record) for record in reader.records()]
+    finally:
+        reader.close()
+    if len(shapes) != len(rows):
+        raise SystemExit(f"{name}: 几何点数({len(shapes)})与属性行数({len(rows)})不符，源数据变了")
+    geometry: list[tuple[float, float]] = []
+    for shape in shapes:
+        if shape.shapeType != 1 or len(shape.points) != 1:
+            raise SystemExit(f"{name}: 期望单点几何，读到 shapeType={shape.shapeType} points={len(shape.points)}")
+        lon, lat = shape.points[0][:2]
+        geometry.append((float(lon), float(lat)))
+    return rows, geometry
+
+
+def _number(value: Any) -> float | None:
+    """数值字段 → float；空值/非数值 → None（源数据没填，不是 0）。
+
+    pyshp 已按 DBF 字段类型把数值解析成 float（旧手写读器拿到的是科学计数法字符串），
+    这里保留字符串兜底：字段类型被上游改坏时仍能解析，而不是静默变成 None。
+    """
+    if value is None:
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    text = str(value).strip()
     if not text:
         return None
     try:
@@ -128,10 +131,7 @@ def _number(value: str) -> float | None:
 
 
 def _records_from_layer(name: str, archive: zipfile.ZipFile, prefix: str) -> list[dict[str, Any]]:
-    _fields, rows = _read_dbf(archive.read(prefix + name + ".dbf"))
-    geometry = _read_shp_points(archive.read(prefix + name + ".shp"))
-    if len(geometry) != len(rows):
-        raise SystemExit(f"{name}: 几何点数({len(geometry)})与属性行数({len(rows)})不符，源数据变了")
+    rows, geometry = _layer_table(name, archive, prefix)
     hazard_type = LAYER_TYPES[name]
     numeric_map = {"泥石流": DEBRIS_FIELDS, "滑坡": LANDSLIDE_FIELDS, "溃决隐患冰川终碛湖": LAKE_FIELDS}[name]
     out: list[dict[str, Any]] = []

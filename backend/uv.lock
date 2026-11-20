@@ -47,7 +47,6 @@ analytics = [
     { name = "duckdb" },
 ]
 data = [
-    { name = "dbfread" },
     { name = "h5netcdf" },
     { name = "pandera" },
     { name = "polars" },
@@ -107,7 +106,6 @@ requires-dist = [
     { name = "aiomqtt", marker = "extra == 'iot'", specifier = ">=2.2" },
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.30" },
     { name = "clickhouse-connect", marker = "extra == 'analytics'", specifier = ">=1.9" },
-    { name = "dbfread", marker = "extra == 'data'", specifier = ">=2.0" },
     { name = "duckdb", marker = "extra == 'analytics'", specifier = ">=1.5" },
     { name = "eclipse-zenoh", marker = "extra == 'edge'", specifier = ">=1.10" },
     { name = "fastapi", specifier = ">=0.115" },
@@ -1063,15 +1061,6 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/b6/b1/d9121a717e0f893c64bd6ca7702614778d7df2a5c309128a002421788516/cryptography-50.0.2-pp311-pypy311_pp73-manylinux_2_34_x86_64.whl", hash = "sha256:1ba34f04897fcdaa73f74145c25f3ec146fbd56593853e88adc2e811303c5f42", size = 4726322, upload-time = "2026-09-30T15:29:54.263Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/36/8b/e6d153808bf353e152abd2fd4d8f09670d956ac78379ac46e60d7efbf04c/cryptography-50.0.2-pp311-pypy311_pp80-macosx_11_0_arm64.whl", hash = "sha256:3dc4fd8058cea1644971207d530e1a03a184a805ffc8ebdddf0599d78a331b81", size = 3873097, upload-time = "2026-09-30T15:29:56.097Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ca/1d/1271f287ff7170ddafc2aad36260c4eec20ccd2fea70f38455e9d56d427b/cryptography-50.0.2-pp311-pypy311_pp80-win_amd64.whl", hash = "sha256:7b75de3c8b3be1cdb1052747c929440c3eea46c1bc2cb8a6e3a48388e9b7b452", size = 3805376, upload-time = "2026-09-30T15:29:58.729Z" },
-]
-
-[[package]]
-name = "dbfread"
-version = "2.0.7"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ad/ae/a5891681f5012724d062a4ca63ec2ff539c73d5804ba594e7e0e72099d3f/dbfread-2.0.7.tar.gz", hash = "sha256:07c8a9af06ffad3f6f03e8fe91ad7d2733e31a26d2b72c4dd4cfbae07ee3b73d", size = 33212, upload-time = "2016-11-25T11:25:01.408Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/4c/94/51349e43503e30ed7b4ecfe68a8809cdb58f722c0feb79d18b1f1e36fe74/dbfread-2.0.7-py2.py3-none-any.whl", hash = "sha256:f604def58c59694fa0160d7be5d0b8d594467278d2bb6a47d46daf7162c84cec", size = 20018, upload-time = "2016-11-25T11:27:36.001Z" },
 ]
 
 [[package]]
