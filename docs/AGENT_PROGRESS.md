@@ -45,7 +45,11 @@
 - ~~**小时雨强（`rainfall_mm_h`）无真实数据源**~~ **2026-11-20 已接 Open-Meteo archive**（CC BY 4.0、匿名、逐小时 `precipitation`）：
   新腿 `precip_hourly` 默认关，取数脚本 `backend/scripts/fetch_precip_hourly_openmeteo.py` 落运行态 CSV，
   连接器只产 `precip_mm_h`、经派生表恒等换算成因子；**源停更 >6h 整轮不产**（陈年数据冒充当前雨情比没数据更危险）。
-  待办：真实站点表 + 首跑取数（见触发行）。日累计与小时雨强**禁止近似折算**的规矩不变，两口径分腿。
+  站点表与首跑已落（见触发行）；日累计与小时雨强**禁止近似折算**的规矩不变，两口径分腿。
+- ~~**CHM_PRE 派生表未产出**~~ **2026-11-21 首份真实派生表落产**：2020–2021 原件取完后按站点表
+  （Wikidata 县域代理点）取最近格点派生 **2,193 行**（`backend/data/precip/station_daily.csv`）。
+  气候学抽检通过：巴宜 50% 非零日 / 7 月 171 mm，梯度 巴宜>定结>八宿 与实况吻合，极端日 37.5 mm 合理。
+  2022–2025 原件 off-peak 后台取数中，落地后增量派生；`precip` 腿开关仍默认关，开腿是部署动作。
 - **CHM_PRE V2 原件未取到**（本机取数通道不通：Zenodo 限流、TPDC FTP 421 并发上限），
   所以**派生表与入仓的降水摘要数据集都还没产出**。取件脚本与派生脚本都已就绪并有离线用例，
   换一台网络条件允许的机器跑 `fetch_precip_chmpre.py` → `derive_precip_station_daily.py` 即可。
