@@ -3,6 +3,7 @@
 模块：
 - `core`：清单、校验和、规范化写盘、下载（规矩只有一份）
 - `table`：表格读取（xlsx/xls/ods，python-calamine）
+- `glof_db`：全球冰湖溃决事件库（Zenodo，CC BY 4.0）
 - `nasa_glc`：NASA 全球滑坡目录（public domain）
 - `pangaea_debris_flow`：全球泥石流规模目录（PANGAEA，CC BY 3.0）
 - `scidb_census`：西藏公路地质灾害普查（CC BY-NC 4.0）

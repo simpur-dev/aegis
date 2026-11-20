@@ -4217,3 +4217,45 @@ MCP 的顾虑（会话状态、重连语义）在这里不存在。
 - **小时雨强（`rainfall_mm_h`）无真实源**；因子权重与归一化边界仍是 MOCK；
 - hypothesis CI profile 未做：各用例用 `@settings(max_examples=…)` 逐条覆盖，
   注册 profile 不会生效，须逐个改用例——收益 10–20s，不值得动 10 个文件的断言口径。
+
+## GLOF DB V3.1 入库批次（2026-11-20）
+
+补上 `lake_outburst` 的**事件**维度。此前仓里只有冰湖**清单**（帕隆藏布 3,224 个）
+与 TPDC 的 19 个**溃决隐患点**，没有"哪个湖什么时候溃过、后果如何"。
+
+### 来源与许可（先查实，再收）
+
+| 项 | 实测 |
+|---|---|
+| 数据 | Glacier Lake Outburst Flood Database **V3.1**，Lützow, Veh & Korup (2023, ESSD 15:2983–3000) |
+| 发布 | Zenodo 记录 `7924369`（`10.5281/zenodo.7924369`），文件 `glofdatabase_V3-1.ods` **685,048 字节** |
+| 许可 | **CC BY 4.0**（Zenodo API `license.id=cc-by-4.0`；匿名可下、可再分发、可商用） |
+| 结构 | 8 张区域工作表（Andes / European Alps / Greenland / HMA / Iceland / NW North America / Scandinavia / Other） |
+
+**只收编译后的库，不拆底层湖泊清单**：库的 README 明说底层清单来自各自来源、可能另有许可。
+
+### 两个数字与一个 schema 拦下的 bug
+
+1. **3,151 ≠ 3,167**：外部交付的标准化 CSV 把每张表的**字段说明行 + 示例行**也当成了数据
+   （8 表 × 2 行 = 16 条幽灵记录）。直接读原始 ODS、每表跳过前 3 行得 **3,151 条**；
+   其中 **3,062 条有坐标**，与库文档"约 3% 无坐标"一致。门禁把这条差异钉死
+   （`test_glof_条数与幽灵行口径`），防以后有人"对齐"回 3,167。
+2. **901 条只有年份的日期一度被写进 `event.date`**（写成 `"1881"`）。统一信封的
+   JSON Schema 要求 `event.date` 是 ISO 日粒度或 `null`，`test_jsonl记录过schema契约`
+   当场红。改为：能确定到日才写 `event.date`；只有年份进 `attributes.year`，
+   原文进 `event.date_raw`——**不臆造月日**。修正后 1,593 条到日 / 1,260 条只到年 / 298 条无日期。
+
+### 读取栈与门禁
+
+- **python-calamine** 读 ODS 全部工作表（新 `table.read_all_sheets`，原样交行、由数据集决定跳过几行）；
+- **pandera（polars 后端）** 校验 ID 为正整数、经纬度在值域、伤亡非负；不过就在 `--refresh` 当场失败；
+- 新增 4 条门禁（条数/区域分布/坐标成对/日期粒度）+ raw ODS 结构校验；目录门禁由 43 → **52 项**。
+- `data/external/` 现为 **7 套**；索引、README、architecture 已同步。
+
+### 仍未做（不声称）
+
+- GLOF 仍是**事件库不是完整普查**：以文献/报告/新闻为线索，无人区缺席；冰岛 + 北美占一半以上，
+  反映研究密度而非溃决频率。
+- 体积/洪峰多为估算（源库另有 `VL_calculation`/`Qp_calculation` 口径，未逐条附带）；
+  `Date_Min`/`Date_Max` 区间只保留原文，不取中点。
+- **未接入生产链路**（七套均未接入），不得用作预测能力证据。

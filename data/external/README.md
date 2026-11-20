@@ -27,7 +27,7 @@ data/external/
     ├── README.md                # 该数据集：来源、许可、字段映射、已知质量问题、更新方法
     ├── LICENSE-*.md             # 仅 NC/特殊许可需要：独立许可摘要与商用限制
     ├── manifest.json            # 机器可读元数据：来源/许可/抓取时间/校验和/条数/选择规则
-    ├── schema.json              # 规范化记录的契约（JSON Schema；五个数据集共用同一份统一信封）
+    ├── schema.json              # 规范化记录的契约（JSON Schema；七个数据集共用同一份统一信封）
     ├── raw/                     # 按选择规则过滤后的**原始列/原始字节**投影（不改字段、不补值）
     └── normalized/              # 项目口径数据（字段见 schema.json；空值一律 null/空）
 ```
@@ -38,7 +38,7 @@ data/external/
 - 校验和以 `manifest.json` 为准，`--check` 逐项比对；改数据必须重跑 `--refresh` 并复核 diff。
 - 抓取脚本在 `backend/scripts/external_data/`（数据目录只放数据与说明）：
   **规矩只有一份**（`core.py`：清单/校验和/规范化写盘/下载），**每个数据集一个模块**
-  （`nasa_glc` / `scidb_census` / `tpdc_himalaya` / `zenodo_himalaya` / `zenodo_lakes`）。
+  （`nasa_glc` / `pangaea_debris_flow` / `scidb_census` / `tpdc_himalaya` / `zenodo_himalaya` / `zenodo_lakes` / `glof_db`）。
   统一入口：
 
   ```bash
@@ -55,6 +55,7 @@ data/external/
 
 | id | 内容 | 性质 | 许可 | 记录数 | 覆盖 |
 |---|---|---|---|---|---|
+| [`glof-db`](glof-db/README.md) | 全球冰湖溃决**事件**库 V3.1（千年尺度，含机制/体积/洪峰/伤亡） | **历史事件** | **CC BY 4.0** | 3,151 | 全球 8 个冰川区；3,062 条有坐标；中国 107 条（HMA 表）；**补上 `lake_outburst` 事件维度** |
 | [`tpdc-himalaya-geohazard-2006-2009`](tpdc-himalaya-geohazard-2006-2009/README.md) | 喜马拉雅重大地灾调查点位（泥石流/滑坡/溃决隐患冰湖） | **灾害本体 + 形态学属性** | **CC BY-NC-SA 4.0** | 525 | 喜马拉雅山全段（78.9–95.3°E）；坡度/比降/发育阶段/冰湖成灾风险 |
 | [`zenodo-parlung-zangbo-glacial-lakes`](zenodo-parlung-zangbo-glacial-lakes/README.md) | 帕隆藏布流域冰湖清单（2020 / 2025 两期） | **灾害本体** | **CC BY 4.0** | 3,224 | 藏东南（93.0–97.1°E）；面积/体积/坡度/与冰川接触 |
 | [`zenodo-himalaya-landslide-inventories`](zenodo-himalaya-landslide-inventories/README.md) | 东喜马拉雅大型滑坡 420 点 + 全球巨型滑坡 MEGAS 411 条 | **灾害本体** | **CC BY 4.0** | 831 | 藏东南—尼泊尔东部；MEGAS 中国 26 条 |
@@ -62,12 +63,13 @@ data/external/
 | [`nasa-glc`](nasa-glc/README.md) | NASA 全球滑坡目录（中国 / 西藏子集） | **历史事件** | public domain（NASA） | 中国 426 / 西藏 16 | 2007-01 至 2016-10；以降雨触发为主（另有地震 7 / 采矿 6 / 融雪 4 等），媒体源 |
 | [`pangaea-debris-flow-magnitude`](pangaea-debris-flow-magnitude/README.md) | 全球泥石流规模目录（体积/面积/火后/成因） | **规模编目（非事件）** | **CC BY 3.0** | 988 | 全球；无坐标，只有地名与文献出处 |
 
-**现在仓里能回答的问题**（说明为什么是这六套）：
+**现在仓里能回答的问题**（说明为什么是这七套）：
 
 - "**某地有没有滑坡体**" → tpdc + zenodo 两套点位；
 - "**冰湖在哪、多大、离冰川多远**" → zenodo 冰湖清单（3,224 个，两期可比较）；
+- "**冰湖什么时候溃过、怎么溃的、后果如何**" → GLOF DB 事件库（3,151 条，全球千年尺度）；
 - "**滑坡的坡度/地层/泥石流的比降与发育阶段**" → tpdc 的专业属性；
-- "**发生过什么、死了多少人**" → 公路普查 + NASA GLC；
+- "**发生过什么、死了多少人**" → 公路普查 + NASA GLC + GLOF DB；
 - "**一次泥石流有多大（体积/面积/是否火后）**" → PANGAEA 规模目录（988 条，无坐标）；
 - "**触发因子（降雨）**" → **目录里没有**，但**平台已经接上了外部降水**：
   TPDC 全国 0.1° 格点降水 V2（**CC BY 4.0**，逐日 1960–2025，全藏，46.8 GB）落**运行态目录**

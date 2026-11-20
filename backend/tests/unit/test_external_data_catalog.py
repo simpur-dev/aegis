@@ -37,6 +37,7 @@ NON_COMMERCIAL_LICENSES = {"cc-by-nc-4.0", "cc-by-nc-sa-4.0"}
 
 #: 各数据集的实测条数（源数据变动时必须在这里显式改，防止"悄悄换了数据"）。
 EXPECTED_ROWS: dict[str, int] = {
+    "glof-db": 3_151,
     "nasa-glc": 426,
     "pangaea-debris-flow-magnitude": 988,
     "sciencedb-tibet-road-geohazard-2022": 13_768,
@@ -169,6 +170,71 @@ def test_nasa_glc_条数与类型分布() -> None:
     assert all(row["geo"]["longitude"] is not None and row["geo"]["latitude"] is not None for row in china), "NASA 子集每条都有坐标"
     # 空值语义：未报 ≠ 0
     assert any(row["impact"]["fatalities"] is None for row in china), "未报的死亡数应是 null 而不是 0"
+
+
+# ============================================================
+# GLOF DB V3.1（CC BY 4.0）
+# ============================================================
+
+
+def test_glof_条数与幽灵行口径() -> None:
+    """3,151 不是 3,167：每张表的字段说明行与示例行都不是数据。
+
+    外部交付的 CSV 把 8 张表 × 2 行说明当成了记录（+16）。本目录读原始 ODS、
+    每表跳过前 3 行——这条闸钉住"我们不跟着那个数走"。
+    """
+    rows = _rows("glof-db", "normalized/glof_events.v1.jsonl")
+    assert len(rows) == EXPECTED_ROWS["glof-db"] == 3_151
+    assert all(row["hazard"]["type"] == "lake_outburst" for row in rows)
+    assert {row["hazard"]["source_category"] for row in rows} == {"glof"}
+
+
+def test_glof_区域分布与坐标成对() -> None:
+    rows = _rows("glof-db", "normalized/glof_events.v1.jsonl")
+    regions = Counter(row["hazard"]["attributes"]["database_region"] for row in rows)
+    assert regions["High Mountain Asia"] == 569
+    assert regions["NW North America"] == 833
+    assert set(regions) == {
+        "Andes",
+        "European Alps",
+        "Greenland",
+        "High Mountain Asia",
+        "Iceland",
+        "NW North America",
+        "Other",
+        "Scandinavia",
+    }
+    # 坐标必须成对出现：3,062 有、89 无（源库约 3% 无坐标）
+    with_point = [row for row in rows if row["geo"]["latitude"] is not None]
+    assert len(with_point) == 3_062
+    for row in rows:
+        assert (row["geo"]["latitude"] is None) == (row["geo"]["longitude"] is None)
+        assert row["hazard"]["attributes"]["place_has_coordinates"] is (row["geo"]["latitude"] is not None)
+
+
+def test_glof_日期粒度不臆造() -> None:
+    """只有年份的记录不得写进 `event.date`（信封要求 ISO 日期或 null）。
+
+    实测 1,593 条到日、1,260 条只到年（年份进 `attributes.year`）、298 条无日期。
+    曾把 `"1881"` 写进 `event.date`——schema 的 ISO 正则当场拦下。
+    """
+    rows = _rows("glof-db", "normalized/glof_events.v1.jsonl")
+    for row in rows:
+        value = row["event"]["date"]
+        assert value is None or len(value) == 10, f"{row['record_id']} 的日期不是 ISO 日粒度: {value!r}"
+    year_only = [row for row in rows if row["event"]["date"] is None and row["hazard"]["attributes"].get("year")]
+    assert len(year_only) == 1_260
+    assert all(1000 <= row["hazard"]["attributes"]["year"] <= 2025 for row in year_only)
+
+
+def test_glof_raw是原始ODS且含八张表() -> None:
+    raw = (_dataset_dir("glof-db") / "raw" / "glofdatabase_V3-1.ods").read_bytes()
+    assert raw[:2] == b"PK", "ODS 是 zip 容器"
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        assert "content.xml" in archive.namelist()
+        workbook = archive.read("content.xml").decode("utf-8", errors="replace")
+    for region in ("Andes", "Iceland", "Scandinavia", "Greenland"):
+        assert region in workbook, f"content.xml 里找不到工作表 {region}"
 
 
 # ============================================================

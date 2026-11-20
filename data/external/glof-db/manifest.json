@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-11-20T15:04:10.428568+00:00",
+  "datasets": [
+    {
+      "id": "glof-db",
+      "title": "Glacier Lake Outburst Flood Database V3.1（全球冰湖溃决事件库）",
+      "publisher": "Zenodo（University of Potsdam）",
+      "authors": [
+        "Lützow, Natalie",
+        "Veh, Georg"
+      ],
+      "license": {
+        "id": "cc-by-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "commercial_use": true,
+        "note": "CC BY 4.0：允许署名后的再分发与商业使用（须保留署名与许可链接）。"
+      },
+      "citation": "Lützow, N., Veh, G., & Korup, O. (2023). A global database of historic glacier lake outburst floods. Earth System Science Data, 15, 2983–3000. https://doi.org/10.5194/essd-15-2983-2023; database: https://doi.org/10.5281/zenodo.7924369 (CC BY 4.0).",
+      "source": {
+        "landing_url": "https://zenodo.org/records/7924369",
+        "file": "https://zenodo.org/api/records/7924369/files/glofdatabase_V3-1.ods/content"
+      },
+      "doi": "10.5281/zenodo.7924369",
+      "selection": {
+        "scope": "8 个区域工作表的全部事件（每表跳过前 3 行：表头/字段说明/示例行）",
+        "exclusions": []
+      },
+      "normalization": {
+        "read_stack": "python-calamine 读 ODS 全部工作表 + pandera（polars 后端）校验 ID/坐标/伤亡",
+        "date_rule": "能确定到日才写 event.date（ISO）；只有年份写 attributes.year，不臆造月日",
+        "geo_rule": "经纬度必须成对且为数值才写；否则 lat/lon 均 null 并置 place_has_coordinates=false",
+        "count_note": "原始 ODS 得 3,151 条；外部标准化 CSV 的 3,167 条把每表字段说明行与示例行也当成了数据（+16）"
+      },
+      "known_limitations": [
+        "**事件库不是完整普查**：以文献/报告/新闻为线索，无人区与无记录事件缺席。",
+        "约 3% 的记录没有可用坐标（3,151 中 3,062 有坐标）；影响与伤亡字段部分缺失。",
+        "湖泊体积/洪峰流量多为估算（有 `VL_calculation`/`Qp_calculation` 口径字段，未逐条附）。",
+        "库的 README 明确底层湖泊清单来自各自来源、可能另有许可；本目录只收编译后的库。"
+      ],
+      "retrieved_at": "2026-11-20T15:04:10.428568+00:00",
+      "files": {
+        "raw/glofdatabase_V3-1.ods": {
+          "sha256": "96a06f2a341a581e3d26ce64f7aa312235032866d6efe9be47bc72b8b291d99b",
+          "bytes": 685048
+        },
+        "normalized/glof_events.v1.jsonl": {
+          "sha256": "4cd9919c0fe76ba57451eb37f664dfeedb43b77c9cd5f52ca69c763cd973cc43",
+          "bytes": 4445370,
+          "rows": 3151
+        }
+      }
+    }
+  ]
+}

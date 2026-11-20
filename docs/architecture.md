@@ -288,9 +288,10 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
   原子迁移）+ `services/alerting/`（分级打断、台账、站内通知、外发 webhook）+ `services/collab/tasks.py`
   （处置空间与任务乐观锁）；读面 `/api/v1/alerts`、`/api/v1/spaces`、`/api/v1/notifications`，
   迁移 `010`–`013`；强认证与审计读面见 ADR 与助手设计文档 §14。
-- **外部公开数据目录（2026-11-12～17）**：`data/external/` 五套数据集（公开灾情/普查/点位/冰湖），
+- **外部公开数据目录（2026-11-12～20）**：`data/external/` **七套**数据集（公开灾情事件/普查/点位/冰湖清单/泥石流规模/冰湖溃决事件），
   统一抓取入口 `python -m scripts.external_data --check|--refresh`（`backend/scripts/external_data/`），
-  许可准入规则见 `data/external/README.md`；**五套均未接入生产链路**。
+  读取栈在 `[data]` extra（xarray/calamine/pyshp/polars/pandera，**不进生产镜像**），
+  许可准入规则见 `data/external/README.md`；**七套均未接入生产链路**。
 - **前端形态三批（2026-11-13～14）**：首屏智能体面板可折叠 + 底缘拉杆调高；助手页值班台两栏 +
   整页拉杆；助手抽屉改会话优先（告警/处置收进图标栏、问答框常驻底）。
 

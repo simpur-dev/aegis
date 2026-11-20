@@ -42,6 +42,16 @@ def read_sheet(data: bytes, sheet_index: int) -> list[dict[str, Any]]:
     return _to_records(_rows(data, sheet_index))
 
 
+def read_all_sheets(data: bytes) -> dict[str, list[list[Any]]]:
+    """读**所有**工作表，返回 `{表名: 原始行}`（首行是表头，内容不做任何解释）。
+
+    多表源（如 GLOF 数据库按区域分表，且每表前两行是字段说明与示例行）需要自己
+    决定跳过几行——所以这里只交原始行，由调用方按源文件的排版处理。
+    """
+    workbook = CalamineWorkbook.from_filelike(io.BytesIO(data))
+    return {name: workbook.get_sheet_by_index(index).to_python() for index, name in enumerate(workbook.sheet_names)}
+
+
 def _to_records(rows: list[list[Any]]) -> list[dict[str, Any]]:
     if not rows:
         return []
@@ -56,4 +66,4 @@ def _to_records(rows: list[list[Any]]) -> list[dict[str, Any]]:
     return records
 
 
-__all__ = ["read_first_sheet", "read_sheet", "sheet_names"]
+__all__ = ["read_all_sheets", "read_first_sheet", "read_sheet", "sheet_names"]
