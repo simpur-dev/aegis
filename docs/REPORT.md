@@ -4137,3 +4137,83 @@ MCP 的顾虑（会话状态、重连语义）在这里不存在。
 
 **仍未做（不声称）**：小时雨强无真实源；CHM_PRE V2 原件未取到；因子权重与归一化边界**仍是 MOCK**
 （本批只立出处登记与门禁，不发明数字）。
+
+## 数据处理提质与门禁提速批次（2026-11-20）
+
+两个目标：**用主流库替换手搓解析器、把质量检查前移到写入时**；**把全量门禁从 7 分钟压到 1 分钟级**。
+
+### 先量后改：门禁慢在哪
+
+`backend/reports/final_green.xml`（4,393 条 / **419.3s**，单进程）：
+
+| 事实 | 数字 |
+|---|---|
+| 70% 墙钟集中在 11% 的用例 | non-unit 486 条 ≈ 292s；unit 3,907 条约 110s |
+| 两个沉默智能体 e2e | 各 **61.4s**（干等 `sla_agent_txn_ms=60s` 段预算），合计占 **29%** |
+| zenoh 查询回环 5 条 | 5–10s/条，文件合计 ≈ 31.5s |
+| 并行 | **无 xdist**，`slow` 标记只有 6 处且真正慢的都没标 |
+
+### 一、数据处理栈（`[data]` extra，离线专用，不进生产镜像）
+
+| 改动 | 换掉了什么 | 证据 |
+|---|---|---|
+| **xarray + h5netcdf** | 裸 h5py 按"1970 纪元天数"猜时间轴 | 修掉**整表日期偏移 3653 天**的 bug：CHM_PRE 用 `days since 1960-01-01`；新增用例断言 1960+22000 天解出的日期 ≠ 1970 纪元结果 |
+| **python-calamine** | 手搓 `xlsx.py`（只认第一张表+共享字符串） | 顺带获得 ods 能力（GLOF DB 是 ods）；同时修掉 `_to_float(value or "")` 把数值 `0.0` 当缺失的真 bug（违反"0 ≠ 未测"口径） |
+| **pyshp** | 手写 struct 版 DBF/SHP 解析器（`tpdc_himalaya.py`） | 用已提交 raw zip 重放：**525 条 normalized 逐字节一致**；字符字段尾随换行按旧口径 strip |
+| **polars + pandera** | 手写逐行 dict 摄取 | PANGAEA 988 条：全列字符串读入→显式 cast→pandera 校验（主键 1..988、体积/面积 ≥0）；NASA 426+16 条重算与提交版**逐字段一致** |
+| **pydantic 信封**（零新依赖） | 只查"七个键在不在" | `write_envelope` 写入前 `model_validate`：纬度越界/未知灾种/伤亡负数在 `--refresh` **当场失败**，不再先落盘等 CI；六个数据集逐个复跑，normalized 逐字节不变（只校验、写原字典，不重排键序） |
+
+**新数据集**：`pangaea-debris-flow-magnitude`（Riley et al. 2012，**CC BY 3.0**，988 条全球泥石流规模目录）。
+与 GLC 泥石流**事件**分表（`source_category=debris_flow_magnitude_catalog`）——它是规模编目，
+无坐标、无伤亡、采样日期约一半为空。`data/external/` 现为 **6 套**。
+
+**一处偏离计划的判断**：原计划 pyshp + dbfread；实测 **dbfread 2.0.7 只吃文件路径**，
+会逼出临时文件与 Windows 句柄锁，而 pyshp 的 `records()` 已能直读 DBF（含 GB18030 列名）——
+**不引入 dbfread**，一个库读齐 SHP+DBF。
+
+### 二、生产热路径（零新依赖，语义不变）
+
+| 改动 | 改前 | 改后 |
+|---|---|---|
+| `TelemetryStore.query` | 每次扫 5 万条快照 | 按 `region_code` 分桶（窗口查询总是带 region），淘汰经 `on_evict` 同步 |
+| `AssessEvidenceBuilder.build` | 对窗口读数走 **5 趟**全pass | **1 趟**同时计剔除数、收集 finite、按 metric 分组 |
+| `_derive_displacement` | 每站重扫整组 O(站×组) | 先按站分一次组 O(组) |
+| `_enforce_payload_bound` | 每弹一条整体 `json.dumps` O(k) | **二分**找最长可容纳前缀 O(log k)（包体单调减小，落点相同） |
+| `factor_engine.group_weight` | 每因子 `next()` 扫描 O(F²) | 组级权重字典 |
+
+新增 `test_telemetry_region_index.py`（5 条）：分桶查询与**朴素全扫参照实现**逐项对账、
+不带 region 仍走全量、超上限时桶与主集合同步收缩。
+
+### 三、门禁提速（419.3s → 60–68s）
+
+| 措施 | 效果 |
+|---|---|
+| **pytest-xdist**（`-n auto --dist loadgroup`） | 全量并行；真端口用例本来就是 `bind(0)`，无抢号窗口 |
+| **e2e 段预算注入**（局部 fixture `sla_agent_txn_ms=2000`） | 两个 61s 用例 → 各约 3s；断言的是"预算耗尽后降级"语义，不是"等满 60 秒" |
+| **`slow` 标记补真**（zenoh 查询回环、OTLP 不可达降级） | 本地快档 `-m "not slow"`；CI 仍跑全量 |
+
+**并行暴露的一个真缺陷**：首跑 `test_11_memory_save_and_load` 失败——反馈记忆默认落
+`backend/data/feedback_memory.json`，并行 worker 对同一 JSON 做 read-modify-write，
+后写的读到旧快照就把别人的记录冲掉。修法不是给用例加锁，而是**让测试不写仓库**：
+`tests/conftest.py` 在**任何 aegis import 之前**按 `PYTEST_XDIST_WORKER` 把
+`AEGIS_HAZARD_FEEDBACK_MEMORY` / `AEGIS_HAZARD_CHECKPOINT_DB` 指向系统临时目录
+（`hazards/config.py` 在模块导入时就把这两个路径解析成常量，晚了不生效）。
+
+**三轮实测**（junit；第 1 轮暴露上述缺陷，修复后 2、3 轮全绿）：
+
+| 轮次 | tests | failures | skipped | time |
+|---|---|---|---|---|
+| 1 | 4,422 | 1 | 119 | 66.5s |
+| 2 | 4,422 | 0 | 119 | 68.4s |
+| 3 | 4,422 | 0 | 119 | **60.7s** |
+
+改造前 **419.3s / 4,393 条**；用例数 +29（本批新增）。慢尾从"两个 61s"变成
+"zenoh 5–10s + MCP 真握手 9.9s"，单条最长 10s。
+
+### 仍未做（不声称）
+
+- **CHM_PRE V2 原件未取到**（本机取数通道不通：Zenodo 限流 / TPDC FTP 421），派生表尚未产出；
+- **GLOF DB V3.1 许可未确认**（zip 内无出版方/DOI/许可声明），未入库；
+- **小时雨强（`rainfall_mm_h`）无真实源**；因子权重与归一化边界仍是 MOCK；
+- hypothesis CI profile 未做：各用例用 `@settings(max_examples=…)` 逐条覆盖，
+  注册 profile 不会生效，须逐个改用例——收益 10–20s，不值得动 10 个文件的断言口径。

@@ -91,6 +91,18 @@ L3 是**一套统一的智能体层**：平台自建五段内环 + 灾种闭环�
 `GET /api/v1/assess/evidence` 与 `GET /api/v1/site-profiles` 供拉取。无合法派生口径的遥测
 进 `unmapped_metrics` 并写原因，禁止近似。证据包自限 48 条观测 / 48KB，超限置 `truncated=True`。
 
+**处理口径与读取栈**（2026-11-20）：
+
+- **窗口查询按 region 分桶**：`TelemetryStore` 对 `(region_code)` 维护旁路桶（淘汰经
+  `BoundedCollection.on_evict` 同步），研判窗口查询不再每次扫 5 万条快照；
+- **证据构建单趟化**：剔除计数/有限值过滤/按 metric 分组合并为一趟；位移派生先按站分组；
+  48KB 裁剪用二分找最长可容纳前缀；
+- **派生量纲单一真源**：`domain/factors.py` 登记单位/值域/物理线与标定带；越界分两类处置
+  （物理线剔读数、标定带留给风险侧归一化并留 note）；
+- **外部数据读取**（离线，`[data]` extra，不进生产镜像）：xarray 读 NetCDF-4 并走 CF-time、
+  calamine 读 xlsx/ods、pyshp 读 SHP/DBF、polars+pandera 做严格摄取与 dataframe schema 门禁；
+  统一信封由 pydantic 在**写入时**校验（形状/类型/值域错则 `--refresh` 当场失败）。
+
 **出处与置信度**：`data_provenance` / `confidence_basis` / `assessment` 是 `RiskVerdict` 一等字段，
 随 API 与 `chain_runs.risk` 落台账。`confidence` 由生产方自产（平台不代填）：灾种因子引擎用
 `min(0.60, 0.15 + 0.40×coverage + 0.05×validation)`，并恒置 `human_review_suggested=True`。

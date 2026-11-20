@@ -5,7 +5,7 @@
 > 选型结论与四问口径见 BRIEF §2/§7：组件库已批 **Arco Design Vue**（先探针实测再迁）；旧视觉已批现在停用；
 > 布局骨架 2026-10-17 拍板并实施为可折叠侧栏，**2026-10-30 已整块退役**，改透明顶栏横排（见下方"现状校准"与决策日志）。
 
-## 现状校准（2026-11-17 更新，读台账前先看）
+## 现状校准（2026-11-20 更新，读台账前先看）
 
 > 本看板的"里程碑/任务表"停在早期批次，**下文历史工作日志与决策记录保留原样不改**；
 > 下表以当前代码为准，与它冲突的条目按此读。
@@ -22,22 +22,25 @@
 | L3 智能体层 | 平台五段 + 外部实现两套 | **2026-11-11 已统一**（`docs/adr/0016`）：11 本体同挂一条总线、能力矩阵单一真源、`AEGIS_AGENT_IMPL` 已删；灾种六体住在 `agents/hazards/`（原 `agents_ext/`） |
 | LLM 通路 | 平台网关与外部实现各一套 | **2026-11-11 已统一**（`docs/adr/0017`）：熔断/提示词注册表（21 条）/台账/meta 在 `agents/core/` 共用一份实现，只留厂商 quirks；灾种调用已进共享台账并在治理出口合并统计 |
 | 前端首屏与助手抽屉 | — | **2026-11-13／11-14 三批已入账**（`bf5f685`／`84f1a65`／`dd5b576`，见工作日志）：首屏智能体面板可折叠 + 底缘拉杆调高；助手页改值班台两栏 + 整页拉杆；抽屉改会话优先，问答框常驻底、告警/处置收进图标栏。三个提交都带了 spec 改动（`DashboardView.spec.ts` / `AssistantView.spec.ts`） |
-| 外部公开数据目录 | — | **2026-11-17 收口入主线**（`3fa78b1`）：抓取收敛为统一内核 + 每数据集一模块（`backend/scripts/external_data/`），入口 `python -m scripts.external_data --check\|--refresh`；**五套**数据集在库（NASA GLC 中国 426/西藏 16、公路地灾普查 13,768、TPDC 喜马拉雅 525、Zenodo 滑坡 420+MEGAS 411、Zenodo 冰湖 3,224）。**五套都仍未接入任何生产链路** |
+| 外部公开数据目录 | — | **2026-11-17 收口入主线**（`3fa78b1`）：抓取收敛为统一内核 + 每数据集一模块（`backend/scripts/external_data/`），入口 `python -m scripts.external_data --check\|--refresh`；**六套**数据集在库（NASA GLC 中国 426/西藏 16、PANGAEA 泥石流规模 988、公路地灾普查 13,768、TPDC 喜马拉雅 525、Zenodo 滑坡 420+MEGAS 411、Zenodo 冰湖 3,224）。**六套都仍未接入任何生产链路** |
+| 数据处理栈与门禁 | 手搓 xlsx/DBF/SHP 解析器、裸 h5py；门禁单进程 419s | **2026-11-20 收口**：`[data]` extra（xarray/calamine/pyshp/polars/pandera）替换手搓解析器并修两个真 bug（CF 时间偏移 10 年、`0.0` 被当缺失）；信封改 pydantic **写入时**校验；生产热路径零依赖算法修复（store region 索引、builder 单趟化）；门禁 **xdist 并行 + e2e 预算注入**：419.3s → **60.7s**（3 轮全绿） |
 | **触发因子（降雨）** | 台账写"仍缺" | **2026-11-17 起不再"链路全假"**：① 演练腿**默认关**（此前默认开 + surge 场景会持续自产橙色预警），状态面新增 `simulator` 行；② 派生表改成**声明式量纲**（×6 从硬编码分支提到表里）+ 物理不可能线拦截；③ 单位收敛到 `domain/factors.py` 一处，三处对账门禁；④ **外部逐日降水腿**（`precip`，默认关）——平台第一个**真实**雨量来源，产 `rain_cumulative_24h` 走规则轨。**仍缺**：① **小时雨强（`rainfall_mm_h`）没有真实源**（日累计不可近似折算）；② 因子权重与归一化边界仍是 MOCK；③ CHM_PRE V2 原件在本机取数通道不通（Zenodo 限流 / TPDC FTP 421 并发上限），**派生数据集尚未入仓** |
 
-**当前门禁（2026-11-17 实测，junit 计数）**
+**当前门禁（2026-11-20 实测，junit 计数；xdist 默认并行）**
 
 - 后端：`pytest tests/unit tests/api tests/contract tests/e2e tests/integration`
-  **4337 tests / 0 failed / 0 errors / 119 skipped**（550.6 s；`backend/tests` 214 个 `test_*.py`；
-  `backend/src/` 360 个 `.py`、63,493 行）；
-  `ruff check` + `ruff format --check` 全绿、`mypy src` 360 文件全绿。
+  **4422 tests / 0 failed / 0 errors / 119 skipped**（**60.7 s**，`-n auto --dist loadgroup`；
+  3 连跑 66.5 / 68.4 / 60.7 s；单进程口径改造前 419.3 s）；
+  `ruff check` + `ruff format --check` 全绿、`mypy src` 364 文件全绿。
+- 本地快档：`uv run pytest -m "not slow"`（跳过 zenoh 查询回环、OTLP 不可达降级等秒级用例）。
 - 前端：`vitest` 最近一次全量 **88 files / 1317 passed**（11-17 实测）、typecheck 0 error；
   颜色棘轮基线现役 **106**（`frontend/src/uiTheme.spec.ts` 的 `COLOR_BASELINE`），正文里的 154 / 139 / 104
   都是历史实量值，别当现行基线读。
-- 外部数据目录：`python -m scripts.external_data --check` **5 个数据集逐项一致**；
-  `tests/unit/test_external_data_catalog.py` **37 项全绿**。
+- 外部数据目录：`python -m scripts.external_data --check` **6 个数据集逐项一致**；
+  `tests/unit/test_external_data_catalog.py` **43 项全绿**（另有三组读取器用例：
+  `test_external_table.py` 3、`test_external_tpdc_reader.py` 5、`test_external_envelope.py` 8）。
 
-**未清项（截至 2026-11-17，这些账仍在）**
+**未清项（截至 2026-11-20，这些账仍在）**
 
 - **小时雨强（`rainfall_mm_h`）仍无真实数据源**：外部逐日降水只能给 24 小时累计
   （`rain_cumulative_24h`，走规则轨），日累计与小时雨强口径不同、**禁止近似折算**；
@@ -46,6 +49,8 @@
 - **CHM_PRE V2 原件未取到**（本机取数通道不通：Zenodo 限流、TPDC FTP 421 并发上限），
   所以**派生表与入仓的降水摘要数据集都还没产出**。取件脚本与派生脚本都已就绪并有离线用例，
   换一台网络条件允许的机器跑 `fetch_precip_chmpre.py` → `derive_precip_station_daily.py` 即可。
+- **GLOF DB V3.1 未入库**：zip 内没有出版方/DOI/许可声明（ODS 元数据也无），
+  按准入规则不能收；需向数据提供方确认许可，或找到原始发布页。
 - **因子权重与归一化边界仍是 MOCK**：`mock_weight_source()` / `mock_boundary_source()`
   都如实登记为原型的自拟值。标定要等现场标注集与真实雨量积累——本批只把
   "出处登记 + 口径单一真源 + 可标定的门禁"立起来，**没有发明新数字**。
@@ -370,3 +375,12 @@
   新依赖：`h5py`（BSD-3）作为 **`[precip]` extra**——**不进生产镜像**（平台只读派生出的 CSV，不读 NetCDF 原件），CI 装它给派生逻辑守门。
   **门禁**：后端全量见上；新增用例 —— 派生对账 17、值域行为 6、上报读数进链路 3、取件离线 11、派生离线 5、连接器 9、装配腿 6。前端 88 files / 1317 passed（新增两条腿的标签对账）。
   **仍未做（不声称）**：**小时雨强无真实源**（要站端设备或气象 API）；**CHM_PRE V2 原件本机取不到**（Zenodo 限流、TPDC FTP 421 并发上限），派生表与入仓摘要数据集**尚未产出**——脚本已就绪，换台网络允许的机器跑两步即可；因子权重与归一化边界**仍是 MOCK**（本批只立出处登记与门禁，不发明数字）。
+
+- 2026-11-20｜**数据处理提质 + 门禁提速（419.3s → 60.7s）**｜批 A/B/C/D/E。两条线并行：数据栈换主流库并把质量检查前移；门禁并行化并修掉慢尾巴。
+  **A 降水派生改 xarray（修 10 年日期偏移）**：`derive_precip_station_daily.py` 从裸 h5py 换 xarray+h5netcdf——旧 `_date_of` 把时间轴一律当"自 1970 起的天数"（注释声称读 `units`，代码没读），CHM_PRE 用 `days since 1960-01-01`，**整表日期偏移 3653 天且无报错**；xarray 走 CF 解码，无 `units` 的旧文件保留 1970 兜底。合成 NetCDF 改用 xarray 写（裸 h5py 手搭的 HDF5 缺维度刻度，测不到真实路径）。
+  **B calamine 换手搓 xlsx（顺带修 0 被当缺失）**：`table.py` 用 python-calamine 统一读 xlsx/xls/**ods**（GLOF 是 ods）；`zenodo_lakes._to_float` 的 `value or ""` 把数值 `0.0` 判成缺失——违反"0 ≠ 未测"口径，一换就现形。离线重放 3,224 条：2020 期逐字段一致、2025 期 292 条浮点文本变最短往返表示（同一 float64）。
+  **C pyshp 换手写 struct 解析器**：`tpdc_himalaya` 的 DBF/SHP 直读 zip 内存流，525 条 normalized **逐字节一致**；字符字段尾随换行按旧口径 strip。**偏离计划**：dbfread 只吃路径不吃内存流（会逼出临时文件+Windows 句柄锁），不引入，pyshp 一个库读齐。
+  **D polars+pandera + pydantic 信封**：PANGAEA 988 条严格摄取（全列字符串→显式 cast→schema 校验）；NASA 426+16 条 polars 重算逐字段一致；`write_envelope` 改 pydantic **写入时**校验（越界/未知灾种/负伤亡当场失败），六数据集复跑 normalized 逐字节不变。新数据集 `pangaea-debris-flow-magnitude`（CC BY 3.0，与 GLC 事件分表）。
+  **E 门禁提速**：xdist `-n auto --dist loadgroup` + e2e 段预算注入（61s→3s×2）+ slow 补标。**并行暴露真缺陷**：反馈记忆写仓库内共享 JSON，worker 间 read-modify-write 丢更新——conftest 在 aegis import 前按 worker 注入临时路径。三轮 4,422 条：66.5/68.4/**60.7s**，0 失败。
+  **生产热路径**（零新依赖）：store 按 region 分桶（窗口查询不再扫 5 万条，淘汰同步）、builder 5 趟→1 趟、位移派生 O(站×组)→O(组)、payload 裁剪二分、因子权重预计算；新增 5 条"分桶 vs 朴素全扫"对账用例。
+  **仍未做（不声称）**：CHM_PRE 原件未取、GLOF 许可未确认、小时雨强无源、因子权重仍 MOCK；hypothesis CI profile 因逐用例 `@settings` 覆盖而无效，未做。
