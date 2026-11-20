@@ -33,7 +33,16 @@ async def live() -> AsyncIterator[httpx.AsyncClient]:
     旧写法 `_free_port()` 先 bind(0) 拿号、关闭、再把同号交给 uvicorn——
     这两步之间任何进程占走该口，本机就是随机 `EADDRINUSE`。
     """
-    settings = Settings(env="dev", bus_backend="memory", delivery_mode="mock", http_port=0, simulator_seed=33)
+    # 演练腿默认关（2026-11-17 起）——这条用例要演练端点可用，所以**显式**开，
+    # 不靠代码默认值：默认值随时会变，依赖它的用例会跟着无声地红。
+    settings = Settings(
+        env="dev",
+        bus_backend="memory",
+        delivery_mode="mock",
+        http_port=0,
+        simulator_seed=33,
+        simulator_enabled=True,
+    )
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(128)

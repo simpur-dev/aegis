@@ -43,7 +43,9 @@ jobs:
         # `agents`：灾种闭环模块（`aegis.agents.hazards`，并入自 hazard-landslide-agent）。
         # 少它时那 109 条迁入用例 + 265 条边界守卫会因"依赖未安装"而收集失败——那是**该红的**：
         # 模块已经并入主线，门禁就该对它有约束力，而不是"装不装随你"。
-        run: uv sync --frozen --extra dev --extra perf --extra postgres --extra iot --extra analytics --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp --extra agents
+        # `precip`：外部降水派生要读 NetCDF-4/HDF5（h5py）。它**不进生产镜像**（平台只读派生出的
+        # CSV，不读原件），但 CI 装它——派生逻辑也得有用例守着。
+        run: uv sync --frozen --extra dev --extra perf --extra postgres --extra iot --extra analytics --extra retrieval --extra edge --extra graph --extra seekdb --extra mcp --extra agents --extra precip
 
       - name: 装前端源码依赖（两条上游读取器漂移守卫要用）
         # `test_offline_tile_format.py` 里有两条守卫是读 `frontend/node_modules` 里的

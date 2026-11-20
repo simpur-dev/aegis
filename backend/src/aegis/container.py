@@ -24,6 +24,7 @@ from aegis.bus.transport import BusTransport
 from aegis.config import Settings, get_settings
 from aegis.connectors.base import DataSource, IngestService
 from aegis.connectors.mqtt import MqttSource
+from aegis.connectors.precip_daily import PrecipDailySource
 from aegis.connectors.simulator import HazardScenarioSimulator
 from aegis.connectors.weather_api import WeatherApiSource
 from aegis.contracts import ContractRegistry
@@ -42,7 +43,9 @@ from aegis.integrations import (
     build_mcp,
     build_memory,
     build_mqtt,
+    build_precip,
     build_retrieval,
+    build_simulator,
     build_store,
     build_transport,
     build_weather,
@@ -202,8 +205,11 @@ class PlatformContainer:
     mqtt_state: IntegrationState | None = None
     weather: WeatherApiSource | None = None
     weather_state: IntegrationState | None = None
+    precip: PrecipDailySource | None = None
+    precip_state: IntegrationState | None = None
     outbound: OutboundCaller | None = None
     simulator: HazardScenarioSimulator | None = None
+    simulator_state: IntegrationState | None = None
     parser: DisasterTextParser | None = None
     assistant: AssistantService | None = None
     #: 席位台账：写动作的前置。内存形态没有这张表，服务自己报 unavailable（端点 503），不假装能写。
@@ -462,6 +468,16 @@ class PlatformContainer:
                 extra={"agent_runtime": self.agent_runtime_state, "bus": self.transport.name},
             )
 
+        if self.settings.env == "prod" and self.simulator is not None:
+            # 演练腿在生产开着不是启动错误（带演练数据部署做演练验收是正当用法），
+            # 但它每轮造一批 surge 读数，越过 `R-DEBRIS-RAIN-1` 的阈值——平台会自产橙色预警。
+            # 这件事必须在启动日志里说破，不能等值班员从"预警突然变多"倒推。
+            log.warning(
+                "生产环境启用了演练腿：读数来自模拟器（surge 场景的雨量会越过规则轨降雨阈值），"
+                "平台会自产演练预警；正式部署请置 AEGIS_SIMULATOR_ENABLED=false",
+                extra={"scenario": self.simulator.scenario, "bus": self.transport.name},
+            )
+
         await register_builtin_templates(self.workflow)
         # 核签流程与灾种剧本分开注册：低置信度上报要能开出一张真人可签的工单
         await register_report_review_template(self.workflow)
@@ -649,6 +665,17 @@ class PlatformContainer:
         if self.weather is not None:
             weather_state = replace(weather_state, detail={**weather_state.detail, **self.weather.status()})
         rows.append(weather_state)
+        # 外部逐日降水腿：它是平台第一个真实雨量来源，状态面要能读出
+        # "在不在 / 读到几行 / 跳过几条"——否则没数据时只能去翻日志。
+        precip_state = self.precip_state or IntegrationState(name="precip", enabled=False, driver="off")
+        if self.precip is not None:
+            precip_state = replace(precip_state, detail={**precip_state.detail, **self.precip.status()})
+        rows.append(precip_state)
+        # 演练腿也要有一行：它是**会自产预警的读数源**（surge 场景的 `rain_10min` 越过
+        # `R-DEBRIS-RAIN-1` 阈值），运维要能从状态面一眼读出"演练腿开着还是关着"，
+        # 而不是从"预警突然变多"倒推。此前这条腿在状态面上完全不存在。
+        simulator_state = self.simulator_state or IntegrationState(name="simulator", enabled=False, driver="off")
+        rows.append(simulator_state)
         # 工作流外呼腿（`api_call` / `device_control` 的出口）：白名单为空时这条腿整条不接入。
         # 画布上摆了这两类节点却没人配白名单，运维要的是一行"没开"加上"为什么没开"，
         # 而不是等节点报 NodeError 之后再猜是哪一环。拒发/失败两个计数就是那两环的现场证据。
@@ -798,6 +825,7 @@ def create_container(
     )
     mqtt_source, mqtt_state = build_mqtt(cfg)
     weather_source, weather_state = build_weather(cfg, client=weather_client)
+    precip_source, precip_state = build_precip(cfg)
     outbound = OutboundCaller(OutboundPolicy.from_settings(cfg), client=outbound_client)
     if not outbound.enabled:
         # 不是错误，但必须说清楚：画布上摆了 api_call/device_control 却没人配白名单时，
@@ -868,7 +896,7 @@ def create_container(
     # 段的执行口先于引擎：引擎的服务里要摆这个可调用，而它只依赖段与盘面，不依赖引擎本身。
     stations = ChainStations(stages)
     use_simulator = cfg.simulator_enabled if with_simulator is None else with_simulator
-    simulator = HazardScenarioSimulator(seed=cfg.simulator_seed) if use_simulator else None
+    simulator, simulator_state = build_simulator(cfg, enabled=use_simulator)
 
     async def on_readings(readings: Sequence[TelemetryReading]) -> None:
         if analytics is not None:
@@ -879,7 +907,7 @@ def create_container(
         store=store,
         tracer=tracer,
         settings=cfg,
-        sources=[source for source in (simulator, mqtt_source, weather_source) if source is not None],
+        sources=[source for source in (simulator, mqtt_source, weather_source, precip_source) if source is not None],
         on_readings=on_readings if analytics is not None else None,
     )
 
@@ -954,10 +982,13 @@ def create_container(
         mqtt_state=mqtt_state,
         weather=weather_source,
         weather_state=weather_state,
+        precip=precip_source,
+        precip_state=precip_state,
         outbound=outbound,
         labels=LabelFlywheel(store),
         suggestions=suggestions,
         simulator=simulator,
+        simulator_state=simulator_state,
         parser=parser,
         llm_gateway=gateway_llm,
         delivery_client=resolved_delivery_client,

@@ -41,6 +41,8 @@ export const LEG_LABELS: Record<string, string> = {
   memory: '共享记忆层',
   mqtt: 'MQTT 推送腿',
   weather: '气象拉取腿',
+  precip: '外部逐日降水腿',
+  simulator: '演练腿',
   outbound: '工作流外呼腿',
   delivery: '触达通道腿',
   tracing: '链路追踪',

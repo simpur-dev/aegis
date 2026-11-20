@@ -150,6 +150,32 @@ class TestWiredKnobsChangeBehavior:
         assert on.simulator is not None
         assert [source.name for source in on.ingest.sources] == [on.simulator.name]
 
+    def test_simulator_默认是关的(self) -> None:
+        """默认形态不该自带一个持续报警源。
+
+        演练腿的 surge 场景把 `rain_10min` 造在 32–55 mm/10min，越过规则轨
+        `R-DEBRIS-RAIN-1`（`>=30.0`）的阈值——开着它就是让平台自己给自己发橙色预警。
+        默认关，演示档由 `scripts/dev.mjs` 显式注入开启。
+
+        取 `model_fields[...].default` 而不是实例值：实例值会被 `.env` 覆盖，
+        那测的就不是"代码默认"了。
+        """
+        assert Settings.model_fields["simulator_enabled"].default is False
+        ctn = create_container(Settings(env="test", bus_backend="memory"))
+        assert ctn.simulator is None
+        assert [source.name for source in ctn.ingest.sources] == []
+
+    def test_simulator_状态面要有一行_开着还是关着读得出来(self) -> None:
+        """演练腿此前在状态面上**完全没有这一行**，运维只能从"预警突然变多"倒推。"""
+        off = create_container(Settings(env="test", bus_backend="memory"))
+        on = create_container(Settings(env="test", bus_backend="memory", simulator_enabled=True))
+        off_row = {state.name: state for state in off.integration_status()}["simulator"]
+        on_row = {state.name: state for state in on.integration_status()}["simulator"]
+        assert (off_row.enabled, off_row.driver) == (False, "off")
+        assert (on_row.enabled, on_row.driver) == (True, "simulator")
+        # 开着时要把场景说清楚：surge 的雨量会越过规则轨阈值，normal 不会。
+        assert on_row.detail["scenario"] == "surge"
+
     def test_explicit_argument_still_overrides_the_knob(self) -> None:
         """显式形参优先：演练与测试要能造出"配置说关掉但我要一个模拟器"的容器。"""
         ctn = create_container(Settings(env="test", bus_backend="memory", simulator_enabled=False), with_simulator=True)

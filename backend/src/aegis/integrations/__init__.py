@@ -29,9 +29,11 @@ from aegis.integrations.knowledge import build_knowledge, close_knowledge, warm_
 from aegis.integrations.mcp import McpAssembly, build_mcp
 from aegis.integrations.memory import build_memory
 from aegis.integrations.mqtt import build_mqtt
+from aegis.integrations.precip import build_precip
 from aegis.integrations.retrieval import build_retrieval, warm_retrieval
 from aegis.integrations.sandbox import AssembledScenarios, sandbox_runner
 from aegis.integrations.shared import target_of
+from aegis.integrations.simulator import build_simulator
 from aegis.integrations.state import IntegrationState, StoreBundle
 from aegis.integrations.store import build_store, start_store, stop_store
 from aegis.integrations.weather import build_weather
@@ -49,7 +51,9 @@ __all__ = [
     "build_mcp",
     "build_memory",
     "build_mqtt",
+    "build_precip",
     "build_retrieval",
+    "build_simulator",
     "build_store",
     "build_transport",
     "build_weather",

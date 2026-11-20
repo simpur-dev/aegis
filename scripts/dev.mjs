@@ -245,6 +245,17 @@ function retrievalEnv() {
   return { AEGIS_RETRIEVAL_ENABLED: 'true', AEGIS_RETRIEVAL_MODEL_DIR: './data/models' }
 }
 
+function simulatorEnv() {
+  // 演练腿**默认关**（`Settings.simulator_enabled` 默认 False）：开着时它按 surge 场景
+  // 每 2 秒造一批读数，雨量越过规则轨 `R-DEBRIS-RAIN-1` 的阈值——平台会自产橙色预警。
+  // 演示档需要它（没有真实站端时链路跑不起来），所以由本地编排**显式**打开，
+  // 而不是把全局默认改回开着——那样正式部署会跟着带上一个持续报警源。
+  // 仓库根 .env 里显式写了 AEGIS_SIMULATOR_ENABLED=false 也不影响这里：本地编排这一档优先。
+  // 逃生口：接真实数据源做联调时用 `AEGIS_DEV_SIMULATOR=off npm run dev` 关掉它。
+  if (process.env.AEGIS_DEV_SIMULATOR === 'off') return {}
+  return { AEGIS_SIMULATOR_ENABLED: 'true' }
+}
+
 function tracingEnv() {
   // observability profile 起着 jaeger 时把本地跨度也送过去，证据链和容器版一致
   return containerRunning('aegis-jaeger')
@@ -271,7 +282,7 @@ if (!existsSync(composeFile)) die(`找不到 ${composeFile}，仓库结构不对
 // 先把能当场判死的都判完，再动 Docker：否则半路报错会把容器后端停了却起不来本地后端
 const dotenv = startBackend ? loadDotEnv(composeEnvFile) : {}
 const backendBaseEnv = startBackend
-  ? { ...postgresEnv(dotenv), ...knowledgeEnv(dotenv), ...retrievalEnv() }
+  ? { ...postgresEnv(dotenv), ...knowledgeEnv(dotenv), ...retrievalEnv(), ...simulatorEnv() }
   : {}
 const backendCmd = startBackend ? backendCommand() : ''
 

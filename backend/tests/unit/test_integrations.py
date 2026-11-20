@@ -363,6 +363,8 @@ class TestContainerWiring:
             "memory",
             "mqtt",
             "weather",
+            "precip",
+            "simulator",
             "outbound",
             "delivery",
             "tracing",

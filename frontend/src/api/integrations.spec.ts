@@ -69,13 +69,27 @@ describe('legLabel：后端加腿不许从 UI 消失', () => {
     expect([...backendIntegrationLegs()].sort()).toEqual(Object.keys(LEG_LABELS).sort())
   })
 
-  it('后端源里真的抓到了十一条腿：改写导致抓取为空时这条先失败，不让上面的相等变成空对空', () => {
+  it('后端源里真的抓到了十三条腿：改写导致抓取为空时这条先失败，不让上面的相等变成空对空', () => {
     // 数字写死是有意的：加一条腿必须在这里显式承认一次，
     // 免得"抓取被改写空了"和"标签表跟抓取都为空"这两种状态在门禁面前长得一样。
     // 这条门禁的实际价值已经兑现过一次：memory 腿落地时没同步标签表，UI 上那条腿因此
     // 只能显示英文键名（面板不会坏，但"看得见降级"变成了"看得懂降级"的缺口），mcp 一起补上。
     expect([...backendIntegrationLegs()].sort()).toEqual(
-      ['analytics', 'delivery', 'knowledge', 'mcp', 'memory', 'mqtt', 'outbound', 'retrieval', 'store', 'tracing', 'weather'].sort(),
+      [
+        'analytics',
+        'delivery',
+        'knowledge',
+        'mcp',
+        'memory',
+        'mqtt',
+        'outbound',
+        'precip',
+        'retrieval',
+        'simulator',
+        'store',
+        'tracing',
+        'weather',
+      ].sort(),
     )
   })
 })

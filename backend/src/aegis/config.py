@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     weather_api_base_url: str = ""
     weather_api_path: str = "/observation"
     weather_api_timeout_ms: int = 4_000
+    # 外部逐日降水腿（本地派生表）：留空且默认关。这条腿是平台第一个**真实**雨量来源——
+    # 派生表由 `scripts/derive_precip_station_daily.py` 从 CHM_PRE V2 原件产出，
+    # 落在运行态目录（不进仓库）。默认关：没派生表就不该有这条腿。
+    precip_enabled: bool = False
+    precip_daily_file: str = ""
     # 工作流节点外呼（api_call / device_control）的主机白名单，逗号分隔。
     # 留空 = 这两类节点在产品形态下不可用（装配桥不注入 http_call，节点响亮失败）；
     # 之所以默认关：URL 由编排画布填写，放开就是把平台变成任意内网地址的代理。
@@ -305,8 +310,11 @@ class Settings(BaseSettings):
     sla_collaboration_success_rate: float = 0.90
     sla_warning_accuracy: float = 0.80
 
-    # 演示/压测用数据发生器
-    simulator_enabled: bool = True
+    # 演示/压测用数据发生器（演练腿）。
+    # 默认**关**：surge 场景的 `rain_10min` 落在 32–55 mm/10min，越过规则轨
+    # `R-DEBRIS-RAIN-1`（`rain_10min >= 30.0`）的阈值——开着它就是让平台自己给自己发
+    # 橙色预警。默认形态不该自带一个持续报警源；演示档由 `scripts/dev.mjs` 显式注入开启。
+    simulator_enabled: bool = False
     simulator_interval_seconds: float = 2.0
     simulator_seed: int = 20260929
 

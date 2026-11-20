@@ -134,6 +134,27 @@ class TestDeploymentEnvKeys:
         for required in ("AEGIS_STORE_BACKEND", "AEGIS_PG_DSN", "AEGIS_KNOWLEDGE_GRAPHITI_URI", "AEGIS_RETRIEVAL_ENABLED"):
             assert required in keys, f"compose 缺少 {required}"
 
+    def test_演练腿在部署面必须显式钉死且默认关(self) -> None:
+        """演练腿默认开着 = 平台自己给自己发橙色预警。
+
+        surge 场景的 `rain_10min` 落在 32–55 mm/10min，越过规则轨 `R-DEBRIS-RAIN-1`
+        （`>=30.0`）的阈值。compose 必须**显式**钉这一行（而不是靠 `.env` 那一行兜底），
+        且默认值是关：操作员显式改 `.env` 才开得起来。
+        """
+        text = COMPOSE.read_text(encoding="utf-8")
+        assert "AEGIS_SIMULATOR_ENABLED" in set(compose_keys()), "compose 没有显式钉死演练腿：.env 里那行会静默生效"
+        assert re.search(
+            r"^ {6}AEGIS_SIMULATOR_ENABLED:\s*\$\{AEGIS_SIMULATOR_ENABLED:-false\}\s*$",
+            text,
+            re.MULTILINE,
+        ), "compose 的演练腿默认值必须是 false"
+        # 模板同样默认关：照抄 .env.example 的人不该顺手带上一个持续报警源。
+        assert re.search(
+            r"^AEGIS_SIMULATOR_ENABLED=false\s*$",
+            ENV_EXAMPLE.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        ), ".env.example 的演练腿默认值必须是 false"
+
     def test_image_installs_every_platform_side_extra(self) -> None:
         """镜像缺一个 extra，对应腿在生产里就只是 /api/v1/integrations 上的一行降级。"""
         _, production = production_stage()

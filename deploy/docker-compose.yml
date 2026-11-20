@@ -178,6 +178,9 @@ services:
       # 采到的轮次/条数/失败次数由 /api/v1/integrations 的 weather 行说明。
       AEGIS_WEATHER_API_BASE_URL: ${AEGIS_WEATHER_API_BASE_URL:-}
       AEGIS_WEATHER_API_PATH: ${AEGIS_WEATHER_API_PATH:-/observation}
+      # 演练腿：默认关。开着时它按 surge 场景自产读数，雨量会越过规则轨 `R-DEBRIS-RAIN-1`
+      # 的阈值——平台会自产橙色预警。开启与否由 /api/v1/integrations 的 simulator 行说明。
+      AEGIS_SIMULATOR_ENABLED: ${AEGIS_SIMULATOR_ENABLED:-false}
       # 工作流节点外呼（api_call/device_control）与真实触达通道：两道闸都在配置面，
       # 留空即整条腿不可用（节点响亮失败 / 通道构造期报错），而不是"默认能发"。
       AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS: ${AEGIS_WORKFLOW_HTTP_ALLOWED_HOSTS:-}
