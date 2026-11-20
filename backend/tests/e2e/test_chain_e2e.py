@@ -157,6 +157,17 @@ class TestAgentPath:
 
 
 class TestDegradationUnderMisbehavior:
+    """沉默/崩溃的智能体必须让该段降级，而不是拖住整条链。
+
+    **段预算在测试里压小**：生产默认 `sla_agent_txn_ms=60_000`，沉默智能体会让这一段
+    干等满 60 秒才降级——两个用例就是 120 秒（占全量门禁墙钟近三成）。这里把预算
+    覆盖成 2 秒：断言的是"预算耗尽后降级并留痕"这个**语义**，不是"等满 60 秒"。
+    """
+
+    @pytest.fixture
+    def settings(self, settings: Settings) -> Settings:
+        return settings.model_copy(update={"sla_agent_txn_ms": 2_000})
+
     @pytest.mark.parametrize(
         ("agent_type", "misbehavior", "stage"),
         [

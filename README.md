@@ -582,6 +582,10 @@ curl -s 'http://localhost:8000/api/v1/accuracy/replay?since=2026-09-01T00:00:00Z
 
 - 提交遵循 Conventional Commits（`feat|fix|chore|test|docs|perf|refactor(scope): 描述`），不带 AI 生成尾注
 - 门禁：`ruff format` + `ruff check` + `mypy` + `pytest` 全绿方可合并（见 `.github/workflows/ci.yml`）
+- 后端门禁默认 **xdist 并行**（`addopts` 里 `-n auto --dist loadgroup`）：4,422 条测试约 60–70 秒
+  （单进程约 7 分钟）。本地只跑快档：`uv run pytest -m "not slow"`（跳过 zenoh 查询回环、
+  OTLP 降级等秒级用例）；CI 仍跑全量。**测试不得写仓库内运行态文件**——反馈记忆与
+  manager checkpoint 由 `tests/conftest.py` 按 worker 注入到系统临时目录
 - 契约变更：语义化版本 + 更新一致性测试套件 + 记录 ADR
 - 测试金字塔：单元测试（含边界/属性测试 hypothesis）→ 契约与模糊（schemathesis）→ 集成（真服务端，按环境变量开关）→ 压测（Locust）
 

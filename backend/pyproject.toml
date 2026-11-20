@@ -69,6 +69,9 @@ mcp = ["mcp>=2.3"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    # 并行跑门禁：4393 条测试单进程约 7 分钟，其中 70% 时间集中在 11% 的用例上；
+    # `-n auto` 后按 CPU 核数分片（真端口用例都用 bind(0)，无抢号窗口）。
+    "pytest-xdist>=3.6",
     # 覆盖率只用于新增 workflow 模块（CI 里显式给 --cov 目标），不改变全仓既有 pytest 口径。
     "pytest-cov>=5.0",
     "ruff>=0.7",
@@ -95,7 +98,7 @@ testpaths = ["tests"]
 # 脚本层（scripts/）里住着有判定逻辑的量测出口（metrics_report / load_curve），它们的用例要直接 import。
 # 不写这行，那些用例会在收集阶段 ModuleNotFoundError——整场 pytest 直接中断，而不是跳过那一个文件。
 pythonpath = ["."]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers -n auto --dist loadgroup"
 markers = [
     "contract: 契约一致性测试（Agent 接入规范门禁）",
     "e2e: 端到端链路测试（含时延量测）",

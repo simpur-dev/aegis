@@ -3,27 +3,40 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from aegis.bus.gateway import AgentGateway
-from aegis.bus.inmemory import InMemoryBus
-from aegis.bus.registry import AgentRegistry
-from aegis.config import Settings, get_settings
-from aegis.container import PlatformContainer, create_container
-from aegis.contracts import ContractRegistry
-from aegis.domain.chain import ChainResult
-from aegis.domain.enums import AgentType, HazardType, RiskLevel
-from aegis.domain.messages import TelemetryReading, now_iso, utc_now
-from aegis.observability.tracer import Tracer
-from aegis.pipeline.stages import HazardStages
-from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain
-from aegis.workflow.engine import WorkflowEngine
-from aegis.workflow.nodes import WorkflowServices
-from aegis.workflow.templates import register_standard_chain_template
+# 每个 pytest 进程（含 xdist 的每个 worker）用**自己的**运行态文件：
+# 反馈记忆与 manager checkpoint 默认落在 `backend/data/`，并行 worker 会对同一个 JSON
+# 做 read-modify-write——后写的那个读到旧快照就把别人的记录冲掉（实测 test_11 的
+# EVT-T11 被并行 worker 覆盖后读不回来）。必须在任何 `aegis.*` import **之前**设置：
+# `hazards/config.py` 在模块导入时就把这两个路径解析成常量了。
+_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "main")
+_SCRATCH = Path(tempfile.gettempdir()) / "aegis-pytest" / _WORKER
+_SCRATCH.mkdir(parents=True, exist_ok=True)
+os.environ["AEGIS_HAZARD_FEEDBACK_MEMORY"] = str(_SCRATCH / "feedback_memory.json")
+os.environ["AEGIS_HAZARD_CHECKPOINT_DB"] = str(_SCRATCH / "manager_checkpoints.sqlite")
+
+from aegis.bus.gateway import AgentGateway  # noqa: E402
+from aegis.bus.inmemory import InMemoryBus  # noqa: E402
+from aegis.bus.registry import AgentRegistry  # noqa: E402
+from aegis.config import Settings, get_settings  # noqa: E402
+from aegis.container import PlatformContainer, create_container  # noqa: E402
+from aegis.contracts import ContractRegistry  # noqa: E402
+from aegis.domain.chain import ChainResult  # noqa: E402
+from aegis.domain.enums import AgentType, HazardType, RiskLevel  # noqa: E402
+from aegis.domain.messages import TelemetryReading, now_iso, utc_now  # noqa: E402
+from aegis.observability.tracer import Tracer  # noqa: E402
+from aegis.pipeline.stages import HazardStages  # noqa: E402
+from aegis.pipeline.workflow_chain import ChainStations, WorkflowChain  # noqa: E402
+from aegis.workflow.engine import WorkflowEngine  # noqa: E402
+from aegis.workflow.nodes import WorkflowServices  # noqa: E402
+from aegis.workflow.templates import register_standard_chain_template  # noqa: E402
 
 # 测试进程一律不许吃本机 `.env`：那是部署面，里面可能有真密钥与真模型路由。
 # 光把 Settings 的 dotenv 源摘掉不够——实测 `graphiti_core` 在 import 时调 dotenv 的

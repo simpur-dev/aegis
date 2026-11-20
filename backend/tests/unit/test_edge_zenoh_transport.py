@@ -456,7 +456,13 @@ class TestRequestReply:
         assert [row.payload["i"] for row in rows] == [0, 1, 2]
 
 
+@pytest.mark.slow
 class TestServe:
+    """真查询走 zenoh 的 queryable 回环：每条要等查询超时窗口，5 条合计约 30 秒。
+
+    标 `slow` 是为了本地快档（`-m "not slow"`）能跳过；CI 仍跑全量。
+    """
+
     async def test_handler_reply_lands_on_a_concrete_keyexpr(self, bus_with_session) -> None:
         bus, session = bus_with_session
         query = _FakeQuery(key_expr=KEYEXPR, payload=event().encode())

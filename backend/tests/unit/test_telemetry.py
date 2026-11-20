@@ -152,6 +152,7 @@ class TestFailureDegradation:
         wrapper.export(["s1", "s2"])  # type: ignore[arg-type]
         assert telemetry.dropped_span_count() - before == 2
 
+    @pytest.mark.slow
     async def test_unreachable_endpoint_cannot_break_business_call(self) -> None:
         """端到端降级：指向必然拒绝连接的端口，业务返回值与异常语义都不受遥测影响。"""
         telemetry.init_telemetry(deployment_environment="test", otlp_endpoint="http://127.0.0.1:1/v1/traces")
