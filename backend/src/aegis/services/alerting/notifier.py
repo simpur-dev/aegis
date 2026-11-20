@@ -111,9 +111,31 @@ class Notifier:
         # 同一席位在一条群发里出现两次只留一条：去重在写入前做，不靠前端去重。
         unique = list(dict.fromkeys(item.strip() for item in recipients if item.strip()))
         # 各收件人相互独立，并发投递而不是逐个串行等待；gather 按 unique 顺序返回。
-        return await asyncio.gather(
-            *(self.notify(recipient=item, message=message, kind="group", sender=sender, space_id=space_id) for item in unique)
+        # return_exceptions=True：一个收件人落库失败不能让整批抛错——已成功的插入没有
+        # 回执，调用方按整批失败重发会对已收到的人造成重复通知。
+        outcomes = await asyncio.gather(
+            *(self.notify(recipient=item, message=message, kind="group", sender=sender, space_id=space_id) for item in unique),
+            return_exceptions=True,
         )
+        rows: list[dict[str, Any]] = []
+        for item, outcome in zip(unique, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                rows.append(
+                    {
+                        "recipient": item,
+                        "kind": "group",
+                        "sender": sender,
+                        "space_id": space_id,
+                        "created_at": None,
+                        "read_at": None,
+                        "delivery_channel": None,
+                        "delivery_status": "failed",
+                        "delivery_error": f"{type(outcome).__name__}: {outcome}"[:180],
+                    }
+                )
+            else:
+                rows.append(outcome)
+        return rows
 
     async def list_for(self, recipient: str, *, unread_only: bool = False, limit: int = 50) -> list[dict[str, Any]]:
         return await self._require().list_notifications(recipient=recipient, unread_only=unread_only, limit=limit)

@@ -186,7 +186,12 @@ class HttpChannelAdapter:
             self.last_error = f"{type(exc).__name__}: {str(exc)[:120]}"
             log.warning("通道下发失败", extra={"channel": self.name.value, "error": self.last_error})
         else:
-            self.delivered += 1 if attempt.status in ("delivered", "retried") else 0
+            if attempt.status in ("delivered", "retried"):
+                self.delivered += 1
+            elif attempt.status == "failed":
+                # 网关明确拒了（回执 failed）也是失败事实：此前这批数在状态面板上消失
+                self.failed += 1
+                self.last_error = self.last_error or f"网关回执 failed（{attempt.attempted_at}）"
         return attempt
 
     def status(self) -> dict[str, Any]:
@@ -279,6 +284,19 @@ class DeliveryDispatcher:
                 log.warning(
                     "通道下发超时",
                     extra={"channel": adapter.name.value, "warning_id": record.warning_id, "attempt": attempt_no + 1},
+                )
+            except Exception as exc:
+                # 协议适配器（注入式/第三方）不被内建 HttpChannelAdapter 的自捕保护：
+                # 其它异常归一成 failed 回执，否则击穿 dispatch 的 gather，其它通道回执丢失。
+                last = DeliveryAttempt(channel=adapter.name.value, audience_count=len(record.audiences), status="failed")
+                log.warning(
+                    "通道下发异常",
+                    extra={
+                        "channel": adapter.name.value,
+                        "warning_id": record.warning_id,
+                        "attempt": attempt_no + 1,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
                 )
             if last.status == "delivered":
                 return last

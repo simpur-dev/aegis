@@ -54,9 +54,11 @@ class RiskEngine:
         worst = min(int(level) for level in levels)
         anchor = RiskLevel(worst)
 
-        # 最严重灾种由达最高等级的命中项决定；同级时取加权得分更高者
+        # 最严重灾种由达最高等级的命中项决定；同级时取加权得分更高者。
+        # 兜底口径与上面 levels 一致（未知 rule_id 按 YELLOW）：此前这里用 anchor（=worst）
+        # 兜底，未知规则命中会越过更严重的已知命中成为 decisive。
         decisive = max(
-            (h for h, level in zip(scoped, levels, strict=False) if int(RiskLevel(self._levels.get(h.rule_id, anchor))) == worst),
+            (h for h, level in zip(scoped, levels, strict=False) if int(level) == worst),
             key=lambda h: h.score * self._weights.get(h.rule_id, 1.0),
         )
         corroboration = sum(1 for h in scoped if h.hazard_type == decisive.hazard_type)

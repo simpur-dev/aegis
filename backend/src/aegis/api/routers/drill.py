@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from aegis.api.deps import get_container
+from aegis.connectors.base import IngestReport
 from aegis.container import PlatformContainer
 from aegis.domain.chain import ChainResult
 from aegis.domain.messages import TelemetryReading
@@ -64,11 +65,21 @@ def build_router() -> APIRouter:
         payload: DrillRequest,
         ctn: PlatformContainer = Depends(get_container),
     ) -> dict[str, Any]:
-        """演练：注入一轮模拟监测数据并跑通全链路，返回链路结果与指标快照。"""
+        """演练：注入一轮模拟监测数据并跑通全链路，返回链路结果与指标快照。
+
+        用**一次性**模拟器按请求场景采集，不改共享单例：此前 `ctn.simulator.scenario =
+        payload.scenario` 会把正在运行的生成器永久压成请求场景（其后所有摄取轮次不再
+        越过阈值），并发两次演练互相覆盖。
+        """
         if ctn.simulator is None:
             raise HTTPException(status_code=503, detail="模拟器未启用")
-        ctn.simulator.scenario = payload.scenario
-        report = await ctn.ingest.ingest_once()
+        from aegis.connectors.simulator import HazardScenarioSimulator
+        from aegis.domain.messages import utc_now
+
+        one_shot = HazardScenarioSimulator(scenario=payload.scenario, seed=42)
+        readings = one_shot.collect_at(utc_now())
+        await ctn.store.telemetry.add(readings)
+        report = IngestReport(readings=len(readings), sources_ok=["drill_one_shot"])
         readings = ctn.store.telemetry.query(region_code=payload.region_code, limit=1_000)
         if not readings:
             return {"ingest": report.as_dict(), "chains": [], "note": "本轮无可用读数"}

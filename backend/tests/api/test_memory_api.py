@@ -20,6 +20,7 @@ import pytest
 from aegis.api.app import create_app
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
+from aegis.domain.operator import Operator, OperatorRole
 
 BASE = "http://testserver"
 LESSON = "540121 蓝色预警后 2 小时泥位回落，重复升级同一条读数会造成误报"
@@ -36,11 +37,52 @@ def _settings() -> Settings:
     )
 
 
+class _StubOperatorLedger:
+    """内存席位台账替身（对齐 test_alerts_api）：只支撑 require_operator 的读面。"""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, Operator] = {}
+        for operator_id, role in (("duty01", OperatorRole.DUTY), ("lead01", OperatorRole.LEAD)):
+            self.rows[operator_id] = Operator(
+                operator_id=operator_id,
+                display_name=operator_id,
+                role=role,
+                active=True,
+            )
+
+    async def upsert_operator(self, operator: Operator) -> Operator:
+        self.rows[operator.operator_id] = operator
+        return operator
+
+    async def create_operator(self, operator: Operator) -> Operator | None:
+        if operator.operator_id in self.rows:
+            return None
+        self.rows[operator.operator_id] = operator
+        return operator
+
+    async def get_operator(self, operator_id: str) -> Operator | None:
+        return self.rows.get(operator_id)
+
+    async def list_operators(self, *, active_only: bool = True, limit: int = 200) -> list[Operator]:
+        rows = [op for op in self.rows.values() if not active_only or op.active]
+        return sorted(rows, key=lambda op: op.operator_id)[:limit]
+
+
+def _seed_operators(container: PlatformContainer) -> None:
+    from aegis.services.operators import OperatorService
+
+    container.operators = OperatorService(_StubOperatorLedger())
+
+
+HEADERS = {"X-Aegis-Operator": "duty01"}
+
+
 @pytest.fixture
 async def memory_pair() -> AsyncIterator[tuple[httpx.AsyncClient, PlatformContainer]]:
     """同时给出接口出口与容器：有几条事实（后端档位、重写语义）只在容器上看得到，
     只测响应会放过"响应对、容器里根本没有这一档"的实现。"""
     container = create_container(_settings(), with_simulator=False)
+    _seed_operators(container)
     await container.start()
     app = create_app(container.settings, container=container)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE) as client:
@@ -58,7 +100,9 @@ async def test_空库读出来要说清是哪一档后端(memory_pair: tuple[htt
 
 async def test_写一条再读回来是同一条内容与时刻(memory_pair: tuple[httpx.AsyncClient, PlatformContainer]) -> None:
     client, _ = memory_pair
-    created = await client.post("/api/v1/memory/shared", json={"kind": "lesson", "content": LESSON, "agent_id": "duty_review"})
+    created = await client.post(
+        "/api/v1/memory/shared", headers=HEADERS, json={"kind": "lesson", "content": LESSON, "agent_id": "duty_review"}
+    )
     assert created.status_code == 201, created.text
     assert created.json()["embedded"] is False, "没配嵌入腿时不能把这条写成「已向量化」"
     record_id = created.json()["record_id"]
@@ -72,7 +116,7 @@ async def test_写一条再读回来是同一条内容与时刻(memory_pair: tup
 
 async def test_请求了语义检索但没有嵌入腿时如实说退到时序(memory_pair: tuple[httpx.AsyncClient, PlatformContainer]) -> None:
     client, _ = memory_pair
-    await client.post("/api/v1/memory/shared", json={"kind": "assessment", "content": LESSON})
+    await client.post("/api/v1/memory/shared", headers=HEADERS, json={"kind": "assessment", "content": LESSON})
     body = (await client.get("/api/v1/memory/shared", params={"q": "泥位回落"})).json()
     assert body["order"] == "valid_at_desc_no_embedding", "给了查询词就回 vector，等于把「按时间捞了几条」说成「最相关的几条」"
 
@@ -83,7 +127,7 @@ async def test_有嵌入腿时同一个查询词才走语义序(memory_pair: tup
     client, container = memory_pair
     assert container.memory is not None
     container.memory.set_embedder(_StubEmbedder())  # 走装配点用的同一个入口，不去拨私有字段
-    await client.post("/api/v1/memory/shared", json={"kind": "lesson", "content": LESSON})
+    await client.post("/api/v1/memory/shared", headers=HEADERS, json={"kind": "lesson", "content": LESSON})
     body = (await client.get("/api/v1/memory/shared", params={"q": "泥位回落"})).json()
     assert body["order"] == "vector" and body["count"] == 1
 
@@ -99,7 +143,9 @@ class _StubEmbedder:
 
 async def test_删掉之后列表里就没有了而再删一次是404(memory_pair: tuple[httpx.AsyncClient, PlatformContainer]) -> None:
     client, _ = memory_pair
-    record_id = (await client.post("/api/v1/memory/shared", json={"kind": "lesson", "content": LESSON})).json()["record_id"]
+    record_id = (await client.post("/api/v1/memory/shared", headers=HEADERS, json={"kind": "lesson", "content": LESSON})).json()[
+        "record_id"
+    ]
     removed = await client.delete(f"/api/v1/memory/shared/{record_id}")
     assert removed.status_code == 200 and removed.json()["removed"] is True
     assert (await client.get("/api/v1/memory/shared")).json()["count"] == 0
@@ -109,11 +155,11 @@ async def test_删掉之后列表里就没有了而再删一次是404(memory_pai
 
 async def test_坏形状在门口就挡住(memory_pair: tuple[httpx.AsyncClient, PlatformContainer]) -> None:
     client, _ = memory_pair
-    assert (await client.post("/api/v1/memory/shared", json={"kind": "guess", "content": LESSON})).status_code == 422
-    assert (await client.post("/api/v1/memory/shared", json={"kind": "lesson", "content": "短"})).status_code == 422
-    assert (await client.post("/api/v1/memory/shared", json={"kind": "lesson", "content": LESSON, "author": "李四"})).status_code == 422, (
-        "多余键必须拒：否则「这条是谁写的」会在拼错键时静默丢掉"
-    )
+    assert (await client.post("/api/v1/memory/shared", headers=HEADERS, json={"kind": "guess", "content": LESSON})).status_code == 422
+    assert (await client.post("/api/v1/memory/shared", headers=HEADERS, json={"kind": "lesson", "content": "短"})).status_code == 422
+    assert (
+        await client.post("/api/v1/memory/shared", headers=HEADERS, json={"kind": "lesson", "content": LESSON, "author": "李四"})
+    ).status_code == 422, "多余键必须拒：否则「这条是谁写的」会在拼错键时静默丢掉"
     assert (await client.get("/api/v1/memory/shared", params={"limit": 500})).status_code == 422
 
 

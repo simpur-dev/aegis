@@ -23,10 +23,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import deque
 from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from aegis.domain.messages import AgentMemoryRecord, SharedKind, new_memory_record_id
 
@@ -259,15 +260,19 @@ class MemoryService:
         读者（`/api/v1/memory/categories`）第一次有可能回答"这台为什么读不出图谱"。
         """
         result: dict[str, dict[str, object]] = {}
-        for name, provider in self._providers.items():
+        # 三路并行（各类带各自的 budget_ms）：串行最坏 3 × budget，挂在分类读面与上报佐证腿上。
+        names = list(self._providers.items())
+
+        async def _recall(name: str, provider: Any):
             if provider is None:
-                result[name] = {"connected": False, "items": [], "note": "该记忆类未接入（装配点没给这条腿）"}
-                continue
+                return {"connected": False, "items": [], "note": "该记忆类未接入（装配点没给这条腿）"}
             try:
                 items = await provider.recall(query, region_code=region_code, hazard_type=hazard_type, limit=limit)
             except Exception as exc:
                 log.warning("记忆门面某一类降级", extra={"category": name, "err": type(exc).__name__})
-                result[name] = {"connected": True, "items": [], "note": f"读取降级: {type(exc).__name__}"}
-            else:
-                result[name] = {"connected": True, "items": list(items), "note": "" if items else "接了，但这句查询没命中"}
+                return {"connected": True, "items": [], "note": f"读取降级: {type(exc).__name__}"}
+            return {"connected": True, "items": list(items), "note": "" if items else "接了，但这句查询没命中"}
+
+        outcomes = await asyncio.gather(*(_recall(name, provider) for name, provider in names))
+        result.update({name: outcome for (name, _provider), outcome in zip(names, outcomes, strict=True)})
         return result

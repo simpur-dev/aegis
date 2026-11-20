@@ -144,7 +144,7 @@ class TestFallbackPolicies:
 
 class TestStepValidation:
     def test_step_defaults(self) -> None:
-        assert WARN.depends_on == (0,) and REPORT.depends_on == (1, 2, 3)
+        assert WARN.depends_on == (0,) and REPORT.depends_on is None, "REPORT 依赖全部前序 active 步骤"
         assert MONITOR.owner_role is OwnerRole.AGENT
 
     def test_playbooks_cover_all_hazards(self) -> None:

@@ -106,8 +106,10 @@ class NotificationWebhook:
             self.last_error = reason
             return {"delivered": False, "status": "failed", "error": reason}
         payload = {field: record.get(field) for field in PAYLOAD_FIELDS}
-        client = self._client if self._client is not None else self._new_client()
         try:
+            # 客户端构造也进 try：webhook extra 未装（httpx ImportError）时"永远不抛"契约
+            # 不能被构造期击穿——站内已落库，调用方按失败重发会造出重复通知。
+            client = self._client if self._client is not None else self._new_client()
             response = await client.post(
                 self._policy.url,
                 json=payload,

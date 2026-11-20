@@ -8,8 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aegis.api.deps import get_container
+from aegis.api.routers.operators import OperatorHeader, require_operator
 from aegis.container import PlatformContainer
 from aegis.domain.messages import new_trace_id
+from aegis.domain.operator import OperatorRole
 from aegis.services.memory.label_flywheel import CAPTURE_MARKER
 from aegis.workflow.documents import WorkflowDocument, WorkflowDraft
 from aegis.workflow.engine import WorkflowConflictError, WorkflowEngine, WorkflowValidationError
@@ -475,8 +477,18 @@ def build_router() -> APIRouter:
         node_id: str,
         payload: DecisionInput,
         container: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
     ) -> dict[str, Any]:
-        decision = {"choice": payload.choice, "by": payload.by, "comment": payload.comment, "level": payload.level}
+        # 结论改判/人工裁决要过席位闸（DUTY 及以上）。`by` 保留请求体的签字署名（台账原样
+        # 留痕），但**责任主体**以席位为准：operator_id 由席位头认证，不随请求体自报。
+        operator = await require_operator(_operator_service(container), x_operator, role=OperatorRole.DUTY)
+        decision = {
+            "choice": payload.choice,
+            "by": payload.by,
+            "comment": payload.comment,
+            "level": payload.level,
+            "operator_id": operator.operator_id,
+        }
         try:
             detail = await engine_of(container).resume(instance_id, node_id=node_id, decision=decision)
         except WorkflowValidationError as exc:
@@ -536,3 +548,10 @@ def build_router() -> APIRouter:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return router
+
+
+def _operator_service(container: PlatformContainer):
+    """席位台账（与 alerts.py 同一口径）：不可用就是 503——写动作无法确定操作者。"""
+    if container.operators is None or not container.operators.available:
+        raise HTTPException(status_code=503, detail={"code": "E_OPERATOR_UNAVAILABLE", "message": "席位台账不可用：写动作无法确定操作者"})
+    return container.operators

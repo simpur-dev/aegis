@@ -25,7 +25,10 @@ class Step:
     sla_seconds: int
     priority: int = 3
     outputs: tuple[str, ...] = ("task_result",)
-    depends_on: tuple[int, ...] = ()  # 剧本内序号，解析时映射为 STU id
+    # 剧本内序号，解析时映射为 STU id；None = 依赖**全部前序 active 步骤**。
+    # REPORT 用 None：各灾种剧本长度/布局不同，写死 (1,2,3) 在 ROCKFALL 里漏掉 VERIFY、
+    # 在 AVALANCHE 里连 WARN 都不在依赖里（执行器会在预警未发时放行报告）。
+    depends_on: tuple[int, ...] | None = ()
 
 
 VERIFY = Step(TaskType.VERIFY, "现场核查监测异常与险情", "field_verify", OwnerRole.FIELD_INSPECTOR, 600, 2)
@@ -40,7 +43,7 @@ REPORT = Step(
     3_600,
     4,
     ("task_result", "feedback_report"),
-    (1, 2, 3),
+    None,
 )
 
 PLAYBOOKS: dict[HazardType, list[Step]] = {
@@ -88,7 +91,11 @@ class TaskParser:
         for index, step in enumerate(playbook):
             if index not in active_indexes:
                 continue
-            dependencies = [id_by_index[i] for i in step.depends_on if i in id_by_index]
+            declared = step.depends_on
+            if declared is None:
+                # None = 全部前序 active 步骤（REPORT 的口径）：汇总本就是"到此为止的一切"
+                declared = tuple(range(index))
+            dependencies = [id_by_index[i] for i in declared if i in id_by_index]
             unit = StandardizedTaskUnit(
                 event_id=event,
                 hazard_type=verdict.hazard_type.value,

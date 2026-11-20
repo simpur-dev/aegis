@@ -101,7 +101,9 @@ class AssistantService:
         self._writes = WriteRateLimiter()
         self._tracer = tracer or Tracer()
         self._sessions: dict[str, AssistantSession] = {}
-        self._order: deque[str] = deque(maxlen=_MAX_SESSIONS)
+        # 顺序队列不设 maxlen：有界 deque 满员静默丢最左 sid，那个会话还活在 _sessions
+        # 里却不在队列上——按队列淘汰会误杀较新的活跃会话（其 id 复用时 history 静默清零）。
+        self._order: deque[str] = deque()
         self.rejections: deque[dict[str, Any]] = deque(maxlen=200)
         self.replies = 0
 
@@ -720,14 +722,17 @@ class AssistantService:
         self._order.append(sid)
         while len(self._sessions) > _MAX_SESSIONS:
             oldest = self._order.popleft()
-            if oldest != sid:
-                self._sessions.pop(oldest, None)
+            self._sessions.pop(oldest, None)
         return session
 
     def _evict_expired(self, now: float) -> None:
         stale = [sid for sid, session in self._sessions.items() if now - session.updated_at > self._ttl]
         for sid in stale:
             self._sessions.pop(sid, None)
+        if stale:
+            # TTL 淘汰要同步清队列：否则 _order 只增不减（长跑进程的台账面），
+            # 后续按队列淘汰会先撞上一串死 id。
+            self._order = deque(sid for sid in self._order if sid in self._sessions)
             if sid in self._order:
                 self._order.remove(sid)
 

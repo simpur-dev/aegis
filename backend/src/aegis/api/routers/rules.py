@@ -10,8 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from aegis.api.deps import get_container
+from aegis.api.routers.operators import OperatorHeader, require_operator
 from aegis.container import PlatformContainer
 from aegis.domain.enums import HazardType
+from aegis.domain.operator import OperatorRole
 from aegis.persistence.suggestions import SuggestionArgumentError, SuggestionConflictError
 from aegis.services.rules.calibration import RuleSample, calibration_report, collect_rule_hits
 from aegis.services.rules.threshold_suggestions import ThresholdSuggestionService
@@ -160,6 +162,7 @@ def build_router() -> APIRouter:
         suggestion_id: str,
         payload: SuggestionConfirm,
         ctn: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
     ) -> dict[str, Any]:
         """人工确认落地：规则库长出一个新版本，建议同时销账，两件事在同一笔事务里。
 
@@ -169,13 +172,15 @@ def build_router() -> APIRouter:
         `engine_loaded` 单独说：库里版本已经落，而内存里那台引擎有没有换上，是两件事。
         """
         service = _suggestion_service(ctn)
+        # 签字人取席位头（要求 DUTY 及以上）：decided_by 是审计字段，不能由请求体自报。
+        operator = await require_operator(_operator_service(ctn), x_operator, role=OperatorRole.DUTY)
         try:
             return await service.confirm(
                 suggestion_id,
                 rule_id=payload.rule_id,
                 metric=payload.metric,
                 threshold=payload.threshold,
-                decided_by=payload.decided_by,
+                decided_by=operator.operator_id,
                 note=payload.note,
                 expected_version=payload.expected_version,
             )
@@ -193,14 +198,25 @@ def build_router() -> APIRouter:
         suggestion_id: str,
         payload: SuggestionReject,
         ctn: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
     ) -> dict[str, Any]:
         """驳回也要留痕：一条被驳回的建议如果只从队列里消失，下一个人无法知道它被看过想过。"""
         service = _suggestion_service(ctn)
+        operator = await require_operator(_operator_service(ctn), x_operator, role=OperatorRole.DUTY)
         try:
-            return await service.reject(suggestion_id, decided_by=payload.decided_by, note=payload.note)
+            return await service.reject(suggestion_id, decided_by=operator.operator_id, note=payload.note)
         except SuggestionConflictError as exc:
             raise HTTPException(status_code=409, detail={"code": "E_SUGGESTION_DECIDED", "message": exc.message, **exc.detail}) from exc
         except SuggestionArgumentError as exc:
             raise HTTPException(status_code=422, detail={"code": "E_SUGGESTION_ARG", "message": str(exc), **exc.detail}) from exc
 
     return router
+
+
+def _operator_service(ctn: PlatformContainer):
+    """席位台账（与 alerts.py 同一口径）：不可用就是 503——写动作无法确定操作者。"""
+    if ctn.operators is None or not ctn.operators.available:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=503, detail={"code": "E_OPERATOR_UNAVAILABLE", "message": "席位台账不可用：写动作无法确定操作者"})
+    return ctn.operators

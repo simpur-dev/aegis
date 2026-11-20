@@ -24,6 +24,7 @@ import pytest
 from aegis.api.app import create_app
 from aegis.config import Settings
 from aegis.container import PlatformContainer, create_container
+from aegis.domain.operator import Operator, OperatorRole
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -46,9 +47,50 @@ async def _client(container: PlatformContainer) -> AsyncIterator[httpx.AsyncClie
         yield client
 
 
+class _StubOperatorLedger:
+    """内存席位台账替身（对齐 test_alerts_api）：只支撑 require_operator 的读面。"""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, Operator] = {}
+        for operator_id, role in (("duty01", OperatorRole.DUTY), ("lead01", OperatorRole.LEAD)):
+            self.rows[operator_id] = Operator(
+                operator_id=operator_id,
+                display_name=operator_id,
+                role=role,
+                active=True,
+            )
+
+    async def upsert_operator(self, operator: Operator) -> Operator:
+        self.rows[operator.operator_id] = operator
+        return operator
+
+    async def create_operator(self, operator: Operator) -> Operator | None:
+        if operator.operator_id in self.rows:
+            return None
+        self.rows[operator.operator_id] = operator
+        return operator
+
+    async def get_operator(self, operator_id: str) -> Operator | None:
+        return self.rows.get(operator_id)
+
+    async def list_operators(self, *, active_only: bool = True, limit: int = 200) -> list[Operator]:
+        rows = [op for op in self.rows.values() if not active_only or op.active]
+        return sorted(rows, key=lambda op: op.operator_id)[:limit]
+
+
+def _seed_operators(container: PlatformContainer) -> None:
+    from aegis.services.operators import OperatorService
+
+    container.operators = OperatorService(_StubOperatorLedger())
+
+
+HEADERS = {"X-Aegis-Operator": "duty01"}
+
+
 @pytest.fixture()
 async def container() -> AsyncIterator[PlatformContainer]:
     ctn = create_container(_settings(), with_simulator=False)
+    _seed_operators(ctn)
     await ctn.start()
     yield ctn
     await ctn.shutdown()
@@ -318,6 +360,7 @@ async def test_核签台账的签字人来自提交者而不是接口默认(cont
 
         anonymous = await client.post(
             f"/api/v1/workflow/instances/{instance_id}/nodes/review/decision",
+            headers=HEADERS,
             json={"choice": "approve", "comment": ""},
         )
         assert anonymous.status_code == 200, anonymous.text
@@ -328,6 +371,7 @@ async def test_核签台账的签字人来自提交者而不是接口默认(cont
         second_id = second.json()["instance_id"]
         named = await client.post(
             f"/api/v1/workflow/instances/{second_id}/nodes/review/decision",
+            headers=HEADERS,
             json={"choice": "adjust", "by": "巡护员扎西", "comment": "改判滑坡"},
         )
         assert named.status_code == 200, named.text
@@ -431,6 +475,7 @@ async def test_签完工单要当面对签字人说清这一票落没落进真�
 
         signed = await client.post(
             f"/api/v1/workflow/instances/{review['instance_id']}/nodes/review/decision",
+            headers=HEADERS,
             json={"choice": "approve", "by": "值班员普赤"},
         )
         assert signed.status_code == 200, signed.text
@@ -449,6 +494,7 @@ async def test_改判带等级才成真值缺等级只记账不替人编(contain
         blank = await _open_review_ticket(client, "540300")
         refused = await client.post(
             f"/api/v1/workflow/instances/{blank['instance_id']}/nodes/review/decision",
+            headers=HEADERS,
             json={"choice": "adjust", "by": "值班员普赤"},
         )
         assert refused.status_code == 200, "改判缺等级不该让签字本身失败——那一票已经签了，只是成不了真值"
@@ -460,6 +506,7 @@ async def test_改判带等级才成真值缺等级只记账不替人编(contain
         revised = await _open_review_ticket(client, "540400")
         signed = await client.post(
             f"/api/v1/workflow/instances/{revised['instance_id']}/nodes/review/decision",
+            headers=HEADERS,
             json={"choice": "adjust", "by": "值班员普赤", "level": 5},
         )
         assert signed.status_code == 200, signed.text
@@ -475,6 +522,7 @@ async def test_没有结论裁决标记的会签不进标注池(container: Platf
         instance_id = started.json()["instance_id"]
         signed = await client.post(
             f"/api/v1/workflow/instances/{instance_id}/nodes/review/decision",
+            headers=HEADERS,
             json={"choice": "approve", "by": "值班员普赤"},
         )
         assert signed.status_code == 200, signed.text
@@ -582,6 +630,7 @@ async def test_实例详情带图与结果(container: PlatformContainer) -> None
 
         signed = await client.post(
             f"/api/v1/workflow/instances/{detail['instance_id']}/nodes/review/decision",
+            headers=HEADERS,
             json={"choice": "approve", "by": "值班员普赤"},
         )
         assert signed.status_code == 200, signed.text

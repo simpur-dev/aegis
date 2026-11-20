@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -23,6 +24,8 @@ from aegis.domain.chain import ChainResult
 from aegis.domain.enums import Action
 from aegis.domain.messages import make_event
 from aegis.storage.store import SupportsHandlingTasks
+
+log = logging.getLogger("aegis.services.collab.tasks")
 
 
 class TaskNotFoundError(LookupError):
@@ -166,7 +169,12 @@ class CollabService:
         updated = await call(version)
         if updated is None:
             raise TaskConflictError(task_id, str(current["status"]))
-        await self._broadcast(updated, verb)
+        # 广播失败不抛（对照 Notifier._broadcast 同一口径）：迁移已提交，抛出去客户端会
+        # 按失败重试又撞乐观锁 409——广播是通知面，不是迁移的一部分。
+        try:
+            await self._broadcast(updated, verb)
+        except Exception as exc:
+            log.warning("处置任务状态广播失败: %s: %s", type(exc).__name__, exc)
         return updated
 
     async def _broadcast(self, task: dict[str, Any], verb: str) -> None:

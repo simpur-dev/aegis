@@ -154,8 +154,15 @@ class OperatorAuthService:
         return [dict(row) for row in await ledger.list_operator_keys(operator_id)]
 
     async def revoke_key(self, operator_id: str, key_id: str) -> bool:
-        """吊销一把钥匙。**只能吊销自己名下的**：别的席位的钥匙要 admin 来撤。"""
+        """吊销一把钥匙。**只能吊销自己名下的**：别的席位的钥匙要 admin 来撤。
+
+        归属校验在服务里做（不是路由上）：路由只看路径里的 operator_id 与请求者是否
+        相等，IDOR 修在数据侧——key_id 不属于该席位时返回 False（与"不存在"同响应，
+        不给枚举面）。"""
         ledger = self._require_ledger()
+        own_keys = await ledger.list_operator_keys(operator_id)
+        if not any(str(row.get("key_id")) == key_id for row in own_keys):
+            return False
         revoked = await ledger.revoke_operator_key(key_id)
         if not revoked:
             return False

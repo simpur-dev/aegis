@@ -11,16 +11,16 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 import pytest
 
 from aegis.config import Settings
 from aegis.domain.chain import ChainResult
-from aegis.domain.messages import TriggerHit, now_iso
 from aegis.domain.enums import RiskLevel
-from aegis.pipeline.stages import HazardStages
+from aegis.domain.messages import TriggerHit
 from aegis.pipeline.publisher import WarningPublisher
+from aegis.pipeline.stages import HazardStages
 from aegis.storage.store import (
     AlertStore,
     ControlActionStore,
@@ -47,9 +47,7 @@ class TestHitsCap:
         bus = InMemoryBus()
         registry = AgentRegistry(Settings(env="test"))
         contracts = ContractRegistry()
-        return HazardStages(
-            gateway=AgentGateway(bus, registry, contracts, Tracer()), registry=registry, contracts=contracts
-        )
+        return HazardStages(gateway=AgentGateway(bus, registry, contracts, Tracer()), registry=registry, contracts=contracts)
 
     def test_超限截断到六十四条且降级留痕(self) -> None:
         stages = self._stages()
@@ -78,14 +76,10 @@ class TestTelemetryTimeWindow:
         reading.observed_at = "2026-11-20T09:30:00.000Z"
         await store.add([reading])
         # until=16:00+08:00 == 08:00Z：09:30Z 的读数必须被**排除**（字符串序会把它包进来）
-        rows = store.query(
-            region_code=reading.region_code, until=datetime.fromisoformat("2026-11-20T16:00:00+08:00")
-        )
+        rows = store.query(region_code=reading.region_code, until=datetime.fromisoformat("2026-11-20T16:00:00+08:00"))
         assert rows == []
         # since=16:00+08:00 == 08:00Z：09:30Z 必须被包含（字符串序会把它漏掉）
-        rows = store.query(
-            region_code=reading.region_code, since=datetime.fromisoformat("2026-11-20T16:00:00+08:00")
-        )
+        rows = store.query(region_code=reading.region_code, since=datetime.fromisoformat("2026-11-20T16:00:00+08:00"))
         assert len(rows) == 1
 
     async def test_等时刻与混精度边界不判反(self) -> None:

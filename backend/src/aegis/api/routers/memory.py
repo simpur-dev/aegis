@@ -10,9 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aegis.api.deps import get_container
+from aegis.api.routers.operators import OperatorHeader, require_operator
 from aegis.container import PlatformContainer
 from aegis.domain.enums import HazardType
 from aegis.domain.messages import SharedKind, new_memory_record_id, now_iso
+from aegis.domain.operator import OperatorRole
 
 
 class MemoryIn(BaseModel):
@@ -114,10 +116,13 @@ def build_router() -> APIRouter:
     async def memory_write(
         payload: MemoryIn,
         ctn: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
     ) -> dict[str, Any]:
         """写一条共享记忆（复盘教训、人工纠正的经验）。挂在令牌面之后：这是写侧，不是查询。"""
         if ctn.memory is None:
             raise HTTPException(status_code=503, detail={"code": "E_MEMORY_UNAVAILABLE", "message": "记忆服务未装配（memory）"})
+        # 写共享记忆 = 写"复盘教训/人工纠正的经验"，进检索池供研判引用——要过席位闸。
+        await require_operator(_operator_service(ctn), x_operator, role=OperatorRole.DUTY)
         record_id = new_memory_record_id()
         written = await ctn.memory.write_shared(
             kind=payload.kind,
@@ -147,3 +152,10 @@ def build_router() -> APIRouter:
         return {"record_id": record_id, "removed": True, "driver": ctn.memory.backend}
 
     return router
+
+
+def _operator_service(ctn: PlatformContainer):
+    """席位台账（与 alerts.py 同一口径）：不可用就是 503——写动作无法确定操作者。"""
+    if ctn.operators is None or not ctn.operators.available:
+        raise HTTPException(status_code=503, detail={"code": "E_OPERATOR_UNAVAILABLE", "message": "席位台账不可用：写动作无法确定操作者"})
+    return ctn.operators
