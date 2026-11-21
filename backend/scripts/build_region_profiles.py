@@ -61,6 +61,7 @@ def load_census_stats(path: Path) -> dict[str, dict[str, Any]]:
             "months": Counter(),
             "years": Counter(),
             "records": 0,
+            "potential": 0,
         }
     )
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -73,6 +74,10 @@ def load_census_stats(path: Path) -> dict[str, dict[str, Any]]:
             continue
         bucket = stats[region]
         bucket["records"] += 1
+        if row["hazard"]["attributes"].get("occurred") is not True:
+            # 隐患点（是否发生=否）不是"事件"：单独计数，不混进 history_*_events_10y
+            bucket["potential"] += 1
+            continue
         hazard = row["hazard"]["type"]
         if hazard != "unknown":
             bucket["counts"][hazard] += 1
@@ -82,9 +87,10 @@ def load_census_stats(path: Path) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for region, bucket in stats.items():
         hazards = dict(bucket["counts"])
-        dominant = max(hazards, key=hazards.get) if hazards else None
+        dominant = max(hazards, key=lambda name: hazards[name]) if hazards else None
         out[region] = {
-            "total": bucket["records"],
+            "total": sum(hazards.values()),  # 已发生且灾种可识别的事件数（不含隐患点）
+            "potential": bucket["potential"],
             "hazards": hazards,
             "dominant": dominant,
             "peak_month": bucket["months"].most_common(1)[0][0] if bucket["months"] else None,
@@ -120,6 +126,17 @@ def load_glc_regions(path: Path) -> dict[str, int]:
         if region:
             counts[region] += 1
     return dict(counts)
+
+
+def _warn_missing_merge_source(path: Path | None) -> None:
+    """显式给的合并源不在盘上：告警（不静默当空）。
+
+    静默为空的后果：既有画像读不进来，导入 history-only 行会把带普查属性的画像
+    整条替换掉（P 组因子缺失、素材腿空——2026-11-21 真机踩过）。"""
+    if path is not None and not Path(path).is_file():
+        import sys
+
+        print(f"[warn] 合并源不存在：{path}——本次输出的区划将不含既有普查属性", file=sys.stderr)
 
 
 def load_existing(path: Path | None) -> dict[str, dict[str, Any]]:
@@ -191,6 +208,16 @@ def build_profiles(
             attributes.append(
                 {"key": "history_peak_month", "value": str(stat["peak_month"]) + "月", "source": SOURCE_CENSUS, "surveyed_at": surveyed_at}
             )
+        if stat.get("potential"):
+            attributes.append(
+                {
+                    "key": "history_potential_sites_10y",
+                    "value": float(stat["potential"]),
+                    "unit": "处",
+                    "source": SOURCE_CENSUS,
+                    "surveyed_at": surveyed_at,
+                }
+            )
         if stat["peak_year"]:
             attributes.append(
                 {"key": "history_peak_year", "value": stat["peak_year"] + "年", "source": SOURCE_CENSUS, "surveyed_at": surveyed_at}
@@ -207,10 +234,16 @@ def build_profiles(
                     "surveyed_at": surveyed_at,
                 }
             )
+        sources_used = {SOURCE_CENSUS}
+        if glc_regions.get(region):
+            sources_used.add(SOURCE_GLC)
         base = existing.get(region)
         if base is not None:
-            base_keys = {str(attr.get("key")) for attr in base.get("attributes") or []}
-            merged_attributes = list(base.get("attributes") or []) + [a for a in attributes if a["key"] not in base_keys]
+            # base 只保留**非 history** 属性（现场普查等）；history_* 一律用本次重算值——
+            # 否则拿上一次输出/库导出当 merge 源时，旧统计会压掉新统计（复检实测 stale 值保留）。
+            base_attributes = [attr for attr in base.get("attributes") or [] if not str(attr.get("key", "")).startswith("history_")]
+            base_keys = {str(attr.get("key")) for attr in base_attributes}
+            merged_attributes = base_attributes + [a for a in attributes if a["key"] not in base_keys]
             name = str(base.get("name") or f"{region} 站点画像")
             merged_hazards = sorted({str(h) for h in (base.get("hazard_types") or [])} | set(hazard_types))
             profiles.append(
@@ -219,11 +252,10 @@ def build_profiles(
                     "name": name,
                     "hazard_types": merged_hazards,
                     "attributes": merged_attributes,
-                    "provenance": base.get("provenance")
-                    or {
-                        "data_kind": "derived",
-                        "sources": [SOURCE_CENSUS],
-                        "disclaimer": PROVENANCE_NOTE,
+                    # 合并画像的来源 = 既有画像来源 ∪ 本次实际贡献（历史统计来自普查）
+                    "provenance": {
+                        **(base.get("provenance") or {"data_kind": "derived", "disclaimer": PROVENANCE_NOTE}),
+                        "sources": sorted({*(base.get("provenance") or {}).get("sources", []), *sources_used}),
                     },
                 }
             )
@@ -237,7 +269,9 @@ def build_profiles(
                 # provenance 形状 = DataProvenance（data_kind/sources/method/disclaimer）
                 "provenance": {
                     "data_kind": "derived",
-                    "sources": [SOURCE_CENSUS, SOURCE_GLOF, SOURCE_GLC],
+                    # 只列真的进了本画像的来源：GLOF 是全区参考（不逐县下放）、
+                    # GLC 无区划码映射——都不该出现在这里。
+                    "sources": sorted(sources_used),
                     "method": "unknown",
                     "disclaimer": PROVENANCE_NOTE,
                 },
@@ -263,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     from datetime import UTC, datetime
 
     surveyed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    _warn_missing_merge_source(args.merge_existing)
     profiles = build_profiles(args.census, args.glof, args.glc, surveyed_at, existing_path=args.merge_existing)
     glof_total = load_glof_china_total(args.glof)
     args.out.parent.mkdir(parents=True, exist_ok=True)

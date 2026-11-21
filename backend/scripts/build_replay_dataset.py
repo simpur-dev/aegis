@@ -19,6 +19,10 @@
 - 灾种映射：普查类型 → 平台 HazardType（rockfall/debris_flow/landslide 直取；
   unknown 不参与分灾种评测，但参与"任意灾害发生"的总体口径）。
 
+**设计边界（如实记）**：负样本只在该区该月**至少有一次该灾种事件**时展开生成
+（迭代事件日时把同月其余日期作为该灾种的负样本）。因此"整月无该灾种"的月份不产负样本，
+precision 是"有事件月份内"的条件估计——它防的是"抓没抓住事件"，不是"全年误报率"。
+
 **用途**：`scripts/replay_rule_accuracy.py` 在这份样本上评测现行规则库与数据驱动
 候选规则的准确率（precision/recall/F1）。普查数据是 CC BY-NC——样本含普查字段，
 落运行态目录（backend/data/replay/），**不进 git**（与 NC 隔离纪律一致）。
@@ -49,7 +53,7 @@ REPLAY_YEARS = ("2020", "2021", "2022")
 TYPE_MAP = {"rockfall": "rockfall", "debris_flow": "debris_flow", "landslide": "landslide"}
 
 
-def load_census(path: Path) -> dict[str, dict[str, list[str]]]:
+def load_census(path: Path) -> dict[tuple[str, str], list[str]]:
     """普查 → {(region, 'YYYY-MM-DD'): [灾种…]}，仅限已发生 + 有日期 + 三县 + 回放窗口。"""
     events: dict[tuple[str, str], set[str]] = defaultdict(set)
     total = 0
@@ -128,7 +132,9 @@ def build_cases(census_path: Path, rain_path: Path) -> dict[str, Any]:
             for other_day, other_rain in month_days[(region, month)]:
                 if other_day == day:
                     continue
-                other_events = events.get(f"{region}|{other_day}", [])
+                # 键必须是 (region, day) 元组——用字符串键查元组字典永远落空，
+                # 事件日会被当成负样本追加（2026-11-21 复检抓到的真 bug：123/170 事件日被误标）。
+                other_events = events.get((region, other_day), [])
                 if hazard in other_events:
                     continue  # 同月同灾种另一天的事件日：不当负样本
                 if other_rain is None:
@@ -146,10 +152,13 @@ def build_cases(census_path: Path, rain_path: Path) -> dict[str, Any]:
                     }
                 )
 
-    # 去重（同一 region|day|hazard 可能被多个月份窗口生成——按 case_id 去重，保留第一条）
+    # 去重（同一 region|day|hazard 可能被多个月份窗口生成）。**正样本优先**：
+    # 按插入顺序"先到先留"会让先生成的负样本压掉同一天的真事件（真值被标签错误覆盖）。
     unique: dict[str, dict[str, Any]] = {}
     for case in cases:
-        unique.setdefault(case["case_id"], case)
+        existing = unique.get(case["case_id"])
+        if existing is None or (case["truth_warning"] and not existing["truth_warning"]):
+            unique[case["case_id"]] = case
     ordered = sorted(unique.values(), key=lambda c: (c["region_code"], c["date"], c["hazard_type"]))
     return {
         "schema_version": "1.0.0",

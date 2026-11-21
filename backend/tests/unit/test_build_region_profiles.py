@@ -58,6 +58,54 @@ class TestCensusStats:
         assert stats["peak_year"] == "2021"
 
 
+class TestOccurredOnly:
+    def test_隐患点不算事件且单独计数(self, tmp_path: Path) -> None:
+        """普查里"是否发生=否"的是隐患点，不是事件——混进 history_*_events 会让
+        助手与研判把"登记过的风险点"读成"发生过的事件"。"""
+        census = _census(
+            tmp_path / "c.jsonl",
+            [("540121", "2021-08-01", "debris_flow"), ("540121", "2021-08-02", "debris_flow")],
+        )
+        # _census 里全部是 occurred=True；再造一条隐患点
+        with census.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "record_id": "census:potential",
+                        "event": {"date": "2021-08-03"},
+                        "geo": {"admin_division": "540121"},
+                        "hazard": {"type": "rockfall", "attributes": {"occurred": False}},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+        stats = load_census_stats(census)["540121"]
+        assert stats["hazards"] == {"debris_flow": 2}, "隐患点不得计入灾种事件数"
+        assert stats["total"] == 2
+        assert stats["potential"] == 1
+
+    def test_隐患点属性单独成维(self, tmp_path: Path) -> None:
+        census = _census(tmp_path / "c.jsonl", [("540121", "2021-08-01", "debris_flow")])
+        with census.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "record_id": "census:potential",
+                        "event": {"date": "2021-08-03"},
+                        "geo": {"admin_division": "540121"},
+                        "hazard": {"type": "landslide", "attributes": {"occurred": False}},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+        profiles = build_profiles(census, tmp_path / "no_glof.jsonl", tmp_path / "no_glc.jsonl", "2026-11-21T00:00:00Z")
+        keys = {attr["key"]: attr["value"] for attr in profiles[0]["attributes"]}
+        assert keys["history_potential_sites_10y"] == 1.0
+        assert keys["history_total_events_10y"] == 1.0, "事件总数只算已发生"
+
+
 class TestMerge:
     def test_既有普查属性不被历史统计覆盖(self, tmp_path: Path) -> None:
         census = _census(tmp_path / "c.jsonl", [("540121", "2021-08-01", "debris_flow")])
@@ -98,6 +146,29 @@ class TestMerge:
         keys = {attr["key"] for attr in profile["attributes"]}
         assert "history_landslide_events_10y" in keys
         assert "history_total_events_10y" in keys
+
+    def test_重算的历史值覆盖合并源里的旧历史值(self, tmp_path: Path) -> None:
+        """拿上一次输出当 merge 源时，history_* 必须用新算的值（旧值只是陈旧快照）。"""
+        census = _census(tmp_path / "c.jsonl", [("540121", "2021-08-01", "debris_flow")])
+        existing = _existing(
+            tmp_path / "profiles.jsonl",
+            [
+                {
+                    "region_code": "540121",
+                    "attributes": [
+                        {"key": "catchment_area_km2", "value": 12.6, "source": "demo_survey"},
+                        {"key": "history_debris_flow_events_10y", "value": 999.0, "source": "stale"},
+                    ],
+                    "hazard_types": [],
+                }
+            ],
+        )
+        profiles = build_profiles(
+            census, tmp_path / "no_glof.jsonl", tmp_path / "no_glc.jsonl", "2026-11-21T00:00:00Z", existing_path=existing
+        )
+        keys = {attr["key"]: attr["value"] for attr in next(p for p in profiles if p["region_code"] == "540121")["attributes"]}
+        assert keys["history_debris_flow_events_10y"] == 1.0, "旧历史值不得覆盖本次重算"
+        assert keys["catchment_area_km2"] == 12.6, "非 history 属性仍保留"
 
     def test_属性key唯一(self, tmp_path: Path) -> None:
         """SiteProfile 校验 key 唯一：合并时同名 key 只能留一份（否则导入被拒）。"""
