@@ -316,6 +316,14 @@ class PostgresStore:
         """链路读视图。落库在 `record_chain`：ChainResult 载荷含服务层类型，本层不回读重建。"""
         return self._read.chains
 
+    def get_chain(self, wanted: str) -> dict[str, Any] | None:
+        """按 trace_id/event_id 取链路读视图：委托内存读模型的旁路索引（O(1)）。
+
+        assistant 的 explain 动作在部署形态拿到的 store 是本类——缺这个委托会落进
+        `_lookup_chain` 的快照回退，而本类的 `snapshot()` 是 dict 视图，迭代出的是
+        键名（str），`row.as_dict()` 当场炸（2026-11-21 真机联测实测）。"""
+        return self._read.get_chain(wanted)
+
     def snapshot(self) -> dict[str, object]:
         return self._read.snapshot()
 

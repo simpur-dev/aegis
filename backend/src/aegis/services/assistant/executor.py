@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import time
 from dataclasses import dataclass
@@ -76,6 +77,9 @@ class ExecutionOutcome:
     #: 高安全档位下这条提案要几票（0 = 本人一次确认）；前端据此显示复核进度。
     review_required: int = 0
     reviews: tuple[dict[str, Any], ...] = ()
+
+
+log = logging.getLogger("aegis.services.assistant.executor")
 
 
 class Executor:
@@ -466,6 +470,8 @@ class Executor:
             raise
         except Exception as exc:
             self._breaker.record_failure(breaker_key)
+            # 非预期异常必须留栈：这是"平台自己的 bug"信号，只留一行文本没法定位
+            log.exception("动作执行非预期异常 action=%s", action.spec.name)
             raise ActionError(
                 "E_ACTION_EXECUTION_FAILED",
                 f"{type(exc).__name__}: {str(exc)[:200]}",

@@ -109,6 +109,33 @@ class TestTelemetryTimeWindow:
         assert len(first) == len(second) == 1
 
 
+class TestChainIndexDeployment:
+    def test_部署形态_链路索引委托与淘汰身份(self) -> None:
+        """PostgresStore 的 explain 依赖 get_chain 委托（2026-11-21 真机联测抓到的
+        缺口：缺委托时 _lookup_chain 落快照回退，snapshot() 是 dict 视图，
+        迭代出 str → row.as_dict() 炸）。"""
+        from aegis.domain.chain import ChainResult, StageResult
+        from aegis.persistence.postgres import PostgresStore
+
+        async def _seed() -> None:
+            # BoundedCollection.add 是 async：锁内触发 on_add 维护索引
+            await store.chains.add(chain)
+            await store.chains.add(chain2)
+
+        store = PostgresStore(dsn="postgresql://x:y@127.0.0.1:1/db")
+        chain = ChainResult(trace_id="trc_" + "a" * 16, event_id="evt-1")
+        chain.stages.append(StageResult(name="assess", mode="agent", ok=True, latency_ms=1.0))
+        chain2 = ChainResult(trace_id="trc_" + "a" * 16, event_id="evt-1")
+        chain2.stages.append(StageResult(name="assess", mode="agent", ok=True, latency_ms=2.0))
+        asyncio.run(_seed())
+        assert store.get_chain("trc_" + "a" * 16) is not None
+        assert store.get_chain("evt-1") is not None
+        assert store.get_chain("trc_" + "b" * 16) is None
+        # 同 id 新行覆盖后，旧行淘汰不得误删新行索引（evict 校验身份）
+        store._read._chain_index_evict(chain)
+        assert store.get_chain("trc_" + "a" * 16) is not None, "新行索引必须仍可读"
+
+
 class TestStoreOrphanEviction:
     async def test_control_action_满员淘汰无孤儿(self) -> None:
         store = ControlActionStore(maxlen=2)

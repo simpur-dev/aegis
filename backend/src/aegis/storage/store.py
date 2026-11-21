@@ -1291,6 +1291,10 @@ class StoreProtocol(Protocol):
     @property
     def tasks(self) -> TaskPort: ...
 
+    def get_chain(self, wanted: str) -> dict[str, Any] | None:
+        """旁路索引读（O(1)）；实现方必须提供（部署形态的 PostgresStore 委托它）。"""
+        ...
+
     @property
     def chains(self) -> BoundedCollection[ChainResult]: ...
 
