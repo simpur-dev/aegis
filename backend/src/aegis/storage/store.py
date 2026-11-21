@@ -949,7 +949,13 @@ class PlatformStore:
         self.telemetry = TelemetryStore(telemetry_maxlen)
         self.warnings = WarningStore()
         self.tasks = TaskStore()
-        self.chains: BoundedCollection[ChainResult] = BoundedCollection(2_000)
+        self.chains: BoundedCollection[ChainResult] = BoundedCollection(
+            2_000, on_add=self._chain_index_add, on_evict=self._chain_index_evict
+        )
+        # trace_id/event_id → ChainResult 旁路索引：assistant 的 explain 动作此前每次
+        # 全量 snapshot + 逐行 as_dict（2000 行 × 一次 dict 构造）。索引挂在集合回调上
+        # （与 region 桶同模式），淘汰自动同步。
+        self._chain_index: dict[str, ChainResult] = {}
         # 动作执行记录（内存态）：写动作的"待确认 → 执行"在这里落账，重启即失——
         # 能力面用 `control_actions_persistent: false` 如实标注，不假装跨重启。
         self.control_actions = ControlActionStore()
@@ -963,6 +969,20 @@ class PlatformStore:
         self._station_dim: dict[str, dict[str, object]] = {}
         # 区域级站点画像（内存态）：静态孕灾属性，由 `scripts/import_site_profiles.py` 显式写入。
         self.site_profiles = SiteProfileStore()
+
+    def get_chain(self, wanted: str) -> dict[str, Any] | None:
+        """按 trace_id/event_id 取链路读视图（O(1) 旁路索引；未命中 None）。"""
+        row = self._chain_index.get(wanted)
+        return None if row is None else row.as_dict()
+
+    def _chain_index_add(self, result: ChainResult) -> None:
+        for key in (result.trace_id, result.event_id):
+            if key:
+                self._chain_index[key] = result
+
+    def _chain_index_evict(self, result: ChainResult) -> None:
+        for key in (result.trace_id, result.event_id):
+            self._chain_index.pop(key, None)
 
     async def upsert_station(
         self,

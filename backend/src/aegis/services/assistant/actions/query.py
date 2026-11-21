@@ -142,6 +142,19 @@ class WarningList(Action):
         return ActionResult(data={"items": items, "count": len(items)}, summary=f"共 {len(items)} 条预警")
 
 
+def _lookup_chain(source: Any, wanted: str) -> dict[str, Any] | None:
+    """链路读视图查找：新形态走 store 的旁路索引（get_chain，O(1)），
+    旧形态（测试替身/裸集合）回退快照扫描。"""
+    getter = getattr(source, "get_chain", None)
+    if callable(getter):
+        return getter(wanted)
+    for row in source.snapshot():
+        data = row.as_dict()
+        if wanted in (data.get("trace_id"), data.get("event_id")):
+            return data
+    return None
+
+
 class WarningExplain(Action):
     spec = ActionSpec(
         name="warning.explain",
@@ -152,14 +165,17 @@ class WarningExplain(Action):
         example="解释 wrn_0123456789abcdef0123 为什么定这个等级",
     )
 
-    def __init__(self, warnings: Any, chains: Any) -> None:
+    def __init__(self, warnings: Any, store: Any) -> None:
         self._warnings = warnings
-        self._chains = chains
+        self._store = store  # 用 get_chain（旁路索引），不再全量扫 chains
 
     async def resolve(self, params: BaseModel, ctx: ActionContext) -> ResolvedTargets:
         assert isinstance(params, WarningExplainParams)
         record = self._warnings.get(params.warning_id)
-        label = params.warning_id if record is None else str(record.model_dump(mode="json").get("title_zh") or params.warning_id)
+        # 读视图行的契约是 model_dump/as_dict（test 替身 _Row 注释钉住），label 从 dump 取
+        label = params.warning_id
+        if record is not None:
+            label = str(record.model_dump(mode="json").get("title_zh") or params.warning_id)
         return ResolvedTargets(items=(TargetRef("warning", params.warning_id, label),))
 
     async def execute(self, targets: ResolvedTargets, params: BaseModel, ctx: ActionContext) -> ActionResult:
@@ -171,7 +187,7 @@ class WarningExplain(Action):
         chain = None
         trace_id = str(dumped.get("trace_id") or "")
         if trace_id:
-            chain = _find_chain(self._chains, trace_id)
+            chain = _lookup_chain(self._store, trace_id)
         facts = narrate_warning(dumped, chain)
         return ActionResult(
             data={"warning_id": params.warning_id, "found": True, "facts": facts, "text": facts},
@@ -209,8 +225,8 @@ class ChainExplain(Action):
         example="链路追踪 trc_0123456789abcdef 每段耗时",
     )
 
-    def __init__(self, chains: Any) -> None:
-        self._chains = chains
+    def __init__(self, store: Any) -> None:
+        self._store = store
 
     async def resolve(self, params: BaseModel, ctx: ActionContext) -> ResolvedTargets:
         assert isinstance(params, ChainExplainParams)
@@ -220,7 +236,7 @@ class ChainExplain(Action):
     async def execute(self, targets: ResolvedTargets, params: BaseModel, ctx: ActionContext) -> ActionResult:
         assert isinstance(params, ChainExplainParams)
         wanted = str(params.trace_id or params.event_id)
-        chain = _find_chain(self._chains, wanted)
+        chain = _lookup_chain(self._store, wanted)
         if chain is None:
             return ActionResult(data={"trace_id": wanted, "found": False, "note": "链路读视图只保留进程内最近事件"})
         facts = narrate_chain(chain)
@@ -352,7 +368,7 @@ class PlanAsk(Action):
         except ValueError as exc:
             # 非法灾种是调用方错误（确定性拒绝）：翻译成 ActionError，别让 executor 按
             # 非确定性异常记熔断（3 次错拼灾种就把 plan.ask 断 60 秒，口径自相矛盾）。
-            raise ActionError("E_ACTION_BAD_PARAMS", f"未知灾种 {params.hazard_type!r}") from exc
+            raise ActionError("E_ACTION_PARAM_INVALID", f"未知灾种 {params.hazard_type!r}") from exc
         steps = [
             {
                 "task_type": step.task_type.value,
@@ -382,11 +398,3 @@ class PlanAsk(Action):
             },
             summary=facts,
         )
-
-
-def _find_chain(chains: Any, wanted: str) -> dict[str, Any] | None:
-    for row in chains.snapshot():
-        data = row.as_dict()
-        if wanted in (data.get("trace_id"), data.get("event_id")):
-            return data
-    return None

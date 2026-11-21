@@ -1122,9 +1122,9 @@ def _build_assistant_registry(
 
     actions: list[Action] = [
         WarningList(store.warnings),
-        WarningExplain(store.warnings, store.chains),
+        WarningExplain(store.warnings, store),
         ChainList(store.chains),
-        ChainExplain(store.chains),
+        ChainExplain(store),
         TaskList(store.tasks),
         TaskGet(store.tasks),
         StationList(store),

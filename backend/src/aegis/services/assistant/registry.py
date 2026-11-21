@@ -35,7 +35,12 @@ class ActionRegistry:
 
     @property
     def names(self) -> tuple[str, ...]:
-        return tuple(sorted(self._actions))
+        # 每请求调一次（respond meta / LLM 菜单）：注册表注册后不可变，构造时排序缓存
+        cached = getattr(self, "_names", None)
+        if cached is None:
+            cached = tuple(sorted(self._actions))
+            self._names = cached
+        return cached
 
     def get(self, name: str) -> Action | None:
         return self._actions.get(name)

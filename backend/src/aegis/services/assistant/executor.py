@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import time
 from dataclasses import dataclass
@@ -103,8 +104,18 @@ class Executor:
 
     async def run(self, action: Action, raw: dict[str, Any], ctx: ActionContext) -> ExecutionOutcome:
         started = time.perf_counter()
-        params = self._parse(action, raw)
-        targets = await action.resolve(params, ctx)
+        try:
+            params = self._parse(action, raw)
+            targets = await action.resolve(params, ctx)
+        except ActionError as exc:
+            # 参数不合法 / 目标不存在与越权同罪：也要留审计行（§9"失败：intent + result
+            # 两行"）——此前这两个失败在 try 之外直接抛，audit_ops 零行，"想干什么但
+            # 没干成"最该记的事件完全不可见（对照 resume() 的同类处理）。
+            if action.spec.writes:
+                await self._audit.write(
+                    self._audit.rejected(action_id=None, action=action, operator=ctx.operator, error=exc, utterance=ctx.utterance)
+                )
+            raise
         try:
             self._authorize(action, ctx)
             # 批量上限与熔断都在提案/确认之前判，且放在 try 内：写动作被这两条拦下也要留审计行
@@ -117,14 +128,18 @@ class Executor:
                     self._audit.rejected(action_id=None, action=action, operator=ctx.operator, error=exc, utterance=ctx.utterance)
                 )
             raise
-        preview = await action.preview(targets, params, ctx) if action.spec.previewable else ImpactPreview(targets=targets.items)
+        preview: ImpactPreview | None = None
         if action.spec.needs_confirm and not ctx.approved:
+            # preview 只服务确认卡：无确认闸的直执行写动作（task.claim/notify.lead…）
+            # 此前也白跑一次 preview（task_control 里是一次 collab 往返），结果无人读。
+            preview = await action.preview(targets, params, ctx) if action.spec.previewable else ImpactPreview(targets=targets.items)
             return await self._gate(action, params, targets, preview, ctx, started)
+        preview = None
         if action.spec.writes:
             # 无确认闸的写动作（认领/回执/关闭/单发通知）也要过审计闸：没有台账就不执行，
             # 不存在"跑了但没记"的路径——这比 gated 动作的 require_repo 更进一步。
             return await self._run_audited(action, params, targets, ctx, started)
-        result = await self._execute(action, targets, params, ctx)
+        result = await self._execute_shielded(action, targets, params, ctx)
         return ExecutionOutcome(
             action=action.spec.name,
             status="executed",
@@ -142,13 +157,45 @@ class Executor:
         ctx: ActionContext,
         started: float,
     ) -> ExecutionOutcome:
-        """直接执行的写动作：intent 在执行前、result 在执行后（含失败），两条共用审计关联键。"""
-        self._require_repo()
+        """直接执行的写动作：intent 在执行前、result 在执行后（含失败），两条共用审计关联键。
+
+        **幂等键在此消费**（API 层 ChatRequest.idempotency_key 的对外承诺：
+        "断线重发、双击靠它命中同一行台账，不重复生成提案"）：此前只有 _gate
+        （提案路径）把键交给台账去重，notify.lead/task.claim 这类无确认闸的
+        直执行写动作重发同一键会**重复落库**（双击一次 = 双倍通知）。修法走
+        台账生命周期本身：create_action(proposed, idempotency_key) → confirm
+        （proposed→executing，自动确认非人工闸）→ 执行 → mark_executed——
+        幂等命中 create_action 直接 replayed=True，不执行。"""
+        repo = self._require_repo()
         audit_id = self._audit.new_action_id()
         await self._audit.write(self._audit.intent(action_id=audit_id, action=action, params=params, targets=targets, ctx=ctx))
+        action_id = f"act_{secrets.token_hex(8)}"
+        record, replayed = await repo.create_action(
+            action_id=action_id,
+            operator_id=(ctx.operator.operator_id if ctx.operator else "unknown"),
+            action=action.spec.name,
+            space_id=ctx.space_id,
+            utterance=ctx.utterance[:500],
+            resolved_args=params.model_dump(mode="json"),
+            impact_scope={},
+            expires_in_seconds=3600,
+            idempotency_key=ctx.idempotency_key,
+        )
+        if replayed:
+            return ExecutionOutcome(
+                action=action.spec.name,
+                status="replayed",
+                action_id=record.get("action_id"),
+                targets=targets,
+                latency_ms=(time.perf_counter() - started) * 1000.0,
+            )
+        # proposed → executing（自动确认：直执行写动作没有人工闸；迁移失败 = 行已被处置/过期）
+        if await repo.confirm_action(action_id) is None:
+            raise ActionError("E_ACTION_CONFLICT", "动作台账状态不允许执行（已处置或过期）")
         try:
-            result = await self._execute(action, targets, params, ctx)
+            result = await self._execute_shielded(action, targets, params, ctx)
         except ActionError as exc:
+            await repo.mark_action_failed(action_id, {"code": exc.code, "message": exc.message[:200]})
             await self._audit.write(
                 self._audit.result(
                     action_id=audit_id,
@@ -160,6 +207,7 @@ class Executor:
                 )
             )
             raise
+        await repo.mark_action_executed(action_id, {"summary": result.summary, **result.data})
         await self._audit.write(
             self._audit.result(
                 action_id=audit_id,
@@ -231,7 +279,7 @@ class Executor:
         if not preconfirmed and await repo.confirm_action(action_id) is None:
             raise ActionError("E_ACTION_CONFLICT", "动作已被处置、已过期或不存在，本次确认没有生效")
         try:
-            result = await self._execute(action, targets, params, ctx)
+            result = await self._execute_shielded(action, targets, params, ctx)
         except ActionError as exc:
             await repo.mark_action_failed(
                 action_id,
@@ -367,6 +415,16 @@ class Executor:
                 "E_ACTION_RATE_LIMITED",
                 f"「{action.spec.title}」连续失败后已熔断，约 {remaining:.0f} 秒后恢复；读动作不受影响",
             )
+
+    async def _execute_shielded(self, action: Action, targets: ResolvedTargets, params: Any, ctx: ActionContext) -> ActionResult:
+        """执行动作本体，**屏蔽取消**（SSE 断连/客户端超时的取消不穿透到业务 await）。
+
+        取消落在动作的交付/落库 await 上会把副作用撕成半截：发布可能已出去、台账停在
+        executing 最长 600 秒才被回收成"结果未知"。shield 后取消只取消"等答案的人"，
+        动作跑完、`mark_action_executed/failed` 必然落定——与 assistant_api `_keepalive`
+        "对话半途消失比慢一点糟得多"的口径一致。"""
+        task = asyncio.ensure_future(self._execute(action, targets, params, ctx))
+        return await asyncio.shield(task)
 
     async def _execute(self, action: Action, targets: ResolvedTargets, params: Any, ctx: ActionContext) -> ActionResult:
         breaker_key = self._breaker_key(action, ctx)

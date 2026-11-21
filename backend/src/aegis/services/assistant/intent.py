@@ -253,9 +253,6 @@ class IntentClassifier:
         matched = self._match(body)
         if matched is None:
             return Intent(action=None, confidence=0.0, decided_by="none", note="未能识别意图")
-        if self._is_questioned_write(matched, body):
-            # 问句里的写动作只是在咨询（"上报流程是什么"），不是要执行：转预案问答，不制造写提案。
-            matched = "plan.ask"
         return self._build(matched, body, region_code=region_code, hazard_hint=hazard_hint, reporter=reporter, decided_by="rule")
 
     def _is_questioned_write(self, action_name: str, body: str) -> bool:
@@ -335,6 +332,12 @@ class IntentClassifier:
     ) -> Intent:
         if self._registry.get(action) is None:
             return Intent(action=None, confidence=0.0, decided_by=decided_by, note=f"动作 {action} 未开放")
+        # 问句闸在 _build（意图构造的唯一入口）而非规则腿：LLM 兜底建议的写动作同样
+        # 可能是问句措辞（"能不能通知值班长来现场看看"）——此前只有规则路径过闸，
+        # LLM 建议的 notify.lead 这类"无需编号的直执行写动作"会直接触发真实通知。
+        # "这句是不是在问事实"是意图构造的属性，两条腿共用同一判据（判据集中一处）。
+        if self._is_questioned_write(action, text):
+            action = "plan.ask"
         args: dict[str, Any] = {}
         if action in _L4_ACTIONS:
             kv = dict(_KV_RE.findall(text))

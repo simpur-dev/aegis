@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 import time
 from collections import deque
@@ -725,8 +726,12 @@ class AssistantService:
         self._sessions[sid] = session
         self._order.append(sid)
         while len(self._sessions) > _MAX_SESSIONS:
-            oldest = self._order.popleft()
+            # 淘汰判据 = updated_at 最旧（与 TTL 同源）：此前按 _order 创建序 FIFO，
+            # "最早创建"可能正是聊得最久的活跃会话（history 静默清零失忆）。
+            oldest = min(self._sessions, key=lambda key: self._sessions[key].updated_at)
             self._sessions.pop(oldest, None)
+            with contextlib.suppress(ValueError):
+                self._order.remove(oldest)
         return session
 
     def _evict_expired(self, now: float) -> None:

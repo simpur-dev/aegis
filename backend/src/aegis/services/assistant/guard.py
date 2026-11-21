@@ -39,7 +39,12 @@ class WriteRateLimiter:
         return True
 
     def forget(self, key: str) -> None:
-        """会话被回收时一并丢掉计数，避免键随会话号无限增长。"""
+        """清掉一个键的计数。
+
+        注意键的语义：调用方按 **operator_id** 计数（`service._run_intent`），
+        所以这里的键不是会话号——会话回收**不应**清它（换会话的同一席位仍该
+        受频控约束）。此方法供席位停用流程与测试使用。
+        """
         self._hits.pop(key, None)
 
 
