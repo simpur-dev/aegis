@@ -16,7 +16,10 @@ from pathlib import Path
 import pytest
 from scripts.replay_rule_accuracy import (
     MIN_AUC_FOR_CALIBRATION,
+    attach_windows,
     auc,
+    holdout,
+    load_station_daily,
     main,
     sweep,
     verdict_for_sweep,
@@ -89,7 +92,8 @@ def test_main产出报告且带双闸口径(tmp_path: Path) -> None:
         for index in range(4):
             handle.write(json.dumps(_case(rain=float(index * 10), truth=index % 2 == 0), ensure_ascii=False) + "\n")
     out = tmp_path / "report.json"
-    assert main(["--cases", str(cases), "--out", str(out)]) == 0
+    # 站点日值显式指到不存在路径：单测不做真实文件依赖，累计窗口跑"跳过"分支
+    assert main(["--cases", str(cases), "--out", str(out), "--station-daily", str(tmp_path / "none.csv")]) == 0
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["cases"] == 4
     assert set(report["current_rules"]) == {"debris_flow"}
@@ -98,3 +102,87 @@ def test_main产出报告且带双闸口径(tmp_path: Path) -> None:
     # 这同时说明"反相关"也会被如实量出来（不是只挑好看的数看）
     assert report["separability_auc"]["debris_flow"] == pytest.approx(0.25)
     assert report["calibration_verdict"]["debris_flow"] == "not_supported_by_data"
+    assert "cumulative" not in report and "cumulative_note" in report
+
+
+def _daily(path: Path, rows: list[tuple[str, str, float | None]]) -> Path:
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("date,station_id,region_code,latitude,longitude,precip_mm\n")
+        for region, day, value in rows:
+            handle.write(f"{day},PR-{region}-01,{region},29.0,94.0,{'' if value is None else value}\n")
+    return path
+
+
+class TestCumulativeWindows:
+    def test_窗口跨月求和且缺测不按零计(self, tmp_path: Path) -> None:
+        daily = load_station_daily(
+            _daily(
+                tmp_path / "d.csv",
+                [
+                    ("540121", "2021-07-30", 10.0),
+                    ("540121", "2021-07-31", 5.0),
+                    ("540121", "2021-08-01", 2.0),
+                    ("540121", "2021-08-02", None),  # 缺测：不计 0，只少一天
+                ],
+            )
+        )
+        [row] = attach_windows([{**_case(2.0, True), "date": "2021-08-01"}], daily, windows=(3,))
+        # 3 日窗口 = 08-01 + 07-31 + 07-30 = 17.0（08-01 是当日）
+        assert row["rain_3d_mm"] == pytest.approx(17.0)
+        assert row["rain_3d_missing"] == 0
+
+        [row2] = attach_windows([{**_case(2.0, True), "date": "2021-08-02"}], daily, windows=(2,))
+        assert row2["rain_2d_mm"] == pytest.approx(2.0), "缺测日跳过，不把缺测当 0 也不整窗作废"
+        assert row2["rain_2d_missing"] == 1
+
+    def test_整窗缺测为None且扫描不把它当负样本(self) -> None:
+        cases = [
+            {
+                "case_id": "a",
+                "region_code": "540121",
+                "date": "2021-08-03",
+                "hazard_type": "debris_flow",
+                "rain_7d_mm": None,
+                "truth_warning": False,
+            }
+        ]
+        rows = sweep(cases, "debris_flow", value_key="rain_7d_mm")
+        assert all(row["fp"] == 0 for row in rows), "缺测样本不进任何一档"
+
+
+class TestHoldout:
+    @staticmethod
+    def _hcase(case_id: str, day: str, rain: float, truth: bool, region: str = "540121") -> dict:
+        return {
+            "case_id": case_id,
+            "region_code": region,
+            "date": day,
+            "hazard_type": "rockfall",
+            "rain_7d_mm": rain,
+            "truth_warning": truth,
+        }
+
+    def test_阈值在训练侧挑测试侧算(self) -> None:
+        """2020 训练/2021 测试：训练侧能分开的阈值，测试侧必须照样过 F1 闸（合成数据）。"""
+        cases = []
+        # 2020：正样本 100mm、负样本 0mm（训练侧可分）
+        for index in range(5):
+            cases.append(self._hcase(f"t{index}", f"2020-08-{index + 1:02d}", 100.0, True))
+            cases.append(self._hcase(f"n{index}", f"2020-09-{index + 1:02d}", 0.0, False))
+        # 2021：同样的可分结构（测试侧应能复现）
+        for index in range(5):
+            cases.append(self._hcase(f"t2{index}", f"2021-08-{index + 1:02d}", 100.0, True))
+            cases.append(self._hcase(f"n2{index}", f"2021-09-{index + 1:02d}", 0.0, False))
+        result = holdout(cases, "rockfall", "rain_7d_mm")["year_2020_train"]
+        assert result["threshold_mm"] > 0
+        assert result["f1"] == pytest.approx(1.0)
+        assert result["passes_f1_gate"] is True
+
+    def test_测试侧无正样本时如实标样本不足(self) -> None:
+        cases = [
+            self._hcase("t", "2020-08-01", 100.0, True),
+            self._hcase("n", "2020-09-01", 0.0, False),
+        ]
+        result = holdout(cases, "rockfall", "rain_7d_mm")["year_2020_train"]
+        # 2020 全在训练侧 → 测试侧只剩 0 条
+        assert result["status"] == "insufficient_samples"

@@ -26,17 +26,28 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from collections import defaultdict
+from collections.abc import Callable
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CASES = REPO_ROOT / "backend" / "data" / "replay" / "replay_cases.jsonl"
 DEFAULT_OUT = REPO_ROOT / "backend" / "data" / "replay" / "rule_accuracy_report.json"
+DEFAULT_STATION_DAILY = REPO_ROOT / "backend" / "data" / "precip" / "station_daily.csv"
 
 #: 候选阈值扫描网格（mm/日）。粗网格即可——目标是判"可标定/不可标定"，不是挑小数点。
 THRESHOLD_GRID = (1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 50.0, 80.0, 120.0)
+
+#: 累计窗口（日）。单日雨量与事件日近乎独立，但土壤含水量有记忆——水文上更合理的
+#: 先验是"前几天下了多少"。实测（2026-11-21，三县 2020–2021）：7 日累计 AUC 明显
+#: 高于单日，落石/滑坡在留出切分下 F1 提升仍过 1.25× 闸，泥石流过不了。
+CUMULATIVE_WINDOWS = (3, 7, 15)
+#: 累计量的候选阈值网格（mm/窗口）。比日雨网格更粗但上限更高（15 日累计可到 200mm+）。
+CUMULATIVE_THRESHOLD_GRID = tuple(float(v) for v in range(5, 205, 5))
 
 
 def load_cases(path: Path) -> list[dict[str, Any]]:
@@ -45,6 +56,45 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
         if line.strip():
             cases.append(json.loads(line))
     return cases
+
+
+def load_station_daily(path: Path) -> dict[tuple[str, str], float | None]:
+    """(region, 'YYYY-MM-DD') → 日降雨 mm；空值/坏值读成 None（缺测不是 0）。"""
+    daily: dict[tuple[str, str], float | None] = {}
+    with path.open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            raw = (row.get("precip_mm") or "").strip()
+            try:
+                value = float(raw) if raw else None
+            except ValueError:
+                value = None
+            daily[(row["region_code"], row["date"])] = value
+    return daily
+
+
+def attach_windows(
+    cases: list[dict[str, Any]],
+    daily: dict[tuple[str, str], float | None],
+    windows: tuple[int, ...] = CUMULATIVE_WINDOWS,
+) -> list[dict[str, Any]]:
+    """给每条样本加 `rain_{w}d_mm`：窗口内**已知日**求和，全缺测 → None。
+
+    缺测日不按 0 计（0mm 是合法读数，缺测不是"没下雨"）；代价是部分窗口只有几天有值，
+    所以报告里同时给每档的缺测样本数，读者能判断"这个 AUC 建在多少条上"。
+    窗口包含当日（当日 + 前 w-1 日）。
+    """
+    enriched: list[dict[str, Any]] = []
+    for case in cases:
+        row = dict(case)
+        day = date.fromisoformat(case["date"])
+        region = case["region_code"]
+        for window in windows:
+            known = [daily.get((region, (day - timedelta(days=offset)).isoformat())) for offset in range(window)]
+            values = [value for value in known if value is not None]
+            row[f"rain_{window}d_mm"] = sum(values) if values else None
+            row[f"rain_{window}d_missing"] = window - len(values)
+        enriched.append(row)
+    return enriched
 
 
 def auc(positives: list[float], negatives: list[float]) -> float:
@@ -61,14 +111,24 @@ def auc(positives: list[float], negatives: list[float]) -> float:
     return wins / (len(positives) * len(negatives))
 
 
-def sweep(cases: list[dict[str, Any]], hazard: str) -> list[dict[str, Any]]:
-    """单灾种的阈值扫描：`rain_mm >= t` 即报。返回每档的点指标。"""
-    subset = [c for c in cases if c["hazard_type"] == hazard]
+def sweep(
+    cases: list[dict[str, Any]],
+    hazard: str,
+    *,
+    value_key: str = "rain_mm",
+    grid: tuple[float, ...] = THRESHOLD_GRID,
+) -> list[dict[str, Any]]:
+    """单灾种的阈值扫描：`value_key >= t` 即报。返回每档的点指标。
+
+    `value_key is None` 的样本（缺测）不参与任何一档——既不进分母也不进分子，
+    否则"缺测"会被当成"没下雨"混进负样本。
+    """
+    subset = [c for c in cases if c["hazard_type"] == hazard and c.get(value_key) is not None]
     positives = sum(1 for c in subset if c["truth_warning"])
     rows: list[dict[str, Any]] = []
-    for threshold in THRESHOLD_GRID:
-        tp = sum(1 for c in subset if c["truth_warning"] and c["rain_mm"] >= threshold)
-        fp = sum(1 for c in subset if not c["truth_warning"] and c["rain_mm"] >= threshold)
+    for threshold in grid:
+        tp = sum(1 for c in subset if c["truth_warning"] and c[value_key] >= threshold)
+        fp = sum(1 for c in subset if not c["truth_warning"] and c[value_key] >= threshold)
         fn = positives - tp
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / positives if positives else 0.0
@@ -146,9 +206,10 @@ def verdict_for_sweep(rows: list[dict[str, Any]], positives: int, negatives: int
     """数据集是否支持降雨阈值标定：**AUC 与 F1 双闸**。
 
     朴素基线 = 永远报警：precision = 正样本占比，recall = 1.0。
-    实测意义（2026-11-21）：三县日降雨对事件日 AUC 0.47–0.55、最佳 F1 仅略高于基线——
-    结论是**这份数据不支持降雨阈值标定**（县域代理点日值与局地暴雨之间有尺度错配），
-    如实记录而不是把噪声阈值塞进规则库。
+    实测意义（2026-11-21 修正后）：三县**单日**降雨对事件日 AUC 0.58/0.64/0.64、
+    最佳阈值全部落在扫描网格下沿 2mm（信号只是"下没下雨"）→ 单日口径不支持标定。
+    **累计窗口是另一回事**：7 日累计 AUC 0.65–0.71，落石/滑坡过双闸、泥石流过不了
+    （见 `holdout` 的留出检查）——单日不成不代表这份数据没用，口径要说清。
     """
     if not rows or positives == 0 or negatives == 0:
         return "insufficient_samples"
@@ -162,10 +223,90 @@ def verdict_for_sweep(rows: list[dict[str, Any]], positives: int, negatives: int
     return "supported"
 
 
+def _metric_block(cases: list[dict[str, Any]], hazard: str, value_key: str) -> dict[str, Any]:
+    """单档（灾种 × 雨量口径）的 AUC/扫描/结论 + 有效样本数（缺测剔除后）。"""
+    subset = [c for c in cases if c["hazard_type"] == hazard and c.get(value_key) is not None]
+    positives = [c[value_key] for c in subset if c["truth_warning"]]
+    negatives = [c[value_key] for c in subset if not c["truth_warning"]]
+    grid = THRESHOLD_GRID if value_key == "rain_mm" else CUMULATIVE_THRESHOLD_GRID
+    rows = sweep(cases, hazard, value_key=value_key, grid=grid)
+    auc_value = round(auc(positives, negatives), 4)
+    best = max(rows, key=lambda row: row["f1"]) if rows else None
+    return {
+        "positives": len(positives),
+        "negatives": len(negatives),
+        "auc": auc_value,
+        "best": None
+        if best is None
+        else {
+            "threshold_mm": best["threshold_mm"],
+            "f1": best["f1"],
+            "precision": best["precision"],
+            "recall": best["recall"],
+        },
+        "verdict": verdict_for_sweep(rows, len(positives), len(negatives), auc_value),
+        "sweep": rows,
+    }
+
+
+#: 留出切分：阈值在训练侧挑、指标在测试侧算——同一批样本上挑阈值再自评会把
+#: "拟合噪声"读成"可标定"。两种切分各管一个混淆来源：年份（气候年际差异）与
+#: 区域（540221 占正样本 65%，留出它检验不是只学会了一个县的雨）。
+HOLDOUT_SPLITS: dict[str, Callable[[dict[str, Any]], bool]] = {
+    "year_2020_train": lambda case: case["date"][:4] == "2020",
+    "region_540221_holdout": lambda case: case["region_code"] != "540221",
+}
+
+
+def holdout(cases: list[dict[str, Any]], hazard: str, value_key: str) -> dict[str, Any]:
+    """阈值迁移检查：训练侧选最佳 F1 阈值，测试侧算 F1 与朴素基线的比值。"""
+    grid = THRESHOLD_GRID if value_key == "rain_mm" else CUMULATIVE_THRESHOLD_GRID
+    subset = [c for c in cases if c["hazard_type"] == hazard and c.get(value_key) is not None]
+    out: dict[str, Any] = {}
+    for name, is_train in HOLDOUT_SPLITS.items():
+        train = [c for c in subset if is_train(c)]
+        test = [c for c in subset if not is_train(c)]
+        train_rows = sweep(train, hazard, value_key=value_key, grid=grid)
+        if not train_rows:
+            out[name] = {"status": "insufficient_samples"}
+            continue
+        chosen = max(train_rows, key=lambda row: row["f1"])["threshold_mm"]
+        tp = sum(1 for c in test if c["truth_warning"] and c[value_key] >= chosen)
+        fp = sum(1 for c in test if not c["truth_warning"] and c[value_key] >= chosen)
+        positives = sum(1 for c in test if c["truth_warning"])
+        negatives = len(test) - positives
+        if positives == 0 or negatives == 0:
+            out[name] = {"status": "insufficient_samples", "threshold_mm": chosen}
+            continue
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / positives
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+        base_precision = positives / (positives + negatives)
+        base_f1 = 2 * base_precision / (base_precision + 1.0)
+        out[name] = {
+            "threshold_mm": chosen,
+            "test_positives": positives,
+            "test_negatives": negatives,
+            "precision": round(precision, 4),
+            "recall": round(recall, 4),
+            "f1": round(f1, 4),
+            "base_f1": round(base_f1, 4),
+            "f1_improvement": round(f1 / base_f1, 4) if base_f1 else None,
+            "passes_f1_gate": bool(base_f1 and f1 > base_f1 * MIN_F1_IMPROVEMENT),
+        }
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="规则准确率回放：历史真值 × 真实降雨")
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument(
+        "--station-daily",
+        type=Path,
+        default=DEFAULT_STATION_DAILY,
+        help="站点日降雨 CSV（缺省 backend/data/precip/station_daily.csv；不存在则跳过累计窗口）",
+    )
     args = parser.parse_args(argv)
 
     if not args.cases.exists():
@@ -176,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         by_hazard[case["hazard_type"]].append(case)
 
     report: dict[str, Any] = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "cases": len(cases),
         "note": "正样本=普查事件日；负样本=同县同月无该类事件日；仅日降雨可用（无传感器量）",
         "threshold_grid_mm": list(THRESHOLD_GRID),
@@ -186,14 +327,25 @@ def main(argv: list[str] | None = None) -> int:
         "separability_auc": {},
         "calibration_verdict": {},
     }
-    for hazard, subset in sorted(by_hazard.items()):
-        positives = [c["rain_mm"] for c in subset if c["truth_warning"]]
-        negatives = [c["rain_mm"] for c in subset if not c["truth_warning"]]
-        rows = sweep(cases, hazard)
-        auc_value = round(auc(positives, negatives), 4)
-        report["sweeps"][hazard] = rows
-        report["separability_auc"][hazard] = auc_value
-        report["calibration_verdict"][hazard] = verdict_for_sweep(rows, len(positives), len(negatives), auc_value)
+    for hazard in sorted(by_hazard):
+        block = _metric_block(cases, hazard, "rain_mm")
+        report["sweeps"][hazard] = block["sweep"]
+        report["separability_auc"][hazard] = block["auc"]
+        report["calibration_verdict"][hazard] = block["verdict"]
+
+    if args.station_daily.exists():
+        enriched = attach_windows(cases, load_station_daily(args.station_daily))
+        report["cumulative_windows"] = list(CUMULATIVE_WINDOWS)
+        report["cumulative"] = {}
+        for window in CUMULATIVE_WINDOWS:
+            key = f"rain_{window}d_mm"
+            report["cumulative"][f"{window}d"] = {hazard: _metric_block(enriched, hazard, key) for hazard in sorted(by_hazard)}
+        report["holdout"] = {
+            f"{window}d": {hazard: holdout(enriched, hazard, f"rain_{window}d_mm") for hazard in sorted(by_hazard)}
+            for window in CUMULATIVE_WINDOWS
+        }
+    else:
+        report["cumulative_note"] = f"站点日值不存在（{args.station_daily}），累计窗口评测跳过"
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -202,13 +354,24 @@ def main(argv: list[str] | None = None) -> int:
     print("\n现行规则（仅日降雨可得）:")
     for hazard, stat in report["current_rules"].items():
         print(f"  {hazard}: 正样本 {stat['positives']} 命中 {stat['tp']} | recall={stat['recall']} precision={stat['precision']}")
-    print("\n可分性与标定结论:")
+    print("\n可分性与标定结论（单日）:")
     for hazard in sorted(by_hazard):
         best = max(report["sweeps"][hazard], key=lambda row: row["f1"])
         print(
             f"  {hazard}: AUC={report['separability_auc'][hazard]} | 最佳阈值 {best['threshold_mm']}mm "
             f"F1={best['f1']} | 结论={report['calibration_verdict'][hazard]}"
         )
+    if "cumulative" in report:
+        print("\n累计窗口与留出检查（训练侧挑阈值、测试侧算指标）:")
+        for window, block in report["cumulative"].items():
+            for hazard, stat in block.items():
+                holds = report["holdout"][window][hazard]
+                hold_txt = "；".join(
+                    f"{name} 阈值 {item['threshold_mm']}mm F1={item['f1']} ({item.get('f1_improvement')}×)"
+                    for name, item in holds.items()
+                    if item.get("f1") is not None
+                )
+                print(f"  {window} {hazard}: AUC={stat['auc']} N={stat['negatives']} 结论={stat['verdict']} | 留出：{hold_txt}")
     return 0
 
 
