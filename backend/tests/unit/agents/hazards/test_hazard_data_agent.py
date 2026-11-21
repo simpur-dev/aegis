@@ -436,8 +436,20 @@ class TestHistoryIsContextOnly:
         evidence = {
             "region_code": "540121",
             "observations": [
-                {"factor": "history_dominant_hazard", "class_value": "泥石流", "samples": 1, "quality": "site", "observed_at": "2026-11-21T00:00:00Z"},
-                {"factor": "history_debris_flow_events_10y", "max_value": 39.0, "samples": 1, "quality": "site", "observed_at": "2026-11-21T00:00:00Z"},
+                {
+                    "factor": "history_dominant_hazard",
+                    "class_value": "泥石流",
+                    "samples": 1,
+                    "quality": "site",
+                    "observed_at": "2026-11-21T00:00:00Z",
+                },
+                {
+                    "factor": "history_debris_flow_events_10y",
+                    "max_value": 39.0,
+                    "samples": 1,
+                    "quality": "site",
+                    "observed_at": "2026-11-21T00:00:00Z",
+                },
             ],
         }
         report = evidence_quality_tool(evidence, region_code="540121")
@@ -451,7 +463,13 @@ class TestHistoryIsContextOnly:
             "region_code": "540121",
             "observations": [
                 {"factor": "rainfall_mm_h", "max_value": 55.0, "samples": 3, "quality": "ok", "observed_at": "2026-11-21T00:00:00Z"},
-                {"factor": "history_dominant_hazard", "class_value": "泥石流", "samples": 1, "quality": "site", "observed_at": "2026-11-21T00:00:00Z"},
+                {
+                    "factor": "history_dominant_hazard",
+                    "class_value": "泥石流",
+                    "samples": 1,
+                    "quality": "site",
+                    "observed_at": "2026-11-21T00:00:00Z",
+                },
             ],
         }
         report = evidence_quality_tool(evidence, region_code="540121")
