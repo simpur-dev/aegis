@@ -82,6 +82,8 @@ backend/.tmp-verify/
 /.tmp-verify/
 # 取数暂存（外部数据 --refresh --source 的下载落点）：数据本体在 data/external/，暂存不入库
 /.tmp-data/
+# 联测/演练响应产物（curl -o 落盘）：证据只看不提交
+backend/drill_*.json
 
 # 本地部署/巡检留档（容器日志、页面截图、一次性 CDP 探针脚本）：只在本地当证据，不入库
 .deploy-logs/

@@ -81,6 +81,10 @@ _INTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("rule.reject_suggestion", ("驳回阈值建议", "驳回建议", "拒绝建议")),
     ("rule.update", ("改阈值", "修改阈值", "调整阈值")),
     ("device.control", ("设备控制", "打开阀门", "关闭阀门", "下发设备指令")),
+    # 历史画像：问"这个县历史上什么灾害多"——必须排在单灾种/预警规则之前命中
+    # （"近十年哪种灾害最多"里没有 warning 关键词，但"历史上发过几次泥石流"会撞 warning.list，
+    # 所以把它放在前面且关键词足够独特）。
+    ("history.query", ("历史灾害", "历史上发过", "近十年", "近10年", "灾害构成", "哪种灾害最多", "哪种灾害多", "历史画像")),
     ("warning.explain", ("为什么", "依据", "凭什么", "解释", "怎么定的")),
     ("chain.explain", ("链路追踪", "谁判的", "每段耗时", "段时延")),
     ("metric.report", ("指标", "时延", "成功率", "sla", "p95", "违约")),
@@ -378,6 +382,9 @@ class IntentClassifier:
             args["task_unit_id"] = task.group()
         if action == "action.status" and (found := _ACTION_ID_RE.search(text)):
             args["action_id"] = found.group()
+        # 区域码：先取句中显式 6 位区划，没有就用会话/请求带的 region_code。
+        if action == "history.query" and (region := extract_region(text, default=region_code)):
+            args["region_code"] = region
         if action in {"notify.lead", "notify.group"}:
             args["message"] = text[:500]
         if action == "notify.group":

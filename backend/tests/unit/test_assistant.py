@@ -24,6 +24,7 @@ from aegis.services.assistant.actions.query import (
     AgentList,
     ChainExplain,
     ChainList,
+    HistoryQuery,
     MetricReport,
     PlanAsk,
     StationList,
@@ -147,7 +148,27 @@ class FakeGateway:
     counters: ClassVar[dict[str, int]] = {"published": 0}
 
 
-def build_registry(rec: Recorder) -> ActionRegistry:
+class FakeHistoryStore:
+    """site_profile 读面的替身：只支撑 history.query 的 get_site_profile。
+
+    历史属性形状与 `build_region_profiles.py` 产物一致（key 前缀 history_、
+    数值/类别混合），口径限定由动作自己拼——替身不替它编文案。
+    """
+
+    def __init__(self, history: dict[str, Any] | None = None) -> None:
+        self._history = dict(history or {})
+
+    async def get_site_profile(self, region_code: str) -> Any:
+        """真 store 的 get_site_profile 是 async（动作里 await 它）——替身同签名。"""
+        from types import SimpleNamespace
+
+        if not self._history:
+            return None
+        attributes = [SimpleNamespace(key=key, value=value) for key, value in self._history.items()]
+        return SimpleNamespace(region_code=region_code, attributes=attributes)
+
+
+def build_registry(rec: Recorder, history: dict[str, Any] | None = None) -> ActionRegistry:
     async def run_drill(*, scenario: str = "surge", ticks: int = 2, region_code: str | None = None) -> dict[str, Any]:
         rec.calls.append(f"run_drill:{scenario}:{ticks}:{region_code}")
         return {"chains": [], "regions": 1}
@@ -169,6 +190,7 @@ def build_registry(rec: Recorder) -> ActionRegistry:
     actions = [
         WarningList(warnings),
         WarningExplain(warnings, chains),
+        HistoryQuery(FakeHistoryStore(history)),
         ChainList(chains),
         ChainExplain(chains),
         TaskList(tasks),
@@ -253,10 +275,11 @@ def build_service(
     llm: Any | None = None,
     registry: ActionRegistry | None = None,
     store: PlatformStore | None = None,
+    history: dict[str, Any] | None = None,
     **overrides: Any,
 ) -> AssistantService:
     return AssistantService(
-        registry=registry or build_registry(rec or Recorder()),
+        registry=registry or build_registry(rec or Recorder(), history),
         llm=llm,
         settings=settings(**overrides),
         # 写动作要落动作台账；内存实现与 SQL 版同一套状态机，只是重启即失
@@ -927,6 +950,18 @@ async def test_超出六十秒撤销窗口如实拒绝() -> None:
 
 
 # ---------- 认知镜像与不编数 ----------
+
+
+@pytest.mark.asyncio
+async def test_历史画像问答给的是数据集事实且带口径限定() -> None:
+    """助手复用研判同一份先验：答案来自 site_profile 的 history_* 属性，
+    且口径限定（公路沿线台账、先验不抬等级）必须随答案出现——不能读成全县普查。"""
+    rec = Recorder()
+    service = build_service(rec, history={"history_debris_flow_events_10y": 39.0, "history_dominant_hazard": "泥石流"})
+    events = await collect(service, "540121 近十年哪种灾害最多", reporter="值班员", operator=DUTY)
+    answer = next(event for event in events if event.type == "answer")
+    assert "39" in answer.data["text"] and "泥石流" in answer.data["text"]
+    assert "公路沿线台账" in answer.data["text"], "口径限定必须随答案出现"
 
 
 @pytest.mark.asyncio

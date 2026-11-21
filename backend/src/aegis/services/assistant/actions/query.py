@@ -75,6 +75,14 @@ class WarningExplainParams(BaseModel):
     warning_id: str = Field(pattern=_WARNING_ID)
 
 
+class HistoryQueryParams(BaseModel):
+    """区域历史灾害画像查询：区域码可选（缺省问全部已入库区域）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    region_code: str | None = Field(default=None, pattern=_REGION)
+
+
 class ChainListParams(_Limit):
     pass
 
@@ -192,6 +200,46 @@ class WarningExplain(Action):
         return ActionResult(
             data={"warning_id": params.warning_id, "found": True, "facts": facts, "text": facts},
             summary=facts,
+        )
+
+
+class HistoryQuery(Action):
+    """区域历史灾害画像（外部公开数据集聚合）——问答侧复用研判同一份先验。
+
+    数据来自 `scripts/build_region_profiles.py` 聚合的 10 年公路台账统计（CC BY-NC，
+    运行态目录），与研判证据包里的 `history_*` 观测同源：值班员问"这个县近十年什么
+    灾害最多"时，助手给的是**同一份事实**，不是模型记忆。普查是公路沿线台账，
+    不是全县面普查——summary 里如实带这句限定。
+    """
+
+    spec = ActionSpec(
+        name="history.query",
+        title="查询区域历史灾害画像",
+        domain=ActionDomain.QUERY,
+        required_role=OperatorRole.DUTY,
+        params=HistoryQueryParams,
+        example="540121 近十年哪种灾害最多",
+    )
+
+    def __init__(self, store: Any) -> None:
+        self._store = store
+
+    async def execute(self, targets: ResolvedTargets, params: BaseModel, ctx: ActionContext) -> ActionResult:
+        assert isinstance(params, HistoryQueryParams)
+        wanted = params.region_code
+        if wanted is None:
+            return ActionResult(data={"found": False, "note": "需要区域码才能查历史画像（如 540121）"})
+        profile = await self._store.get_site_profile(wanted) if hasattr(self._store, "get_site_profile") else None
+        if profile is None:
+            return ActionResult(data={"region_code": wanted, "found": False, "note": "该区域没有历史画像（未聚合或数据集未覆盖）"})
+        history = {attribute.key: attribute.value for attribute in profile.attributes if attribute.key.startswith("history_")}
+        if not history:
+            return ActionResult(data={"region_code": wanted, "found": False, "note": "该区域画像不含历史统计"})
+        facts = "；".join(f"{key.removeprefix('history_')}={value}" for key, value in history.items())
+        note = "统计口径：公路沿线台账（非全县面覆盖），先验参考，不据此抬升风险等级"
+        return ActionResult(
+            data={"region_code": wanted, "found": True, "history": history, "note": note, "facts": facts},
+            summary=f"{wanted} 历史灾害画像：{facts}（{note}）",
         )
 
 

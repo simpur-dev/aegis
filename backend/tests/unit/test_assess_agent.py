@@ -57,6 +57,7 @@ def _assess_vars() -> dict[str, str]:
         "hits": "R-DEBRIS-RAIN-1",
         "hazards": "、".join(str(item.value) for item in HazardType),
         "context": "",
+        "history": "",
         "arbitration": "",
     }
 
@@ -132,6 +133,93 @@ def verdict(level: int, *, confidence: float = 0.8, rationale: str = "强降雨�
     return AssessVerdict(
         risk_level=level, hazard_type="debris_flow", confidence=confidence, rationale=rationale, evidence_refs=["R-DEBRIS-RAIN-1"]
     )
+
+
+class TestHistoryGrounding:
+    """历史画像（外部数据集聚合）进证据包 → 提示词：先验只校准、季节偏离必须如实写明。
+
+    数据集不能只"在库"：这一组钉住它真的走到了 LLM 输入侧，且确定性信号（季节偏离）
+    由平台算，不让模型自己做月份算术（rationale 里的数字必须可溯源）。
+    """
+
+    @staticmethod
+    def _obs(key: str, *, value: float | None = None, cls: str | None = None):
+        from aegis.domain.assess import FactorObservation
+
+        return FactorObservation(
+            factor=key,
+            unit="",
+            samples=1,
+            max_value=value,
+            class_value=cls,
+            observed_at="2026-11-21T00:00:00Z",
+            quality="site",
+            sources=["site_profile:sciencedb-road-census"],
+        )
+
+    def test_季节偏离按环形距离算(self) -> None:
+        from aegis.agents.assess import AssessAgent
+
+        observations = [self._obs("history_peak_month", cls="8月")]
+        assert "3 个月" in AssessAgent._seasonal_deviation(observations, "2026-11-21T08:00:00Z")
+        assert AssessAgent._seasonal_deviation(observations, "2026-08-15T08:00:00Z") == "", "当季不提示偏离"
+        # 环形距离：12 月与 1 月差 1 个月，不算偏离
+        assert AssessAgent._seasonal_deviation([self._obs("history_peak_month", cls="12月")], "2026-01-15T08:00:00Z") == ""
+        # 读不出高发月时静默（不臆造偏离）
+        assert AssessAgent._seasonal_deviation([self._obs("history_x", value=1.0)], "2026-11-21T08:00:00Z") == ""
+
+    def test_历史观测压成提示词块且带季节提示(self) -> None:
+        """_prompt_vars 收到 history 块后原样进模板变量（过注入围栏），空块不留痕。"""
+        from aegis.agents.assess import AssessAgent
+
+        agent = AssessAgent.__new__(AssessAgent)  # 只测纯函数，不建总线依赖
+        vars_with = agent._prompt_vars(region="540121", hits=[], ctx={}, history="历史画像：history_peak_month=8月")
+        assert "历史画像：history_peak_month=8月" in vars_with["history"]
+        vars_without = agent._prompt_vars(region="540121", hits=[], ctx={})
+        assert vars_without["history"] == "", "没有画像时提示词不该出现空标签"
+
+
+class TestHistoryGroundingEndToEnd:
+    """离线端到端：真 SiteProfile → AssessEvidenceBuilder 证据包 → AssessAgent 组装提示词。
+
+    比"纯函数单测"更强的一层：历史画像如果在证据构建这一跳折掉（key 形状、quality、
+    上限截断），LLM 永远拿不到——这条用例盯的就是那一跳。真实 LLM 的 rationale 引用
+    （PG 形态实测："历史画像显示该区以泥石流为主导灾种（10年39次、峰值8月）"）由联测覆盖。
+    """
+
+    @pytest.mark.asyncio
+    async def test_历史画像经证据包进入实际发送的提示词(self) -> None:
+        from aegis.domain.site import SiteAttribute, SiteProfile
+        from aegis.pipeline.assess_input import AssessEvidenceBuilder
+        from aegis.storage.store import PlatformStore
+
+        store = PlatformStore()
+        store.site_profiles.upsert(
+            SiteProfile(
+                region_code="540121",
+                name="540121 历史灾害画像（数据集聚合）",
+                hazard_types=[HazardType.DEBRIS_FLOW],
+                attributes=[
+                    SiteAttribute(key="history_debris_flow_events_10y", value=39.0, unit="起", source="sciencedb-road-census"),
+                    SiteAttribute(key="history_dominant_hazard", value="泥石流", source="sciencedb-road-census"),
+                    SiteAttribute(key="history_peak_month", value="8月", source="sciencedb-road-census"),
+                ],
+            )
+        )
+        builder = AssessEvidenceBuilder(store, window_minutes=60)
+        evidence = await builder.build(region="540121", hits=[], readings=[], intake="telemetry")
+
+        a, gw = agent(verdict(1))
+        request = _request()
+        request.payload["evidence"] = evidence.model_dump(mode="json")
+        await a.handle(request)
+
+        sent = gw.calls[0]["prompt_vars"]
+        history = sent["history"]
+        assert "history_debris_flow_events_10y=39.0" in history
+        assert "history_dominant_hazard=泥石流" in history
+        # 季节偏离由平台确定性算（当前月份来自证据 generated_at，不是模型推测）
+        assert "季节提示" in history and "8 月" in history
 
 
 class TestHazardEnum:

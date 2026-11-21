@@ -82,6 +82,7 @@ from aegis.services.assistant.actions.query import (
     AgentList,
     ChainExplain,
     ChainList,
+    HistoryQuery,
     MetricReport,
     PlanAsk,
     StationList,
@@ -1123,6 +1124,7 @@ def _build_assistant_registry(
     actions: list[Action] = [
         WarningList(store.warnings),
         WarningExplain(store.warnings, store),
+        HistoryQuery(store),
         ChainList(store.chains),
         ChainExplain(store),
         TaskList(store.tasks),

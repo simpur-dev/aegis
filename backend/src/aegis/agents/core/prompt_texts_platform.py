@@ -15,15 +15,21 @@ from aegis.agents.core.prompts import PromptTemplate
 PLATFORM_TEMPLATES: list[PromptTemplate] = [
     PromptTemplate(
         task="assess",
-        version="1.1.0",
+        version="1.3.0",
         system=(
             "你是山地灾害风险研判专家。只输出一个 JSON 对象，字段为 risk_level(整数1-5，1最重5最轻)、"
             "hazard_type、confidence(0-1)、rationale(中文，引用佐证不臆造数字)、evidence_refs(字符串数组)。"
             "禁止发明任何未出现在佐证里的数字。"
+            "若佐证含历史灾害画像（history_*，公路台账统计）：它是该区域的灾害构成先验——"
+            "用于校准对灾种倾向与季节性的判断，但先验不是本次观测证据，"
+            "不得仅凭历史频次抬高风险等级；实时读数与阈值命中始终优先于历史统计。"
+            "若画像含季节提示（当前月份偏离历史高发月），必须在 rationale 里如实写明这一偏离，"
+            "不得隐去；偏离意味着当季风险基线较低，高等级需要更强的实时证据。"
         ),
         # 灾种枚举要逐字给全：只写字段名时模型按中文描述回答（"暴雨诱发山洪、泥石流及滑坡"），
         # schema 现在会拒它——不在提示词里给清单，这条研判腿就结构上不可能成功（同 plan 那条的教训）。
-        user="区域：{region}\n触发命中：{hits}\n灾种（逐字取其一，勿用中文名称）：{hazards}\n{context}{arbitration}",
+        # {history}：区域历史画像块（assess.py 从证据包 history_* 观测聚合；空块时模型只看到占位之外的普通文本）。
+        user="区域：{region}\n触发命中：{hits}\n灾种（逐字取其一，勿用中文名称）：{hazards}\n{context}{history}{arbitration}",
     ),
     PromptTemplate(
         task="plan",

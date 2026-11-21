@@ -438,13 +438,42 @@ class TestModelInfo:
             schema=Verdict,
             task="assess",
             prompt_key="assess",
-            prompt_vars={"region": "540121", "hits": "R-1", "hazards": "debris_flow、landslide", "context": "", "arbitration": ""},
+            prompt_vars={
+                "region": "540121",
+                "hits": "R-1",
+                "hazards": "debris_flow、landslide",
+                "context": "",
+                "history": "",
+                "arbitration": "",
+            },
         )
         sent = calls.calls[0]["messages"]
         assert sent[0]["role"] == "system" and "研判" in sent[0]["content"]
         assert sent[1]["content"] == "区域：540121\n触发命中：R-1\n灾种（逐字取其一，勿用中文名称）：debris_flow、landslide\n"
         # 版本号来自注册表且随实际发送的提示词写入台账（可复现的前提，§4.1.6/D10）。
-        assert g.usage_records()[-1].prompt_version == "1.1.0"
+        assert g.usage_records()[-1].prompt_version == "1.3.0"
+
+    async def test_prompt_key_renders_history_block_when_provided(self) -> None:
+        """历史画像块（数据集聚合的先验）必须真实进提示词——它只增强上下文，
+        不改确定性算法；system 里的使用指引（不得据此抬等级）与 {history} 占位同源。"""
+        g, calls = gw('{"level": 3, "region": "540121", "confidence": 0.7}')
+        await g.chat_structured(
+            [],
+            schema=Verdict,
+            task="assess",
+            prompt_key="assess",
+            prompt_vars={
+                "region": "540121",
+                "hits": "R-1",
+                "hazards": "debris_flow",
+                "context": "",
+                "history": "该区域历史灾害画像（公路台账统计，先验非实时证据）：history_dominant_hazard=泥石流",
+                "arbitration": "",
+            },
+        )
+        sent = calls.calls[0]["messages"]
+        assert "history_dominant_hazard=泥石流" in sent[1]["content"]
+        assert "先验" in sent[0]["content"], "system 必须写明'先验不是证据'"
 
 
 class TestUnconfigured:
@@ -460,7 +489,7 @@ class TestUnconfigured:
 class TestPromptRegistry:
     def test_builtin_seeds_migrated_prompts(self) -> None:
         reg = PromptRegistry.builtin()
-        assert reg.version_for_task("assess") == "1.1.0"  # 灾种枚举进提示词 → 正文变了就得换版本号
+        assert reg.version_for_task("assess") == "1.3.0"  # 历史画像块进提示词 → 正文变了就得换版本号
         assert reg.version_for_task("plan") == "1.1.0"  # 白名单进提示词 → 正文变了就得换版本号
         assert reg.version_for_task("feedback") == "1.0.0"
         assert reg.version_for_task("execute") == "1.0.0"  # 三分支文案已迁入版本化真源
@@ -471,7 +500,7 @@ class TestPromptRegistry:
 
     def test_build_and_version(self) -> None:
         reg = PromptRegistry([PromptTemplate(task="assess", version="1.2.0", system="研判", user="区域 {region}")])
-        assert reg.version_for_task("assess") == "1.2.0"
+        assert reg.version_for_task("assess") == "1.2.0"  # 自建注册表：版本号来自这条临时模板，不跟内置真源
         msgs, version = reg.build("assess", region="540121")
         assert version == "1.2.0"
         assert msgs == [{"role": "system", "content": "研判"}, {"role": "user", "content": "区域 540121"}]

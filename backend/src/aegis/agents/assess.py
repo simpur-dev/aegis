@@ -185,6 +185,7 @@ class AssessAgent(AgentKit):
         region: str,
         hits: list[Any],
         ctx: dict[str, Any],
+        history: str = "",
     ) -> tuple[AssessVerdict, bool | None, str]:
         """两腿都在：一致则上调置信，分歧则第三 call 仲裁（两份 rationale 并入）；仲裁失败也只在增强腿内收口。"""
         if int(second.risk_level) == int(first.risk_level):
@@ -194,7 +195,7 @@ class AssessAgent(AgentKit):
             # 分歧已经发生却没时间仲裁：取更保守（等级更高=数字更小）的一条，并留痕
             conservative = first if int(first.risk_level) <= int(second.risk_level) else second
             return conservative, True, "arbitrated_skipped_budget"
-        arb_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, divergence=(first, second))
+        arb_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, divergence=(first, second), history=history)
         try:
             arb, _ = await self._grade(task="arbitration", base_vars=arb_vars, request=request)
         except Exception as exc:
@@ -244,7 +245,21 @@ class AssessAgent(AgentKit):
             except Exception as exc:
                 log.warning("assess 历史研判召回降级", extra={"err": type(exc).__name__})
 
-        base_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx)
+        # 历史画像块：证据包里 history_ 前缀的 site 观测（外部公开数据集聚合，
+        # quality=site）。它是**先验**不是实时观测——提示词指引"参考构成、不得据此抬等级"。
+        history_block = ""
+        if req.evidence is not None:
+            history_observations = [obs for obs in req.evidence.observations if obs.factor.startswith("history_")]
+            history_lines = [
+                f"{obs.factor}={obs.max_value if obs.max_value is not None else obs.class_value}" for obs in history_observations
+            ]
+            if history_lines:
+                history_block = "该区域历史灾害画像（公路台账统计，先验非实时证据）：" + "；".join(history_lines)
+                # 季节偏离：确定性信号，由画像的 peak_month 与当前月份算（不让模型自己做月份算术）。
+                season = self._seasonal_deviation(history_observations, req.evidence.generated_at)
+                if season:
+                    history_block += f"；季节提示：{season}"
+        base_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, history=history_block)
         # §3.2 要求"并行第二评估"，但"要不要第二腿"的触发条件（初始定级 ≤2）长在模型的第一份结论上——
         # 那是第二腿发车之前拿不到的东西。所以并行只在**规则轨已经报了红/橙**时预触发：`rule_level` 是
         # 平台在 dispatch 之前就算好的事实，拿它当预触发不引入新阈值，也不参与判定（结论的出处仍然只有
@@ -317,6 +332,7 @@ class AssessAgent(AgentKit):
                     region=region,
                     hits=hits,
                     ctx=ctx,
+                    history=history_block,
                 )
 
         # §3.2 双盲状态如实留痕：agreed / arbitrated / skipped_deadline / skipped_budget /
@@ -392,7 +408,13 @@ class AssessAgent(AgentKit):
         return ModelInfo(model=info.get("model"), prompt_version=info.get("prompt_version"))
 
     def _prompt_vars(
-        self, *, region: str, hits: list[Any], ctx: dict[str, Any], divergence: tuple[AssessVerdict, AssessVerdict] | None = None
+        self,
+        *,
+        region: str,
+        hits: list[Any],
+        ctx: dict[str, Any],
+        divergence: tuple[AssessVerdict, AssessVerdict] | None = None,
+        history: str = "",
     ) -> dict[str, str]:
         """把上下文压成 PromptRegistry `assess` 模板的填充变量（正文单一真源在注册表，§4.1.6）。"""
         context = "".join(f"{label} 佐证：{ctx[label]}\n" for label in ("retrieval", "cases", "graph", "memory") if ctx.get(label))
@@ -411,7 +433,33 @@ class AssessAgent(AgentKit):
             "hits": fence_untrusted("触发命中", str(list(hits)[:8])),
             "context": fence_untrusted("外部佐证", context) if context else "",
             "arbitration": fence_untrusted("分歧", arbitration) if arbitration else "",
+            "history": fence_untrusted("历史画像", history) if history else "",
         }
+
+    @staticmethod
+    def _seasonal_deviation(observations: list[Any], generated_at: str) -> str:
+        """ "当前月份 vs 历史高发月"的确定性偏离提示（空串 = 无偏离或读不出）。
+
+        为什么不让模型自己算：份数算术是确定性事实，模型算月份差会出错（且 rationale 里的
+        数字必须可溯源）。历史高发月取自数据集聚合的 `history_peak_month`（形如 "8月"）；
+        偏离 ≥2 个月时提示"当季风险基线较低，需更多实时证据支撑高等级"。
+        """
+        peak_raw = next((str(obs.class_value or "") for obs in observations if obs.factor == "history_peak_month"), "")
+        digits = "".join(ch for ch in peak_raw if ch.isdigit())
+        if not digits:
+            return ""
+        try:
+            peak_month = int(digits)
+            current_month = int(generated_at[5:7])
+        except (ValueError, IndexError):
+            return ""
+        if not 1 <= peak_month <= 12 or not 1 <= current_month <= 12:
+            return ""
+        # 环形距离：12 月与 1 月只差 1 个月
+        distance = min(abs(current_month - peak_month), 12 - abs(current_month - peak_month))
+        if distance < 2:
+            return ""
+        return f"当前 {current_month} 月距历史高发月（{peak_month} 月）{distance} 个月，当季风险基线较低，需要更多实时证据支撑高等级"
 
     @staticmethod
     def _first_hazard(hits: list[Any]) -> str | None:
