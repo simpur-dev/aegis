@@ -240,6 +240,23 @@ class TpdcFtpChannel(Channel):
 # --------------------------------------------------------------------- 校验与清单
 
 
+def _netcdf_intact(path: Path) -> bool:
+    """NetCDF-4 = HDF5 容器：h5py 能打开（读出根属性）才算完整。
+
+    sha256 只证明"这批字节就是那批字节"，证明不了字节全——截断文件同样有稳定
+    哈希。skip_existing 的 skip 判据必须是**结构完整**，否则断连残留会被当真值
+    入清单。h5py 在 [precip] extra（派生脚本同依赖），缺 extra 时退回 False
+    （宁可重下，不签发损坏证书）。"""
+    try:
+        import h5py
+
+        with h5py.File(path, "r") as handle:
+            _ = handle.attrs
+        return True
+    except Exception:
+        return False
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -304,10 +321,15 @@ def fetch_all(
     channel_list = list(channels)
     for artifact in artifacts:
         path = dest / artifact.dest_rel
-        if skip_existing and path.exists():
+        if skip_existing and path.exists() and _netcdf_intact(path):
             digests[artifact.dest_rel] = sha256_file(path)
             print(f"[skip] {artifact.dest_rel}（已在盘，{_human(path.stat().st_size)}）", flush=True)
             continue
+        if skip_existing and path.exists():
+            # 已在盘但 HDF5 结构校验不过 = 上次取件中途断连的截断文件。**不能**按
+            # sha256 记入清单（那是给损坏数据发真值证书）；不跳过，让通道按 REST
+            # 断点续传从已有字节继续（2026-11-21 实测：2023.nc 断在 115MB 被跳过）。
+            print(f"[redo] {artifact.dest_rel}（盘上文件不完整，{_human(path.stat().st_size)}，断点续传）", flush=True)
         last_error: Exception | None = None
         for channel in channel_list:
             progress: Callable[[int], None] | None = None

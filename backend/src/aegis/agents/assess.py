@@ -117,6 +117,11 @@ class AssessAgent(AgentKit):
         台账在真实网关上是一个方法（`LlmGateway.usage_records()`）。按属性读会拿到绑定方法，
         迭代它就是 TypeError——而这条路径只在规则轨报红/橙时才走，恰好把最该研判的事件打回本地轨。
         """
+        # 新形态：网关维护 per-task 尾窗 p50（O(1) 读，见 LlmGateway.latency_p50_for_task）
+        tail = getattr(self.llm, "latency_p50_for_task", None)
+        if callable(tail):
+            return float(tail("assess"))
+        # 旧形态回退（假网关/未接统计）：全量扫台账（兼容保留，量级由调用方承担）
         ledger = getattr(self.llm, "usage_records", None)
         records = ledger() if callable(ledger) else []
         latencies = sorted(float(record.latency_ms) for record in records if getattr(record, "task", "") == "assess")

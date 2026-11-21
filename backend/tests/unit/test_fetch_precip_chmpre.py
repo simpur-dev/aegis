@@ -26,13 +26,27 @@ from scripts.fetch_precip_chmpre import (
 )
 
 
+def _minimal_hdf5() -> bytes:
+    """h5py 产出一个能打开的最小 HDF5 文件字节。"""
+    import io
+
+    import h5py
+
+    buffer = io.BytesIO()
+    with h5py.File(buffer, "w") as handle:
+        handle.attrs["aegis_test"] = True
+    return buffer.getvalue()
+
+
 class _FakeChannel(Channel):
     """替身通道：按内容写盘，并记录被取了几次。"""
 
     name = "fake"
 
-    def __init__(self, payload: bytes = b"precip-payload", *, fail: bool = False) -> None:
-        self.payload = payload
+    def __init__(self, payload: bytes | None = None, *, fail: bool = False) -> None:
+        # 默认 payload 用**最小合法 HDF5**：skip_existing 的判据是 h5py 结构完整，
+        # 替身写出来的"已在盘"文件也必须过这道闸（否则幂等语义测不了）。
+        self.payload = payload if payload is not None else _minimal_hdf5()
         self.fail = fail
         self.calls: list[str] = []
 
@@ -89,7 +103,15 @@ def test_已在盘的文件不重取(tmp_path: Path) -> None:
 
     second = _FakeChannel()
     fetch_all(tmp_path, artifacts, [second])
-    assert second.calls == [], "幂等：已在盘的文件不该重取"
+    assert second.calls == [], "幂等：已在盘**且结构完整**的文件不该重取"
+
+    # 截断文件（上次断连的残留）不得按 sha256 记入清单——h5py 打不开就重下
+    magic_head = bytes([0x89]) + b"HDF" + bytes([0x0D, 0x0A, 0x1A, 0x0A])
+    truncated_bytes = magic_head + b"truncated"
+    (tmp_path / "annual" / "CHM_PRE_V2_annual.nc").write_bytes(truncated_bytes)
+    third = _FakeChannel()
+    fetch_all(tmp_path, artifacts, [third])
+    assert third.calls == ["annual/CHM_PRE_V2_annual.nc"], "截断残留必须重取（不能给损坏数据发真值证书）"
 
 
 def test_force_可以强制重取(tmp_path: Path) -> None:

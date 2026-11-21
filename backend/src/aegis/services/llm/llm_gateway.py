@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, TypeVar
 
@@ -54,6 +55,11 @@ class LlmUnavailableError(AegisError):
 
 class MalformedLlmOutputError(AegisError):
     code = ErrorCode.INTERNAL
+
+
+#: per-task 尾窗统计的窗口与 p50 重算间隔（见 _record）
+_TASK_TAIL_SIZE = 500
+_P50_RECALC_EVERY = 64
 
 
 class LlmGateway:
@@ -101,6 +107,9 @@ class LlmGateway:
         # 台账实现与灾种 provider 共用一份（agents/core/ledger.py）——落账的形状与
         # 首过率口径必须两侧一致，否则质量门禁在两侧算的不是同一个数。
         self._ledger = LlmUsageLedger(limit=cfg.llm_usage_ledger_limit, tracer=tracer)
+        # per-task 尾窗时延（见 _record）：键 = task，值 = 最近 N 次耗时
+        self._task_latencies: dict[str, deque[float]] = {}
+        self._task_p50_cache: dict[str, float] = {}
 
     # ---------- 对外口径（与升级前逐字一致） ----------
 
@@ -161,6 +170,20 @@ class LlmGateway:
 
     def _record(self, rec: LlmCallRecord) -> None:
         self._ledger.record(rec)
+        # per-task 尾窗时延统计：assess 的双盲预算闸（_recent_grade_p50_ms）此前每次
+        # 红/橙派发都全量拷贝台账再排序（4 万行 ≈ 5-15ms，恰好压在最该快的链路上）。
+        # 尾窗 500 行 + 每 64 行重算一次 p50 缓存——O(1) 读。
+        if rec.validation in ("ok", "malformed", "transport_error", "streamed"):
+            bucket = self._task_latencies.setdefault(rec.task, deque(maxlen=_TASK_TAIL_SIZE))
+            bucket.append(float(rec.latency_ms))
+            if len(bucket) % _P50_RECALC_EVERY == 1 or len(bucket) <= 1:
+                values = sorted(bucket)
+                mid = len(values) // 2
+                self._task_p50_cache[rec.task] = values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+
+    def latency_p50_for_task(self, task: str) -> float:
+        """该 task 的尾窗实测 p50（无样本返回 0.0 = "读不到，别拍数"）。"""
+        return self._task_p50_cache.get(task, 0.0)
 
     def usage_records(self) -> list[LlmCallRecord]:
         return self._ledger.records()
