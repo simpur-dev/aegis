@@ -110,6 +110,7 @@ class LlmGateway:
         # per-task 尾窗时延（见 _record）：键 = task，值 = 最近 N 次耗时
         self._task_latencies: dict[str, deque[float]] = {}
         self._task_p50_cache: dict[str, float] = {}
+        self._task_counts: dict[str, int] = {}
 
     # ---------- 对外口径（与升级前逐字一致） ----------
 
@@ -176,7 +177,12 @@ class LlmGateway:
         if rec.validation in ("ok", "malformed", "transport_error", "streamed"):
             bucket = self._task_latencies.setdefault(rec.task, deque(maxlen=_TASK_TAIL_SIZE))
             bucket.append(float(rec.latency_ms))
-            if len(bucket) % _P50_RECALC_EVERY == 1 or len(bucket) <= 1:
+            counts = self._task_counts
+            counts[rec.task] = counts.get(rec.task, 0) + 1
+            # 重算触发用**单调计数**：deque(maxlen) 的 len 饱和后不再变化——
+            # 用 len%64 触发会在第 449 个样本后永久冻结 p50 缓存（实测灌 2000 个
+            # 递增时延后缓存 225.0 / 真实尾窗 1751.0，8× 失真，直接喂给双盲预算闸）。
+            if len(bucket) <= 1 or counts[rec.task] % _P50_RECALC_EVERY == 0:
                 values = sorted(bucket)
                 mid = len(values) // 2
                 self._task_p50_cache[rec.task] = values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2

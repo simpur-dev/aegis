@@ -139,7 +139,8 @@ class Executor:
             # 无确认闸的写动作（认领/回执/关闭/单发通知）也要过审计闸：没有台账就不执行，
             # 不存在"跑了但没记"的路径——这比 gated 动作的 require_repo 更进一步。
             return await self._run_audited(action, params, targets, ctx, started)
-        result = await self._execute_shielded(action, targets, params, ctx)
+        # 读动作无台账收尾，本体 shield 即可
+        result = await self._shielded(self._execute(action, targets, params, ctx))
         return ExecutionOutcome(
             action=action.spec.name,
             status="executed",
@@ -168,7 +169,6 @@ class Executor:
         幂等命中 create_action 直接 replayed=True，不执行。"""
         repo = self._require_repo()
         audit_id = self._audit.new_action_id()
-        await self._audit.write(self._audit.intent(action_id=audit_id, action=action, params=params, targets=targets, ctx=ctx))
         action_id = f"act_{secrets.token_hex(8)}"
         record, replayed = await repo.create_action(
             action_id=action_id,
@@ -180,6 +180,15 @@ class Executor:
             impact_scope={},
             expires_in_seconds=3600,
             idempotency_key=ctx.idempotency_key,
+            # intent 审计行与动作行同事务（对照 _gate 同构）：幂等重放时台账丢弃该行，
+            # 不会出现"重放一遍多一行无配对 result 的 intent"破坏 §9 两行口径。
+            audit=self._audit.intent(
+                action_id=audit_id,
+                action=action,
+                params=params,
+                targets=targets,
+                ctx=ctx,
+            ),
         )
         if replayed:
             return ExecutionOutcome(
@@ -192,10 +201,27 @@ class Executor:
         # proposed → executing（自动确认：直执行写动作没有人工闸；迁移失败 = 行已被处置/过期）
         if await repo.confirm_action(action_id) is None:
             raise ActionError("E_ACTION_CONFLICT", "动作台账状态不允许执行（已处置或过期）")
-        try:
-            result = await self._execute_shielded(action, targets, params, ctx)
-        except ActionError as exc:
-            await repo.mark_action_failed(action_id, {"code": exc.code, "message": exc.message[:200]})
+
+        async def _execute_and_finalize() -> ActionResult:
+            """执行 + 台账/审计收尾整体作为一个单元被 shield：断连取消的是"等答案的人"，
+            本体与收尾（mark_executed/failed + result 审计行）必然落定——只 shield 执行
+            本体会让收尾留在可被取消的外层（台账停在 executing、审计与事实背离）。"""
+            try:
+                result = await self._execute(action, targets, params, ctx)
+            except ActionError as exc:
+                await repo.mark_action_failed(action_id, {"code": exc.code, "message": exc.message[:200]})
+                await self._audit.write(
+                    self._audit.result(
+                        action_id=audit_id,
+                        action=action,
+                        params=params,
+                        targets=targets,
+                        ctx=ctx,
+                        after={"rejected": exc.code, "message": exc.message[:200]},
+                    )
+                )
+                raise
+            await repo.mark_action_executed(action_id, {"summary": result.summary, **result.data})
             await self._audit.write(
                 self._audit.result(
                     action_id=audit_id,
@@ -203,21 +229,12 @@ class Executor:
                     params=params,
                     targets=targets,
                     ctx=ctx,
-                    after={"rejected": exc.code, "message": exc.message[:200]},
+                    after={"summary": result.summary, **result.data},
                 )
             )
-            raise
-        await repo.mark_action_executed(action_id, {"summary": result.summary, **result.data})
-        await self._audit.write(
-            self._audit.result(
-                action_id=audit_id,
-                action=action,
-                params=params,
-                targets=targets,
-                ctx=ctx,
-                after={"summary": result.summary, **result.data},
-            )
-        )
+            return result
+
+        result = await self._shielded(_execute_and_finalize())
         return ExecutionOutcome(
             action=action.spec.name,
             status="executed",
@@ -278,34 +295,45 @@ class Executor:
         # 原子抢占仍在台账里：两个人同时确认，只有一个能从 proposed 迁走
         if not preconfirmed and await repo.confirm_action(action_id) is None:
             raise ActionError("E_ACTION_CONFLICT", "动作已被处置、已过期或不存在，本次确认没有生效")
-        try:
-            result = await self._execute_shielded(action, targets, params, ctx)
-        except ActionError as exc:
-            await repo.mark_action_failed(
+
+        # 执行 + 台账/审计收尾整体 shield（与 _run_audited 的 _execute_and_finalize 同构）：
+        # 只 shield 执行本体会把收尾留在可被取消的外层——断连时动作跑完了，台账停在
+        # executing、result 审计行丢失（审计与事实背离）。
+        async def _execute_and_finalize() -> ActionResult:
+            try:
+                result = await self._execute(action, targets, params, ctx)
+            except ActionError as exc:
+                await repo.mark_action_failed(
+                    action_id,
+                    {"code": exc.code, "message": exc.message},
+                    audit=self._audit.result(
+                        action_id=action_id,
+                        action=action,
+                        params=params,
+                        targets=targets,
+                        ctx=ctx,
+                        after={"rejected": exc.code, "message": exc.message[:200]},
+                    ),
+                )
+                raise
+            await repo.mark_action_executed(
                 action_id,
-                {"code": exc.code, "message": exc.message},
+                {"summary": result.summary, **result.data},
                 audit=self._audit.result(
                     action_id=action_id,
                     action=action,
                     params=params,
                     targets=targets,
                     ctx=ctx,
-                    after={"rejected": exc.code, "message": exc.message[:200]},
+                    after={"summary": result.summary, **result.data},
                 ),
             )
-            raise
-        await repo.mark_action_executed(
-            action_id,
-            {"summary": result.summary, **result.data},
-            audit=self._audit.result(
-                action_id=action_id,
-                action=action,
-                params=params,
-                targets=targets,
-                ctx=ctx,
-                after={"summary": result.summary, **result.data},
-            ),
-        )
+            return result
+
+        async def _whole() -> ActionResult:
+            return await _execute_and_finalize()
+
+        result = await self._shielded(_whole())
         return ExecutionOutcome(
             action=action.spec.name,
             status="executed",
@@ -416,15 +444,18 @@ class Executor:
                 f"「{action.spec.title}」连续失败后已熔断，约 {remaining:.0f} 秒后恢复；读动作不受影响",
             )
 
-    async def _execute_shielded(self, action: Action, targets: ResolvedTargets, params: Any, ctx: ActionContext) -> ActionResult:
-        """执行动作本体，**屏蔽取消**（SSE 断连/客户端超时的取消不穿透到业务 await）。
+    async def _shielded(self, coro) -> Any:
+        """shield 本体：等待方被取消（SSE 断连/客户端超时）时，本体协程继续跑完
+        （含台账/审计收尾），然后取消照常生效——shield 后丢掉的只是"送出去的帧"。
 
-        取消落在动作的交付/落库 await 上会把副作用撕成半截：发布可能已出去、台账停在
-        executing 最长 600 秒才被回收成"结果未知"。shield 后取消只取消"等答案的人"，
-        动作跑完、`mark_action_executed/failed` 必然落定——与 assistant_api `_keepalive`
-        "对话半途消失比慢一点糟得多"的口径一致。"""
-        task = asyncio.ensure_future(self._execute(action, targets, params, ctx))
-        return await asyncio.shield(task)
+        注意：**收尾（mark_* / result 审计）必须与执行本体一起进被 shield 的协程**——
+        只 shield 执行会把收尾留在可被取消的外层（动作跑完了、台账停在 executing）。"""
+        task = asyncio.ensure_future(coro)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
 
     async def _execute(self, action: Action, targets: ResolvedTargets, params: Any, ctx: ActionContext) -> ActionResult:
         breaker_key = self._breaker_key(action, ctx)

@@ -297,9 +297,11 @@ class AssessAgent(AgentKit):
         if second_leg is not None:
             outcome, second_ms = second_leg
             if isinstance(outcome, BaseException):
-                # 增强腿的失败只能收口在增强腿：第一遍结论已经到手，第二/三遍任何异常都不许穿出
-                # handle()——穿出就等于用一次模型故障废掉整段研判（真机 503 风暴实测：四条链路
-                # stages 全成 mode=local、协同成功率 0.0，而第一遍结论本可以活下来）。
+                # 增强腿的失败/取消只能收口在增强腿：第一遍结论已经到手，第二/三遍任何异常
+                # 都不许穿出 handle()——穿出就等于用一次模型故障废掉整段研判（真机 503 风暴
+                # 实测：四条链路 stages 全成 mode=local、协同成功率 0.0，而第一遍结论本可以
+                # 活下来）。gather 收尸路径取消的第二腿此前落 not_applicable，与 parallel
+                # 自相矛盾——统一如实落 failed_second:*。
                 blind_status = f"failed_second:{type(outcome).__name__}"
                 log.warning(
                     "研判双盲增强腿失败，保留第一遍结论",

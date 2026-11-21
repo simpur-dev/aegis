@@ -581,9 +581,10 @@ class AgentGateway:
         if self._result_handler is not None:
             try:
                 await self._result_handler(message)
-            except Exception:
-                # 处理失败：条目移除，NATS 不 ack → ack_wait 后重投会重新进入处理
-                # （at-least-once 的"处理恰好一次"归网关，不归智能体）。
+            except BaseException:
+                # 处理失败/取消：条目移除，NATS 不 ack → ack_wait 后重投会重新进入处理
+                # （at-least-once 的"处理恰好一次"归网关，不归智能体）。CancelledError
+                # 不释放的话 msg_id 永久停在 inflight——重投恒被当并发副本丢弃直到重启。
                 self._release_uplink(message.msg_id)
                 raise
         self._complete_uplink(message.msg_id)

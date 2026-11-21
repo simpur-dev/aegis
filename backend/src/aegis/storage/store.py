@@ -981,8 +981,11 @@ class PlatformStore:
                 self._chain_index[key] = result
 
     def _chain_index_evict(self, result: ChainResult) -> None:
+        # 校验身份再删：同 trace_id/event_id 的新行可能已覆盖索引（重执行复用 id），
+        # 直接 pop 会把仍存活的新行索引一并删掉（get_chain 误报 None）。
         for key in (result.trace_id, result.event_id):
-            self._chain_index.pop(key, None)
+            if self._chain_index.get(key) is result:
+                self._chain_index.pop(key, None)
 
     async def upsert_station(
         self,
