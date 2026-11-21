@@ -13,7 +13,7 @@ import secrets
 import time
 from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from aegis.config import Settings, get_settings
@@ -53,12 +53,28 @@ class AssistantEvent:
         return {"type": self.type, **self.data}
 
 
+#: 中文灾种名 → 平台 hazard value：历史画像（数据集聚合）用中文记录主导灾种，
+#: 而动作参数要平台口径。映射只覆盖平台枚举里存在的灾种，其余原样交给下游校验。
+_HAZARD_CN_TO_VALUE: dict[str, str] = {
+    "泥石流": "debris_flow",
+    "滑坡": "landslide",
+    "崩塌": "rockfall",
+    "冰湖溃决": "lake_outburst",
+    "雪崩": "avalanche",
+    "地震": "quake_triggered",
+}
+
+
 @dataclass(slots=True)
 class AssistantSession:
     session_id: str
     trace_id: str
     updated_at: float
     history: deque[dict[str, str]] = field(default_factory=lambda: deque(maxlen=_MAX_TURNS * 2))
+    #: 最近一轮实际涉及的灾种（平台口径 hazard value）。多轮承接用：
+    #: "那今年该重点防什么"里的"那"指的是上一轮的历史画像——不承接就会退化成
+    #: 通用预案（hazard_type=unknown），值班员得自己重复一遍灾种。
+    last_hazard: str = ""
 
 
 class AssistantService:
@@ -579,11 +595,21 @@ class AssistantService:
             yield AssistantEvent("answer", {"text": self._capability_hint(intent.note)})
             return
         action = self._registry.require(intent.action)
+        # 多轮承接（只补"省略"的灾种，不覆盖用户明确给出的值）：上一轮聊的是泥石流，
+        # 这一轮"那今年该重点防什么"不承接就会退化成通用预案（unknown 步骤表）。
+        if action.spec.name == "plan.ask" and not intent.args.get("hazard_type") and session.last_hazard:
+            # Intent 是冻结的（意图不可变）：派生一份带上灾种的新意图，不改原对象。
+            intent = replace(
+                intent,
+                args={**intent.args, "hazard_type": session.last_hazard},
+                note=(f"{intent.note}；" if intent.note else "") + f"承接上文灾种 {session.last_hazard}",
+            )
+        action_name = action.spec.name  # replace 后 intent.action 的类型收窄失效，落一个 str 局部量给下游用
         # 强身份闸（设计 §14.1.1）：强认证开启后，写动作必须带有效令牌（identity_kind='key'），
         # 仅声明身份在此拒绝、不进频控也不落提案；读动作不会走到这里。
         if action.spec.writes and self._strong_identity_required(identity_kind):
             reason = "该操作需要按人令牌：请带上 X-Aegis-Operator-Key（强认证开启后写动作不接受仅声明的席位）"
-            self._reject(session, action=intent.action, reason=reason, detail={"code": "E_OPERATOR_KEY_REQUIRED"})
+            self._reject(session, action=action_name, reason=reason, detail={"code": "E_OPERATOR_KEY_REQUIRED"})
             if self._audit.available:
                 await self._audit.write(
                     self._audit.rejected(
@@ -602,7 +628,7 @@ class AssistantService:
         # 拒绝也要落 audit_ops——频控是"这次不执行"的决定，必须可查。
         if action.spec.writes and operator is not None and not self._writes.allow(operator.operator_id):
             reason = "本会话一分钟内的写动作已达 10 次，请稍后再试；读动作不受影响"
-            self._reject(session, action=intent.action, reason=reason, detail={"code": "E_ACTION_RATE_LIMITED"})
+            self._reject(session, action=action_name, reason=reason, detail={"code": "E_ACTION_RATE_LIMITED"})
             if self._audit.available:
                 await self._audit.write(
                     self._audit.rejected(
@@ -623,11 +649,11 @@ class AssistantService:
             approved=False,
             idempotency_key=idempotency_key,
         )
-        yield AssistantEvent("status", {"text": f"执行 {intent.action}"})
+        yield AssistantEvent("status", {"text": f"执行 {action_name}"})
         try:
             outcome = await self._executor.run(action, dict(intent.args), ctx)
         except ActionError as exc:
-            self._reject(session, action=intent.action, reason=exc.message, detail={"code": exc.code})
+            self._reject(session, action=action_name, reason=exc.message, detail={"code": exc.code})
             yield AssistantEvent("error", {"code": exc.code, "message": exc.message})
             yield AssistantEvent("answer", {"text": exc.message})
             return
@@ -662,10 +688,15 @@ class AssistantService:
 
         result = outcome.result
         data = {} if result is None else dict(result.data)
-        yield AssistantEvent("result", {"action": intent.action, **data})
+        # 会话级灾种承接：把这一轮真正涉及的灾种记住，下一轮省略灾种的追问能接上
+        # （history.query 给主导灾种；plan.ask / warning.* 给 hazard_type）。
+        hinted = data.get("hazard_type") or (data.get("history") or {}).get("history_dominant_hazard")
+        if isinstance(hinted, str) and hinted:
+            session.last_hazard = _HAZARD_CN_TO_VALUE.get(hinted, hinted)
+        yield AssistantEvent("result", {"action": action_name, **data})
         text = "" if result is None else result.summary
         if not text:
-            text = narrate_result(intent.action, data)
+            text = narrate_result(action_name, data)
         yield AssistantEvent("answer", {"text": await self._polish(text, session)})
 
     def _strong_identity_required(self, identity_kind: str) -> bool:

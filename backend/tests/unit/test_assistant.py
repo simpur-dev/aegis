@@ -1099,3 +1099,28 @@ async def test_润色缓存_同一事实不重复等模型() -> None:
     # 不同事实仍走模型
     await service._polish("预警 wrn_y，等级 2 级，橙色", None)
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_多轮承接上文灾种_省略灾种的追问不退化成通用预案() -> None:
+    """ "那今年该重点防什么"（省略灾种）应承接上一轮历史画像的主导灾种；
+    用户明确给出灾种时不被覆盖（只补省略值，不改口）。"""
+    rec = Recorder()
+    service = build_service(rec, history={"history_dominant_hazard": "泥石流", "history_debris_flow_events_10y": 39.0})
+    events = await collect(service, "540121 近十年哪种灾害最多", reporter="值班员", operator=DUTY)
+    # 第一轮：历史画像（主导灾种进会话上下文）
+    assert any(event.type == "result" for event in events)
+
+    # 用规则命中的省略说法（"怎么办"→plan.ask 且不带灾种）；LLM 不在场时也可复现
+    second = await collect(service, "那该怎么办", reporter="值班员", operator=DUTY, session_id=_session_of(events))
+    plan = next(event for event in second if event.type == "result")
+    assert plan.data["hazard_type"] == "debris_flow", "省略灾种应承接上文（不是 unknown 通用预案）"
+
+    third = await collect(service, "那滑坡该怎么办", reporter="值班员", operator=DUTY, session_id=_session_of(events))
+    plan3 = next(event for event in third if event.type == "result")
+    assert plan3.data["hazard_type"] == "landslide", "用户明确给出的灾种不得被上文覆盖"
+
+
+def _session_of(events: list[Any]) -> str | None:
+    meta = next((event for event in events if event.type == "meta"), None)
+    return None if meta is None else str(meta.data.get("session_id") or "")
