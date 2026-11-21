@@ -131,10 +131,27 @@ class AgentKit:
         )
 
     async def _heartbeat_loop(self, interval: float) -> None:
+        # 心跳是"活着"的唯一凭证：一次 publish 失败（NATS 重连窗口）不该让循环带着
+        # 异常死掉——那之后 sweep 会把本体摘出候选集，而注册帧只在 start() 发过一次，
+        # 网关的心跳自愈永远失去机会（"活着但不可见"）。失败记数 + 退避，继续跳。
+        degraded = 0
         try:
             while True:
-                await asyncio.sleep(interval)
-                await self.transport.publish(subjects.agent_hb(self.agent_type), self._lifecycle_frame(Action.AGENT_HEARTBEAT))
+                await asyncio.sleep(interval * (2 ** min(degraded, 3)))
+                try:
+                    await self.transport.publish(subjects.agent_hb(self.agent_type), self._lifecycle_frame(Action.AGENT_HEARTBEAT))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    degraded += 1
+                    log.warning(
+                        "心跳发布失败（第 %d 次），退避后重试: %s: %s",
+                        degraded,
+                        type(exc).__name__,
+                        str(exc)[:120],
+                    )
+                else:
+                    degraded = 0
         except asyncio.CancelledError:
             return
 

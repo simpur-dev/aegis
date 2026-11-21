@@ -364,6 +364,13 @@ class LlmGateway:
                     )
                 )
                 continue
+            except BaseException:
+                # **名额必有出口**：CancelledError/GeneratorExit 是 BaseException，此前
+                # 不进任何 note_*/release_probe 出口——半开试探被取消后名额永久占用，
+                # 模型被静默下架直到重启（5xx 风暴 + agentkit 到点取消叠加时必现）。
+                # 取消不记账、不切模型，归还名额后原样上抛。
+                self._breaker.release_probe(model_name)
+                raise
             latency_ms = (time.perf_counter() - started) * 1000
             self._note_success(model_name)
             usage = getattr(response, "usage", None)
@@ -404,7 +411,16 @@ class LlmGateway:
         prompt_version,
         structured: bool = False,
         attempt: int = 0,
-    ) -> str:
+    ) -> tuple[str, LlmCallRecord | None]:
+        """返回 (正文, 本次的台账行引用)。
+
+        **malformed 改判必须持有自己的行**：此前 `_mark_last_malformed` 按全局台账
+        的最后一行改账——双盲并行（同一网关两路并发）时 A 落账 ok → B 落账 ok →
+        A 要标 malformed 时 `records()[-1]` 是 B 的行，A 漏记、B 被冤枉，**首过率
+        在它最该度量的并发场景下系统性失真**（灾种侧已用 ContextVar 行列表修掉同一
+        问题，平台侧没跟）。改判口径不变（validation=malformed + error），只是行
+        归属从"台账最后一行"改为"本次调用返回的那一行"。
+        """
         _, response, model_used = await self._complete(
             messages,
             task=task,
@@ -421,17 +437,22 @@ class LlmGateway:
         content = _THINK_BLOCK.sub("", content).strip()
         if not content:
             # 空内容：把刚记录的用量标记为 malformed，方便评测/审计把这算一次不达标首过。
-            self._mark_last_malformed("空内容")
+            record = self._last_record()
+            self._mark_malformed(record, "空内容")
             raise MalformedLlmOutputError("LLM 返回空内容", detail={"model": model_used})
-        return content
+        record = self._last_record()
+        return content, record
 
-    def _mark_last_malformed(self, reason: str) -> None:
+    def _last_record(self) -> LlmCallRecord | None:
+        """刚落的那一行（单事件循环内 `_complete` 返回即为本任务所落）。"""
         rows = self._ledger.records()
-        if not rows:
+        return rows[-1] if rows else None
+
+    def _mark_malformed(self, record: LlmCallRecord | None, reason: str) -> None:
+        if record is None:
             return
-        last = rows[-1]
-        last.validation = "malformed"
-        last.error = reason[:180]
+        record.validation = "malformed"
+        record.error = reason[:180]
 
     # ---------- 公开方法 ----------
 
@@ -448,7 +469,7 @@ class LlmGateway:
     ) -> str:
         # temperature 保留旧默认 0.3；调用方显式传值优先，未传时按 task 路由的 temperature。
         eff_temperature = None if temperature == 0.3 and task != "default" else temperature
-        return await self._chat_raw(
+        content, _record = await self._chat_raw(
             messages,
             task=task,
             temperature=eff_temperature,
@@ -458,6 +479,7 @@ class LlmGateway:
             agent_id=agent_id,
             prompt_version=prompt_version,
         )
+        return content
 
     async def chat_json(
         self,
@@ -469,7 +491,7 @@ class LlmGateway:
         agent_id: str | None = None,
         prompt_version: str | None = None,
     ) -> dict[str, Any]:
-        raw = await self._chat_raw(
+        raw, _record = await self._chat_raw(
             messages,
             task=task,
             temperature=temperature,
@@ -511,11 +533,12 @@ class LlmGateway:
         last_error: MalformedLlmOutputError | None = None
         for attempt in range(repair + 1):
             raw = ""
+            record: LlmCallRecord | None = None
             # 取正文必须在 try 内：`_chat_raw` 对"空内容"抛的正是 MalformedLlmOutputError，
             # 放在 try 外会让这一类不合规**绕过整个修复重试**、直接把这条腿打死
             # （真机实测：deepseek-reasoner 9 次仲裁里 5 次空内容，5 次都没进修复轮，研判整段降级）。
             try:
-                raw = await self._chat_raw(
+                raw, record = await self._chat_raw(
                     current,
                     task=task,
                     temperature=temperature,
@@ -531,7 +554,8 @@ class LlmGateway:
                 return schema.model_validate(parsed)
             except (MalformedLlmOutputError, ValidationError) as exc:
                 reason = str(exc)
-                self._mark_last_malformed(reason[:180])
+                # 改判落到**本次调用自己的行**（并发双盲下全局最后一行是别人的）
+                self._mark_malformed(record, reason[:180])
                 last_error = MalformedLlmOutputError(
                     "LLM 结构化输出不合规" if attempt < repair else "LLM 结构化输出多次不合规，降级",
                     detail={"task": task, "reason": reason[:200], "attempt": attempt},
@@ -617,6 +641,10 @@ class LlmGateway:
                     error=f"{type(exc).__name__}: {str(exc)[:180]}",
                 )
             )
+            raise
+        except BaseException:
+            # 同 dispatch：取消/生成器关闭（async-for 被客户端断开）也必须归还名额
+            self._breaker.release_probe(model_name)
             raise
         self._note_success(model_name)
         self._record(

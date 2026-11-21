@@ -249,10 +249,26 @@ class AssessAgent(AgentKit):
         second_leg: tuple[AssessVerdict | BaseException, float] | None = None
         if self.double_blind and self._pre_flagged_high_risk(req.rule_level) and self._pair_affordable(request, started_at):
             blind_mode = "parallel"
-            (first, first_ms), second_leg = await asyncio.gather(
+            # return_exceptions=True：主腿抛出时 gather 的默认行为是**连坐取消**第二腿——
+            # 被取消一路的 chat_structured 半途死亡：无台账行（首过率分母漏计）+ 半开试探
+            # 名额泄漏（取消是 BaseException）。两路都收尸后再决定：主腿失败照旧上抛
+            # （stages 的降级语义不变），第二腿的结果/异常照常消费。
+            main_outcome, blind_outcome = await asyncio.gather(
                 self._grade(task="assess", base_vars=base_vars, request=request),
                 self._blind_leg(base_vars=base_vars, request=request),
+                return_exceptions=True,
             )
+            if isinstance(main_outcome, BaseException):
+                # 主腿失败照旧上抛（stages 的降级语义不变）——但第二腿已收尸，不连坐取消
+                if not isinstance(blind_outcome, BaseException):
+                    second_leg = (blind_outcome[0], blind_outcome[1])
+                raise main_outcome
+            first, first_ms = main_outcome
+            # blind_outcome 是 (verdict|BaseException, float) 元组或 BaseException；
+            # 元组形态赋给 second_leg（消费方的 isinstance 分支收口异常），异常形态（腿内
+            # 收口失败时 gather 已转成值，这里不会再是裸异常）保持 None 走既有 not_applicable。
+            if not isinstance(blind_outcome, BaseException):
+                second_leg = (blind_outcome[0], blind_outcome[1])
         else:
             first, first_ms = await self._grade(task="assess", base_vars=base_vars, request=request)
             # 双盲只对高危（红=1/橙=2）触发（§8 成本对策）；一致则上调置信，分歧则第三 call 仲裁。

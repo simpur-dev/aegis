@@ -85,14 +85,23 @@ def _clip01(x):
     return max(0.0, min(1.0, float(x)))
 
 
-def _saturate_note(value: float, lo: float, hi: float) -> str:
-    """越出归一化边界时的说明。
+def _saturate_note(value: float, lo: float, hi: float, *, method: str = "linear_pos") -> str:
+    """越出归一化边界时的说明（方向语义随方法变化）。
 
     此前越界**静默饱和**（note 是空串）：一个 330 mm/h 的读数在 150 的上界下拿满分因子，
     而证据包、因子分、覆盖率、告警里都看不出任何异常——它长得像一个"刚好 150 的正常值"。
     边界是方法的标定带，越界只说明方法在外推（不是读数坏了），所以**不拒**，
     但要说出来：谁看因子分都能看见"这一项是外推出来的"。
+
+    linear_neg 的方向相反（值越低风险越高）：低于下界是**饱和到 1** 而不是"截到 0"
+    ——此前文案与事实相反（实测 x=-5 → z=1.0 但 note 写"已截到 0"）。
     """
+    if method == "linear_neg":
+        if value < lo:
+            return f"取值 {value:g} 低于归一化下界 {lo:g}，已饱和到 1（值越低风险越高的方向）"
+        if value > hi:
+            return f"取值 {value:g} 高于归一化上界 {hi:g}，已截到 0（值越高风险越低的方向）"
+        return ""
     if value < lo:
         return f"取值 {value:g} 低于归一化下界 {lo:g}，已截到 0"
     if value > hi:
@@ -140,7 +149,7 @@ def normalize_value(value, norm: dict):
         lo, hi = norm["L"], norm["U"]
         if hi <= lo:
             return None, "归一化边界配置错误 (U<=L)"
-        return _clip01((hi - x) / (hi - lo)), _saturate_note(x, lo, hi)
+        return _clip01((hi - x) / (hi - lo)), _saturate_note(x, lo, hi, method="linear_neg")
     if method == "log_pos":
         lo, hi = norm["L"], norm["U"]
         if x <= 0:
@@ -157,11 +166,18 @@ def normalize_value(value, norm: dict):
         lo, b_lo, b_hi, hi = norm["L"], norm["band_lo"], norm["band_hi"], norm["U"]
         if b_hi <= b_lo:
             return None, "归一化边界配置错误 (band)"
+        if b_lo <= lo or b_hi >= hi:
+            # 带要落在 [L,U] 内部：倒挂/越出时 band 外的衰减式分母为 0 或负——
+            # 此前静默归 0（数学上"安全"但配置错误无人知晓），与 linear 系的
+            # "配置错误响亮失败"口径不一致。
+            return None, "归一化边界配置错误 (band 必须落在 L 与 U 内部且不倒挂)"
         if b_lo <= x <= b_hi:
             return 1.0, ""
         if x < b_lo:
-            return _clip01((x - lo) / (b_lo - lo)) if b_lo > lo else 0.0, ""
-        return _clip01((hi - x) / (hi - b_hi)) if hi > b_hi else 0.0, ""
+            z = _clip01((x - lo) / (b_lo - lo)) if b_lo > lo else 0.0
+            return z, f"取值 {x:g} 低于最优带下缘 {b_lo:g}，按带缘线性衰减到 {z:g}（外推）"
+        z = _clip01((hi - x) / (hi - b_hi)) if hi > b_hi else 0.0
+        return z, f"取值 {x:g} 高于最优带上缘 {b_hi:g}，按带缘线性衰减到 {z:g}（外推）"
 
     return None, f"未知归一化方法 {method}"
 
@@ -227,6 +243,7 @@ def compute_factor_assessment(observations, region: str, config: dict) -> dict:
     # ---------- 路由判定（如崩塌破坏方式 / 泥石流水源类型）----------
     route_value, route_note = None, ""
     weights_override = {}
+    route_required = None  # per-variant required 覆盖（路由未命中变体时保持 None → 用静态清单）
     if route_cfg:
         route_key = route_cfg["factor_key"]
         route_obs = by_factor.get(route_key)
@@ -234,7 +251,15 @@ def compute_factor_assessment(observations, region: str, config: dict) -> dict:
             route_value = _representative(route_obs, "class")
         variants = route_cfg.get("variants", {})
         if route_value in variants:
-            weights_override = variants[route_value]
+            variant = variants[route_value]
+            # per-variant `required`：必需因子与路由**正交**是配置错误——溃决/泉水型
+            # 结构上不该有降雨观测，静态 required 里的 rainfall_mm_h 会把保护规则都
+            # 命中的评估整单拒绝。变体可声明 `required`（覆盖静态清单），未声明沿用。
+            route_required = variant.get("required")
+            weights_override = {group: overrides for group, overrides in variant.items() if group in groups_cfg}
+            unknown_variant_keys = sorted(set(variant) - set(groups_cfg) - {"required"})
+            if unknown_variant_keys:
+                raise ValueError(f"权重变体 '{route_value}' 含未知键: {unknown_variant_keys}（只允许组名与 'required'）")
             # 变体引用了未在组里声明的因子 → 配置错误，响亮失败：评分循环只遍历已声明
             # 因子，静默吞掉等于"变体永远不生效 + route_note 谎报已启用"（泥石流水源型
             # 路由踩过这个坑，见 debris_flow_risk_tool T 组的声明注释）。
@@ -321,8 +346,9 @@ def compute_factor_assessment(observations, region: str, config: dict) -> dict:
         completeness[group_name] = round(covered_w / total_w, 3) if total_w > 0 else 0.0
         group_scores[group_name] = round(weighted_sum / covered_w, 4) if covered_w > 0 else None
 
-    # required 因子检查
-    for key in config.get("required_factors", []):
+    # required 因子检查：路由变体可覆盖静态清单（route_required 未命中变体时为 None）
+    effective_required = route_required if route_required is not None else list(config.get("required_factors", []))
+    for key in effective_required:
         if factor_scores.get(key, {}).get("z") is None:
             missing_required.append(key)
     if missing_required:
@@ -393,7 +419,7 @@ def compute_factor_assessment(observations, region: str, config: dict) -> dict:
         "region": region,
         "engine_version": FACTOR_ENGINE_VERSION,
         "assessment_status": "insufficient_data" if insufficient else "scored",
-        "required_factors": list(config.get("required_factors", [])),
+        "required_factors": list(effective_required),
         "insufficient_reasons": insufficient_reasons,
         "formula": {
             "expression": R_FORMULA_EXPRESSION,

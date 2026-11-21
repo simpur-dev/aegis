@@ -43,12 +43,15 @@ class TestRegistration:
         assert snap[0]["inflight"] == 0
 
     def test_reregister_replaces_state(self, registry: AgentRegistry) -> None:
+        """能力清单按新注册替换，但**账跟着身份走**：旧对象上挂着的 in-flight 若归零，
+        serve_blockers 会少算饱和 → 并发派发超过声明并发（本体重启复用同一 agent_id 的
+        常见路径）。2026-11-21 口径修正：计数迁移、首次注册时刻保留。"""
         registry.register(reg("assess.t01", AgentType.ASSESS, ["risk_assess"]))
         entry = registry.get("assess.t01")
         entry.inflight = 5
         registry.register(reg("assess.t01", AgentType.ASSESS, ["risk_assess", "chain_assess"]))
         fresh = registry.get("assess.t01")
-        assert fresh.inflight == 0
+        assert fresh.inflight == 5, "in-flight 计数随身份迁移（旧对象蒸发会短暂超卖并发）"
         assert "chain_assess" in fresh.reg.capabilities
 
     def test_heartbeat_unknown_agent(self, registry: AgentRegistry) -> None:

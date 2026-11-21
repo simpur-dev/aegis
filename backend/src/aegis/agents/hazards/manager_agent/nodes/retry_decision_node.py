@@ -23,6 +23,7 @@ from aegis.agents.hazards.manager_agent.state import (
     AGENT_DATA,
     AGENT_FEEDBACK,
     AGENT_SIMULATION,
+    ERROR_AGENT_TIMEOUT,
     ERROR_MAX_RETRIES,
     ERROR_MISSING_DATA,
     ERROR_SIMULATION_FAILURE,
@@ -101,7 +102,10 @@ def retry_decision_node(state: dict) -> dict:
                 }
             )
         reason_tail = f"重试上限已达（{used}/{limit}）" if error_type in RETRYABLE_ERRORS else f"错误类型 {error_type} 不属于可重试范围"
-        if agent == AGENT_SIMULATION and _sim_optional(state) and error_type == ERROR_SIMULATION_FAILURE:
+        # 处置矩阵声明"Simulation 且可选 → skip"：总线超时（ERROR_AGENT_TIMEOUT）与
+        # SIMULATION_FAILURE 都是"这条腿没跑成"——重试耗尽后可选环节同样该跳过，
+        # 而不是 stop_with_error 转人工（此前只认 FAILURE 一种，超时达上限整单失败）。
+        if agent == AGENT_SIMULATION and _sim_optional(state) and error_type in (ERROR_SIMULATION_FAILURE, ERROR_AGENT_TIMEOUT):
             action = "skip_optional_agent"
             reason = f"模拟失败且按配置可选（SIMULATION_OPTIONAL），跳过并继续下游：{reason_tail}"
             if updates["pending_agents"] and updates["pending_agents"][0] == agent:

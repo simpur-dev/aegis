@@ -19,6 +19,8 @@ import json
 import logging
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from aegis.agents.core.meta import llm_call_meta
 from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
@@ -42,6 +44,16 @@ _ACTION_TEMPLATES = {
     "insufficient_evidence": "补齐反馈输入：由 Manager 将缺失的上游 Agent 交付物一并传入 Feedback Agent 后重新执行反馈检查",
     "workflow_error": "核对管线状态级联约定：上游 failed/insufficient 时应阻断或显式降级，而不是由下游继续产出成功结果",
 }
+
+
+class SuggestionOut(BaseModel):
+    suggestions: list = Field(
+        description="建议列表，每项为对象："
+        "{feedback_id, target_agent, target_component, "
+        "problem_description, suggested_action, "
+        "supporting_evidence, expected_effect, "
+        "requires_human_review}"
+    )
 
 
 def _resolve_component(hazard_key: str, agent: str, item: dict) -> str:
@@ -106,18 +118,7 @@ def suggestion_node(state: FeedbackAgentState) -> dict[str, Any]:
 
     if items:
         try:
-            from pydantic import BaseModel, Field
-
             from aegis.agents.hazards.feedback_agent.llm_setup import get_feedback_llm
-
-            class SuggestionOut(BaseModel):
-                suggestions: list = Field(
-                    description="建议列表，每项为对象："
-                    "{feedback_id, target_agent, target_component, "
-                    "problem_description, suggested_action, "
-                    "supporting_evidence, expected_effect, "
-                    "requires_human_review}"
-                )
 
             llm = get_feedback_llm()
             structured = llm.with_structured_output(SuggestionOut)

@@ -81,8 +81,11 @@ def data_plan_node(state: DataAgentState) -> dict[str, Any]:
     try:
         QueryParamModel = build_query_param_model(hazard_key)  # 菜单驱动的动态模型
         structured_llm = get_llm().with_structured_output(QueryParamModel)
+        # 恒用基础模板：本图的重试回路是 validate→retrieve（**不回 plan**，见 graph.py），
+        # plan 节点只跑一次、retry_count 恒 0——"hazard.data_plan.retry" 不可达，且注册表
+        # 已把它移除（引用未注册模板是 KeyError 埋雷）。
         messages, prompt_version = build_prompt(
-            "hazard.data_plan.retry" if retry_count > 0 else "hazard.data_plan",
+            "hazard.data_plan",
             task=task,
             hazard_type=hazard_key,
             hazard_type_cn=req["hazard_type_cn"],

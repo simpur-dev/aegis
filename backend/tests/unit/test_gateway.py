@@ -101,9 +101,15 @@ class TestValidation:
 class TestIdempotency:
     def test_duplicate_detection(self, gateway: AgentGateway) -> None:
         msg_id = make_event(source="perceive.t01", action=Action.PERCEIVE_ANOMALY.value, payload={}, trace_id=TRACE).msg_id
-        assert gateway.is_duplicate(msg_id) is False
-        assert gateway.is_duplicate(msg_id) is True
+        assert gateway._claim_uplink(msg_id) == "new"
+        assert gateway._claim_uplink(msg_id) == "inflight", "首份还在处理时，并发副本挡住不双跑"
+        gateway._complete_uplink(msg_id)
+        assert gateway._claim_uplink(msg_id) == "done"
+        assert gateway.is_duplicate(msg_id) is True, "done 之后才算重复（两段式：处理失败的重投要重跑）"
         assert gateway.counters["duplicate"] == 1
+        # 处理失败：条目移除 → 重投重新进入处理（去重不是"处理失败也不再处理"）
+        gateway._release_uplink(msg_id)
+        assert gateway._claim_uplink(msg_id) == "new"
 
     def test_dedup_cache_evicts_oldest(self, gateway: AgentGateway) -> None:
         gateway._dedup_capacity = 2

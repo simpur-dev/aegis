@@ -157,6 +157,15 @@ class AgentRegistry:
     def register(self, reg: CapabilityRegistration) -> AgentEntry:
         now = time.monotonic()
         entry = AgentEntry(reg=reg, registered_mono=now, last_hb_mono=now)
+        previous = self._entries.get(reg.agent_id)
+        if previous is not None:
+            # agent_id 是稳定身份（本体重启复用同一 id / 心跳自愈重登记）：账跟着身份走——
+            # 此前整条 entry 被新对象覆盖，旧对象上还挂着的 in-flight 计数蒸发，短暂超卖
+            # max_concurrency；served/failed 清零也让负载路由的 -e.served 排序失忆。
+            entry.inflight = previous.inflight
+            entry.served = previous.served
+            entry.failed = previous.failed
+            entry.registered_mono = previous.registered_mono
         self._entries[reg.agent_id] = entry
         log.info("智能体注册", extra={"agent_id": reg.agent_id, "capabilities": reg.capabilities})
         return entry

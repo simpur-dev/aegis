@@ -130,10 +130,16 @@ class MockAgent:
         )
 
     async def _heartbeat_loop(self, interval: float) -> None:
+        # 与 agentkit 同口径：一次发布失败不终结心跳（替身也要"活着但可见"）。
         try:
             while True:
                 await asyncio.sleep(interval)
-                await self.transport.publish(subjects.agent_hb(self.agent_type), self._frame(Action.AGENT_HEARTBEAT))
+                try:
+                    await self.transport.publish(subjects.agent_hb(self.agent_type), self._frame(Action.AGENT_HEARTBEAT))
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    continue
         except asyncio.CancelledError:
             return
 

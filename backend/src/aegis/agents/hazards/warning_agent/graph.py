@@ -25,6 +25,8 @@ Warning Agent 的 LangGraph 图构建
   build_warning_agent_graph() / create_warning_agent()（给 Manager 用）
 """
 
+from functools import lru_cache
+
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -89,6 +91,10 @@ def build_warning_agent_graph() -> CompiledStateGraph:
     return graph.compile()
 
 
+@lru_cache(maxsize=1)
 def create_warning_agent():
-    """便捷函数：创建并返回编译好的 Warning Agent 图。>>> 给 Manager 用"""
+    """便捷函数：创建并返回编译好的 Warning Agent 图。>>> 给 Manager 用
+
+    编译单例（与 risk/data/manager 同口径）：无 checkpointer、invoke 每次新建运行态，
+    多线程并发复用安全；此前每请求重新 compile 实测 6.6ms/次，预警腿白付。"""
     return build_warning_agent_graph()

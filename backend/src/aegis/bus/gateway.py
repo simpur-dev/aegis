@@ -83,6 +83,10 @@ def _message_payload(message: AgentMessage) -> dict[str, Any]:
     return json.loads(message.model_dump_json(exclude_none=True))
 
 
+_DEDUP_INFLIGHT = "inflight"
+_DEDUP_DONE = "done"
+
+
 class AgentGateway:
     platform_id = "platform.gateway"
 
@@ -104,7 +108,8 @@ class AgentGateway:
         self._tracer = tracer
         self._allow_unregistered = allow_unregistered_action
         self._default_deadline_ms = default_deadline_ms
-        self._seen: OrderedDict[str, float] = OrderedDict()
+        # 两段式去重：值 = 状态（inflight / done）。见 _claim_uplink。
+        self._seen: OrderedDict[str, str] = OrderedDict()
         self._dedup_capacity = dedup_capacity
         self._txn: deque[TxnRecord] = deque(maxlen=txn_capacity)
         self._inbox_seq = 0
@@ -174,13 +179,44 @@ class AgentGateway:
             )
 
     def is_duplicate(self, msg_id: str) -> bool:
-        if msg_id in self._seen:
+        """兼容判定：只看"已完成处理"的条目（两段式去重的读侧口径）。"""
+        state = self._seen.get(msg_id)
+        return state == _DEDUP_DONE
+
+    def _claim_uplink(self, msg_id: str) -> str:
+        """上行事件的去重认领：返回 "done"（重复，丢弃）/ "inflight"（并发副本，丢弃）/ "new"。
+
+        **两段式**的理由：此前标记在处理**之前**落表 + NATS 自动 ack——result_handler
+        一次瞬时异常（下游存储抖动）→ ack_wait 后 JetStream 重投 → 命中去重表按
+        "幂等丢弃"正常返回 → 自动 ack → 这条上行事件的处理结果**永久丢失**。
+        去重的语义是"重复投递不重复处理"，不是"处理失败也不再处理"：
+        - new → 进入处理；成功后置 done；
+        - 失败/异常 → 移除条目，让重投重新进入处理；
+        - inflight → 并发副本（首份还在跑）挡住，避免双跑。
+        """
+        state = self._seen.get(msg_id)
+        if state == _DEDUP_DONE:
             self.counters["duplicate"] += 1
-            return True
-        self._seen[msg_id] = time.monotonic()
+            return "done"
+        if state == _DEDUP_INFLIGHT:
+            return "inflight"
+        self._seen[msg_id] = _DEDUP_INFLIGHT
         while len(self._seen) > self._dedup_capacity:
-            self._seen.popitem(last=False)
-        return False
+            # 只逐出 done 条目（inflight 是活事务，逐出会让并发副本双跑）
+            for key, st in list(self._seen.items()):
+                if st == _DEDUP_DONE:
+                    self._seen.pop(key, None)
+                    break
+            else:
+                break
+        return "new"
+
+    def _complete_uplink(self, msg_id: str) -> None:
+        if msg_id in self._seen:
+            self._seen[msg_id] = _DEDUP_DONE
+
+    def _release_uplink(self, msg_id: str) -> None:
+        self._seen.pop(msg_id, None)
 
     # ---------- 下行：平台 → 智能体 ----------
 
@@ -525,9 +561,10 @@ class AgentGateway:
             instrumentation.end_span(uplink_span)
             return
 
-        if self.is_duplicate(message.msg_id):
-            log.debug("重复消息幂等丢弃", extra={"msg_id": message.msg_id})
-            instrumentation.mark_degraded(uplink_span, "幂等去重丢弃（msg_id 重复）", outcome="duplicate")
+        claim = self._claim_uplink(message.msg_id)
+        if claim != "new":
+            log.debug("上行事件去重丢弃（%s）", claim, extra={"msg_id": message.msg_id, "claim": claim})
+            instrumentation.mark_degraded(uplink_span, f"去重丢弃（{claim}）", outcome="duplicate")
             instrumentation.end_span(uplink_span)
             return
 
@@ -542,7 +579,14 @@ class AgentGateway:
 
         instrumentation.set_attributes(uplink_span, sync_ms=round(sync_ms, 3), outcome="ok")
         if self._result_handler is not None:
-            await self._result_handler(message)
+            try:
+                await self._result_handler(message)
+            except Exception:
+                # 处理失败：条目移除，NATS 不 ack → ack_wait 后重投会重新进入处理
+                # （at-least-once 的"处理恰好一次"归网关，不归智能体）。
+                self._release_uplink(message.msg_id)
+                raise
+        self._complete_uplink(message.msg_id)
         instrumentation.end_span(uplink_span)
 
     # ---------- 台账 ----------

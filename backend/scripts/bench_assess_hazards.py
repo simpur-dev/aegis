@@ -41,8 +41,13 @@ def _observations(sites: int) -> list[FactorObservation]:
         "rain_10min",  # T 组：触发（另一个触发口径）
     )
     out: list[FactorObservation] = []
+    # 契约上限 48 条观测（AssessEvidence.observations max_length=48）：脚本此前会造
+    # sites × factors = 240 条直接 ValidationError——按上限截断，站点号写进 station_ids。
+    cap = 48
     for site in range(sites):
         for index, factor in enumerate(factors):
+            if len(out) >= cap:
+                return out
             out.append(
                 FactorObservation(
                     factor=factor,

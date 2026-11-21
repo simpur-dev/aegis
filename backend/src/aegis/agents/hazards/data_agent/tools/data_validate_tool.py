@@ -132,7 +132,11 @@ def data_validate_tool(
     COMPLETENESS_THRESHOLD = 0.8  # 阈值可配置化（当前为 Mock 约定，无规范来源）
     MAX_ANOMALY_RATIO = 0.1
 
-    anomaly_ratio = len(quality_report["anomalies"]) / max(total_count, 1)
+    # 异常率按**记录数**口径（含异常的记录 / 总记录）：一条记录可含多个越界字段，
+    # 按 anomalies 条数算会把多字段异常放大——48 观测 × 8 数值字段下两三条坏记录
+    # 即可越过 0.1 阈值误杀整批数据（与 completeness_ratio 的记录口径对齐）。
+    anomalous_events = {a.get("event_id") for a in quality_report["anomalies"] if isinstance(a, dict) and a.get("event_id") is not None}
+    anomaly_ratio = len(anomalous_events) / max(total_count, 1)
 
     quality_report["is_valid"] = quality_report["completeness_ratio"] >= COMPLETENESS_THRESHOLD and anomaly_ratio <= MAX_ANOMALY_RATIO
 

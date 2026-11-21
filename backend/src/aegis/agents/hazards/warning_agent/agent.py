@@ -122,7 +122,10 @@ class WarningContentAgent(AgentKit):
             "suggested_actions": list(alert.get("suggested_actions") or []),
             "cap_xml": str(cap.get("xml") or ""),
             "cap_dict": cap.get("dict") if isinstance(cap.get("dict"), dict) else {},
-            "based_on": list(alert.get("based_on") or []),
+            # based_on 是 {依据键: 内容} 的 dict：list(dict) 只剩键名清单（"依据链"没有内容）。
+            "based_on": [f"{key}={value}" for key, value in (alert.get("based_on") or {}).items()]
+            if isinstance(alert.get("based_on"), dict)
+            else list(alert.get("based_on") or []),
             "warning_level": str(alert.get("warning_level") or ""),
             "target_region": str(alert.get("target_region") or ""),
             "is_mock": bool(alert.get("mock_only", False)),

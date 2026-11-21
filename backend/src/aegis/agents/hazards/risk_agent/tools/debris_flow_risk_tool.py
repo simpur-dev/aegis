@@ -172,8 +172,10 @@ FACTOR_CONFIG = {
                     "rainfall_mm_h": 0.15,
                 }
             },
-            "outburst": {"T": {"upstream_breach_flag": 1.0}},  # 溃决型（联动另发保护规则）
-            "spring": {"T": {"spring_surge_flag": 1.0}},  # 泉水型
+            # 溃决/泉水型结构上没有降雨观测：required 随路由覆盖静态清单，否则
+            # "必需因子缺失: rainfall_mm_h" 会把保护规则都命中的评估整单拒绝。
+            "outburst": {"T": {"upstream_breach_flag": 1.0}, "required": ["upstream_breach_flag"]},  # 溃决型（联动另发保护规则）
+            "spring": {"T": {"spring_surge_flag": 1.0}, "required": ["spring_surge_flag"]},  # 泉水型
         },
     },
     # ---- 保护规则（命中即升级响应，不被综合指数稀释；均为 MOCK）----

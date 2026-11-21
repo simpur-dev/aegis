@@ -22,6 +22,8 @@ import json
 import logging
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from aegis.agents.core.meta import llm_call_meta
 from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
@@ -46,6 +48,17 @@ _STAGE_BY_CATEGORY = {
     "insufficient_evidence": ("manager", ["流程跳过了必要上游 Agent", "Manager 组装反馈输入时字段遗漏"]),
     "workflow_error": ("manager", ["状态级联约定被违反（上游失败下游仍继续）", "某 Agent 输出 Schema 偏离系统约定"]),
 }
+
+
+class ReflectionOut(BaseModel):
+    overall_analysis: str = Field(description="整体问题分析概述")
+    reflections: list = Field(
+        description="逐条反思，每项为对象："
+        "{issue_id, occurred_stage, possible_causes(候选原因列表，措辞为假设), "
+        "evidence_sufficient(证据是否足以支持原因判断), "
+        "additional_data_needed(证据不足时还需哪些数据), "
+        "lessons(有证据支撑的可留存经验)}，必须覆盖每个 issue_id"
+    )
 
 
 def _deterministic_reflection(items: list) -> list:
@@ -75,19 +88,7 @@ def reflection_node(state: FeedbackAgentState) -> dict[str, Any]:
 
     reflections, used_llm, overall = [], False, ""
     try:
-        from pydantic import BaseModel, Field
-
         from aegis.agents.hazards.feedback_agent.llm_setup import get_feedback_llm
-
-        class ReflectionOut(BaseModel):
-            overall_analysis: str = Field(description="整体问题分析概述")
-            reflections: list = Field(
-                description="逐条反思，每项为对象："
-                "{issue_id, occurred_stage, possible_causes(候选原因列表，措辞为假设), "
-                "evidence_sufficient(证据是否足以支持原因判断), "
-                "additional_data_needed(证据不足时还需哪些数据), "
-                "lessons(有证据支撑的可留存经验)}，必须覆盖每个 issue_id"
-            )
 
         llm = get_feedback_llm()
         structured = llm.with_structured_output(ReflectionOut)

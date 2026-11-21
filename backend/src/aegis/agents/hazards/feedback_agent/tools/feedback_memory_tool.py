@@ -185,10 +185,13 @@ def save_external_feedback(record: dict) -> dict:
     entry["acceptance_note"] = (
         "外部反馈仅作为结果反馈证据存档；'未发生灾害'不等同于此前风险评估错误（预警为概率性提示），误差分析须经人工审核后方可用于模型改进"
     )
-    existing = _load_json(EXTERNAL_STORAGE_PATH)
-    existing.append(entry)
-    with open(EXTERNAL_STORAGE_PATH, "w", encoding="utf-8") as f:
-        json.dump(existing, f, ensure_ascii=False, indent=2)
+    # 同一把 _SAVE_LOCK：两个文件的 read-modify-write 语义相同，共享腿池并发跑
+    # 两条审计腿时无锁的后写覆盖前写（save_feedback_records 已修过同一问题）。
+    with _SAVE_LOCK:
+        existing = _load_json(EXTERNAL_STORAGE_PATH)
+        existing.append(entry)
+        with open(EXTERNAL_STORAGE_PATH, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
     return {"saved": True, "format_issues": problems, "store_path": str(EXTERNAL_STORAGE_PATH)}
 
 

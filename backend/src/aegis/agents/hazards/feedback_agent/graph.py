@@ -19,6 +19,8 @@ Feedback Agent 的 LangGraph 图构建
   build_feedback_agent_graph() / create_feedback_agent()（给 Manager 用）
 """
 
+from functools import lru_cache
+
 from langgraph.graph import END, StateGraph
 
 from aegis.agents.hazards.feedback_agent.nodes.feedback_analyze_node import feedback_analyze_node
@@ -87,6 +89,9 @@ def build_feedback_agent_graph():
     return graph.compile()
 
 
+@lru_cache(maxsize=1)
 def create_feedback_agent():
-    """便捷函数：创建并返回编译好的 Feedback Agent 图。>>> 给 Manager 用"""
+    """便捷函数：创建并返回编译好的 Feedback Agent 图。>>> 给 Manager 用
+
+    编译单例（同 warning/risk 口径）：此前每请求重新 compile 实测 6.6ms/次，审计腿白付。"""
     return build_feedback_agent_graph()

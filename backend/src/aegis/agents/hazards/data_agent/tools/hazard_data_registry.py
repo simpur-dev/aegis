@@ -19,6 +19,7 @@ Data Agent 灾种数据需求注册表（五类山地灾害，因子来源可追
   提供给：data_agent 五节点 / 通用数据工具 / 测试。
 """
 
+from functools import cache
 from typing import Any
 
 from pydantic import Field, create_model
@@ -308,8 +309,12 @@ def get_data_source_tool(hazard_type: str):
     return get_hazard_data_requirements(hazard_type)["data_source_tool"]
 
 
+@cache
 def build_query_param_model(hazard_type: str):
-    """按灾种查询参数菜单动态构建 pydantic 模型（data_plan 的 LLM 结构化输出用）。"""
+    """按灾种查询参数菜单动态构建 pydantic 模型（data_plan 的 LLM 结构化输出用）。
+
+    菜单是模块级静态配置：同灾种每次重建 create_model（类构建 + schema 生成）是纯开销，
+    按 hazard_key 缓存（灾种集合固定，不会增长）。"""
     req = get_hazard_data_requirements(hazard_type)
     # 【并入主线时的改动】补注解：字段值有 float/int/str 三种类型，不标注会被推成
     # `tuple[type[float], Any]`，随后 `create_model(**fields)` 就过不了类型检查。

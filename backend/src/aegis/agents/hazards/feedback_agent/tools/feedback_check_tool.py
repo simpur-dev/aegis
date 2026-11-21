@@ -942,7 +942,13 @@ def _check_warning_block(seq, issues, hazard_key, warning_result, risk_result, d
                     requires_human_review=True,
                 )
             )
-        if "已发布" in sent and alert.get("alert_status") == "draft" and not any(n in sent for n in _NEGATION_MARKERS):
+        already_flagged = any(sent[:80] in (issue.get("evidence") or [""])[0] for issue in issues)
+        if (
+            "已发布" in sent
+            and alert.get("alert_status") == "draft"
+            and not any(n in sent for n in _NEGATION_MARKERS)
+            and not already_flagged
+        ):
             issues.append(
                 _issue(
                     seq(),

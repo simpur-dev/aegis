@@ -47,12 +47,15 @@ def evidence_quality_tool(
 
     completeness_ratio = round(len(usable) / total, 4) if total else 0.0
 
+    usable_ids = {id(obs) for obs in usable}
     missing: list[str] = []
     for obs in observations:
         if not isinstance(obs, dict):
             continue
         factor = str(obs.get("factor") or "unknown")
-        if obs not in usable:
+        if id(obs) not in usable_ids:
+            # 同一对象集合的成员判定：id 集合 O(1)，`obs not in usable` 是逐个 dict
+            # 全键比较（48 观测 ≈ 2.3k 次比较）；usable 里的对象本就来自 observations。
             missing.append(f"因子 {factor} 没有可用数值")
         elif obs.get("quality") not in (None, "ok"):
             missing.append(f"因子 {factor} 观测质量 {obs.get('quality')}")

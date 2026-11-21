@@ -19,6 +19,8 @@ import json
 import logging
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from aegis.agents.core.meta import llm_call_meta
 from aegis.agents.core.prompts import build_prompt
 from aegis.agents.hazards.feedback_agent.state import FeedbackAgentState
@@ -29,18 +31,17 @@ from aegis.agents.hazards.feedback_agent.tools.feedback_check_tool import (
 log = logging.getLogger("aegis.agents.hazards.feedback_agent.nodes.feedback_analyze_node")
 
 
+class AnalyzeCommentary(BaseModel):
+    commentary: str = Field(description="对已发现问题的通俗解释与影响说明")
+    manager_attention: list = Field(default_factory=list, description="值得 Manager 注意的流程性提示（非新问题判定）")
+
+
 def _llm_commentary(state, issues) -> dict:
     """LLM 对检查结果做解释（仅解释，不判定；失败走空说明兜底）。"""
     if not issues:
         return {"commentary": "", "used_llm": False, "note": "确定性检查未发现问题，无需解释"}
     try:
-        from pydantic import BaseModel, Field
-
         from aegis.agents.hazards.feedback_agent.llm_setup import get_feedback_llm
-
-        class AnalyzeCommentary(BaseModel):
-            commentary: str = Field(description="对已发现问题的通俗解释与影响说明")
-            manager_attention: list = Field(default_factory=list, description="值得 Manager 注意的流程性提示（非新问题判定）")
 
         llm = get_feedback_llm()
         structured = llm.with_structured_output(AnalyzeCommentary)

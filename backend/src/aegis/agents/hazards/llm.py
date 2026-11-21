@@ -69,6 +69,7 @@ import hashlib
 import threading
 import time
 from contextvars import ContextVar
+from typing import Any
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -151,6 +152,12 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
     #: 本实例专属的熔断器（进程级共享的那一个由 `get_llm()` 注入）。
     #: 放在模型实例上而不是全局单例：不同端点/凭据各有一条熔断账，互不污染。
     _breaker: LlmBreaker = PrivateAttr(default_factory=LlmBreaker)
+    #: 结构化输出链缓存：键 = (schema 类, kwargs 冻结)。链是**无请求态**的
+    #: （台账收集器走 ContextVar，每次 invoke 自建 list），跨请求复用安全。
+    #: 不缓存的话每个请求要重建两次 pydantic json schema（function_calling 绑定
+    #: 一次 + PydanticOutputParser 格式指令一次）——cProfile 实测这是规则轨研判
+    #: 的头号热点（generate_inner 6720 次/480 轮），占单请求 ~0.5ms。
+    _structured_cache: dict[tuple, Any] = PrivateAttr(default_factory=dict)
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         """在真正发请求之前过熔断；请求结果回来后记账。
@@ -248,13 +255,17 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
         return record
 
     def with_structured_output(self, schema, **kwargs):
-        """返回与 langchain 兼容的结构化输出 Runnable。
+        """返回与 langchain 兼容的结构化输出 Runnable（按 (schema, kwargs) 实例级缓存）。
 
         通道一：function_calling（langchain 原生实现，模型愿意调工具时最精准）。
         通道二（回退）：服务端强制 JSON（response_format=json_object，
         智谱遵守）+ Pydantic 格式指令注入，模型无法输出非 JSON 内容。
         两通道都失败 → 抛 RuntimeError（节点 try/except 兜底并打印明确原因）。
         """
+        cache_key = (schema, tuple(sorted(kwargs.items())))
+        cached = self._structured_cache.get(cache_key)
+        if cached is not None:
+            return cached
         # ---- 通道一：function_calling（模型不调工具时返回 None，不抛异常）----
         base_fc = super().with_structured_output(schema, method="function_calling", **kwargs)
 
@@ -280,6 +291,13 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
             return messages
 
         def _invoke(messages):
+            # 快路径：熔断打开时直接抛，不穿 langchain 的 generate/格式化机制——
+            # 实测稳态一次 invoke 仍要 0.6ms（json schema 重建 + callbacks 复制），
+            # 而真正该做的事（报"不可用"）0.002ms 就够。available() 是纯读、
+            # 不占半开试探名额；权威闸仍在 _generate 的 allow()（异常落节点 try 的
+            # 兜底契约逐字不变，见其 docstring）。
+            if not self._breaker.available():
+                raise LlmUnavailableError("LLM 熔断中（连续失败达阈值，冷却窗口内不再发起调用）；本次直接走确定性兜底。")
             # 本次调用的落账收集器：只收"这条调用链"自己的行。
             # langchain 的 RunnableSequence 每一步都在**复制的上下文**里跑——
             # 子上下文里 set 的值传不回父上下文，但父子共享同一个列表对象，
@@ -316,7 +334,9 @@ class ZhipuCompatChatOpenAI(ChatOpenAI):
             finally:
                 _call_records_var.reset(records_token)
 
-        return RunnableLambda(_invoke)
+        runnable = RunnableLambda(_invoke)
+        self._structured_cache[cache_key] = runnable
+        return runnable
 
 
 # ---------- 客户端进程级复用 ----------
