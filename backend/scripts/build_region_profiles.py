@@ -122,9 +122,39 @@ def load_glc_regions(path: Path) -> dict[str, int]:
     return dict(counts)
 
 
-def build_profiles(census_path: Path, glof_path: Path, glc_path: Path, surveyed_at: str) -> list[dict[str, Any]]:
+def load_existing(path: Path | None) -> dict[str, dict[str, Any]]:
+    """既有站点画像（按 region_code）：合并目标。
+
+    **为什么必须合并而不是覆盖**：`import_site_profiles` 是 upsert（整条替换）——
+    若历史画像独占一个 region_code，导入就会把既有普查属性（坡度/汇水面积/沟道比降）
+    冲掉，因子引擎当场判 P 组覆盖率 0%、预警素材腿拿不到 `assessment_status=scored`
+    的信封（2026-11-21 真机联调实测到的连锁故障）。历史统计是**追加维度**，
+    与现场普查属性共存于同一画像。
+    """
+    if path is None or not path.is_file():
+        return {}
+    existing: dict[str, dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        region = str(row.get("region_code") or "").strip()
+        if region:
+            existing[region] = row
+    return existing
+
+
+def build_profiles(
+    census_path: Path,
+    glof_path: Path,
+    glc_path: Path,
+    surveyed_at: str,
+    *,
+    existing_path: Path | None = None,
+) -> list[dict[str, Any]]:
     census = load_census_stats(census_path)
     glc_regions = load_glc_regions(glc_path)
+    existing = load_existing(existing_path)
 
     profiles: list[dict[str, Any]] = []
     for region, stat in sorted(census.items()):
@@ -177,6 +207,27 @@ def build_profiles(census_path: Path, glof_path: Path, glc_path: Path, surveyed_
                     "surveyed_at": surveyed_at,
                 }
             )
+        base = existing.get(region)
+        if base is not None:
+            base_keys = {str(attr.get("key")) for attr in base.get("attributes") or []}
+            merged_attributes = list(base.get("attributes") or []) + [a for a in attributes if a["key"] not in base_keys]
+            name = str(base.get("name") or f"{region} 站点画像")
+            merged_hazards = sorted({str(h) for h in (base.get("hazard_types") or [])} | set(hazard_types))
+            profiles.append(
+                {
+                    "region_code": region,
+                    "name": name,
+                    "hazard_types": merged_hazards,
+                    "attributes": merged_attributes,
+                    "provenance": base.get("provenance")
+                    or {
+                        "data_kind": "derived",
+                        "sources": [SOURCE_CENSUS],
+                        "disclaimer": PROVENANCE_NOTE,
+                    },
+                }
+            )
+            continue
         profiles.append(
             {
                 "region_code": region,
@@ -201,12 +252,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--glof", type=Path, default=GLOF_PATH)
     parser.add_argument("--glc", type=Path, default=GLC_PATH)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument(
+        "--merge-existing",
+        type=Path,
+        default=REPO_ROOT / "backend" / "data" / "site_profiles.demo.jsonl",
+        help="既有站点画像（按 region_code 合并历史属性，不覆盖普查属性）",
+    )
     args = parser.parse_args(argv)
 
     from datetime import UTC, datetime
 
     surveyed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    profiles = build_profiles(args.census, args.glof, args.glc, surveyed_at)
+    profiles = build_profiles(args.census, args.glof, args.glc, surveyed_at, existing_path=args.merge_existing)
     glof_total = load_glof_china_total(args.glof)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", encoding="utf-8", newline="\n") as handle:
