@@ -4410,3 +4410,51 @@ CHM_PRE off-peak 取数比预期快（2020–2021 两个 673 MB 原件已完整�
 - `precip` 腿开关仍默认关：派生表在位后开腿（`AEGIS_PRECIP_DAILY_ENABLED` + 文件路径）是部署动作。
 
 这 closing 了"平台第一个真实雨量来源"的最后一段：采集（原件）→ 派生（站点逐日表）→ 装配（腿）全链真实数据在位。
+
+## 智能体后端优化批次（2026-11-21）：子代理审查-修复循环
+
+**方法**（与上一轮存储层批次同构，按"先量后改"纪律）：cProfile 基线 → 三路子代理并行审查
+（助手 / 灾种六体 / 内核总线）→ 逐条核实修复 → 第二轮复检代理验证 → 收敛。
+
+### 基线与实测收益（bench_assess_hazards --loops 30，LLM 熔断兜底态）
+
+| 指标 | 基线 | 优化后 | 收益 |
+|---|---|---|---|
+| 研判 p50 | 4.06 ms | **1.74 ms** | **2.3×** |
+| 研判 p90 | 4.82 ms | 1.92 ms | 2.5× |
+| 吞吐 | 246 ops/s | **564-576 ops/s** | **2.3×** |
+
+热点溯源（cProfile）：pydantic json_schema 重建（generate_inner 6720 次/480 轮）——
+来源是每请求重建结构化输出链。修复：
+
+- **P2 快路径**：`_invoke` 入口先查 `breaker.available()`（纯读不占半开名额），熔断打开
+  直接抛——不再穿 3 层 langchain 机制才撞熔断（稳态 0.619ms→0.002ms 量级）；
+- **P1 链缓存**：`with_structured_output` 按 (schema, kwargs) 实例级缓存（链无请求态，
+  台账走 ContextVar）——每请求省 2 次 json schema 重建；
+- P3 warning/feedback 图编译单例（此前每请求 6.6ms）；P4 注册表 create_model 按 hazard
+  缓存；P5 函数体 pydantic 类提模块级；P6 成员判定 id 集合化；
+- C16 网关 per-task 尾窗 p50（红/橙派发前的双盲预算闸不再全量扫台账）。
+
+### 并发正确性（子代理抓到的真缺陷）
+
+- **熔断名额"必有出口"**：dispatch/chat_stream 补 BaseException 兜底——
+  CancelledError/GeneratorExit 此前不进任何 note_*/release_probe 出口，5xx 风暴 +
+  agentkit 到点取消叠加时半开试探名额永久占用，模型被静默下架直到重启；
+- **台账改判持有自己的行**：chat_structured 此前按全局台账最后一行改 malformed——
+  并发双盲下 A 漏记、B 被冤枉，首过率在最该度量的并发场景系统性失真；
+- 双盲 gather return_exceptions=True（主腿失败不连坐取消第二腿）；心跳循环自愈；
+  上行去重两段式（处理失败的重投重新处理）；registry 计数随身份迁移。
+
+### 助手与灾种逻辑（逻辑 bug）
+
+- 问句闸下沉 intent._build（LLM 兜底建议的 notify.lead 不再被问句直接触发）；
+- 直执行写动作消费幂等键（走台账生命周期，双击不再双倍通知）；执行屏蔽取消；
+  参数/目标解析失败落审计；chains 旁路索引替换 explain 全量扫描；
+- 路由变体 per-variant required（outburst/spring 型不再被静态必需因子整单拒绝）；
+  manager Simulation 超时也走 skip_optional；linear_neg 越界 note 方向修正等 9 条。
+
+### 门禁与留痕
+
+全量 4,498 / 0 failed（38-42s）；新增回归用例覆盖截断重取、去重状态机、路由 required。
+复检代理逐条验证（结论见其报告；一处自我纠错：旁路竞态塞实例锁会死锁——asyncio.Lock
+不可重入，改为执行前复查 BYPASSED，既有用例钉住的设计保持）。
