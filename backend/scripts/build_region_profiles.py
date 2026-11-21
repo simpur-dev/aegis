@@ -274,6 +274,10 @@ def main(argv: list[str] | None = None) -> int:
     if sample:
         attrs = {a["key"]: a["value"] for a in sample["attributes"]}
         print("示例（540121）:", json.dumps(attrs, ensure_ascii=False)[:300])
+    # 覆盖度如实报：只有同时具备现场普查属性的区划才能过因子引擎的 P 组门控；
+    # 其余区划的历史画像只喂 LLM 先验（不编造普查值填门控）。
+    with_survey = [p for p in profiles if any(not a["key"].startswith("history_") for a in p["attributes"])]
+    print(f"覆盖度：{len(with_survey)}/{len(profiles)} 个区划同时有现场普查属性（可过因子引擎 P 组门控），其余仅有历史先验")
     return 0
 
 
