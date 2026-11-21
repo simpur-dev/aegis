@@ -420,3 +420,40 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("全部测试通过 ✅")
     print("=" * 60)
+
+
+class TestHistoryIsContextOnly:
+    """历史画像（外部数据集聚合）**不是**本次观测：不进完整度、不撑"数据充足"。
+
+    2026-11-21 复检实测：只有 history_* 观测的区划曾得到 completeness=1.0 /
+    sufficient=True——85 个只有历史统计的区划会看起来"数据充足"。历史是先验，
+    给 LLM 用；确定性门控只认实时观测与站点画像。
+    """
+
+    def test_只有历史观测时完整度为0且不充足(self) -> None:
+        from aegis.agents.hazards.data_agent.tools.evidence_quality_tool import evidence_quality_tool
+
+        evidence = {
+            "region_code": "540121",
+            "observations": [
+                {"factor": "history_dominant_hazard", "class_value": "泥石流", "samples": 1, "quality": "site", "observed_at": "2026-11-21T00:00:00Z"},
+                {"factor": "history_debris_flow_events_10y", "max_value": 39.0, "samples": 1, "quality": "site", "observed_at": "2026-11-21T00:00:00Z"},
+            ],
+        }
+        report = evidence_quality_tool(evidence, region_code="540121")
+        assert report["completeness_ratio"] == 0.0, "历史统计不能算作本次观测覆盖率"
+        assert report["sufficient"] is False, "只有先验不足以支撑研判"
+
+    def test_实时观测与历史并存时只按实时算(self) -> None:
+        from aegis.agents.hazards.data_agent.tools.evidence_quality_tool import evidence_quality_tool
+
+        evidence = {
+            "region_code": "540121",
+            "observations": [
+                {"factor": "rainfall_mm_h", "max_value": 55.0, "samples": 3, "quality": "ok", "observed_at": "2026-11-21T00:00:00Z"},
+                {"factor": "history_dominant_hazard", "class_value": "泥石流", "samples": 1, "quality": "site", "observed_at": "2026-11-21T00:00:00Z"},
+            ],
+        }
+        report = evidence_quality_tool(evidence, region_code="540121")
+        assert report["completeness_ratio"] == 0.5, "分母含历史观测，但只有实时观测算可用（1/2）"
+        assert report["sufficient"] is True, "有实时观测仍可研判"

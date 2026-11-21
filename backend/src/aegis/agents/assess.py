@@ -245,18 +245,24 @@ class AssessAgent(AgentKit):
             except Exception as exc:
                 log.warning("assess 历史研判召回降级", extra={"err": type(exc).__name__})
 
-        # 历史画像块：证据包里 history_ 前缀的 site 观测（外部公开数据集聚合，
-        # quality=site）。它是**先验**不是实时观测——提示词指引"参考构成、不得据此抬等级"。
+        # 历史画像块：直接读证据包的 site_profile 属性（不是 observations）——观测列表有
+        # 48 条上限、裁剪从尾部切，history_* 恰好排在尾部会被静默切掉；画像属性不受该上限影响，
+        # 且这里要的是"描述性先验"，与因子观测的用途本就不同。
+        # 它是**先验**不是实时观测——提示词指引"参考构成、不得据此抬等级"。
         history_block = ""
-        if req.evidence is not None:
-            history_observations = [obs for obs in req.evidence.observations if obs.factor.startswith("history_")]
-            history_lines = [
-                f"{obs.factor}={obs.max_value if obs.max_value is not None else obs.class_value}" for obs in history_observations
+        if req.evidence is not None and req.evidence.site_profile is not None:
+            history_pairs = [
+                (attribute.key, attribute.value)
+                for attribute in req.evidence.site_profile.attributes
+                if attribute.key.startswith("history_")
             ]
-            if history_lines:
-                history_block = "该区域历史灾害画像（公路台账统计，先验非实时证据）：" + "；".join(history_lines)
+            if history_pairs:
+                history_block = "该区域历史灾害画像（公路台账统计，先验非实时证据）：" + "；".join(
+                    f"{key}={value}" for key, value in history_pairs
+                )
                 # 季节偏离：确定性信号，由画像的 peak_month 与当前月份算（不让模型自己做月份算术）。
-                season = self._seasonal_deviation(history_observations, req.evidence.generated_at)
+                peak_raw = next((str(value) for key, value in history_pairs if key == "history_peak_month"), "")
+                season = self._seasonal_deviation(peak_raw, req.evidence.generated_at)
                 if season:
                     history_block += f"；季节提示：{season}"
         base_vars = self._prompt_vars(region=region, hits=hits, ctx=ctx, history=history_block)
@@ -437,15 +443,14 @@ class AssessAgent(AgentKit):
         }
 
     @staticmethod
-    def _seasonal_deviation(observations: list[Any], generated_at: str) -> str:
+    def _seasonal_deviation(peak_raw: str, generated_at: str) -> str:
         """ "当前月份 vs 历史高发月"的确定性偏离提示（空串 = 无偏离或读不出）。
 
         为什么不让模型自己算：份数算术是确定性事实，模型算月份差会出错（且 rationale 里的
         数字必须可溯源）。历史高发月取自数据集聚合的 `history_peak_month`（形如 "8月"）；
-        偏离 ≥2 个月时提示"当季风险基线较低，需更多实时证据支撑高等级"。
+        偏离 ≥2 个月时只如实说相差几个月，**不说"基线较低"**——模型会照这句话压等级。
         """
-        peak_raw = next((str(obs.class_value or "") for obs in observations if obs.factor == "history_peak_month"), "")
-        digits = "".join(ch for ch in peak_raw if ch.isdigit())
+        digits = "".join(ch for ch in str(peak_raw or "") if ch.isdigit())
         if not digits:
             return ""
         try:
@@ -459,7 +464,9 @@ class AssessAgent(AgentKit):
         distance = min(abs(current_month - peak_month), 12 - abs(current_month - peak_month))
         if distance < 2:
             return ""
-        return f"当前 {current_month} 月距历史高发月（{peak_month} 月）{distance} 个月，当季风险基线较低，需要更多实时证据支撑高等级"
+        # 只说"偏离"这个可核查的事实，不断言"风险基线较低"——
+        # 单个月份峰值不足以支撑"低风险季节"的结论，而模型会照着这句话压等级。
+        return f"当前 {current_month} 月不在历史高发月（{peak_month} 月）附近（相差 {distance} 个月）"
 
     @staticmethod
     def _first_hazard(hits: list[Any]) -> str | None:

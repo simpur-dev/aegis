@@ -22,6 +22,14 @@ _VALUE_KEYS = ("min_value", "max_value", "mean_value", "class_value")
 
 
 def _is_usable(observation: dict[str, Any]) -> bool:
+    """这条观测能不能当"数据"用来算完整度/准入。
+
+    **history_ 前缀不算**：区域历史画像（外部数据集聚合的先验）是给 LLM 的上下文，
+    不是本次研判的观测——若把它算进完整度，只有历史统计的区划会得到 100% 完整度与
+    `sufficient=True`（2026-11-21 复检实测 6/6），"数据充足"就成了假象。
+    """
+    if str(observation.get("factor") or "").startswith("history_"):
+        return False
     return any(observation.get(key) is not None for key in _VALUE_KEYS)
 
 

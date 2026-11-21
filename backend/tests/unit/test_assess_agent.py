@@ -142,31 +142,15 @@ class TestHistoryGrounding:
     由平台算，不让模型自己做月份算术（rationale 里的数字必须可溯源）。
     """
 
-    @staticmethod
-    def _obs(key: str, *, value: float | None = None, cls: str | None = None):
-        from aegis.domain.assess import FactorObservation
-
-        return FactorObservation(
-            factor=key,
-            unit="",
-            samples=1,
-            max_value=value,
-            class_value=cls,
-            observed_at="2026-11-21T00:00:00Z",
-            quality="site",
-            sources=["site_profile:sciencedb-road-census"],
-        )
-
     def test_季节偏离按环形距离算(self) -> None:
         from aegis.agents.assess import AssessAgent
 
-        observations = [self._obs("history_peak_month", cls="8月")]
-        assert "3 个月" in AssessAgent._seasonal_deviation(observations, "2026-11-21T08:00:00Z")
-        assert AssessAgent._seasonal_deviation(observations, "2026-08-15T08:00:00Z") == "", "当季不提示偏离"
+        assert "3 个月" in AssessAgent._seasonal_deviation("8月", "2026-11-21T08:00:00Z")
+        assert AssessAgent._seasonal_deviation("8月", "2026-08-15T08:00:00Z") == "", "当季不提示偏离"
         # 环形距离：12 月与 1 月差 1 个月，不算偏离
-        assert AssessAgent._seasonal_deviation([self._obs("history_peak_month", cls="12月")], "2026-01-15T08:00:00Z") == ""
+        assert AssessAgent._seasonal_deviation("12月", "2026-01-15T08:00:00Z") == ""
         # 读不出高发月时静默（不臆造偏离）
-        assert AssessAgent._seasonal_deviation([self._obs("history_x", value=1.0)], "2026-11-21T08:00:00Z") == ""
+        assert AssessAgent._seasonal_deviation("", "2026-11-21T08:00:00Z") == ""
 
     def test_历史观测压成提示词块且带季节提示(self) -> None:
         """_prompt_vars 收到 history 块后原样进模板变量（过注入围栏），空块不留痕。"""
@@ -220,6 +204,41 @@ class TestHistoryGroundingEndToEnd:
         assert "history_dominant_hazard=泥石流" in history
         # 季节偏离由平台确定性算（当前月份来自证据 generated_at，不是模型推测）
         assert "季节提示" in history and "8 月" in history
+
+    @pytest.mark.asyncio
+    async def test_观测裁剪不影响历史画像块(self) -> None:
+        """观测列表有 48 条上限、裁剪从尾部切——history_* 恰在尾部。历史块改读
+        site_profile 之后，即使观测被裁光，先验也照样进提示词（不再静默消失）。"""
+        from aegis.domain.site import SiteAttribute, SiteProfile
+        from aegis.pipeline.assess_input import AssessEvidenceBuilder
+        from aegis.storage.store import PlatformStore
+
+        store = PlatformStore()
+        store.site_profiles.upsert(
+            SiteProfile(
+                region_code="540121",
+                name="540121 历史灾害画像（数据集聚合）",
+                hazard_types=[HazardType.DEBRIS_FLOW],
+                attributes=[
+                    SiteAttribute(key="history_debris_flow_events_10y", value=39.0, unit="起", source="sciencedb-road-census"),
+                    SiteAttribute(key="history_peak_month", value="8月", source="sciencedb-road-census"),
+                ],
+            )
+        )
+        builder = AssessEvidenceBuilder(store, window_minutes=60)
+        evidence = await builder.build(region="540121", hits=[], readings=[], intake="telemetry")
+        # 模拟裁剪把 history_* 观测全部切掉：证据包里只剩 site_profile 兜底
+        evidence = evidence.model_copy(
+            update={"observations": [obs for obs in evidence.observations if not obs.factor.startswith("history_")]}
+        )
+
+        a, gw = agent(verdict(1))
+        request = _request()
+        request.payload["evidence"] = evidence.model_dump(mode="json")
+        await a.handle(request)
+
+        history = gw.calls[0]["prompt_vars"]["history"]
+        assert "history_debris_flow_events_10y=39.0" in history, "观测被裁后历史画像块仍须进提示词"
 
 
 class TestHazardEnum:
