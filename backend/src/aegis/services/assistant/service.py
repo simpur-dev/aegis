@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import secrets
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any
@@ -106,6 +106,7 @@ class AssistantService:
         # 里却不在队列上——按队列淘汰会误杀较新的活跃会话（其 id 复用时 history 静默清零）。
         self._order: deque[str] = deque()
         self.rejections: deque[dict[str, Any]] = deque(maxlen=200)
+        self._polish_cache: OrderedDict[str, str] = OrderedDict()
         self.replies = 0
 
     # ---------- 对外面 ----------
@@ -678,12 +679,22 @@ class AssistantService:
 
     # ---------- 措辞层（LLM 只改措辞，不新增数字） ----------
 
+    #: 润色缓存上限：同一份事实（值班员反复看同一条预警）不该重复等 1.2s 的装饰性重写。
+    #: 只缓存**已通过数字闸**的结果（同一个 facts 键 → 同一批数字，闸的结论不会变）；
+    #: 界面上的"为什么"类问答天然高频重复，这是纯收益。有界，防无界增长。
+    _POLISH_CACHE_SIZE = 256
+
     async def _polish(self, facts: str, session: AssistantSession | None) -> str:
         if not self.llm_available or not facts:
             return facts[:_ANSWER_LIMIT]
         llm = self._llm
         if llm is None:
             return facts[:_ANSWER_LIMIT]
+        cache_key = facts[:2_000]
+        cached = self._polish_cache.get(cache_key)
+        if cached is not None:
+            self._polish_cache.move_to_end(cache_key)
+            return cached
         # 润色是可有可无的一层：慢模型不许把 answer 帧（已拿到的事实）扣在手里。
         # 超时就直出，reason 里留一行降级，排查时能分清"模型慢"与"模型编数"。
         timeout = float(self._settings.assistant_polish_timeout_seconds)
@@ -711,7 +722,12 @@ class AssistantService:
         if invented:
             self._reject(session, action="llm.polish", reason="润色引入新数字，整段弃用", detail={"invented": sorted(invented)[:8]})
             return facts[:_ANSWER_LIMIT]
-        return str(polished)[:_ANSWER_LIMIT]
+        text = str(polished)[:_ANSWER_LIMIT]
+        # 只缓存过了数字闸的文本（闸已按同一 facts 判过，复用时结论不变）
+        self._polish_cache[cache_key] = text
+        while len(self._polish_cache) > self._POLISH_CACHE_SIZE:
+            self._polish_cache.popitem(last=False)
+        return text
 
     # ---------- 会话与留痕 ----------
 

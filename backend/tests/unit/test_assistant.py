@@ -1070,3 +1070,32 @@ async def test_缺参数不等于出错路径闭嘴但也不假称查到了() ->
     events = await collect(service, "解释 wrn_… 为什么定这个等级", reporter="值班员")
     answer = next(event for event in events if event.type == "answer")
     assert "缺少" in str(answer.data["text"]), answer.data["text"]
+
+
+@pytest.mark.asyncio
+async def test_润色缓存_同一事实不重复等模型() -> None:
+    """值班员反复看同一条预警：同一份事实的润色结果复用缓存（装饰层可缓存），
+    答案文本不变、LLM 调用次数不增；数字闸已在入缓存前判过（同一 facts → 同一批数字）。"""
+
+    calls: list[list[dict[str, str]]] = []
+
+    class CountingLlm:
+        # 分类器按 `available` 属性判"LLM 在不在"（不是按实例非空）——替身要同形
+        available = True
+
+        async def chat(self, messages, **kw: Any) -> str:
+            calls.append(messages)
+            return "- 预警 wrn_x，等级 1 级，红色"
+
+        async def chat_json(self, messages, **kw: Any) -> dict[str, Any]:  # 意图兜底不用，但契约同形
+            return {}
+
+    service = build_service(llm=CountingLlm())
+    facts = "预警 wrn_x，等级 1 级，红色"
+    first = await service._polish(facts, None)
+    second = await service._polish(facts, None)
+    assert first == second
+    assert len(calls) == 1, "同一份事实第二次不该再调模型"
+    # 不同事实仍走模型
+    await service._polish("预警 wrn_y，等级 2 级，橙色", None)
+    assert len(calls) == 2
