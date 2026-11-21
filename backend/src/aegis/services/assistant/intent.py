@@ -101,6 +101,14 @@ _INTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("report.submit", ("上报", "报告险情", "我要报", "我发现", "我看到", "刚看到")),
 )
 
+#: 宽松关键词的上下文闸：这些词单独出现不足以定意图。
+#: 「近十年降雨有多少」问的是降雨统计，不是历史灾害画像——只有同句还出现
+#: 灾种/事件语义时才算 history.query 命中；只有时间词而没有灾害语义的按未命中处理。
+_CONTEXTUAL_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "近十年": ("灾害", "灾种", "泥石流", "滑坡", "崩塌", "落石", "冰湖", "事件", "发生", "画像", "历史"),
+    "近10年": ("灾害", "灾种", "泥石流", "滑坡", "崩塌", "落石", "冰湖", "事件", "发生", "画像", "历史"),
+}
+
 #: 祈使式前缀：只有"把/请/帮我…"或整体作用域才算"要执行"，否则"这条预警可以撤回吗"会被误杀。
 _IMPERATIVE_PREFIX = re.compile(r"^(把|请|帮我|我们|立即|马上|现在|快)")
 #: 问句一律不当指令：带"吗/为什么/是否/怎么"的句子是在问事实，不是让人去执行。
@@ -317,8 +325,16 @@ class IntentClassifier:
         best_action: str | None = None
         best_at = -1
         for action, keywords in _INTENT_RULES:
-            positions = (lowered.find(keyword) for keyword in keywords)
-            hit_at = min((pos for pos in positions if pos >= 0), default=-1)
+            hit_at = -1
+            for keyword in keywords:
+                pos = lowered.find(keyword)
+                if pos < 0:
+                    continue
+                required = _CONTEXTUAL_KEYWORDS.get(keyword)
+                if required is not None and not any(word in lowered for word in required):
+                    continue
+                if hit_at < 0 or pos < hit_at:
+                    hit_at = pos
             if hit_at > best_at:
                 best_action = action
                 best_at = hit_at

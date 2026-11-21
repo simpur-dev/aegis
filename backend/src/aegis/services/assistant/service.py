@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import secrets
 import time
 from collections import OrderedDict, deque
@@ -75,6 +76,9 @@ class AssistantSession:
     #: "那今年该重点防什么"里的"那"指的是上一轮的历史画像——不承接就会退化成
     #: 通用预案（hazard_type=unknown），值班员得自己重复一遍灾种。
     last_hazard: str = ""
+    #: 该灾种来自哪个区域。承接必须区域一致：540121 的"以泥石流为主"不能变成
+    #: 540221 那次省略式追问的灾种（跨区串味，复检实测过）。
+    last_region: str = ""
 
 
 class AssistantService:
@@ -225,6 +229,9 @@ class AssistantService:
         # 多轮指代消解在分类前："撤回它"会补上上一轮的编号；utterance 仍保留用户原始输入。
         effective_text = resolve_coreference(body, session.history)
         intent = await self._classifier.classify_async(effective_text, region_code=region_code, reporter=reporter)
+        # 承接在发 intent 帧**之前**：客户端看到的意图必须与真正执行的一致
+        # （此前先发帧后承接，客户端看到 hazard_type=None、实际却用了上文灾种）。
+        intent = self._carry_hazard(session, intent, region_code=region_code)
         yield AssistantEvent("intent", intent.as_dict())
         session.history.append({"role": "user", "text": body[:500]})
 
@@ -566,6 +573,23 @@ class AssistantService:
 
     # ---------- 编排 ----------
 
+    @staticmethod
+    def _carry_hazard(session: AssistantSession, intent: Intent, *, region_code: str | None) -> Intent:
+        """省略灾种的 plan.ask 承接上文灾种（只补省略值；区域不一致不承接）。
+
+        Intent 是冻结的（意图不可变）：派生新意图，不改原对象。
+        跨区不承接：540121 的"以泥石流为主"不能替 540221 的追问作答。
+        """
+        if intent.action != "plan.ask" or intent.args.get("hazard_type") or not session.last_hazard:
+            return intent
+        if region_code is not None and session.last_region not in ("", region_code):
+            return intent
+        return replace(
+            intent,
+            args={**intent.args, "hazard_type": session.last_hazard},
+            note=(f"{intent.note}；" if intent.note else "") + f"承接上文灾种 {session.last_hazard}",
+        )
+
     async def _run_intent(
         self,
         session: AssistantSession,
@@ -595,16 +619,9 @@ class AssistantService:
             yield AssistantEvent("answer", {"text": self._capability_hint(intent.note)})
             return
         action = self._registry.require(intent.action)
-        # 多轮承接（只补"省略"的灾种，不覆盖用户明确给出的值）：上一轮聊的是泥石流，
-        # 这一轮"那今年该重点防什么"不承接就会退化成通用预案（unknown 步骤表）。
-        if action.spec.name == "plan.ask" and not intent.args.get("hazard_type") and session.last_hazard:
-            # Intent 是冻结的（意图不可变）：派生一份带上灾种的新意图，不改原对象。
-            intent = replace(
-                intent,
-                args={**intent.args, "hazard_type": session.last_hazard},
-                note=(f"{intent.note}；" if intent.note else "") + f"承接上文灾种 {session.last_hazard}",
-            )
-        action_name = action.spec.name  # replace 后 intent.action 的类型收窄失效，落一个 str 局部量给下游用
+        # 承接已在 respond 里做完（发 intent 帧之前）——这里只取一个 str 局部量：
+        # `intent` 可能被 replace 过，其 `action` 的类型收窄在重新赋值后失效。
+        action_name = action.spec.name
         # 强身份闸（设计 §14.1.1）：强认证开启后，写动作必须带有效令牌（identity_kind='key'），
         # 仅声明身份在此拒绝、不进频控也不落提案；读动作不会走到这里。
         if action.spec.writes and self._strong_identity_required(identity_kind):
@@ -664,7 +681,7 @@ class AssistantService:
                 "proposal",
                 {
                     "action_id": outcome.action_id,
-                    "action": intent.action,
+                    "action": action_name,
                     "summary": f"{action.spec.title}：{body[:120]}" if body else action.spec.title,
                     "args": dict(intent.args),
                     "status": "proposed",
@@ -693,6 +710,7 @@ class AssistantService:
         hinted = data.get("hazard_type") or (data.get("history") or {}).get("history_dominant_hazard")
         if isinstance(hinted, str) and hinted:
             session.last_hazard = _HAZARD_CN_TO_VALUE.get(hinted, hinted)
+            session.last_region = str(data.get("region_code") or "")
         yield AssistantEvent("result", {"action": action_name, **data})
         text = "" if result is None else result.summary
         if not text:
@@ -721,11 +739,18 @@ class AssistantService:
         llm = self._llm
         if llm is None:
             return facts[:_ANSWER_LIMIT]
-        cache_key = facts[:2_000]
+        # 键用**完整 facts 的摘要**：前缀键会让"只有尾部不同"的两份事实共用缓存
+        # （第二份直接拿到第一份尾部才有的数字）。命中路径仍要过数字闸——
+        # 护栏不能在缓存旁路上失效。
+        cache_key = hashlib.sha256(facts.encode("utf-8")).hexdigest()
         cached = self._polish_cache.get(cache_key)
         if cached is not None:
             self._polish_cache.move_to_end(cache_key)
-            return cached
+            if invented_numbers(cached, facts):
+                # 摘要相同而闸不过，只可能是缓存被污染：弃用并让本次走模型
+                self._polish_cache.pop(cache_key, None)
+            else:
+                return cached
         # 润色是可有可无的一层：慢模型不许把 answer 帧（已拿到的事实）扣在手里。
         # 超时就直出，reason 里留一行降级，排查时能分清"模型慢"与"模型编数"。
         timeout = float(self._settings.assistant_polish_timeout_seconds)

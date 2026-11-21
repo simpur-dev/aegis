@@ -16,6 +16,7 @@ _READ_ACTIONS = [
     "metric.report",
     "plan.ask",
     "action.status",
+    "history.query",
 ]
 _WRITE_ACTIONS = [
     "drill.start",
@@ -83,6 +84,27 @@ class Test规则多命中取舍:
     def test_问句里的读动作保持(self) -> None:
         assert _clf().classify("sla达标了吗").action == "metric.report"
         assert _clf().classify("请问预警有哪些").action == "warning.list"
+
+
+class Test历史画像意图:
+    """「近十年」是宽松词：只有同句带灾害语义才算 history.query。
+
+    没有这道闸，"近十年降雨有多少"会被当成历史灾害画像查询（答非所问）。
+    """
+
+    def test_带灾害语义命中且带区域码(self) -> None:
+        intent = _clf().classify("540121 近十年哪种灾害最多")
+        assert intent.action == "history.query"
+        assert intent.args["region_code"] == "540121"
+
+    def test_灾种语义也算上下文(self) -> None:
+        assert _clf().classify("近十年泥石流发生了几次", region_code="540121").action == "history.query"
+
+    def test_纯时间词不抢历史画像(self) -> None:
+        assert _clf().classify("近十年降雨有多少").action != "history.query", "问降雨统计不是问历史灾害构成"
+
+    def test_显式历史灾害词不受上下文闸影响(self) -> None:
+        assert _clf().classify("历史灾害有哪些").action == "history.query"
 
 
 class Test规则置信度:

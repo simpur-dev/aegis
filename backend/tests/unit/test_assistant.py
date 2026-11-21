@@ -1121,6 +1121,31 @@ async def test_多轮承接上文灾种_省略灾种的追问不退化成通用�
     assert plan3.data["hazard_type"] == "landslide", "用户明确给出的灾种不得被上文覆盖"
 
 
+@pytest.mark.asyncio
+async def test_承接不跨区_另一个县的省略追问不继承上文灾种() -> None:
+    """540121 的历史灾种不能替 540221 的追问作答（复检实测过跨区串味）。"""
+    rec = Recorder()
+    service = build_service(rec, history={"history_dominant_hazard": "泥石流", "history_debris_flow_events_10y": 39.0})
+    events = await collect(service, "540121 近十年哪种灾害最多", reporter="值班员", operator=DUTY)
+    sid = _session_of(events)
+    other = await collect(service, "那该怎么办", reporter="值班员", operator=DUTY, session_id=sid, region_code="540221")
+    plan = next(event for event in other if event.type == "result")
+    assert plan.data["hazard_type"] == "unknown", "跨区不承接，保持 unknown（通用预案）"
+
+
+@pytest.mark.asyncio
+async def test_解释预警后再省略追问_能承接该预警的灾种() -> None:
+    """先解释一条预警、再问"那该怎么办"：承接的灾种来自这一轮实际涉及的对象
+    （warning.explain 结果带 hazard_type，复检前这条链路是断的）。"""
+    rec = Recorder()
+    service = build_service(rec)
+    events = await collect(service, "wrn_0123456789abcdef0123 为什么是红色", reporter="值班员", operator=DUTY)
+    sid = _session_of(events)
+    follow = await collect(service, "那该怎么办", reporter="值班员", operator=DUTY, session_id=sid)
+    plan = next(event for event in follow if event.type == "result")
+    assert plan.data["hazard_type"] == "debris_flow", "应承接该预警的灾种（WARNING_ROW 是 debris_flow）"
+
+
 def _session_of(events: list[Any]) -> str | None:
     meta = next((event for event in events if event.type == "meta"), None)
     return None if meta is None else str(meta.data.get("session_id") or "")

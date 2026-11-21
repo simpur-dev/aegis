@@ -76,7 +76,8 @@ class WarningExplainParams(BaseModel):
 
 
 class HistoryQueryParams(BaseModel):
-    """区域历史灾害画像查询：区域码可选（缺省问全部已入库区域）。"""
+    """区域历史灾害画像查询：区域码可选（请求/会话未带区域时如实回"需要区域码"，
+    不做跨区域汇总——不同县的口径不可加总）。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -198,7 +199,16 @@ class WarningExplain(Action):
             chain = _lookup_chain(self._store, trace_id)
         facts = narrate_warning(dumped, chain)
         return ActionResult(
-            data={"warning_id": params.warning_id, "found": True, "facts": facts, "text": facts},
+            # hazard_type 带出来：会话级灾种承接要从这一轮实际涉及的对象取
+            # （此前只回 warning_id/facts，复检实测"先解释预警再问那该怎么办"承接不到）。
+            data={
+                "warning_id": params.warning_id,
+                "found": True,
+                "hazard_type": str(dumped.get("hazard_type") or ""),
+                "region_code": (dumped.get("region_codes") or [""])[0],
+                "facts": facts,
+                "text": facts,
+            },
             summary=facts,
         )
 
