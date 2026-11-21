@@ -291,7 +291,19 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
 - **外部公开数据目录（2026-11-12～20）**：`data/external/` **七套**数据集（公开灾情事件/普查/点位/冰湖清单/泥石流规模/冰湖溃决事件），
   统一抓取入口 `python -m scripts.external_data --check|--refresh`（`backend/scripts/external_data/`），
   读取栈在 `[data]` extra（xarray/calamine/pyshp/polars/pandera，**不进生产镜像**），
-  许可准入规则见 `data/external/README.md`；**七套均未接入生产链路**。
+  许可准入规则见 `data/external/README.md`。
+
+- **数据集 → 决策链（2026-11-21）**：公路普查与 NASA GLC 经 `build_region_profiles.py`
+  聚合成 **88 个区划的 10 年灾害画像**（灾种构成/主导灾种/高发月/峰值年），作为
+  `site_profiles` 的追加属性进库——零契约改动，`AssessEvidenceBuilder._site_observations`
+  自动把它变成证据包观测（`quality=site`、`source=site_profile:<dataset>`）；
+  研判提示词（assess v1.3.0）以 `{history}` 块读取，并明确"先验不抬等级"；
+  季节偏离（当前月 vs 历史高发月，环形距离）由平台确定性计算后注入。
+  助手侧同一份事实经 `history.query` 动作回答"这个县近十年什么灾害最多"。
+  **标定边界**：以普查真值 × CHM_PRE 真实降雨（1,438 条回放样本）实测，
+  县域代点日降雨对事件日 AUC 0.47–0.55、最佳阈值 F1 仅略高于"永远报警"基线
+  → `replay_rule_accuracy.py` 判 **not_supported_by_data**，因此**不**用该数据
+  标定降雨阈值；要标定需要站点级小时雨强（`precip_hourly` 腿已就位）。
 - **前端形态三批（2026-11-13～14）**：首屏智能体面板可折叠 + 底缘拉杆调高；助手页值班台两栏 +
   整页拉杆；助手抽屉改会话优先（告警/处置收进图标栏、问答框常驻底）。
 
