@@ -289,7 +289,8 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
   （处置空间与任务乐观锁）；读面 `/api/v1/alerts`、`/api/v1/spaces`、`/api/v1/notifications`，
   迁移 `010`–`013`；强认证与审计读面见 ADR 与助手设计文档 §14。
 - **外部公开数据目录（2026-11-12～20）**：`data/external/` **七套**数据集（公开灾情事件/普查/点位/冰湖清单/泥石流规模/冰湖溃决事件），
-  统一抓取入口 `python -m scripts.external_data --check|--refresh`（`backend/scripts/external_data/`），
+  统一抓取入口 `python -m scripts.external_data --check|--refresh`（在 `backend/` 下运行，
+  模块在 `backend/scripts/external_data/`），
   读取栈在 `[data]` extra（xarray/calamine/pyshp/polars/pandera，**不进生产镜像**），
   许可准入规则见 `data/external/README.md`。
 
@@ -297,13 +298,18 @@ O(维度数 × 底表)。存储的旁路索引与主集合同步收缩（否则�
   聚合成 **88 个区划的 10 年灾害画像**（灾种构成/主导灾种/高发月/峰值年），作为
   `site_profiles` 的追加属性进库——零契约改动，`AssessEvidenceBuilder._site_observations`
   自动把它变成证据包观测（`quality=site`、`source=site_profile:<dataset>`）；
-  研判提示词（assess v1.3.0）以 `{history}` 块读取，并明确"先验不抬等级"；
-  季节偏离（当前月 vs 历史高发月，环形距离）由平台确定性计算后注入。
+  研判提示词（assess v1.3.1）的 `{history}` 块**直接读 site_profile 属性**（观测列表有
+  48 条上限，history_* 在尾部会被裁剪切掉），并明确"先验不抬等级"；
+  季节偏离（当前月 vs 历史高发月，环形距离）由平台确定性计算后注入，只陈述事实、
+  不说"基线较低"（那句话会让模型系统性压等级）。
   助手侧同一份事实经 `history.query` 动作回答"这个县近十年什么灾害最多"。
-  **标定边界**：以普查真值 × CHM_PRE 真实降雨（1,438 条回放样本）实测，
-  县域代点日降雨对事件日 AUC 0.47–0.55、最佳阈值 F1 仅略高于"永远报警"基线
-  → `replay_rule_accuracy.py` 判 **not_supported_by_data**，因此**不**用该数据
-  标定降雨阈值；要标定需要站点级小时雨强（`precip_hourly` 腿已就位）。
+  **标定边界**：以普查真值 × CHM_PRE 真实降雨（1,438 条回放样本、170 正）实测，
+  县域代点**单日**降雨对事件日 AUC 0.58–0.64、最佳阈值全部落在网格下沿 2 mm
+  → 单日口径判 **not_supported_by_data**（信号只是"下没下雨"）；
+  **7 日累计**口径 AUC 0.65–0.71，落石/滑坡过双闸且在两种留出切分（2020→2021、
+  540221 留出）下 F1 提升 1.31–1.64×，泥石流仍不过——候选阈值（落石 25 mm/7d、
+  滑坡 15 mm/7d）**只记录不进规则库**（滑坡仅 21 正样本，需站点级小时雨强复核）。
+  完整口径见 `replay_rule_accuracy.py` 输出与 REPORT 该批次小节。
 - **前端形态三批（2026-11-13～14）**：首屏智能体面板可折叠 + 底缘拉杆调高；助手页值班台两栏 +
   整页拉杆；助手抽屉改会话优先（告警/处置收进图标栏、问答框常驻底）。
 
