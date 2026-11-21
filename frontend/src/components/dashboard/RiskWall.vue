@@ -17,6 +17,8 @@ import type { RiskLevel } from '@/api/types'
 import { RISK_COLORS, RISK_LABELS } from '@/api/types'
 
 export interface RiskCell {
+  /** 与场景标记共用的唯一 id；缺省退化为 region（历史调用方不必改） */
+  id?: string
   region: string
   hazard: string
   level: RiskLevel
@@ -24,9 +26,13 @@ export interface RiskCell {
   degraded: boolean
   isMock: boolean
   disclaimer: string
+  /** 已校准的场景锚点；缺省表示“未配置场景位置”，图上不放点 */
+  anchor?: { x: number; y: number }
+  updatedAt?: string | null
 }
 
-const props = defineProps<{ cells: RiskCell[]; windowSize: number }>()
+const props = defineProps<{ cells: RiskCell[]; windowSize: number; selectedId?: string | null }>()
+const emit = defineEmits<{ (event: 'select', id: string): void }>()
 
 /**
  * 墙上有 mock 结论就得挂一句使用限制；文案优先用结论自带的 `disclaimer`
@@ -45,12 +51,17 @@ const mockNotice = computed<string>(() => {
       <span class="risk-wall__notice-tag">模拟数据</span>
       <span>{{ mockNotice }}</span>
     </div>
-    <div
+    <button
       v-for="cell in cells"
       :key="cell.region"
+      type="button"
       class="cell"
+      :class="{ 'is-selected': selectedId === (cell.id ?? cell.region) }"
       :data-testid="`risk-cell-${cell.region}`"
+      :data-risk-id="cell.id ?? cell.region"
       :data-level="cell.level"
+      :aria-pressed="selectedId === (cell.id ?? cell.region)"
+      @click="emit('select', cell.id ?? cell.region)"
     >
       <span class="cell__band" :style="{ background: RISK_COLORS[cell.level] }" aria-hidden="true"></span>
       <div class="cell__body">
@@ -63,9 +74,10 @@ const mockNotice = computed<string>(() => {
           <span class="cell__conf">置信 {{ cell.confidence > 0 ? `${Math.round(cell.confidence * 100)}%` : '—' }}</span>
           <span v-if="cell.isMock" class="cell__mock" :title="cell.disclaimer || '该结论来自模拟数据'">模拟数据</span>
           <span v-if="cell.degraded" class="cell__degraded">降级：平台规则兜底</span>
+          <span v-if="!cell.anchor" class="cell__noscene" data-testid="risk-no-scene">未配置场景位置</span>
         </div>
       </div>
-    </div>
+    </button>
     <!-- 卡片级空态一律用带出口的芯片块：同一屏不许并排两种空态习语（antd 居中大插图没有出口）。 -->
     <div v-if="!cells.length" class="empty-hero empty-hero--compact" data-testid="region-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
@@ -108,10 +120,31 @@ const mockNotice = computed<string>(() => {
 }
 .cell {
   display: flex;
+  width: 100%;
+  padding: 0;
   overflow: hidden;
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-md);
   background: var(--aeg-color-card);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--aeg-motion-base) ease,
+    box-shadow var(--aeg-motion-base) ease;
+}
+/* 悬停提亮描边：墙上瓦片多，指到哪一格就说明"在看这条结论"，不改变等级色带 */
+.cell:hover {
+  border-color: var(--aeg-color-brand);
+  box-shadow: var(--aeg-shadow-sm);
+}
+/* 选中态与地图标记同一套口径：品牌色描边 + 外圈光晕 */
+.cell.is-selected {
+  border-color: var(--aeg-color-brand);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--aeg-color-brand) 28%, transparent),
+    var(--aeg-shadow-sm);
 }
 .cell__band {
   flex: 0 0 4px;
@@ -159,5 +192,12 @@ const mockNotice = computed<string>(() => {
   border-radius: 3px;
   color: var(--aeg-color-status-warning);
   font-weight: var(--aeg-weight-semibold);
+}
+/* 没有校准锚点的记录如实标注：列表里在、图上没有点，不拿随机坐标补 */
+.cell__noscene {
+  padding: 0 4px;
+  border: 1px dashed var(--aeg-color-border-strong);
+  border-radius: 3px;
+  color: var(--aeg-color-text-muted);
 }
 </style>

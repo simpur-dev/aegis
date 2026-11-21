@@ -234,13 +234,13 @@ async function initScene(): Promise<void> {
   try {
     const { createMapScene } = await import('@/components/map/viewer')
     const created = await createMapScene(host.value, {
-      terrainUrl: MAP_ASSET_PATHS.terrain,
+      terrainUrl: MAP_ASSET_PATHS.terrainReal,
       // prefer:'template'：本地烘过真 OSM 瓦片时优先用它们（探针命中 z0/0/0 才算可达），
-      // 没烘（新克隆）就自动退回仓库自带的合成 PMTiles——两条路都是同源，降级链不变。
+      // 没烘（新克隆）就退回真实高程派生的山体阴影 PMTiles——两条路都是同源，降级链不变。
       // maximumLevel 必须与烘焙档位一致：写 14 而瓦只到 z10，Cesium 会去要 z11–z14 并吃一串 404。
       basemap: {
         template: MAP_ASSET_PATHS.basemapTemplate,
-        pmtilesUrl: MAP_ASSET_PATHS.pmtiles,
+        pmtilesUrl: MAP_ASSET_PATHS.reliefPmtiles,
         prefer: 'template',
         maximumLevel: 10,
       },

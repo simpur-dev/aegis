@@ -34,6 +34,15 @@ vi.mock('@/api/workflow', () => ({
   workflowApi: { instances: vi.fn() },
 }))
 
+/**
+ * 三维地形嵌入走真实 Cesium + mapApi：本 spec 钉的是取数/账号口径，
+ * 让真地图进场会拖起 WebGL、地形请求与 30s 计时器，和这些断言无关。
+ * 用一个同名替身占住网格位，保证布局测试仍能看到"地图在这一格"。
+ */
+vi.mock('@/components/dashboard/DashboardTerrain.vue', () => ({
+  default: { name: 'DashboardTerrain', template: '<div data-testid="terrain-stub"></div>' },
+}))
+
 const mockedInstances = vi.mocked(workflowApi.instances)
 
 vi.mock('@/composables/useEventStream', async () => {
@@ -95,6 +104,12 @@ const STUBS = {
   'a-empty': { name: 'AEmpty', props: ['description'], template: '<div class="empty">{{ description }}</div>' },
   'a-button': { name: 'AButton', props: ['loading', 'size'], template: '<button class="button" :disabled="loading"><slot /></button>' },
   'a-alert': { name: 'AAlert', props: ['message', 'type', 'showIcon'], template: '<div class="alert">{{ message }}</div>' },
+  // 抽屉只在 open 时渲染内容（antd 真实行为），否则详情字段会一直混进页面文本
+  'a-drawer': {
+    name: 'ADrawer',
+    props: ['open', 'title', 'placement', 'width'],
+    template: '<div v-if="open" class="drawer"><div class="drawer-title">{{ title }}</div><slot /></div>',
+  },
   'a-timeline': { name: 'ATimeline', template: '<div class="tl"><slot /></div>' },
   'a-timeline-item': { name: 'ATimelineItem', props: ['color'], template: '<div class="tl-item"><slot /></div>' },
   'router-link': { name: 'RouterLink', props: ['to'], template: '<a class="router-link" :data-to="to"><slot /></a>' },
@@ -570,12 +585,12 @@ describe('智能体面板的折叠与拉杆', () => {
   const DEFAULT_H = Math.min(Math.round(768 * 0.55), 768 - 370)
   const MAX_H = Math.round(768 * 0.8)
 
-  it('默认收进视口约 55% 且给第二行让位，不再把第二行顶出首屏', async () => {
+  it('默认不写死高度：交给网格与左侧主卡等高（拖过拉杆才记显式高度）', async () => {
     responses()
     const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
     await flushPromises()
     const panel = wrapper.find('[data-testid="agent-panel"]')
-    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
+    expect(panel.attributes('style') ?? '').not.toContain('height')
     wrapper.unmount()
   })
 
@@ -592,7 +607,7 @@ describe('智能体面板的折叠与拉杆', () => {
     expect(JSON.parse(localStorage.getItem(KEY) ?? '{}')).toEqual({ collapsed: true, height: null })
     await toggle.trigger('click')
     expect(panel.classes()).not.toContain('is-collapsed')
-    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
+    expect(panel.attributes('style') ?? '').not.toContain('height')
     expect(JSON.parse(localStorage.getItem(KEY) ?? '{}').collapsed).toBe(false)
     wrapper.unmount()
   })
@@ -614,7 +629,7 @@ describe('智能体面板的折叠与拉杆', () => {
     await handle.trigger('keydown', { key: 'ArrowDown' })
     expect(panel.attributes('style')).toContain(`height: ${MAX_H}px`)
     await handle.trigger('dblclick')
-    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
+    expect(panel.attributes('style') ?? '').not.toContain('height')
     wrapper.unmount()
   })
 
@@ -638,7 +653,7 @@ describe('智能体面板的折叠与拉杆', () => {
     await handle.trigger('pointermove', { clientY: 560, pointerId: 1 })
     // 帧回调落地前高度不动：多发事件合进同一帧，不许逐发回流
     expect(frames).toHaveLength(1)
-    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
+    expect(panel.attributes('style') ?? '').not.toContain('height')
     frames.splice(0).forEach((cb) => cb(performance.now()))
     expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H + 60}px`)
     expect(handle.attributes('aria-valuenow')).toBe(String(DEFAULT_H + 60))
@@ -680,5 +695,41 @@ describe('智能体面板的折叠与拉杆', () => {
     await flushPromises()
     expect(empty.find('[data-testid="agent-panel-summary"]').text()).toBe('—')
     empty.unmount()
+  })
+
+  /**
+   * 右栏一行只装得下编号/类型/在途/成败，capabilities/hazard_types/版本装不下。
+   * 点击行必须能看全——任务书要求"点击 → 详情"，不是"点了没反应"。
+   */
+  it('点一行智能体打开详情抽屉，字段给全', async () => {
+    responses()
+    mocked.agents.mockResolvedValue({
+      items: [
+        {
+          agent_id: 'agt_planner_01',
+          agent_type: 'planner',
+          capabilities: ['route', 'dispatch'],
+          hazard_types: ['debris_flow'],
+          healthy: true,
+          inflight: 1,
+          max_concurrency: 4,
+          served: 10,
+          failed: 1,
+          version: '1.2.0',
+          idle_seconds: 12,
+        },
+      ],
+    } as never)
+    const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="agent-detail-drawer"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="agent-row-agt_planner_01"]').trigger('click')
+    const drawer = wrapper.find('[data-testid="agent-detail-drawer"]')
+    expect(drawer.exists()).toBe(true)
+    expect(drawer.find('[data-testid="agent-detail-id"]').text()).toBe('agt_planner_01')
+    expect(drawer.text()).toContain('1.2.0')
+    expect(drawer.text()).toContain('route、dispatch')
+    wrapper.unmount()
   })
 })

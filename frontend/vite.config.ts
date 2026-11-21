@@ -1,11 +1,38 @@
+import { existsSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 const apiTarget = process.env.AEGIS_API_TARGET ?? 'http://127.0.0.1:8000'
 
+// 离线地图资产（地形/底图）缺失时必须返回 404，而不是 SPA 的 index.html。
+// 否则 Cesium 会把 HTML 当 quantized-mesh / PNG 解析，抛 RangeError 并污染整球渲染。
+function offlineTileFallback(): Plugin {
+  const publicDir = resolve(fileURLToPath(new URL('.', import.meta.url)), 'public')
+  const prefixes = ['/terrain/', '/terrain-real/', '/basemaps/']
+  const handler = (req: { url?: string }, res: { statusCode: number; end: () => void }, next: () => void) => {
+    const path = (req.url ?? '').split('?')[0]
+    if (prefixes.some((p) => path.startsWith(p)) && !existsSync(join(publicDir, path))) {
+      res.statusCode = 404
+      res.end()
+      return
+    }
+    next()
+  }
+  return {
+    name: 'aegis-offline-tile-404',
+    configureServer(server) {
+      server.middlewares.use(handler)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(handler)
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), offlineTileFallback()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

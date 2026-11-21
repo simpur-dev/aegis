@@ -176,8 +176,12 @@ export const MAP_ASSET_PATHS = {
   regionAnchors: '/basemaps/region-anchors.json',
   hazardZones: '/basemaps/hazard-zones.geojson',
   terrain: '/terrain',
+  /** 真实高程（Mapzen/AWS Terrain Tiles 离线烘焙）：作战视图的地形源；/terrain 是链路验证合成样本。 */
+  terrainReal: '/terrain-real',
   basemapTemplate: '/basemaps/{z}/{x}/{y}.png',
   pmtiles: '/basemaps/aegis.pmtiles',
+  /** 真实 DEM 派生的山体阴影设色影像（PMTiles v3 栅格，z0–6）。 */
+  reliefPmtiles: '/basemaps/relief.pmtiles',
 } as const
 
 /**

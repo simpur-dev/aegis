@@ -74,10 +74,10 @@ afterEach(() => {
 })
 
 describe('主题三态与持久化', () => {
-  it('没存过偏好就跟随系统：系统暗 → 首屏就是深色，且真的写进 DOM', async () => {
+  it('没存过偏好默认深色（指挥中心大屏）：首屏就是深蓝且真的写进 DOM', async () => {
     installMatchMedia(true)
     const theme = await freshTheme()
-    expect(theme.mode.value).toBe('system')
+    expect(theme.mode.value).toBe('dark')
     expect(theme.initTheme()).toBe('dark')
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(applied('--aeg-color-page')).toBe(colorSlots.dark.page)
@@ -95,6 +95,7 @@ describe('主题三态与持久化', () => {
   })
 
   it('跟随系统时系统翻暗：页面立刻换肤，不是停在第一次算出来的那档', async () => {
+    localStorage.setItem('aegis.theme', 'system')
     installMatchMedia(false)
     const theme = await freshTheme()
     const { nextTick } = await import('vue')
@@ -140,11 +141,11 @@ describe('主题三态与持久化', () => {
     expect(localStorage.getItem('aegis.theme')).toBe('system')
   })
 
-  it('存的是垃圾值也退回跟随系统，而不是白屏', async () => {
+  it('存的是垃圾值也退回指挥中心默认深色，而不是白屏', async () => {
     localStorage.setItem('aegis.theme', 'neon')
     installMatchMedia(true)
     const theme = await freshTheme()
-    expect(theme.mode.value).toBe('system')
+    expect(theme.mode.value).toBe('dark')
     expect(theme.initTheme()).toBe('dark')
   })
 
@@ -158,7 +159,7 @@ describe('主题三态与持久化', () => {
     })
     const theme = await freshTheme()
     getItem.mockRestore()
-    expect(theme.mode.value).toBe('system')
+    expect(theme.mode.value).toBe('dark')
 
     theme.setMode('dark')
     expect(document.documentElement.dataset.theme).toBe('dark')

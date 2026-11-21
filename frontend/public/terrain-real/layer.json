@@ -1,0 +1,88 @@
+{
+  "format": "quantized-mesh-1.0",
+  "version": "1.0",
+  "scheme": "slippyMap",
+  "projection": "EPSG:4326",
+  "tiles": [
+    "{z}/{x}/{y}.terrain"
+  ],
+  "extensions": [
+    "octvertexnormals"
+  ],
+  "minzoom": 0,
+  "maxzoom": 7,
+  "bounds": [
+    -180,
+    -90,
+    180,
+    90
+  ],
+  "attribution": "高程 © Mapzen / AWS Terrain Tiles（SRTM、GEBCO、GMTED 等）· 离线烘焙 quantized-mesh",
+  "available": [
+    [
+      {
+        "startX": 0,
+        "endX": 1,
+        "startY": 0,
+        "endY": 0
+      }
+    ],
+    [
+      {
+        "startX": 0,
+        "endX": 3,
+        "startY": 0,
+        "endY": 1
+      }
+    ],
+    [
+      {
+        "startX": 0,
+        "endX": 7,
+        "startY": 0,
+        "endY": 3
+      }
+    ],
+    [
+      {
+        "startX": 11,
+        "endX": 12,
+        "startY": 4,
+        "endY": 5
+      }
+    ],
+    [
+      {
+        "startX": 22,
+        "endX": 25,
+        "startY": 9,
+        "endY": 11
+      }
+    ],
+    [
+      {
+        "startX": 45,
+        "endX": 50,
+        "startY": 19,
+        "endY": 23
+      }
+    ],
+    [
+      {
+        "startX": 90,
+        "endX": 100,
+        "startY": 39,
+        "endY": 47
+      }
+    ],
+    [
+      {
+        "startX": 186,
+        "endX": 196,
+        "startY": 82,
+        "endY": 89
+      }
+    ]
+  ],
+  "generator": "frontend/scripts/bake-real-relief.mjs"
+}

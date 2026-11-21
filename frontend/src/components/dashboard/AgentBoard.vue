@@ -1,37 +1,45 @@
 <script setup lang="ts">
 /**
- * 智能体在线板（spike：dashboard 标杆页）。
+ * 智能体在线面板（态势总览右栏）。
  *
- * 与旧 a-table 的差别：这页要回答的是"谁还活着、谁在忙、忙到什么程度"，
- * 表格把每颗智能体摊成五列等宽字，扫一遍要五次眼跳；行式紧凑排布 +
- * 在途/上限的小容量条，让"活着但一件没干"和"满负荷"两种状态一眼可分。
- *
- * 状态口径不动：在线/失联仍取注册表的 `healthy`（总线契约），这里不判"心跳多久没来"。
+ * 设计稿要求“一行一颗”：状态点 / 编号 / 类型 / 当前任务 / 成功·失败 / 详情箭头
+ * 全部在同一行、垂直居中；不再做成两行小卡（那会把 12 颗智能体撑成一屏放不下）。
+ * 点一行看详情（右栏装不下 capabilities/hazard_types/版本）。
+ * 状态口径不动：在线/失联取注册表的 `healthy`。
  */
 import type { AgentInfo } from '@/api/types'
 
 defineProps<{ agents: AgentInfo[] }>()
 
-function loadRatio(agent: AgentInfo): number {
-  if (agent.max_concurrency <= 0) return 0
-  return Math.min(1, agent.inflight / agent.max_concurrency)
-}
+const emit = defineEmits<{ select: [agent: AgentInfo] }>()
 </script>
 
 <template>
   <div class="agent-board">
-    <div v-for="agent in agents" :key="agent.agent_id" class="agent" :data-testid="`agent-row-${agent.agent_id}`">
+    <div
+      v-for="agent in agents"
+      :key="agent.agent_id"
+      class="agent"
+      :data-testid="`agent-row-${agent.agent_id}`"
+      role="button"
+      tabindex="0"
+      :aria-label="`查看智能体 ${agent.agent_id} 详情`"
+      @click="emit('select', agent)"
+      @keydown.enter.prevent="emit('select', agent)"
+      @keydown.space.prevent="emit('select', agent)"
+    >
       <span class="agent__dot" :class="agent.healthy ? 'is-live' : 'is-dead'" aria-hidden="true"></span>
       <span class="agent__id" :title="agent.agent_id">{{ agent.agent_id }}</span>
-      <span class="agent__type">{{ agent.agent_type }}</span>
-      <span class="agent__caps" :title="agent.capabilities.join('、')">{{ agent.capabilities.join('、') || '—' }}</span>
-      <span class="agent__load" :title="`在途 ${agent.inflight} / 上限 ${agent.max_concurrency}`">
-        <span class="agent__loadbar" aria-hidden="true"><i :style="{ width: `${Math.round(loadRatio(agent) * 100)}%` }"></i></span>
-        <span class="agent__loadnum">{{ agent.inflight }}/{{ agent.max_concurrency }}</span>
+      <span class="agent__type" :title="agent.agent_type">{{ agent.agent_type }}</span>
+      <span
+        class="agent__load"
+        :title="`当前任务 ${agent.inflight} / 上限 ${agent.max_concurrency}`"
+      >{{ agent.inflight }}/{{ agent.max_concurrency }}</span>
+      <span class="agent__served" :title="`已服务 ${agent.served} 次，失败 ${agent.failed} 次`">
+        <span>成 {{ agent.served }}</span>
+        <span :class="{ 'agent__failed': agent.failed > 0 }">败 {{ agent.failed }}</span>
       </span>
-      <span class="agent__served" :title="`已服务 ${agent.served} 次，失败 ${agent.failed} 次`"
-        >成 {{ agent.served }} · <span :class="{ 'agent__failed': agent.failed > 0 }">败 {{ agent.failed }}</span></span
-      >
+      <span class="agent__chevron" aria-hidden="true">›</span>
     </div>
     <div v-if="!agents.length" class="empty-hero" data-testid="agents-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
@@ -48,111 +56,87 @@ function loadRatio(agent: AgentInfo): number {
 .agent-board {
   display: flex;
   flex-direction: column;
-  gap: var(--aeg-space-s2);
+  gap: 2px;
 }
-/* 一颗智能体一张小卡：与链路卡同一套习语（sunken 底 + 细边 + 悬停品牌描边），
-   替掉原来的通栏分隔线——分隔线在滚动区里读起来像一张没表头的表。 */
+/* 一行一颗：固定 38px，扫一列就能对齐读 */
 .agent {
   display: flex;
   align-items: center;
   gap: var(--aeg-space-s2);
-  padding: var(--aeg-space-s2) 10px;
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-md);
-  background: var(--aeg-color-sunken);
-  transition:
-    border-color var(--aeg-motion-base) ease,
-    box-shadow var(--aeg-motion-base) ease;
+  height: 46px;
+  padding: 0 var(--aeg-space-s1);
+  border-bottom: 1px solid var(--aeg-color-border-subtle);
+  border-radius: var(--aeg-radius-sm);
+  cursor: pointer;
+  transition: background-color var(--aeg-motion-base) ease;
+}
+.agent:last-child {
+  border-bottom: none;
 }
 .agent:hover {
-  border-color: var(--aeg-color-brand);
-  box-shadow: var(--aeg-shadow-sm);
+  background: var(--aeg-color-sunken);
+}
+.agent:focus-visible {
+  outline: 2px solid var(--aeg-color-brand);
+  outline-offset: -2px;
 }
 .agent__dot {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: var(--aeg-radius-pill);
-  background: var(--aeg-color-border-strong);
+  background: var(--aeg-color-status-danger);
 }
 .agent__dot.is-live {
   background: var(--aeg-color-status-success);
 }
-.agent__dot.is-dead {
-  background: var(--aeg-color-status-danger);
-}
 .agent__id {
-  flex: 0 0 auto;
-  overflow: hidden;
-  max-width: 180px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--aeg-font-mono);
-  font-size: var(--aeg-font-sm);
-  font-weight: var(--aeg-weight-medium);
-  color: var(--aeg-color-text);
-}
-.agent__type {
-  flex: 0 0 auto;
-  padding: 0 6px;
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-sm);
-  background: var(--aeg-color-sunken);
-  font-size: var(--aeg-font-sm);
-  color: var(--aeg-color-text-secondary);
-}
-.agent__caps {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  color: var(--aeg-color-text);
+}
+.agent__type {
+  flex: 0 0 auto;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-sm);
+  font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-muted);
 }
 .agent__load {
-  display: inline-flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-}
-.agent__loadbar {
-  width: 44px;
-  height: 4px;
-  border-radius: var(--aeg-radius-pill);
-  background: var(--aeg-color-sunken);
-}
-.agent__loadbar i {
-  display: block;
-  height: 100%;
-  border-radius: var(--aeg-radius-pill);
-  background: var(--aeg-color-brand);
-}
-.agent__loadnum {
-  font-size: var(--aeg-font-sm);
+  min-width: 40px;
+  text-align: right;
+  font-size: var(--aeg-font-xs);
   font-variant-numeric: tabular-nums;
   color: var(--aeg-color-text-secondary);
 }
-/* 「成 N · 败 N」徽标框：白底细边的小胶囊（深色主题是深底浅字，见 stat-chip-* 令牌）。
-   宽度用 min-width 钉住，数字从 0 涨到三位数时框不左右抖。失败数不为 0 时只把"败 N"染红，
-   不给整框描红边——满屏红边会盖过面板本身。 */
 .agent__served {
   display: inline-flex;
   flex: 0 0 auto;
-  align-items: baseline;
-  justify-content: center;
-  min-width: 112px;
-  padding: var(--aeg-space-s2) var(--aeg-space-s3);
-  border: 1px solid var(--aeg-color-stat-chip-border);
-  border-radius: var(--aeg-radius-pill);
-  background: var(--aeg-color-stat-chip-bg);
-  text-align: center;
-  white-space: nowrap;
-  font-size: var(--aeg-font-sm);
+  gap: 6px;
+  min-width: 74px;
+  justify-content: flex-end;
+  font-size: var(--aeg-font-xs);
   font-variant-numeric: tabular-nums;
-  color: var(--aeg-color-stat-chip-text);
+  color: var(--aeg-color-text-secondary);
 }
 .agent__failed {
   color: var(--aeg-color-status-danger);
+}
+.agent__chevron {
+  flex: 0 0 auto;
+  color: var(--aeg-color-text-muted);
+  font-size: var(--aeg-font-base);
+  line-height: 1;
 }
 </style>

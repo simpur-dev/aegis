@@ -236,33 +236,38 @@ describe('UI 基座', () => {
   })
 
   /**
-   * 2026-11-19 用户裁决的门禁化：雾底与 KPI 球恢复（2026-11-18 的整层退役裁决被用户
-   * 对这两层推翻——"把我之前做的背景和球的效果加上去"；2dcec21 的其余改进原样保留）。
+   * 2026-11-20 指挥中心裁决的门禁化（任务书 §2/§3）：
+   * 统计球退役、KPI 改现代横向数据卡，全局背景换成指定的深蓝波浪素材。
    * 口径换了但职责没松，原判据各找新宿主：
-   * 1. 雾底/球槽位必须住在 tokens.ts 真源（两主题同名同集合由 tokens.spec 钉），
-   *    照片素材必须在磁盘上——离线部署 P0，外链 CDN 或删素材都会让首屏掉回白底；
-   * 2. backdrop-filter 仍全仓零——雾底走背景图自身 filter 的一次性栅格化，
-   *    不是每帧重采样；这条性能判据不因恢复而放宽；
-   * 3. 装饰渐变只许出现在用户点名的两个宿主（App.vue 雾底、KpiStrip 球），
-   *    FreshnessBar/RunTimeline 仍禁——监测页的饱和色留给预警四色与状态。
+   * 1. 波浪底/玻璃面板槽位必须住在 tokens.ts 真源（两主题同名同集合由 tokens.spec 钉），
+   *    背景素材必须在磁盘上——离线部署 P0，外链 CDN 或删素材都会让首屏掉回渐变兜底；
+   * 2. backdrop-filter 仍全仓零——波浪底走背景图自身 filter 的一次性栅格化，
+   *    不是每帧重采样；这条性能判据不因换素材而放宽；
+   * 3. 装饰渐变只许出现在用户点名的宿主（App.vue 波浪底光斑），
+   *    FreshnessBar/RunTimeline 仍禁——监测页的饱和色留给预警四色与状态；
+   * 4. KPI 不许退回统计球：横向卡片的图标位与主指标判定必须还在。
    */
-  it('雾底与 KPI 球按裁决恢复：槽位在真源、素材在盘、模糊零、渐变只在点名宿主', () => {
+  it('指挥中心底色：槽位在真源、波浪素材在盘、模糊零、KPI 不再是球', () => {
     const tokens = readRepoFile('frontend', 'src', 'theme', 'tokens.ts')
-    for (const slot of ['canvas-from', 'glass-bg', 'ball-surface', 'accent-ball-from', 'accent-ball-text']) {
-      expect(tokens, `雾底/球槽位 ${slot} 不在真源（恢复的层也必须走令牌）`).toContain(`'${slot}'`)
+    for (const slot of ['canvas-from', 'glass-bg', 'brand-alt']) {
+      expect(tokens, `指挥中心槽位 ${slot} 不在真源（换肤必须走令牌）`).toContain(`'${slot}'`)
     }
+    // halo 是无连字符的键，tokens.ts 里按对象字面量写（halo: …），不带引号
+    expect(tokens, '指挥中心槽位 halo 不在真源（换肤必须走令牌）').toMatch(/^\s*halo:/m)
+    expect(tokens, '统计球槽位没退役干净（ball-surface 应是历史）').not.toContain("'ball-surface'")
     const app = appVue()
-    expect(app, '雾底的照片层不见了').toMatch(/\.app-backdrop::before/)
-    expect(app, '雾底没引离线素材').toContain("url('/backgrounds/aegis-horizon.webp')")
+    expect(app, '波浪底的照片层不见了').toMatch(/\.app-backdrop::before/)
+    expect(app, '波浪底没引任务书指定的离线素材').toContain("url('/backgrounds/aegis-command-waves.png')")
     expect(
-      existsSync(join(repoRoot(), 'frontend', 'public', 'backgrounds', 'aegis-horizon.webp')),
-      '雾底素材不在磁盘上（离线部署会掉回渐变兜底）',
+      existsSync(join(repoRoot(), 'frontend', 'public', 'backgrounds', 'aegis-command-waves.png')),
+      '波浪素材不在磁盘上（离线部署会掉回渐变兜底）',
     ).toBe(true)
     const kpi = readRepoFile('frontend', 'src', 'components', 'dashboard', 'KpiStrip.vue')
-    expect(kpi, 'KPI 球不见了').toMatch(/\.kpi__ball/)
-    expect(kpi, '紫球不再按业务顺序判定（改文案不该改视觉重点）').toContain(
-      "'is-accent': index === items.length - 1",
+    expect(kpi, 'KPI 的图标位不见了').toMatch(/\.kpi__icon/)
+    expect(kpi, '主指标不再按业务顺序判定（改文案不该改视觉重点）').toContain(
+      "'is-primary': index === items.length - 1",
     )
+    expect(kpi, '统计球退役后 KPI 里又出现了 .kpi__ball').not.toMatch(/\.kpi__ball/)
 
     const srcDir = join(repoRoot(), 'frontend', 'src')
     const files = readdirSync(srcDir, { recursive: true })

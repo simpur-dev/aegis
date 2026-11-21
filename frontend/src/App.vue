@@ -129,6 +129,47 @@ const statusTitle = computed<string>(() =>
            当前页用半透明白色圆角底标出；右侧自左向右是「状态 → 浅/深 → 品牌」。 -->
       <div class="main-col">
         <header v-if="!immersive" class="topbar">
+          <div class="topbar__lead">
+            <div class="topbrand" data-testid="brand">
+              <span class="brand-logo" aria-hidden="true">A</span>
+              <span class="topbrand__text">
+                <span class="brand-name">AEGIS 山地灾害协同调控平台</span>
+                <span class="brand-sub">西藏山地灾害多智能体协同调控</span>
+              </span>
+            </div>
+            <div class="topbar-right">
+              <div class="nav-status" :title="statusTitle" data-testid="nav-status">
+                <span class="status-fact">
+                  <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
+                  <span class="status-pill__text">{{ health ? '后端在线' : '后端不可达' }}</span>
+                </span>
+                <span class="status-fact" data-testid="stream-badge">
+                  <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
+                  <span class="status-pill__text">{{ streamLabel }}</span>
+                </span>
+                <span class="status-fact" data-testid="events-badge" title="最近事件条数">
+                  <span class="events-count">{{ events.length }}</span>
+                  <span class="status-pill__text">事件</span>
+                </span>
+              </div>
+              <div class="theme-switch" role="group" aria-label="主题">
+                <button
+                  v-for="opt in themeOptions"
+                  :key="opt.value"
+                  type="button"
+                  class="theme-switch__btn"
+                  :class="{ 'is-on': resolved === opt.value }"
+                  :aria-pressed="resolved === opt.value"
+                  :title="`${opt.label}主题`"
+                  :data-testid="`theme-${opt.value}`"
+                  @click="setMode(opt.value)"
+                >
+                  {{ opt.short }}
+                </button>
+              </div>
+            </div>
+          </div>
+
           <nav class="topnav" aria-label="主导航">
             <template v-for="group in NAV_GROUPS" :key="group.key">
               <router-link
@@ -158,49 +199,10 @@ const statusTitle = computed<string>(() =>
               <span class="topnav__short">助手</span>
             </router-link>
           </nav>
-
-          <div class="topbar-right">
-            <div class="nav-status" :title="statusTitle" data-testid="nav-status">
-              <span class="status-fact">
-                <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
-                <span class="status-pill__text">{{ health ? '后端在线' : '后端不可达' }}</span>
-              </span>
-              <span class="status-fact" data-testid="stream-badge">
-                <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
-                <span class="status-pill__text">{{ streamLabel }}</span>
-              </span>
-              <span class="status-fact" data-testid="events-badge" title="最近事件条数">
-                <span class="events-count">{{ events.length }}</span>
-                <span class="status-pill__text">事件</span>
-              </span>
-            </div>
-            <div class="theme-switch" role="group" aria-label="主题">
-              <button
-                v-for="opt in themeOptions"
-                :key="opt.value"
-                type="button"
-                class="theme-switch__btn"
-                :class="{ 'is-on': resolved === opt.value }"
-                :aria-pressed="resolved === opt.value"
-                :title="`${opt.label}主题`"
-                :data-testid="`theme-${opt.value}`"
-                @click="setMode(opt.value)"
-              >
-                {{ opt.short }}
-              </button>
-            </div>
-            <div class="topbrand" data-testid="brand">
-              <span class="brand-logo" aria-hidden="true">A</span>
-              <span class="topbrand__text">
-                <span class="brand-name">AEGIS</span>
-                <span class="brand-sub">山地灾害协同调控</span>
-              </span>
-            </div>
-          </div>
         </header>
 
         <!-- Ⅰ/Ⅱ 级告警的顶部常驻条：抽屉会被自动展开，这条是"关了抽屉也看得见"的兜底 -->
-        <div v-if="urgentCards.length > 0" class="alert-banner" data-testid="alert-banner">
+        <div v-if="urgentCards.length > 0 && route.name !== 'dashboard'" class="alert-banner" data-testid="alert-banner">
           <span class="alert-banner__dot" aria-hidden="true"></span>
           <span class="alert-banner__text" data-testid="alert-banner-text">
             {{ urgentCards.length }} 条红色/橙色告警未确认
@@ -329,14 +331,29 @@ const statusTitle = computed<string>(() =>
 }
 .topbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--aeg-space-s4);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
   height: var(--aeg-header-height);
   padding: 0 var(--aeg-space-s6);
   background: transparent;
   border: none;
   box-shadow: none;
+}
+/* 两层：上层品牌 + 状态/主题，下层导航。品牌从右侧挪回左上，视觉重心与设计稿一致。 */
+.topbar__lead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--aeg-space-s4);
+  min-height: 52px;
+}
+.topbar__lead .topbrand {
+  padding-left: 0;
+  border-left: none;
+}
+.topnav {
+  height: 48px;
 }
 .topbar-right {
   display: flex;
@@ -468,7 +485,6 @@ const statusTitle = computed<string>(() =>
   min-height: 0;
   overflow-y: auto;
   padding: var(--aeg-space-s5) var(--aeg-space-s6);
-  transition: margin-right var(--aeg-motion-base) ease;
 }
 
 /* Ⅰ/Ⅱ 级告警顶部条：红色系语义槽（status-danger），只做"有事"的宣告，不做操作面 */
@@ -491,22 +507,18 @@ const statusTitle = computed<string>(() =>
 .alert-banner__text {
   font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
-  color: var(--aeg-color-status-danger);
+  /* 深色主题的 status-danger(#F05252) 压在这条半透青底上只有 3.89:1；
+     risk-text-1 两主题都过 AA（深色 #FCA5A5），且与"红/橙告警"同一语义。 */
+  color: var(--aeg-risk-text-1);
 }
 .alert-banner__meta {
   margin-left: auto;
   font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-secondary);
 }
-/* 助手抽屉打开时把主内容整体往左挤（抽屉本身固定贴右，不再盖在内容上）；
-   宽度只读 --assistant-drawer-w 一个真源，抽屉左侧拖拽时同步跟随 */
-html.assistant-drawer-open .main-content {
-  margin-right: var(--assistant-drawer-w, clamp(320px, 25vw, 520px));
-}
-/* 拖宽度手柄时关掉过渡：否则主内容会滞后于指针 */
-html.assistant-resizing .main-content {
-  transition: none;
-}
+/* 助手抽屉是覆盖式浮层（fixed 贴右，z-index 高于主内容）：打开时盖在内容上，
+   不挤压主布局——右列智能体面板与地图保持原宽（用户问题 #4：两者同时占位 → 拥挤）。
+   宽度真源仍是 --assistant-drawer-w，抽屉左侧拖拽时只改浮层自身宽度。 */
 /* 一张图全屏：主内容不再留内边距，地图自己铺满顶栏以下 */
 .main-content.is-map {
   padding: 0;
@@ -592,10 +604,11 @@ html.assistant-resizing .main-content {
   }
 }
 
-/* ——— 全局雾底（2026-11-19 用户裁决恢复） ———
-   素材是离线资产 `public/backgrounds/aegis-horizon.webp`（不外链任何 CDN）：
-   淡蓝→粉紫的地平线渐变，模糊 46px + 放大 1.1 后只剩柔和的色团，不抢卡片的字。
-   渐变兜底用画布令牌，两主题各一套。所有页面共用（含一张图与流程编排）。
+/* ——— 全局指挥中心背景（2026-11-20 用户裁决：换成任务书指定的深蓝波浪素材） ———
+   素材是离线资产 `public/backgrounds/aegis-command-waves.png`（不外链任何 CDN）：
+   深蓝底 + 青蓝波浪光带，深色主题近乎原图呈现（波浪是这版观感的主角，不再糊成色团）；
+   浅色主题把同一张素材压到 14% 透明度叠在浅画布渐变上——只留一层淡淡的波纹肌理，
+   顶栏深字仍落在浅底上。渐变兜底用画布令牌，两主题各一套。所有页面共用。
    模糊走背景图自身的 filter（一次性栅格化），不用 backdrop-filter——后者每帧重采样。 */
 .app-shell {
   background: transparent;
@@ -611,33 +624,37 @@ html.assistant-resizing .main-content {
 .app-backdrop::before {
   content: '';
   position: absolute;
-  inset: -48px;
-  background-image: url('/backgrounds/aegis-horizon.webp');
+  inset: -24px;
+  background-image: url('/backgrounds/aegis-command-waves.png');
   background-size: cover;
   background-position: center;
-  filter: blur(46px) saturate(1.12);
-  transform: scale(1.1);
-  opacity: 0.95;
+  filter: blur(6px) brightness(1.4) saturate(0.6);
+  transform: scale(1.04);
+  opacity: 0.14;
 }
-/* 柔光：左上偏白、右侧一点淡蓝，和参考图的光斑同向；深色主题换成紫蓝 */
+/* 柔光：左上偏白、右侧一点淡蓝，压在浅画布上给波浪肌理再加一层空间感 */
 .app-backdrop::after {
   content: '';
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 18% 8%, var(--aeg-color-ball-surface), transparent 55%),
+    radial-gradient(circle at 18% 8%, var(--aeg-color-halo), transparent 55%),
     radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 60%);
   opacity: 0.55;
 }
 html[data-theme='dark'] .app-backdrop::before {
-  filter: blur(46px) brightness(0.4) saturate(1.35);
-  opacity: 0.85;
+  filter: saturate(1.12) brightness(1.02);
+  opacity: 1;
 }
+/* 深色：上下两条压暗 scrim 保证顶栏/页脚的字始终落在近实色底上（波浪亮脊不抢字），
+   中间留给波浪原图；scrim 收薄一点让深蓝波浪成为画面主角（用户问题 #1）。 */
 html[data-theme='dark'] .app-backdrop::after {
   background:
-    radial-gradient(circle at 18% 8%, var(--aeg-color-accent-ball-glow), transparent 58%),
-    radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 62%);
-  opacity: 0.45;
+    linear-gradient(180deg, var(--aeg-color-page) 0%, transparent 22%),
+    linear-gradient(0deg, var(--aeg-color-page) 0%, transparent 12%),
+    radial-gradient(circle at 84% 86%, var(--aeg-color-halo), transparent 55%),
+    radial-gradient(circle at 10% 34%, var(--aeg-color-brand-soft), transparent 52%);
+  opacity: 0.82;
 }
 
 /* 顶栏透明：不再盖玻璃底（导航文字直接落在雾底上）；只保留层级，压住雾底 */

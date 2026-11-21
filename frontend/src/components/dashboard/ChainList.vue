@@ -2,9 +2,10 @@
 /**
  * 链路执行记录：一行一条链，先给结论（成功/失败 + 走到哪一段），再给细节（trace、任务数、降级）。
  *
- * 密度取舍：默认只露出 5 条（卡内滚动 + 底部渐隐），其余等"查看全部"再展开——
- * 20 条一次铺开会把这张卡撑成一屏多，把下面的智能体板与事件流顶出首屏。
+ * 密度取舍：底部三卡等高，这张表默认只露 3 条（卡内滚动 + 底部渐隐），其余等"查看全部"。
  * 段位不再用五个实心胶囊：改成"圆点 + 段名 + 连接线"的轻重轨，颜色只说这段是谁做的/有没有砸。
+ * 顶部图例改成可点的筛选页签：值班员常问"这轮是智能体接的还是平台兜底的"，
+ * 图例只能说"颜色是什么"，筛选能直接把不是它的排掉。
  */
 import { computed, ref } from 'vue'
 
@@ -20,10 +21,37 @@ const STAGE_LABELS: Record<string, string> = {
 
 const props = defineProps<{ chains: ChainSummary[] }>()
 
-/** 默认露出 4 张卡，点"查看全部"后放开到卡内滚动 */
-const VISIBLE_ROWS = 4
+/** 底部三卡等高：默认露出 3 张卡，点"查看全部"后放开到卡内滚动 */
+const VISIBLE_ROWS = 3
 const expanded = ref(false)
-const canExpand = computed(() => props.chains.length > VISIBLE_ROWS)
+
+type FilterKey = 'all' | 'agent' | 'local' | 'hybrid' | 'skipped' | 'failed'
+const FILTERS: { key: FilterKey; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'agent', label: '智能体' },
+  { key: 'local', label: '平台兜底' },
+  { key: 'hybrid', label: '混合' },
+  { key: 'skipped', label: '跳过' },
+  { key: 'failed', label: '失败' },
+]
+const filter = ref<FilterKey>('all')
+
+function isFailed(chain: ChainSummary): boolean {
+  return chain.errors.length > 0 || chain.stages.some((stage) => !stage.ok)
+}
+
+function matches(chain: ChainSummary, key: FilterKey): boolean {
+  if (key === 'all') return true
+  if (key === 'failed') return isFailed(chain)
+  return chain.stages.some((stage) => stage.mode === key)
+}
+
+const filtered = computed<ChainSummary[]>(() => props.chains.filter((chain) => matches(chain, filter.value)))
+const canExpand = computed(() => filtered.value.length > VISIBLE_ROWS)
+
+function countOf(key: FilterKey): number {
+  return key === 'all' ? props.chains.length : props.chains.filter((chain) => matches(chain, key)).length
+}
 
 function stageClass(stage: ChainSummary['stages'][number]): string {
   if (!stage.ok) return 'is-fail'
@@ -48,17 +76,25 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
 
 <template>
   <div class="chain-list">
-    <div class="chain-list__legend" aria-hidden="true">
-      <span class="legend-item"><i class="seg seg--swatch is-agent"></i>智能体</span>
-      <span class="legend-item"><i class="seg seg--swatch is-local"></i>平台兜底</span>
-      <span class="legend-item"><i class="seg seg--swatch is-hybrid"></i>混合</span>
-      <span class="legend-item"><i class="seg seg--swatch is-skipped"></i>跳过</span>
-      <span class="legend-item"><i class="seg seg--swatch is-fail"></i>失败</span>
+    <div class="chain-list__filters" role="tablist" aria-label="按执行方式筛选链路">
+      <button
+        v-for="entry in FILTERS"
+        :key="entry.key"
+        type="button"
+        class="chain-filter"
+        :class="{ 'is-active': filter === entry.key }"
+        role="tab"
+        :aria-selected="filter === entry.key"
+        :data-testid="`chain-filter-${entry.key}`"
+        @click="filter = entry.key"
+      >
+        {{ entry.label }}<span class="chain-filter__count">{{ countOf(entry.key) }}</span>
+      </button>
     </div>
 
     <div class="chain-list__rows" :class="{ 'is-expanded': expanded }">
       <div
-        v-for="chain in chains"
+        v-for="chain in filtered"
         :key="chain.trace_id"
         class="chain"
         :class="resultOf(chain).cls"
@@ -90,6 +126,9 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
           </span>
         </span>
       </div>
+      <div v-if="chains.length && !filtered.length" class="chain-list__nomatch" data-testid="chains-nomatch">
+        没有符合「{{ FILTERS.find((entry) => entry.key === filter)?.label }}」的链路
+      </div>
     </div>
 
     <button
@@ -99,7 +138,7 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
       data-testid="chains-more"
       @click="expanded = !expanded"
     >
-      {{ expanded ? '收起' : `查看全部 ${chains.length} 条` }}<span aria-hidden="true"> →</span>
+      {{ expanded ? '收起' : `查看全部 ${filtered.length} 条` }}<span aria-hidden="true"> →</span>
     </button>
 
     <div v-if="!chains.length" class="empty-hero empty-hero--compact" data-testid="chains-empty">
@@ -120,27 +159,55 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
   gap: var(--aeg-space-s2);
 }
 
-/* 图例压成一行小字，不再抢行 */
-.chain-list__legend {
+/* 筛选页签：一行小胶囊，选中的那枚品牌色描边；计数用等宽数字，切换时宽度不抖 */
+.chain-list__filters {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--aeg-space-s1) var(--aeg-space-s2);
-  font-size: var(--aeg-font-sm);
-  color: var(--aeg-color-text-muted);
+  gap: var(--aeg-space-s1);
 }
-.legend-item {
+.chain-filter {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-pill);
+  background: transparent;
+  color: var(--aeg-color-text-muted);
+  font-size: var(--aeg-font-xs);
+  cursor: pointer;
+  transition:
+    border-color var(--aeg-motion-base) ease,
+    color var(--aeg-motion-base) ease,
+    background var(--aeg-motion-base) ease;
+}
+.chain-filter:hover {
+  border-color: var(--aeg-color-brand);
+  color: var(--aeg-color-text);
+}
+.chain-filter.is-active {
+  border-color: var(--aeg-color-brand);
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-brand-hover);
+}
+.chain-filter__count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+.chain-list__nomatch {
+  padding: var(--aeg-space-s3) 0;
+  text-align: center;
+  font-size: var(--aeg-font-sm);
+  color: var(--aeg-color-text-muted);
 }
 
-/* 每张卡片 = 一条链；默认露 4 张（4×~72px），底部渐隐提示还有更多 */
+/* 每张卡片 = 一条链；默认露 3 张（3×~62px + gap），底部渐隐提示还有更多 */
 .chain-list__rows {
   display: flex;
   flex-direction: column;
   gap: var(--aeg-space-s2);
-  max-height: 296px;
+  max-height: 220px;
   overflow-y: auto;
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
   mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);

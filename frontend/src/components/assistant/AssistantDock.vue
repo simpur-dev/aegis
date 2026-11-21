@@ -12,7 +12,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
-import { useAlerts } from '@/composables/useAlerts'
 import {
   clampDrawerWidth,
   clampTop,
@@ -46,17 +45,10 @@ const headerVar = computed(() => (props.immersive ? '--aeg-editor-header-height'
 /** 抽屉顶部的落点（跟随顶栏/编辑器头部高度；水平位置与宽度由 CSS 变量算）。 */
 const drawerTopStyle = computed(() => ({ top: `${headerH.value}px` }))
 
-const { urgentCards } = useAlerts()
-watch(
-  () => urgentCards.value.length,
-  (now, prev) => {
-    // Ⅰ/Ⅱ 级告警出现（0 → N）：抽屉自动展开，不等值班员去找图标（需求 D3 的强打断）
-    if (now > 0 && (prev ?? 0) === 0) {
-      open.value = true
-      saveState()
-    }
-  },
-)
+// 2026-11-21 指挥中心裁决：Ⅰ/Ⅱ 级告警不再自动展开抽屉。
+// 自动展开会把主内容整体往左挤，与右列智能体面板同时占位 → 拥挤（用户问题 #4）。
+// 告警的"强打断"由 App.vue 顶部常驻 alert-banner 承担（关了抽屉也看得见），
+// 抽屉只在值班员主动点图标时打开，保持首屏的地图主视觉完整。
 
 function readHeaderHeight(): number {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(headerVar.value).trim()
@@ -240,8 +232,7 @@ onMounted(() => {
   window.addEventListener('keydown', onEscape)
 })
 
-/* 抽屉不再悬浮在内容上：打开时给主内容让出宽度（App.vue 里的 margin-right），
-   由根元素上的一个类驱动，页面自己不用知道抽屉状态 */
+/* 抽屉是覆盖式浮层：打开时盖在主内容上（不挤压布局），根元素类只供测试与外部样式钩子用 */
 watch(
   open,
   (value) => {

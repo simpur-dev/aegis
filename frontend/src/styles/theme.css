@@ -406,6 +406,8 @@ body .stat-cell .ant-statistic-content-suffix {
 @media (prefers-reduced-motion: reduce) {
   body .ant-card,
   .status-dot.live,
+  .marker__pulse,
+  .agent__dot.is-live,
   .ed-head__polling::before {
     animation: none !important;
   }

@@ -29,13 +29,14 @@ export const brand = {
     soft: 'rgba(37, 99, 235, 0.12)',
     line: 'rgba(37, 99, 235, 0.22)',
   },
-  /** 深色主题主色：底是深蓝黑，同一段蓝要提一档才够对比 */
+  /** 深色主题主色：指挥中心裁决取用户指定的主交互青蓝 #19C8F3。
+   *  深底上的按钮字走 text-inverse（深色字压亮青 8.25:1），不沿用白字——白字压这支青只有 2.2:1。 */
   dark: {
-    base: '#3B82F6',
-    hover: '#60A5FA',
-    active: '#2563EB',
-    soft: 'rgba(59, 130, 246, 0.20)',
-    line: 'rgba(59, 130, 246, 0.34)',
+    base: '#19C8F3',
+    hover: '#4FD2FF',
+    active: '#0E9CCB',
+    soft: 'rgba(25, 200, 243, 0.16)',
+    line: 'rgba(25, 200, 243, 0.38)',
   },
 } as const
 
@@ -93,21 +94,18 @@ export const colorSlots = {
     // 一张图「深空皮肤」的太空底：两主题同值——那是"宇宙"，不随页面主题翻面
     'space-globe': '#061326',
     'deep-space': '#05030E',
-    /* 雾底 + KPI 球（2026-11-19 用户裁决恢复：背景与球是用户认定的产品观感，
-       2dcec21 的其余改进——a11y/短名/12px prose/GET 探针——原样保留）。
-       画布雾底是渐变兜底，照片素材在 public/backgrounds/aegis-horizon.webp；
-       球面/球环是白球的两档，紫球走 accent-ball 四档。 */
+    /* 指挥中心裁决（2026-11-20）：统计球退役，KPI 改横向数据卡；雾底素材换成
+       用户指定的深蓝波浪背景（public/backgrounds/aegis-command-waves.png）。
+       浅色主题仍是 daylight 档：同一张素材压低透明度叠在浅画布渐变上，顶栏深字不受影响。
+       brand-alt 是辅助蓝（图形/连线/图标用，不当正文色——深底上它只有 3.57:1）；
+       halo 是背景柔光斑。球面/球环/紫球六档随球一起退役。 */
     'canvas-from': '#EAF4FF',
     'canvas-via': '#F5FAFF',
     'canvas-to': '#E8F1FF',
     'glass-bg': 'rgba(255, 255, 255, 0.62)',
     'glass-border': 'rgba(255, 255, 255, 0.78)',
-    'ball-surface': 'rgba(255, 255, 255, 0.86)',
-    'ball-ring': 'rgba(255, 255, 255, 0.92)',
-    'accent-ball-from': '#9B8CFF',
-    'accent-ball-to': '#6D5AE0',
-    'accent-ball-glow': 'rgba(139, 124, 246, 0.45)',
-    'accent-ball-text': '#100C33',
+    'brand-alt': '#1E40AF',
+    halo: 'rgba(255, 255, 255, 0.85)',
     // 空态里的强动作按钮（黑底白字）；两主题各自一套，不复用 text-inverse（深色主题里它是深色字）
     'action-bg': '#1A1A1C',
     'action-bg-hover': '#2C2C31',
@@ -152,28 +150,33 @@ export const colorSlots = {
     'chart-bar-p95-to': '#F6C46B',
   },
   dark: {
-    page: '#0B1220',
-    card: '#111A2B',
-    elevated: '#16223A',
-    sunken: '#0E1728',
-    alter: '#13203A',
-    border: '#24344F',
-    'border-subtle': '#1B2942',
-    'border-strong': '#33475F',
-    text: '#E6EDF7',
-    'text-secondary': '#A7B4C9',
-    'text-muted': '#8595AD',
-    'text-inverse': '#0B1220',
+    /* 指挥中心色板（用户裁决，逐值来自任务书）：
+       主背景 #04152B / 一级面板 #0A2342 / 二级面板 #102F52 / 主交互 #19C8F3 / 辅助蓝 #2678E8 /
+       正常 #25D6A0 / 中风险 #FFAD3D / 高风险 #F05252 / 主文字 #EDF6FF / 辅助文字 #91A9C3。
+       每一对文字/表面的 AA 由 tokens.spec 现算。 */
+    page: '#04152B',
+    card: '#0A2342',
+    elevated: '#102F52',
+    sunken: '#081B36',
+    alter: '#102F52',
+    border: '#1B3A61',
+    'border-subtle': '#14304F',
+    'border-strong': '#2A4E7E',
+    text: '#EDF6FF',
+    'text-secondary': '#91A9C3',
+    /** 弱字比辅助字再暗一档，但压在次级面板 #102D50 上仍要过 4.5（实算 5.29）。 */
+    'text-muted': '#8AA2BF',
+    'text-inverse': '#04152B',
     brand: brand.dark.base,
     'brand-hover': brand.dark.hover,
     'brand-active': brand.dark.active,
     'brand-soft': brand.dark.soft,
     'brand-line': brand.dark.line,
-    'status-success': '#4ADE80',
-    'status-warning': '#FBBF24',
-    'status-danger': '#F87171',
-    'status-info': '#60A5FA',
-    'overlay-scrim': 'rgba(2, 6, 16, 0.62)',
+    'status-success': '#25D6A0',
+    'status-warning': '#FFAD3D',
+    'status-danger': '#F05252',
+    'status-info': '#63A4F5',
+    'overlay-scrim': 'rgba(3, 10, 24, 0.66)',
     'editor-canvas': '#151A21',
     'editor-header': '#171D26',
     'editor-panel': '#1A202B',
@@ -197,26 +200,22 @@ export const colorSlots = {
     'editor-state-awaiting': '#C4B5FD',
     'space-globe': '#061326',
     'deep-space': '#05030E',
-    'canvas-from': '#0A1020',
-    'canvas-via': '#0B1220',
-    'canvas-to': '#0A0F1C',
-    'glass-bg': 'rgba(20, 30, 48, 0.55)',
-    'glass-border': 'rgba(120, 150, 200, 0.22)',
-    'ball-surface': 'rgba(30, 44, 68, 0.82)',
-    'ball-ring': 'rgba(140, 170, 220, 0.35)',
-    'accent-ball-from': '#8B7CF6',
-    'accent-ball-to': '#5B49C8',
-    'accent-ball-glow': 'rgba(139, 124, 246, 0.5)',
-    'accent-ball-text': '#100C33',
+    'canvas-from': '#041022',
+    'canvas-via': '#04152B',
+    'canvas-to': '#030C1C',
+    'glass-bg': 'rgba(10, 35, 66, 0.72)',
+    'glass-border': 'rgba(94, 140, 190, 0.28)',
+    'brand-alt': '#2678E8',
+    halo: 'rgba(38, 120, 232, 0.4)',
     // 深色主题下"最强的动作"是提亮：浅底深字（若沿用黑底，必须换成亮字，见提示词 §4.1）
     'action-bg': '#E8EDF7',
     'action-bg-hover': '#F7FAFF',
     'action-bg-active': '#CBD6E6',
-    'action-text': '#0B1220',
-    'stat-chip-bg': 'rgba(28, 42, 64, 0.86)',
-    'stat-chip-border': '#2C3E5C',
-    'stat-chip-text': '#C9D5E6',
-    'topbar-pill-bg': 'rgba(255, 255, 255, 0.18)',
+    'action-text': '#04152B',
+    'stat-chip-bg': 'rgba(16, 45, 80, 0.86)',
+    'stat-chip-border': '#2A4E7E',
+    'stat-chip-text': '#C9DCF2',
+    'topbar-pill-bg': 'rgba(120, 170, 230, 0.18)',
     'map-panel-bg': 'rgba(208, 224, 244, 0.72)',
     'map-panel-border': 'rgba(255, 255, 255, 0.6)',
     'map-panel-text': '#0B1220',
@@ -329,7 +328,8 @@ export const z = { sticky: 10, header: 100, drawer: 200, modal: 300, toast: 400 
 
 /** 顶栏定高：提示条 top 与"浮层不压顶栏"那条判据都依赖它，收成一处 */
 export const layout = {
-  headerHeight: 68,
+  // 两层顶栏：品牌行 52 + 导航行 48
+  headerHeight: 100,
   sidebarWidth: 232,
   sidebarCollapsed: 64,
   contentMaxWidth: 1720,

@@ -1,9 +1,9 @@
 /**
  * 主题模式：`light` / `dark` / `system` 三态，选择持久化到 localStorage。
  *
- * 默认是 `system`（评审笔记本与值班室大屏都可能任意一种环境），
- * 但**没存过就用系统偏好，不硬钉浅色**——硬钉浅色会让跟随系统的用户在暗房里被闪一下。
- * 顶栏那个切换器（阶段 1）只需绑 `mode` 与 `setMode`，这里已经把持久化与 `matchMedia` 接好。
+ * 默认是 `dark`（2026-11-21 指挥中心裁决：本平台是深海军蓝的大屏指挥舱，
+ * 首屏就应该是任务书指定的深蓝波浪底，而不是跟随系统落到浅灰）。
+ * 老用户显式存过的 `light` / `system` 仍然压过默认值，顶栏切换器三态能力不变。
  */
 
 import { computed, ref, watch } from 'vue'
@@ -18,10 +18,10 @@ const STORAGE_KEY = 'aegis.theme'
 function readStored(): ThemePreference {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'system'
+    return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'dark'
   } catch {
-    // 隐私模式/禁用存储时 localStorage 会抛：不能因此白屏，退回"跟随系统"
-    return 'system'
+    // 隐私模式/禁用存储时 localStorage 会抛：不能因此白屏，退回指挥中心默认深色
+    return 'dark'
   }
 }
 

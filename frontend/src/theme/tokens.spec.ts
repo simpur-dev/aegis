@@ -155,8 +155,10 @@ describe('设计令牌真源', () => {
     expect(dark.algorithm).toBeDefined()
     expect(dark.algorithm).not.toEqual(light.algorithm)
     const token = dark.token as Record<string, unknown>
-    expect(token.colorBgContainer).toBe('#111A2B')
-    expect(token.colorText).toBe('#E6EDF7')
+    /* 指挥中心裁决：深色容器底换成任务书一级面板色 #0A2342，
+       主文字换成 #EDF6FF。判据职责不变——深色底必须真的是暗面。 */
+    expect(token.colorBgContainer).toBe('#0A2342')
+    expect(token.colorText).toBe('#EDF6FF')
     expect(hex(String(token.colorBgContainer)).r, '深色容器底色还是亮的').toBeLessThan(40)
   })
 
@@ -168,7 +170,7 @@ describe('设计令牌真源', () => {
     applyTheme('dark')
     const root = document.documentElement
     expect(root.dataset.theme).toBe('dark')
-    expect(root.style.getPropertyValue('--aeg-color-card').trim()).toBe('#111A2B')
+    expect(root.style.getPropertyValue('--aeg-color-card').trim()).toBe('#0A2342')
     expect(root.style.getPropertyValue('--aeg-space-s4')).toBe('16px')
     applyTheme('light')
     expect(root.style.getPropertyValue('--aeg-color-card').trim()).toBe('#FFFFFF')
@@ -206,16 +208,29 @@ describe('设计令牌真源', () => {
     }
   })
 
-  /* 紫球读数（2026-11-19 恢复球体时补钉）：数字坐在径向渐变的高光中心（32% 26%），
-     那一档就是 accent-ball-from；to 档落在球缘右下，远离数字，不拿它判读数。
-     32px/700 属大字号，但这里按正文 4.5 钉——球是首屏主指标，读不清就是事故。 */
-  it('协同成功率紫球：球心高光档上的深字过 AA（两主题各算一遍）', () => {
-    for (const mode of ['light', 'dark'] as const) {
-      const slots = colorSlots[mode]
-      expect(
-        ratio(slots['accent-ball-text'], slots['accent-ball-from']),
-        `${mode} 主题：紫球读数在球心高光档读不清`,
-      ).toBeGreaterThanOrEqual(4.5)
+  /* 指挥中心色板（用户裁决，替代同日的紫球判据——球已退役为横向数据卡）：
+     任务书点名的色值必须原样住在深色真源里，改了一个就是"页面说的和任务书不是一回事"。
+     可读性不在这条钉——上面 textPairs 已对每一对文字/表面现算 AA。 */
+  it('指挥中心深色色板：任务书点名的色值原样在真源（球退役后这条接管视觉重点）', () => {
+    const slots = colorSlots.dark
+    const decree: Array<[ColorSlot, string]> = [
+      ['page', '#04152B'],
+      ['card', '#0A2342'],
+      ['elevated', '#102F52'],
+      ['brand', '#19C8F3'],
+      ['brand-alt', '#2678E8'],
+      ['status-success', '#25D6A0'],
+      ['status-warning', '#FFAD3D'],
+      ['status-danger', '#F05252'],
+      ['text', '#EDF6FF'],
+      ['text-secondary', '#91A9C3'],
+    ]
+    for (const [slot, value] of decree) {
+      expect(slots[slot], `深色槽位 ${slot} 不再是任务书指定的 ${value}`).toBe(value)
+    }
+    /* 球槽位必须真的退役：留着死槽位，下一个人就会以为球还在 */
+    for (const retired of ['ball-surface', 'ball-ring', 'accent-ball-from', 'accent-ball-to', 'accent-ball-glow', 'accent-ball-text']) {
+      expect(Object.keys(slots), `球槽位 ${retired} 应随统计球一起退役`).not.toContain(retired)
     }
   })
 })

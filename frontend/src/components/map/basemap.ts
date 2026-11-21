@@ -25,6 +25,8 @@ import { isLocalAssetUrl, tileUrlForTemplate } from './offline'
 export const DEFAULT_BASEMAP_TEMPLATE = '/basemaps/{z}/{x}/{y}.png'
 export const DEFAULT_PMTILES_URL = '/basemaps/aegis.pmtiles'
 export const BASEMAP_ATTRIBUTION = 'AEGIS 离线底图（自托管烘焙，无第三方瓦片服务）'
+/** 真实高程派生影像的署名：自托管烘焙 + 上游 DEM 出处（Mapzen/AWS Terrain Tiles 的署名要求）。 */
+export const RELIEF_ATTRIBUTION = 'AEGIS 离线底图（自托管烘焙）· 高程 © Mapzen / AWS Terrain Tiles（SRTM、GEBCO、GMTED 等）'
 /**
  * 真 OSM 烘焙档的署名（ODbL 要求）。它**只在 url-template 档生效**：
  * 合成 PMTiles 那一份里没有一个 OSM 字节，挂上这句署名就是假溯源。
@@ -79,8 +81,10 @@ export function chooseBasemapSource(
   }
 
   // 署名跟着**实际加载的那一份**走：显式给了就用显式的，否则按源类型给。
+  // pmtiles 档再按归档分：合成样本不冒领上游出处，真实高程烘焙档必须记 Mapzen/AWS 的署名。
   const forKind = (kind: 'template' | 'pmtiles') =>
-    config.attribution || (kind === 'template' ? OSM_BAKE_ATTRIBUTION : BASEMAP_ATTRIBUTION)
+    config.attribution ||
+    (kind === 'template' ? OSM_BAKE_ATTRIBUTION : config.pmtilesUrl === DEFAULT_PMTILES_URL ? BASEMAP_ATTRIBUTION : RELIEF_ATTRIBUTION)
   const pmtilesFirst = config.prefer === 'pmtiles'
   const first = pmtilesFirst
     ? { ok: reach.pmtilesReachable, source: { kind: 'pmtiles' as const, url: config.pmtilesUrl, attribution: forKind('pmtiles') } }

@@ -84,6 +84,14 @@ export interface MapSceneOptions {
    * 只有「一张图」传 true。区域视图（默认约 1.7e6 m）不叠纹理，底图与要素色不变。
    */
   spaceLook?: boolean
+  /**
+   * 建场完成后的一次性宿主钩子：把 viewer 与 cesium 命名空间交给宿主，
+   * 让「态势总览」的三维嵌入在其上加数据连线与风险点呼吸，而无需另建一套场景。
+   *
+   * 默认不传——「一张图」与既有门禁行为完全不变。宿主须在 `destroy()` 之前
+   * 自行清理它挂上的 rAF / 事件监听；这里只负责在建场末尾调用一次。
+   */
+  onReady?: (viewer: CesiumViewer, cesium: CesiumModule) => void
 }
 
 export interface MapSceneInfo {
@@ -614,6 +622,10 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   // 装配完先推一次：`camera.changed` 只在**变化**时发，不推的话面板一直停在"视野：未就绪"、
   // 缩放报 0，而且按视野过滤图层的那条路一直拿不到 bbox（浏览器实测：不动鼠标就一直是未就绪）。
   onCameraChanged()
+
+  // 场景已装配完毕、首帧已排出：把 viewer 交给宿主（总览页三维嵌入）挂数据连线与风险点呼吸。
+  // 宿主自行持有并在 destroy 前清理它加的 rAF / 监听；不传则此处什么都不做。
+  options.onReady?.(viewer, cesium)
 
   function currentBBox(): BBox | null {
     const rectangle = viewer.camera.computeViewRectangle()

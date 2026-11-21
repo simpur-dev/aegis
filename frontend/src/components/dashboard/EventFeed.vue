@@ -1,10 +1,8 @@
 <script setup lang="ts">
 /**
- * 实时事件流：一条事件一张小卡，和链路执行记录同一套卡片语言。
+ * 实时事件流：时间线形态——左侧一根竖轨串起圆点，右边一行时间 + 一句正文。
  *
- * 卡片两行：第一行 = 级别圆点 + 时间 + 类型标签；第二行 = 一句正文。
- * 默认只露 4 张（卡内滚动 + 底部渐隐），其余等"查看全部"再展开——
- * 和链路卡一样，不让行数把首屏顶走。
+ * 和底部另外两张卡等高：默认只露 3 条（卡内滚动 + 底部渐隐），其余等"查看全部"。
  * 时间仍走 `formatOperatingTime`（UTC+8，跨日进位），不给裸 ISO。
  */
 import { computed, ref } from 'vue'
@@ -14,7 +12,7 @@ import { formatOperatingTime } from '@/utils/clock'
 
 const props = defineProps<{ events: StreamEvent[] }>()
 
-const VISIBLE_ROWS = 4
+const VISIBLE_ROWS = 3
 const expanded = ref(false)
 const canExpand = computed(() => props.events.length > VISIBLE_ROWS)
 
@@ -52,12 +50,17 @@ function toneOf(event: StreamEvent): 'bad' | 'warn' | 'muted' {
         data-testid="evt-row"
         :title="`${event.subject} · ${event.trace_id}`"
       >
-        <div class="evt__top">
-          <i class="evt__dot" aria-hidden="true"></i>
-          <span class="evt__time">{{ formatOperatingTime(event.ts) }}</span>
-          <span class="evt__subject">{{ event.subject }}</span>
+        <span class="evt__rail" aria-hidden="true">
+          <i class="evt__dot"></i>
+          <i class="evt__line"></i>
+        </span>
+        <div class="evt__body">
+          <div class="evt__top">
+            <span class="evt__time">{{ formatOperatingTime(event.ts) }}</span>
+            <span class="evt__subject">{{ event.subject }}</span>
+          </div>
+          <span class="evt__text" :title="event.subject">{{ headlineOf(event) }}</span>
         </div>
-        <span class="evt__text" :title="event.subject">{{ headlineOf(event) }}</span>
       </div>
     </div>
 
@@ -89,12 +92,11 @@ function toneOf(event: StreamEvent): 'bad' | 'warn' | 'muted' {
   gap: var(--aeg-space-s2);
 }
 
-/* 默认 4 张卡（4×~55px + 3×8px 间距）；底部渐隐提示还有更多 */
+/* 时间线：默认露 3 条（3×~46px + gap）；底部渐隐提示还有更多 */
 .evt-feed__rows {
   display: flex;
   flex-direction: column;
-  gap: var(--aeg-space-s2);
-  max-height: 252px;
+  max-height: 190px;
   overflow-y: auto;
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
   mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
@@ -112,22 +114,57 @@ function toneOf(event: StreamEvent): 'bad' | 'warn' | 'muted' {
   background: var(--aeg-color-border);
 }
 
-/* 一条事件一张卡：与链路卡同一套圆角/描边/底色 */
+/* 一条事件 = 一行：左轨（圆点 + 竖线）串成时间线，右边是内容。
+   不再一事件一张卡：三张卡并排时，卡片语言会盖过"这是一条流"。 */
 .evt {
   display: flex;
-  flex-direction: column;
-  gap: var(--aeg-space-s1);
-  padding: var(--aeg-space-s2) 10px;
-  border: 1px solid var(--aeg-color-border);
+  gap: var(--aeg-space-s2);
+  padding: 6px 8px;
   border-radius: var(--aeg-radius-md);
-  background: var(--aeg-color-sunken);
-  transition:
-    border-color var(--aeg-motion-base) ease,
-    box-shadow var(--aeg-motion-base) ease;
+  transition: background var(--aeg-motion-base) ease;
 }
 .evt:hover {
-  border-color: var(--aeg-color-brand);
-  box-shadow: var(--aeg-shadow-sm);
+  background: var(--aeg-color-sunken);
+}
+
+/* 左轨：点固定在首行高度，线从点下沿一直落到下一行的点（最后一条不画） */
+.evt__rail {
+  position: relative;
+  flex: 0 0 10px;
+  align-self: stretch;
+  display: flex;
+  justify-content: center;
+}
+.evt__dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-border-strong);
+}
+.evt__line {
+  position: absolute;
+  top: 16px;
+  bottom: -10px;
+  width: 1px;
+  background: var(--aeg-color-border);
+}
+.evt:last-child .evt__line {
+  display: none;
+}
+.evt.is-warn .evt__dot {
+  background: var(--aeg-color-status-warning);
+}
+.evt.is-bad .evt__dot {
+  background: var(--aeg-color-status-danger);
+}
+
+.evt__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
 
 .evt__top {
@@ -135,20 +172,6 @@ function toneOf(event: StreamEvent): 'bad' | 'warn' | 'muted' {
   align-items: center;
   gap: var(--aeg-space-s2);
   min-width: 0;
-}
-
-.evt__dot {
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--aeg-radius-pill);
-  background: var(--aeg-color-border-strong);
-}
-.evt.is-warn .evt__dot {
-  background: var(--aeg-color-status-warning);
-}
-.evt.is-bad .evt__dot {
-  background: var(--aeg-color-status-danger);
 }
 
 .evt__time {
