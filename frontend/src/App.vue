@@ -131,7 +131,15 @@ const statusTitle = computed<string>(() =>
         <header v-if="!immersive" class="topbar">
           <div class="topbar__lead">
             <div class="topbrand" data-testid="brand">
-              <span class="brand-logo" aria-hidden="true">A</span>
+              <!-- 雪山徽标：仓库里没有原版 Logo 资源（git 历史也没有），这里用内联雪山轮廓占位；
+                   拿到原图后替换这个 svg 即可，尺寸/布局不用改。 -->
+              <span class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 40 40" role="presentation">
+                  <path d="M2 32 L12 11 L18 21 L23 13 L38 32 Z" fill="var(--aeg-color-brand)" />
+                  <path d="M12 11 L16 18 L13 20 L9.5 17.5 Z" fill="var(--aeg-color-text)" />
+                  <path d="M23 13 L26.5 19 L24 20.5 L21 18 Z" fill="var(--aeg-color-text)" />
+                </svg>
+              </span>
               <span class="topbrand__text">
                 <span class="brand-name">AEGIS 山地灾害协同调控平台</span>
                 <span class="brand-sub">西藏山地灾害多智能体协同调控</span>
@@ -330,14 +338,20 @@ const statusTitle = computed<string>(() =>
   height: 100vh;
 }
 .topbar {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 0;
   height: var(--aeg-header-height);
   padding: 0 var(--aeg-space-s6);
-  background: transparent;
-  border: none;
+  /* 深蓝品牌横幅：纯色叠层，不再铺会被裁切的山地装饰图 */
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--aeg-color-page) 96%, var(--aeg-color-brand) 4%) 0%,
+    var(--aeg-color-page) 100%
+  );
+  border-bottom: 1px solid var(--aeg-color-glass-border);
   box-shadow: none;
 }
 /* 两层：上层品牌 + 状态/主题，下层导航。品牌从右侧挪回左上，视觉重心与设计稿一致。 */
@@ -347,13 +361,55 @@ const statusTitle = computed<string>(() =>
   justify-content: space-between;
   gap: var(--aeg-space-s4);
   min-height: 52px;
+  border-bottom: 1px solid var(--aeg-color-glass-border);
 }
 .topbar__lead .topbrand {
   padding-left: 0;
   border-left: none;
 }
+/* 雪山徽标占位（仓库缺原版资源）：40px，玻璃底衬托 */
+.brand-mark {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--aeg-color-glass-border);
+  border-radius: var(--aeg-radius-md);
+  background: color-mix(in srgb, var(--aeg-color-brand) 14%, transparent);
+}
+.brand-mark svg {
+  width: 32px;
+  height: 32px;
+}
+.brand-name {
+  font-size: 17px;
+  letter-spacing: 0.01em;
+}
+.brand-sub {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--aeg-color-text-muted);
+}
 .topnav {
   height: 48px;
+  gap: 4px;
+  background: color-mix(in srgb, var(--aeg-color-page) 55%, transparent);
+}
+.topnav__item {
+  height: 36px;
+  padding: 0 var(--aeg-space-s4);
+  border-radius: var(--aeg-radius-md);
+}
+/* 选中项：冰川青→辅助蓝的渐变 + 柔和外发光（参考图一的“发光胶囊”） */
+.topnav__item.is-on {
+  border: none;
+  background: linear-gradient(135deg, var(--aeg-color-brand) 0%, var(--aeg-color-brand-alt) 100%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--aeg-color-brand) 55%, transparent),
+    0 6px 18px -8px var(--aeg-color-brand);
+  color: var(--aeg-color-text-inverse);
 }
 .topbar-right {
   display: flex;

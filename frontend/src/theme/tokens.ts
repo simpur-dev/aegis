@@ -328,7 +328,7 @@ export const z = { sticky: 10, header: 100, drawer: 200, modal: 300, toast: 400 
 
 /** 顶栏定高：提示条 top 与"浮层不压顶栏"那条判据都依赖它，收成一处 */
 export const layout = {
-  // 两层顶栏：品牌行 52 + 导航行 48
+  // 两层顶栏：品牌行 52 + 导航行 48（图一要求 100–112）
   headerHeight: 100,
   sidebarWidth: 232,
   sidebarCollapsed: 64,

@@ -222,8 +222,9 @@ onMounted(() => {
   const saved = loadState()
   width.value = clampDrawerWidth(saved.width ?? defaultDrawerWidth(window.innerWidth), window.innerWidth)
   applyWidth()
+  // 图标固定落在右下角安全区：历史版本存过的 top 不再复用，避免旧位置压住智能体面板
   top.value = clampTop(
-    saved.top ?? window.innerHeight - DOCK_SIZE - 24,
+    window.innerHeight - DOCK_SIZE - 24,
     window.innerHeight,
     headerH.value,
   )

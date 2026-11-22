@@ -367,7 +367,8 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--aeg-font-mono);
-  font-size: var(--aeg-font-xs);
+  font-size: 10px;
+  opacity: 0.72;
   color: var(--aeg-color-text-muted);
 }
 

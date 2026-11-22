@@ -74,6 +74,7 @@ const mockNotice = computed<string>(() => {
           <span class="cell__conf">置信 {{ cell.confidence > 0 ? `${Math.round(cell.confidence * 100)}%` : '—' }}</span>
           <span v-if="cell.isMock" class="cell__mock" :title="cell.disclaimer || '该结论来自模拟数据'">模拟数据</span>
           <span v-if="cell.degraded" class="cell__degraded">降级：平台规则兜底</span>
+          <span v-else class="cell__status">处置中</span>
           <span v-if="!cell.anchor" class="cell__noscene" data-testid="risk-no-scene">未配置场景位置</span>
         </div>
       </div>
@@ -167,8 +168,12 @@ const mockNotice = computed<string>(() => {
 }
 .cell__level {
   flex: 0 0 auto;
-  font-size: var(--aeg-font-sm);
-  font-weight: var(--aeg-weight-bold);
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 11px;
+  font-weight: var(--aeg-weight-semibold);
 }
 .cell__hazard {
   margin-top: 2px;
@@ -185,6 +190,9 @@ const mockNotice = computed<string>(() => {
 }
 .cell__degraded {
   color: var(--aeg-color-status-warning);
+}
+.cell__status {
+  color: var(--aeg-color-text-muted);
 }
 .cell__mock {
   padding: 0 4px;

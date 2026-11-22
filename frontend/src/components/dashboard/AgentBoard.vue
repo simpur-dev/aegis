@@ -58,13 +58,14 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
   flex-direction: column;
   gap: 2px;
 }
-/* 一行一颗：固定 38px，扫一列就能对齐读 */
+/* 一行一颗：CSS Grid 固定列，扫一列就能对齐读 */
 .agent {
-  display: flex;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) 64px 48px 92px 14px;
   align-items: center;
-  gap: var(--aeg-space-s2);
+  column-gap: var(--aeg-space-s3);
   height: 46px;
-  padding: 0 var(--aeg-space-s1);
+  padding: 0 var(--aeg-space-s2);
   border-bottom: 1px solid var(--aeg-color-border-subtle);
   border-radius: var(--aeg-radius-sm);
   cursor: pointer;
@@ -81,6 +82,7 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
   outline-offset: -2px;
 }
 .agent__dot {
+  justify-self: start;
   flex: 0 0 auto;
   width: 7px;
   height: 7px;
@@ -91,42 +93,37 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
   background: var(--aeg-color-status-success);
 }
 .agent__id {
-  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--aeg-font-sm);
+  font-size: 13px;
   font-weight: var(--aeg-weight-semibold);
   color: var(--aeg-color-text);
 }
 .agent__type {
-  flex: 0 0 auto;
-  max-width: 96px;
+  width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 0 6px;
+  text-align: center;
+  padding: 1px 0;
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-sm);
-  font-size: var(--aeg-font-xs);
+  font-size: 11px;
   color: var(--aeg-color-text-muted);
 }
 .agent__load {
-  flex: 0 0 auto;
-  min-width: 40px;
   text-align: right;
-  font-size: var(--aeg-font-xs);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--aeg-color-text-secondary);
 }
 .agent__served {
   display: inline-flex;
-  flex: 0 0 auto;
   gap: 6px;
-  min-width: 74px;
   justify-content: flex-end;
-  font-size: var(--aeg-font-xs);
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--aeg-color-text-secondary);
 }
@@ -134,6 +131,7 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
   color: var(--aeg-color-status-danger);
 }
 .agent__chevron {
+  justify-self: end;
   flex: 0 0 auto;
   color: var(--aeg-color-text-muted);
   font-size: var(--aeg-font-base);

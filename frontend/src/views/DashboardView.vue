@@ -63,7 +63,8 @@ const { events } = useEventStream()
 function deltaTrend(current: number | null | undefined, previous: number | null | undefined, unit: string): KpiItem['trend'] {
   if (current == null || previous == null) return undefined
   const delta = current - previous
-  if (delta === 0) return { text: '较上次持平', dir: 'flat' }
+  // 持平不展示：没有信息量的“较上次持平”只会让四张卡变吵
+  if (delta === 0) return undefined
   return { text: `较上次 ${delta > 0 ? '+' : ''}${delta} ${unit}`, dir: delta > 0 ? 'up' : 'down' }
 }
 
@@ -624,15 +625,16 @@ watch(
   grid-template-areas:
     'main agent'
     'bottom bottom';
-  grid-template-rows: minmax(0, 1fr) auto auto;
   gap: var(--aeg-space-s4);
   align-items: stretch;
   min-width: 0;
-  /* 一屏装下：顶部两层栏 + 内边距扣掉后，主区拿剩余高度，底部三卡固定 252px；
-     更下面的“可选子系统”允许落在首屏之外（页面可滚），不挤占设计稿里的三卡。 */
-  height: calc(100vh - var(--aeg-header-height) - var(--aeg-space-s5) * 2);
-  min-height: 620px;
-  grid-template-rows: minmax(0, 1fr) clamp(200px, 22vh, 240px);
+  /* 主区行高固定 390–470（1600 下 ~405）：不跟智能体数量走，地图在其中伸缩 */
+  --dash-bottom-h: 210px;
+  height: auto;
+  grid-template-rows: clamp(390px, 45vh, 470px) auto;
+}
+.dash-layout:has(.chain, .evt, .cell) {
+  --dash-bottom-h: clamp(240px, 26vh, 300px);
 }
 /* 左侧一张主卡：标题 + 四指标 + 地形，纵跨上半区；右侧智能体面板同高 */
 .dash-main {
@@ -642,8 +644,13 @@ watch(
   gap: var(--aeg-space-s2);
   min-width: 0;
   min-height: 0;
-  padding: var(--aeg-space-s3);
+  padding: var(--aeg-space-s3) var(--aeg-space-s3) 0;
   overflow: hidden;
+}
+/* 覆盖 .glass-panel 的 16px 内边距：地图要直接铺到面板最底端，不留底边和底边框 */
+.dash-main.glass-panel {
+  padding: var(--aeg-space-s3) var(--aeg-space-s3) 0;
+  border-bottom: none;
 }
 .dash-main__head {
   display: flex;
@@ -669,38 +676,52 @@ watch(
   gap: 4px;
 }
 .dash-main .dash-kpi :deep(.kpi__label) {
-  font-size: var(--aeg-font-xs);
+  font-size: 12px;
 }
-/* 四张指标卡：一行四列等宽；高度 84 → 63（再压 1/4），把省下的高度让给地形图 */
+/* 四张指标卡：一行四列等宽；高度 76、图标 38、数字 26（25–28 区间） */
 .dash-main .dash-kpi :deep(.kpi-strip__cards) {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 .dash-main .dash-kpi :deep(.kpi) {
-  height: 63px;
-  padding: 8px 12px;
-  gap: 10px;
+  height: 76px;
+  padding: 10px 12px;
+  gap: 12px;
+  border-radius: var(--aeg-radius-md);
 }
 .dash-main .dash-kpi :deep(.kpi__icon) {
-  width: 30px;
-  height: 30px;
+  width: 38px;
+  height: 38px;
+}
+/* 图标语义色：在线青 / 预警橙 / 任务蓝 / 成功率绿；卡片底色保持统一深蓝 */
+.dash-main .dash-kpi :deep(.kpi:nth-child(2) .kpi__icon) {
+  color: var(--aeg-color-status-warning);
+}
+.dash-main .dash-kpi :deep(.kpi:nth-child(3) .kpi__icon) {
+  color: var(--aeg-color-brand-alt);
+}
+.dash-main .dash-kpi :deep(.kpi:nth-child(4) .kpi__icon) {
+  color: var(--aeg-color-status-success);
 }
 .dash-main .dash-kpi :deep(.kpi__value) {
-  font-size: var(--aeg-font-lg);
+  font-size: 26px;
 }
 .dash-main .dash-kpi :deep(.kpi__suffix) {
-  font-size: var(--aeg-font-xs);
+  font-size: 12px;
 }
 .dash-main .dash-kpi :deep(.kpi__trend) {
-  font-size: var(--aeg-font-xs);
+  font-size: 11px;
 }
 .dash-main .dash-kpi :deep(.kpi__note) {
-  font-size: 10px;
+  font-size: 11px;
   line-height: var(--aeg-lh-tight);
 }
-/* 紧凑标题栏：标题行 40、说明 12px、按钮 34，整体压到 60 左右 */
+/* 紧凑标题栏：标题 21、说明 12px、按钮 36，整体约 60 */
 .dash-main :deep(.page-head) {
   margin-bottom: 0;
+}
+.dash-main :deep(.page-head__title) {
+  font-size: 21px;
 }
 .dash-main :deep(.page-head__caption) {
   margin-top: 2px;
@@ -708,20 +729,22 @@ watch(
   max-width: none;
 }
 .dash-main :deep(.page-head__actions .ant-btn) {
-  min-height: 34px;
+  min-height: 36px;
 }
 .dash-main :deep(.page-head__actions) {
   font-size: var(--aeg-font-sm);
 }
-/* 地形是主视觉：占满主卡剩余高度，底图本身用 cover，不改图片比例 */
+/* 地形直接铺在主面板下半部：去掉子卡片边框/圆角/背景，左右贴边 */
 .dash-main .dash-map {
   flex: 1 1 auto;
-  min-height: 260px;
+  min-height: 210px;
+  max-height: 290px;
   min-width: 0;
+  margin: 0 calc(-1 * var(--aeg-space-s3));
   overflow: hidden;
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-lg);
-  background: var(--aeg-color-card);
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 .dash-main .dash-map > * {
   height: 100%;
@@ -732,12 +755,13 @@ watch(
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
+  height: 26px;
   margin-top: 2px;
-  padding: 4px 10px;
-  border: 1px solid var(--aeg-color-status-danger);
-  border-radius: var(--aeg-radius-pill);
-  background: var(--aeg-color-brand-soft);
-  color: var(--aeg-color-text);
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--aeg-color-status-danger) 62%, transparent);
+  border-radius: var(--aeg-radius-md);
+  background: color-mix(in srgb, var(--aeg-color-status-danger) 18%, var(--aeg-color-page));
+  color: color-mix(in srgb, var(--aeg-color-status-danger) 62%, var(--aeg-color-text));
   font-size: var(--aeg-font-xs);
 }
 .dash-alert-chip__dot {
@@ -780,6 +804,28 @@ watch(
   padding-top: var(--aeg-space-s2);
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
   mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
+}
+.dash-agent__summary {
+  color: var(--aeg-color-status-success);
+  font-weight: var(--aeg-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+/* 统一细滚动条：4–6px，低亮度，hover 稍微提亮 */
+.dash-agent__body::-webkit-scrollbar,
+.dash-bottom__card :deep(.ant-card-body)::-webkit-scrollbar,
+.dash-bottom__card :deep(.ant-card-body *)::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.dash-agent__body::-webkit-scrollbar-thumb,
+.dash-bottom__card :deep(.ant-card-body)::-webkit-scrollbar-thumb,
+.dash-bottom__card :deep(.ant-card-body *)::-webkit-scrollbar-thumb {
+  border-radius: var(--aeg-radius-pill);
+  background: color-mix(in srgb, var(--aeg-color-border-strong) 55%, transparent);
+}
+.dash-agent__body:hover::-webkit-scrollbar-thumb,
+.dash-bottom__card :deep(.ant-card-body):hover::-webkit-scrollbar-thumb {
+  background: var(--aeg-color-border-strong);
 }
 .dash-agent__body::-webkit-scrollbar {
   width: 6px;
@@ -857,12 +903,17 @@ watch(
   gap: var(--aeg-space-s4);
   align-items: stretch;
   min-width: 0;
+  /* 高度由布局变量统一给：空态 210，出现真实行后 240–300；行高与主区互补，首屏始终装得下 */
+  height: var(--dash-bottom-h);
+  overflow: hidden;
 }
 /* 三张卡同高：网格拉伸 + 卡片 flex 列，正文区各自滚动，标题顶边与分隔线齐平。 */
 .dash-bottom__card {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 .dash-bottom__card :deep(.ant-card) {
   flex: 1;
@@ -878,9 +929,12 @@ watch(
 .dash-layout > .dash-legs {
   grid-area: legs;
 }
-/* 首屏之外的可选子系统：留出与上方的间距，不参与首屏网格高度 */
+/* 首屏之外的可选子系统：与三卡的间距对齐“主图 ↔ 三卡”的视觉间隙
+   （主卡内边距 s3 + 网格 gap s4 + 卡片边框 ≈ 32–33px），不再贴着三卡 */
 .dash-legs {
-  margin-top: var(--aeg-space-s4);
+  position: relative;
+  z-index: 1;
+  margin-top: calc(var(--aeg-space-s5) + var(--aeg-space-s3));
 }
 /* 37% 列比原来的 340px 宽：agent id 放宽，能力标签仍让位（保留"一行读得完"）。
    一行装不下时让 id 省略而不是整块换行：换行会把每颗智能体撑成两行，12 颗只露 6 行。 */
@@ -930,11 +984,40 @@ watch(
 .glass-panel {
   padding: var(--aeg-space-s4);
   border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-xl);
+  border-radius: var(--aeg-radius-lg);
   background: var(--aeg-color-glass-bg);
   box-shadow: var(--aeg-shadow-md);
   /* 独立合成层：滚动时整块搬已栅格化的纹理，不重 raster 整页内容层。 */
   transform: translateZ(0);
+}
+/* 业务卡提高不透明度：深蓝波浪只做背景，不穿透正文（对比度优先） */
+.dash-bottom__card.glass-panel {
+  border-color: color-mix(in srgb, var(--aeg-color-border) 80%, transparent);
+  background: color-mix(in srgb, var(--aeg-color-page) 94%, transparent);
+}
+.dash-bottom__card.glass-panel :deep(.ant-card-head) {
+  border-bottom: 1px solid var(--aeg-color-border-subtle);
+}
+/* 底部卡内空态收小：不再用整张大卡占满，留一句说明 + 次级出口 */
+.dash-bottom__card :deep(.empty-hero) {
+  gap: var(--aeg-space-s2);
+  padding: var(--aeg-space-s3);
+}
+.dash-bottom__card :deep(.empty-hero__icon) {
+  width: 32px;
+  height: 32px;
+  font-size: 14px;
+}
+.dash-bottom__card :deep(.empty-hero__title) {
+  font-size: 14px;
+}
+.dash-bottom__card :deep(.empty-hero__desc) {
+  font-size: 12px;
+}
+.dash-bottom__card :deep(.empty-hero__action) {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 .glass-panel :deep(.ant-card) {
   background: transparent;
@@ -959,8 +1042,8 @@ watch(
 .glass-panel :deep(.ant-card-head-title) {
   padding: 0;
   color: var(--aeg-color-text);
-  /* 与 KPI 卡内的页头标题同档：同一行里的标题字号/字重不许一页两套 */
-  font-size: var(--aeg-font-lg);
+  /* 底部三卡标题统一 19px，与正文层级拉开 */
+  font-size: 19px;
   font-weight: var(--aeg-weight-bold);
   letter-spacing: 0.02em;
   /* 标题加重之后会更长：允许折行，别用 antd 默认的省略号把"感知→研判→决策"截掉 */

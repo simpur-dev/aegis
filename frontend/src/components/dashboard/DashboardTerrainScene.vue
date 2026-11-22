@@ -17,22 +17,30 @@ const emit = defineEmits<{ (event: 'select', id: string): void }>()
 
 const sceneRef = ref<HTMLElement | null>(null)
 const imgRef = ref<HTMLImageElement | null>(null)
-/** 图片元素自身在容器里的实际矩形（相对容器）：标记层与它同框才不会错位 */
+/** 底图原始像素：cover 裁切后的标记层要按“完整图片坐标系”换算 */
+const ART_W = 1672
+const ART_H = 941
+const ART_POS_Y = 0.5
+/** 图片 cover 后在容器里的完整渲染矩形（可能大于容器，负偏移） */
 const artBox = ref({ left: 0, top: 0, width: 0, height: 0 })
 
 function measureArt(): void {
   const el = sceneRef.value
-  const img = imgRef.value
-  if (!el || !img) return
+  if (!el) return
   const cw = el.clientWidth
   const ch = el.clientHeight
   if (!cw || !ch) return
-  // 图片用 max-width/max-height 等比缩放（不再依赖 object-fit 的裁切/留白计算）：
-  // 直接量 <img> 的真实盒子，标记层与它同框；容器再怎么换比例也不会裁掉地形。
-  const sr = el.getBoundingClientRect()
-  const ir = img.getBoundingClientRect()
-  if (!ir.width || !ir.height) return
-  artBox.value = { left: ir.left - sr.left, top: ir.top - sr.top, width: ir.width, height: ir.height }
+  // object-fit: cover —— 取较大的缩放比，按 object-position: center 50% 算偏移；
+  // 标记层用完整图片坐标系，图片被上下裁切时锚点仍然对得上。
+  const scale = Math.max(cw / ART_W, ch / ART_H)
+  const width = ART_W * scale
+  const height = ART_H * scale
+  artBox.value = {
+    left: (cw - width) / 2,
+    top: (ch - height) * ART_POS_Y,
+    width,
+    height,
+  }
 }
 
 let observer: ResizeObserver | null = null
@@ -83,7 +91,6 @@ function colorOf(level: RiskLevel): string {
       src="/backgrounds/aegis-terrain-slab.png"
       alt="西藏高原三维地形示意（非 GIS 底图）"
       draggable="false"
-      :style="{ width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }"
     />
     <div class="scene__veil" aria-hidden="true"></div>
 
@@ -105,6 +112,7 @@ function colorOf(level: RiskLevel): string {
         :class="[`is-level-${cell.level}`, { 'is-selected': isSelected(cell.id) }]"
         :style="{ left: `${cell.anchor!.x}%`, top: `${cell.anchor!.y}%`, '--marker-color': colorOf(cell.level) }"
         :data-testid="`terrain-marker-${cell.id}`"
+        :title="`${cell.region} · ${cell.hazard} · ${RISK_LABELS[cell.level]}`"
         :aria-pressed="isSelected(cell.id)"
         @click="emit('select', cell.id)"
       >
@@ -149,20 +157,19 @@ function colorOf(level: RiskLevel): string {
   /* 0：容器多矮就多矮——绝不因为组件自己的最小高度超出卡片而被裁掉底边 */
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-xl);
-  background: var(--aeg-color-page);
+  /* 与主面板融合：去掉子卡片边框、圆角和底色 */
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
-/* 图片用 max-width/max-height 等比缩放：完整显示、不裁切、不拉伸；
-   容器比例再宽也只是两侧留深蓝，绝不把地形切掉 */
+/* 宽扁构图：按 cover 填满宽度、上下裁掉图片自带的深色/天空边（不横向压扁地形） */
 .scene__art {
-  position: relative;
+  position: static;
   display: block;
-  width: auto;
-  height: auto;
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 50%;
   user-select: none;
   -webkit-user-drag: none;
 }
@@ -187,15 +194,17 @@ function colorOf(level: RiskLevel): string {
   z-index: 2;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px 4px 6px;
+  gap: 7px;
+  height: 28px;
+  padding: 0 6px 0 8px;
   pointer-events: auto;
-  border: 1px solid color-mix(in srgb, var(--marker-color) 60%, transparent);
-  border-radius: var(--aeg-radius-pill);
-  background: color-mix(in srgb, var(--aeg-color-page) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--marker-color) 42%, var(--aeg-color-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--aeg-color-page) 90%, transparent);
+  box-shadow: var(--aeg-shadow-sm);
   color: var(--aeg-color-text);
-  font-size: var(--aeg-font-xs);
-  line-height: var(--aeg-lh-snug);
+  font-size: 12px;
+  line-height: 1;
   white-space: nowrap;
   cursor: pointer;
   transform: translate(-50%, -50%);
@@ -207,14 +216,16 @@ function colorOf(level: RiskLevel): string {
 .marker:hover,
 .marker:focus-visible {
   border-color: var(--marker-color);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--marker-color) 22%, transparent);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--marker-color) 18%, transparent),
+    var(--aeg-shadow-sm);
 }
 .marker.is-selected {
   border-color: var(--marker-color);
   box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--marker-color) 34%, transparent),
-    0 8px 22px -12px var(--marker-color);
-  transform: translate(-50%, -50%) scale(1.04);
+    0 0 0 2px color-mix(in srgb, var(--marker-color) 28%, transparent),
+    0 8px 22px -14px var(--marker-color);
+  transform: translate(-50%, -50%) scale(1.03);
 }
 .marker__pulse,
 .marker__dot {
@@ -226,21 +237,29 @@ function colorOf(level: RiskLevel): string {
 }
 .marker__pulse {
   position: absolute;
-  left: 6px;
+  left: 8px;
   width: 8px;
   height: 8px;
-  opacity: 0.5;
-  animation: marker-pulse 2.4s ease-out infinite;
+  opacity: 0.42;
+  animation: marker-pulse 2.8s ease-out infinite;
 }
 .marker.is-level-1 .marker__pulse,
 .marker.is-level-2 .marker__pulse {
-  animation-duration: 1.6s;
+  animation-duration: 2s;
 }
 .marker__label {
   font-weight: var(--aeg-weight-semibold);
 }
 .marker__level {
-  color: color-mix(in srgb, var(--marker-color) 80%, var(--aeg-color-text));
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--marker-color) 16%, transparent);
+  color: color-mix(in srgb, var(--marker-color) 72%, var(--aeg-color-text));
+  font-size: 11px;
+  font-weight: var(--aeg-weight-semibold);
 }
 @keyframes marker-pulse {
   0% {
@@ -317,17 +336,17 @@ function colorOf(level: RiskLevel): string {
 .scene__legend {
   position: absolute;
   left: 12px;
-  bottom: 12px;
+  bottom: 10px;
   z-index: 3;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--aeg-space-s1) var(--aeg-space-s3);
+  gap: 6px var(--aeg-space-s3);
   padding: 4px 10px;
   border: 1px solid var(--aeg-color-glass-border);
-  border-radius: var(--aeg-radius-pill);
-  background: color-mix(in srgb, var(--aeg-color-page) 78%, transparent);
-  color: var(--aeg-color-text-muted);
-  font-size: var(--aeg-font-xs);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--aeg-color-page) 84%, transparent);
+  color: var(--aeg-color-text-secondary);
+  font-size: 11px;
 }
 .scene__legend-item {
   display: inline-flex;
