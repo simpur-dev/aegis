@@ -135,4 +135,14 @@ describe('选择契约（Dify T2 端口）', () => {
     selection.setEdges(['e1', 'e1'])
     expect(selection.selectedEdgeIds.value).toEqual(['e1'])
   })
+
+  it('Shift 框选缩回去时只保留初始选择和当前框内的节点', () => {
+    const selection = make()
+    const nodes = [{ id: 'b', position: { x: 300, y: 0 } }]
+    const initial = ['a']
+    selection.marquee(nodes, { x: 0, y: 0, width: 500, height: 100 }, true, initial)
+    expect(selection.selectedNodeIds.value).toEqual(['a', 'b'])
+    selection.marquee(nodes, { x: 0, y: 0, width: 250, height: 100 }, true, initial)
+    expect(selection.selectedNodeIds.value).toEqual(['a'])
+  })
 })

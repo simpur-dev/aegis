@@ -35,9 +35,6 @@ app.config.errorHandler = (error, _instance, info) => {
   else console.error(`[aegis] 视图异常（${where}）：`, error)
 }
 
-/** antd 的提示条默认 top:8px，正好压在 68px 高的顶栏上：真机截图里一条 500 报错
- *  把步进器第 7 档和右侧状态胶囊整个盖住，而那两处是"我在哪一步/后端通不通"的唯一入口。
- *  顶栏定高 68px，留 8px 缝 ⇒ 76px。 */
-message.config({ top: '76px' })
+message.config({ top: 'calc(var(--aeg-header-height) + 8px)' })
 
 app.mount('#app')

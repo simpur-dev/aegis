@@ -108,27 +108,29 @@ function onFailure(event: Event): void {
 }
 
 function onBudget(event: Event, key: 'sla_ms' | 'timeout_ms'): void {
+  const current = node.value
+  if (current === null) return
+  const input = event.target as HTMLInputElement
   const parsed = numberValue(event)
-  if (parsed === null) return
   // 取值域与后端一致（workflow_api.py 的 NodeInput），越界直接夹住，省一轮 422。
   // 超时那一格的上限还要压到本节点的 SLA：界面上写着"上限＝SLA"，就得真是那个数。
-  const cap = key === 'timeout_ms' ? Math.min(node.value?.sla_ms ?? SLA_MAX_MS, SLA_MAX_MS) : SLA_MAX_MS
-  const bounded = Math.min(Math.max(parsed, SLA_MIN_MS), cap)
-  patch(key === 'sla_ms' ? { sla_ms: bounded } : { timeout_ms: bounded })
+  const cap = key === 'timeout_ms' ? Math.min(current.sla_ms, SLA_MAX_MS) : SLA_MAX_MS
+  const bounded = Math.min(Math.max(Math.trunc(parsed ?? current[key]), SLA_MIN_MS), cap)
+  input.value = String(bounded)
+  patch(key === 'sla_ms' ? { sla_ms: bounded, timeout_ms: Math.min(current.timeout_ms, bounded) } : { timeout_ms: bounded })
 }
 
 function onRetry(event: Event, key: 'max_attempts' | 'backoff_ms'): void {
   const current = node.value?.retry
   const parsed = numberValue(event)
-  if (current === undefined || parsed === null) return
+  if (current === undefined) return
   // 与 onBudget 同一手法：越界先夹住，别让人白敲一次再吃 validateGraph 的红字。
   // 上界取自 utils/graph 的那批常量（有跨端门禁对着 model.py 校验）。
-  const clamp = (value: number, max: number) => Math.min(Math.max(value, 0), max)
-  const next =
-    key === 'max_attempts'
-      ? { ...current, max_attempts: clamp(parsed, MAX_ATTEMPTS) }
-      : { ...current, backoff_ms: clamp(parsed, MAX_BACKOFF_MS) }
-  patch({ retry: next })
+  const maximum = key === 'max_attempts' ? MAX_ATTEMPTS : MAX_BACKOFF_MS
+  const bounded = Math.min(Math.max(Math.trunc(parsed ?? current[key]), 0), maximum)
+  const input = event.target as HTMLInputElement
+  input.value = String(bounded)
+  patch({ retry: { ...current, [key]: bounded } })
 }
 
 function onConfig(next: Record<string, JsonValue>): void {
@@ -147,7 +149,7 @@ function onConfig(next: Record<string, JsonValue>): void {
     </header>
     <p class="wf-inspector__desc">{{ catalog.descriptionByType[node.type] ?? meta?.description }}</p>
 
-    <template v-if="known">
+    <fieldset v-if="known" class="wf-inspector__editable" :disabled="!documentStore.canEdit" aria-label="节点配置">
       <label class="wf-inspector__row">
         <span>节点显示名</span>
         <input class="wf-inspector__input" type="text" :maxlength="MAX_NODE_NAME_CHARS" :value="node.name" @input="onName" />
@@ -211,7 +213,7 @@ function onConfig(next: Record<string, JsonValue>): void {
         </label>
       </div>
       <p class="wf-inspector__hint">
-        重试 0 表示不重试；这一条会随定义一起保存（写接口认 retry），改动后仍需点"保存定义"才落到服务端。
+        重试 0 表示不重试，修改会随草稿自动保存。
       </p>
 
       <fieldset class="wf-inspector__config">
@@ -219,20 +221,20 @@ function onConfig(next: Record<string, JsonValue>): void {
         <ValidationList :issues="issues" />
         <ConfigFields
           :def="node"
-          :disabled="false"
+          :disabled="!documentStore.canEdit"
           :issues="issues"
           :candidates="candidates"
           :variables="upstreamVariables"
           @update:config="onConfig"
         />
       </fieldset>
-    </template>
+    </fieldset>
 
     <p v-else class="wf-inspector__unknown" role="status">
-      此节点类型 <code>{{ node.type }}</code> 不在当前前端注册表中，已按只读降级显示。升级前端后可编辑参数；这里仍可删除它。
+      此节点类型 <code>{{ node.type }}</code> 暂不支持编辑参数。
     </p>
 
-    <div class="wf-inspector__actions">
+    <div v-if="documentStore.canEdit" class="wf-inspector__actions">
       <button v-if="canSyncUpstream" type="button" class="wf-inspector__button" @click="documentStore.syncUpstreamConfig(node.node_id)">
         按连线回填 upstream
       </button>
@@ -252,6 +254,15 @@ function onConfig(next: Record<string, JsonValue>): void {
   gap: 8px;
   padding: 12px;
   overflow-y: auto;
+}
+.wf-inspector__editable {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 .wf-inspector__empty {
   margin: 12px;

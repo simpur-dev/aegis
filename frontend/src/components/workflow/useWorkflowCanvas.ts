@@ -141,12 +141,19 @@ export function useWorkflowCanvas(
   )
 
   const selection = useCanvasSelection({
-    readOnly: () => !documentStore.autoSaveEnabled,
+    readOnly: () => !documentStore.canEdit,
     onChange: ({ nodeIds }) => {
       const primary = nodeIds[nodeIds.length - 1] ?? null
       editor.select(primary)
     },
   })
+
+  watch(() => documentStore.documentEpoch, () => {
+    selection.clickBlank()
+    dragStartPositions = null
+    lastPointer = null
+    stopMarquee()
+  }, { flush: 'sync' })
 
   /**
    * 反向同步：节点面板/运行态等外部入口只写 editor.selectedNodeId，
@@ -241,7 +248,7 @@ export function useWorkflowCanvas(
   }
 
   function editable(): boolean {
-    return documentStore.autoSaveEnabled && documentStore.definition !== null
+    return documentStore.canEdit && documentStore.definition !== null
   }
 
   function notifyError(error: unknown): void {
@@ -266,7 +273,7 @@ export function useWorkflowCanvas(
 
   async function copySelection(): Promise<boolean> {
     const document = documentStore.document
-    if (!editable() || document === null) return false
+    if (document === null) return false
     if (selection.selectedNodeIds.value.length === 0) return false
 
     try {
@@ -279,7 +286,11 @@ export function useWorkflowCanvas(
   }
 
   async function cutSelection(): Promise<boolean> {
+    if (!editable()) return false
+    const epoch = documentStore.documentEpoch
+    const ids = selection.selectedNodeIds.value
     if (!(await copySelection())) return false
+    if (epoch !== documentStore.documentEpoch || ids !== selection.selectedNodeIds.value) return false
     return deleteSelection()
   }
 
@@ -312,8 +323,10 @@ export function useWorkflowCanvas(
 
   async function pasteClipboard(drop?: Position): Promise<boolean> {
     if (!editable()) return false
+    const epoch = documentStore.documentEpoch
     try {
       const parsed = await readWorkflowClipboard()
+      if (!editable() || epoch !== documentStore.documentEpoch) return false
       const point = drop ?? defaultDropPoint()
       return insertPayloadWithOffset(
         { nodes: parsed.nodes, edges: parsed.edges },
@@ -393,10 +406,15 @@ export function useWorkflowCanvas(
     const nodes = view.value.nodes
       .filter((node) => node.type !== 'note')
       .map((node) => ({ id: node.id, position: node.position }))
+    const canvas = options.canvasRef?.value
+    const width = canvas?.clientWidth ?? window.innerWidth
+    const height = canvas?.clientHeight ?? window.innerHeight
+    const overlayWidth = canvas?.closest('.ed-body')?.querySelector('.ed-panel')?.clientWidth ?? 0
+    const availableWidth = width - overlayWidth
     return focusNode(
       nodes,
       nodeId,
-      { width: window.innerWidth, height: window.innerHeight },
+      { width: availableWidth >= 320 ? availableWidth : width, height },
       async (transform, transformOptions) => {
         await setViewport(transform, transformOptions)
       },
@@ -408,6 +426,7 @@ export function useWorkflowCanvas(
     currentClient: { x: number; y: number }
     flowStart: Position
     additive: boolean
+    initialNodes: readonly string[]
     active: boolean
   }
 
@@ -440,10 +459,12 @@ export function useWorkflowCanvas(
       currentClient: { x: event.clientX, y: event.clientY },
       flowStart: screenToFlowCoordinate({ x: event.clientX, y: event.clientY }),
       additive: event.shiftKey,
+      initialNodes: selection.selectedNodeIds.value,
       active: false,
     }
     window.addEventListener('mousemove', onMarqueeMove)
     window.addEventListener('mouseup', onMarqueeUp)
+    window.addEventListener('blur', stopMarquee)
   }
 
   function onMarqueeMove(event: MouseEvent): void {
@@ -466,7 +487,7 @@ export function useWorkflowCanvas(
     const nodes = view.value.nodes
       .filter((node) => node.type !== 'note')
       .map((node) => ({ id: node.id, position: node.position }))
-    selection.marquee(nodes, rect, state.additive)
+    selection.marquee(nodes, rect, state.additive, state.initialNodes)
   }
 
   function onMarqueeUp(): void {
@@ -482,6 +503,7 @@ export function useWorkflowCanvas(
   function stopMarquee(): void {
     window.removeEventListener('mousemove', onMarqueeMove)
     window.removeEventListener('mouseup', onMarqueeUp)
+    window.removeEventListener('blur', stopMarquee)
     marqueeState.value = null
   }
 
@@ -489,6 +511,7 @@ export function useWorkflowCanvas(
 
   /** 首次拖动前把自动布局坐标固化，避免新节点/旧节点混用两套坐标系而重叠。 */
   function onNodeDragStart(): void {
+    if (!editable()) return
     const positions: Record<string, Position> = {}
     for (const node of view.value.nodes) {
       if (node.type !== 'note') positions[node.id] = node.position
@@ -498,6 +521,7 @@ export function useWorkflowCanvas(
   }
 
   function onNodeDragStop({ node }: NodeDragEvent): void {
+    if (!editable() || dragStartPositions === null) return
     if (node.type === 'note') {
       documentStore.updateNote(node.id, { x: node.position.x, y: node.position.y })
       dragStartPositions = null
@@ -533,7 +557,7 @@ export function useWorkflowCanvas(
     const raw = event.dataTransfer?.getData(NODE_DRAG_MIME) ?? ''
     const def = documentStore.definition
     /** nodeMeta 非空即证明该类型在注册表内，故把 string 收窄为 NodeType 是安全的。 */
-    if (def === null || nodeMeta(raw) === null) return
+    if (!editable() || def === null || nodeMeta(raw) === null) return
     const position = screenToFlowCoordinate({ x: event.clientX, y: event.clientY })
     /* 落点让位：连拖两个节点到同一处会叠住（真机量到 389×234px 压叠）；
        只躲压叠不躲可视区时又被推到画布下沿之外（y=704..957，画布底 880）；

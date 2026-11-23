@@ -373,6 +373,16 @@ describe('空表要说人话也要说下一步', () => {
   })
 })
 
+it('详情回查失败时保留预警并说明任务列表无法读取', async () => {
+  mockedEvents.mockRejectedValue(new Error('接口暂时不可达'))
+  const wrapper = mountView()
+  await flushPromises()
+  await wrapper.find('.warning-title-link').trigger('click')
+  await flushPromises()
+  expect(wrapper.find('.drawer').text()).toContain('接口暂时不可达')
+  expect(wrapper.find('[data-testid="tasks-empty"]').exists()).toBe(false)
+})
+
 /**
  * 助手页有三条芯片要一个标识符（`解释 wrn_…`、`链路追踪 trc_…`、`查询任务单元`），
  * 而此前整个界面没有一处显示 `wrn_`/`stu_` 编号——点芯片得到的"缺少 …ID"根本没法自助解决。

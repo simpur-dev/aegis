@@ -2,7 +2,7 @@
  * 主题三态这一层的用例（阶段 0）。
  *
  * 令牌本身对不对由 `tokens.spec.ts` 管，这份管的是**三态与持久化**：
- * ①默认跟随系统、②用户显式选过的压过系统、③系统偏好真的翻了要跟着翻。
+ * ①首次打开为深色、②用户选过的主题继续生效、③已保存的系统档随系统翻转。
  * 第三档不是纸上推理——写第一版时 `resolved` 里直接调 `matchMedia`，computed 把它缓存成
  * 第一次的值，"翻系"事件到了也一动不动；这条用例就是钉那个坑的。
  *
@@ -74,10 +74,10 @@ afterEach(() => {
 })
 
 describe('主题三态与持久化', () => {
-  it('没存过偏好就跟随系统：系统暗 → 首屏就是深色，且真的写进 DOM', async () => {
-    installMatchMedia(true)
+  it('没存过偏好时默认显示深色，并应用到 DOM', async () => {
+    installMatchMedia(false)
     const theme = await freshTheme()
-    expect(theme.mode.value).toBe('system')
+    expect(theme.mode.value).toBe('dark')
     expect(theme.initTheme()).toBe('dark')
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(applied('--aeg-color-page')).toBe(colorSlots.dark.page)
@@ -95,6 +95,7 @@ describe('主题三态与持久化', () => {
   })
 
   it('跟随系统时系统翻暗：页面立刻换肤，不是停在第一次算出来的那档', async () => {
+    localStorage.setItem('aegis.theme', 'system')
     installMatchMedia(false)
     const theme = await freshTheme()
     const { nextTick } = await import('vue')
@@ -140,11 +141,11 @@ describe('主题三态与持久化', () => {
     expect(localStorage.getItem('aegis.theme')).toBe('system')
   })
 
-  it('存的是垃圾值也退回跟随系统，而不是白屏', async () => {
+  it('无法识别的偏好退回默认深色', async () => {
     localStorage.setItem('aegis.theme', 'neon')
     installMatchMedia(true)
     const theme = await freshTheme()
-    expect(theme.mode.value).toBe('system')
+    expect(theme.mode.value).toBe('dark')
     expect(theme.initTheme()).toBe('dark')
   })
 
@@ -158,7 +159,7 @@ describe('主题三态与持久化', () => {
     })
     const theme = await freshTheme()
     getItem.mockRestore()
-    expect(theme.mode.value).toBe('system')
+    expect(theme.mode.value).toBe('dark')
 
     theme.setMode('dark')
     expect(document.documentElement.dataset.theme).toBe('dark')

@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import { message } from 'ant-design-vue'
+import { PlayCircleOutlined } from '@ant-design/icons-vue'
+import { useMediaQuery } from '@vueuse/core'
 import { computed, ref } from 'vue'
 
 import PageHero from '@/components/PageHero.vue'
 import {
   PLAYBOOK_ACTIONS,
   SIMULATION_DEFAULTS,
+  SIMULATION_LIMITS,
+  SIMULATION_FIELD_LABELS,
   describeSimulationError,
   preflightSimulation,
   roleLabel,
   runSimulation,
   toSimulationBody,
   type SimulationReport,
+  type SimulationBody,
 } from '@/api/simulation'
+import { formatOperatingTime } from '@/utils/clock'
 
 /**
  * 推演沙盒（§3.6 / §4.4）。
@@ -29,6 +35,17 @@ const running = ref(false)
 /** 失败原因留在页面上：只有 toast 的话，三秒后这页只剩一张看起来正常的空表。 */
 const failure = ref<string | null>(null)
 const startedAt = ref<string | null>(null)
+const reportInput = ref<SimulationBody | null>(null)
+const compact = useMediaQuery('(max-width: 720px)')
+const reportIsPrevious = computed(() =>
+  reportInput.value !== null && (running.value || JSON.stringify(reportInput.value) !== JSON.stringify(toSimulationBody(draft.value))),
+)
+const formatRate = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 }).format
+const fieldGroups = [
+  { name: 'rain', label: '降雨条件', fields: ['rain_base_mm', 'rain_spread_mm'] },
+  { name: 'scenario', label: '情景设置', fields: ['scenarios', 'rounds'] },
+  { name: 'budget', label: '预算与复现', fields: ['token_budget'] },
+] as const
 
 const matrixColumns = [
   { title: '降雨分档 (mm/10min)', dataIndex: 'rain_bucket_mm', key: 'rain_bucket_mm' },
@@ -81,6 +98,7 @@ const matrixRows = computed(() =>
 )
 
 async function run(): Promise<void> {
+  if (running.value) return
   const body = toSimulationBody(draft.value)
   const blocked = preflightSimulation(body)
   if (blocked !== '') {
@@ -90,8 +108,10 @@ async function run(): Promise<void> {
   }
   running.value = true
   failure.value = null
+  draft.value = { ...body }
   try {
     report.value = await runSimulation(body)
+    reportInput.value = body
     startedAt.value = new Date().toISOString()
   } catch (error) {
     failure.value = describeSimulationError(error)
@@ -103,11 +123,8 @@ async function run(): Promise<void> {
 </script>
 
 <template>
-  <div>
-    <PageHero title="推演沙盒" badge="演示" caption="多角色 × K 情景 × T 轮：数值由确定性模型推进，系数为未实测初值。">
-      <template #actions>
-        <a-button type="primary" :loading="running" data-testid="sim-run" @click="run">发起推演</a-button>
-      </template>
+  <div class="simulation-page">
+    <PageHero surface title="推演沙盒" badge="演示数据" caption="调整降雨、情景数量和预案，比较模型给出的触发概率。">
       <template #stats>
         <div class="stat-cell">
           <a-statistic title="本次生效情景" :value="report === null ? '—' : report.cost.effective_scenarios" />
@@ -116,48 +133,55 @@ async function run(): Promise<void> {
           <a-statistic title="推演轮数" :value="report === null ? '—' : report.timeline.length" />
         </div>
         <div class="stat-cell" :class="`is-${policyTone}`">
-          <a-statistic title="角色档位" :value="report === null ? '—' : report.roles.policy" />
+          <a-statistic title="角色档位" :value="report === null ? '—' : report.roles.policy === 'llm' ? '模型协同' : '规则推演'" />
         </div>
       </template>
     </PageHero>
 
-    <a-card size="small" title="推演参数（都由你给定，平台不编默认值）">
-      <!-- 数字框不收上下步进钮：那两枚 22×15 的小钮在值班台上点不准（真机探针量到），
-           与"随机种子"同口径直接键入，方向键 ↑↓ 仍可步进。 -->
-      <a-form layout="inline" class="sim-form" data-testid="sim-form">
-        <a-form-item label="情景条数 K">
-          <a-input-number v-model:value="draft.scenarios" :min="1" :max="64" :controls="false" aria-label="情景条数 K" />
-        </a-form-item>
-        <a-form-item label="轮数 T">
-          <a-input-number v-model:value="draft.rounds" :min="1" :max="24" :controls="false" aria-label="轮数 T" />
-        </a-form-item>
-        <a-form-item label="基准降雨 mm">
-          <a-input-number v-model:value="draft.rain_base_mm" :min="0" :max="500" :controls="false" aria-label="基准降雨 mm" />
-        </a-form-item>
-        <a-form-item label="降雨浮动 mm">
-          <a-input-number v-model:value="draft.rain_spread_mm" :min="0" :max="200" :controls="false" aria-label="降雨浮动 mm" />
-        </a-form-item>
-        <a-form-item label="预案档位">
-          <a-select v-model:value="draft.playbook" :options="PLAYBOOK_ACTIONS.map((item) => ({ value: item, label: item }))" style="width: 110px" aria-label="预案档位" />
-        </a-form-item>
-        <a-form-item label="令牌预算">
-          <a-input-number v-model:value="draft.token_budget" :min="1" :max="10000000" :step="10000" :controls="false" aria-label="令牌预算" />
-        </a-form-item>
-        <a-form-item label="随机种子">
-          <a-input-number v-model:value="draft.seed" :controls="false" style="width: 130px" aria-label="随机种子" />
-        </a-form-item>
+    <a-card class="ops-surface" size="small" title="配置推演">
+      <a-form layout="vertical" class="sim-form" data-testid="sim-form" @finish="run">
+        <fieldset v-for="group in fieldGroups" :key="group.name" :disabled="running" class="sim-fieldset">
+          <legend>{{ group.label }}</legend>
+          <div class="sim-fields">
+            <a-form-item v-for="field in group.fields" :key="field" :label="SIMULATION_FIELD_LABELS[field]">
+              <a-input-number
+                v-model:value="draft[field]"
+                v-bind="SIMULATION_LIMITS[field]"
+                :controls="false"
+                :disabled="running"
+                :aria-label="SIMULATION_FIELD_LABELS[field]"
+                :placeholder="String(SIMULATION_DEFAULTS[field])"
+                :addon-after="group.name === 'rain' ? 'mm' : undefined"
+              />
+            </a-form-item>
+            <a-form-item v-if="group.name === 'scenario'" label="预案档位">
+              <a-select v-model:value="draft.playbook" :options="PLAYBOOK_ACTIONS.map((item) => ({ value: item, label: item }))" :disabled="running" aria-label="预案档位" />
+            </a-form-item>
+            <a-form-item v-if="group.name === 'budget'" label="随机种子">
+              <a-input-number v-model:value="draft.seed" :controls="false" :disabled="running" :placeholder="String(SIMULATION_DEFAULTS.seed)" aria-label="随机种子" />
+            </a-form-item>
+          </div>
+        </fieldset>
       </a-form>
-      <p class="sim-hint">
-        超预算时后端自动降 K 并在下面写明"降到几"；同参数同种子逐键可复现。角色选档默认走确定性规则档，
-        接 LLM 要部署侧开 <code>AEGIS_SIMULATION_ROLES_LLM</code>。
-      </p>
-      <p v-if="failure !== null" class="sim-error" data-testid="sim-error">这页现在跑不出报告：{{ failure }}</p>
+      <div class="sim-submit">
+        <p class="sim-hint">
+          留空字段采用占位符显示的系统默认值。预算不足时，报告会列出实际推演的情景数量。
+        </p>
+        <a-button type="primary" :loading="running" :disabled="running" data-testid="sim-run" @click="run">
+          <template #icon><PlayCircleOutlined aria-hidden="true" /></template>
+          发起推演
+        </a-button>
+      </div>
+      <p v-if="failure !== null" class="sim-error" role="alert" data-testid="sim-error">{{ failure }}</p>
     </a-card>
 
-    <a-empty v-if="report === null" data-testid="sim-empty" description="尚未推演：上面填好参数再点「发起推演」。缺这一步时页面不显示任何概率数字。" style="margin-top: 16px" />
+    <div v-if="report === null" class="ops-record sim-empty" data-testid="sim-empty" role="status">
+      {{ running ? '正在生成推演报告…' : '尚未推演。设置参数后点击「发起推演」。' }}
+    </div>
 
     <template v-else>
-      <a-card size="small" title="成本与口径" style="margin-top: 12px" data-testid="sim-cost">
+      <a-card class="ops-surface sim-results" size="small" title="推演报告" data-testid="sim-cost">
+        <p v-if="reportIsPrevious" class="sim-hint">以下是上一次完成的报告。</p>
         <a-alert v-if="report.cost.downscaled" type="warning" show-icon message="情景数被预算降档">
           <template #description>
             请求 {{ report.cost.requested_scenarios }} 条，按令牌预算只跑得起 {{ report.cost.effective_scenarios }} 条——
@@ -166,10 +190,12 @@ async function run(): Promise<void> {
         </a-alert>
         <a-alert v-else type="info" show-icon :message="`K=${report.cost.effective_scenarios} 条情景全部跑满，未降档`" />
         <p class="sim-note" data-testid="sim-note">{{ report.note }}</p>
-        <p class="sim-quiet">取到这份报告的时间：{{ startedAt }}</p>
+        <p class="sim-quiet" v-if="reportInput">
+          {{ formatOperatingTime(startedAt) }}（UTC+8） · {{ reportInput.playbook }} · 基准降雨 {{ reportInput.rain_base_mm }} mm · 种子 {{ reportInput.seed }}
+        </p>
       </a-card>
 
-      <a-card size="small" title="角色档（谁在选、选了几次）" style="margin-top: 12px" data-testid="sim-roles">
+      <a-card class="ops-surface sim-results" size="small" title="角色决策" data-testid="sim-roles">
         <p class="sim-policy">{{ policySentence }}</p>
         <a-table
           :data-source="report.roles.roles.map((role, index) => ({ ...role, key: `${role.key}-${index}` }))"
@@ -183,22 +209,41 @@ async function run(): Promise<void> {
         <p class="sim-quiet">本轮实际出现过的票面：{{ report.roles.distinct_actions.join(' / ') || '（无）' }}</p>
       </a-card>
 
-      <a-card size="small" title="次生灾害触发概率矩阵" style="margin-top: 12px">
-        <a-table :data-source="matrixRows" :columns="matrixColumns" :pagination="false" size="small" data-testid="sim-matrix" />
-      </a-card>
-
-      <a-card size="small" title="关键时间线（每轮四个角色各投一票，汇聚后生效）" style="margin-top: 12px">
-        <a-table :data-source="report.timeline" :columns="timelineColumns" :pagination="false" size="small" row-key="round" data-testid="sim-timeline">
+      <a-card class="ops-surface sim-results" size="small" title="次生灾害触发概率">
+        <a-table :data-source="matrixRows" :columns="matrixColumns" :pagination="false" size="small" data-testid="sim-matrix">
           <template #bodyCell="{ column, record }">
-            <template v-if="String(column.key).startsWith('role:')">
-              {{ record.actions[String(column.key).slice(5)] }}
-            </template>
+            <template v-if="column.key === 'mean_secondary_rate' || column.key === 'max_secondary_rate'">{{ formatRate(record[column.key]) }}</template>
           </template>
         </a-table>
       </a-card>
 
-      <a-card size="small" title="预案对比（同一强度下的反事实）" style="margin-top: 12px">
-        <a-table :data-source="comparisonRows" :columns="comparisonColumns" :pagination="false" size="small" data-testid="sim-comparison" />
+      <a-card class="ops-surface sim-results" size="small" title="推演时间线">
+        <ul v-if="compact" class="ops-list" data-testid="sim-timeline">
+          <li v-for="round in report.timeline" :key="round.round" class="ops-record">
+            <div class="ops-record__head"><span>第 {{ round.round }} 轮 · {{ round.applied_playbook }}</span><span>{{ formatRate(round.trigger_probability) }}</span></div>
+            <div class="ops-record__meta">雨强 {{ round.rain_mm }} mm · 泥位 {{ round.mudlevel_cm }} cm</div>
+            <details class="sim-votes">
+              <summary>查看各角色选择</summary>
+              <ul><li v-for="role in report.roles.roles" :key="role.key">{{ roleLabel(role) }} · {{ round.actions[role.key] ?? '未记录' }}</li></ul>
+            </details>
+          </li>
+        </ul>
+        <a-table v-else :data-source="report.timeline" :columns="timelineColumns" :pagination="false" size="small" row-key="round" data-testid="sim-timeline">
+          <template #bodyCell="{ column, record }">
+            <template v-if="String(column.key).startsWith('role:')">
+              {{ record.actions[String(column.key).slice(5)] ?? '未记录' }}
+            </template>
+            <template v-else-if="column.key === 'trigger_probability'">{{ formatRate(record.trigger_probability) }}</template>
+          </template>
+        </a-table>
+      </a-card>
+
+      <a-card class="ops-surface sim-results" size="small" title="同一雨强下的预案对比">
+        <a-table :data-source="comparisonRows" :columns="comparisonColumns" :pagination="false" size="small" data-testid="sim-comparison">
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'mean_secondary_rate'">{{ formatRate(record.mean_secondary_rate) }}</template>
+          </template>
+        </a-table>
       </a-card>
     </template>
   </div>
@@ -206,7 +251,94 @@ async function run(): Promise<void> {
 
 <style scoped>
 .sim-form {
-  row-gap: var(--aeg-space-s2);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--aeg-space-s3);
+}
+.sim-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-overview-tile);
+}
+.sim-fieldset legend {
+  width: auto;
+  padding-inline: var(--aeg-space-s1);
+  color: var(--aeg-color-text);
+  font-size: var(--aeg-font-base);
+  font-weight: var(--aeg-weight-semibold);
+}
+.sim-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--aeg-space-s2);
+}
+.sim-fields :deep(.ant-form-item) {
+  min-width: 0;
+  margin: 0;
+}
+.sim-fields :deep(:is(.ant-input-number, .ant-input-number-group-wrapper, .ant-select)) {
+  width: 100%;
+}
+.sim-fieldset:nth-child(2) .sim-fields :deep(.ant-form-item:last-child) {
+  grid-column: 1 / -1;
+}
+.sim-results,
+.sim-empty {
+  margin-top: var(--aeg-space-s4);
+}
+.sim-submit {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  margin-top: var(--aeg-space-s3);
+}
+.sim-submit .sim-hint {
+  margin: 0;
+}
+.sim-submit :deep(.ant-btn) {
+  min-height: 38px;
+}
+.sim-votes {
+  margin-top: var(--aeg-space-s2);
+  color: var(--aeg-color-text-secondary);
+}
+.sim-votes summary {
+  cursor: pointer;
+  color: var(--aeg-color-brand-hover);
+}
+.sim-results :deep(.ant-table-cell) {
+  overflow-wrap: anywhere;
+}
+.simulation-page {
+  container: simulation / inline-size;
+}
+@container simulation (max-width: 840px) {
+  .sim-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@container simulation (max-width: 520px) {
+  .simulation-page .stat-cell {
+    min-width: 0;
+    padding-inline: var(--aeg-space-s1);
+  }
+  .simulation-page :deep(.page-head__stats) {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: var(--aeg-space-s2);
+    gap: var(--aeg-space-s2);
+  }
+  .simulation-page :deep(.ant-statistic-title) {
+    font-size: var(--aeg-font-sm);
+  }
+  .simulation-page :deep(.ant-statistic-content) {
+    font-size: var(--aeg-font-md);
+  }
 }
 .sim-hint {
   margin: var(--aeg-space-s2) 0 0;

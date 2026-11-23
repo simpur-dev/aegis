@@ -421,7 +421,10 @@ describe('文档层：打开草稿与版本', () => {
     expect(current().versions).toHaveLength(1)
 
     current().addNode(nodeDef('notify_1'))
-    expect(current().isDirty).toBe(true)
+    current().setMeta({ name: '只读图上尝试改名' })
+    expect(current().definition?.nodes.some((node) => node.node_id === 'notify_1')).toBe(false)
+    expect(current().document?.name).toBe('已存链路')
+    expect(current().isDirty).toBe(false)
     await vi.advanceTimersByTimeAsync(2_000)
     expect(gateway.putDraft).not.toHaveBeenCalled()
     expect(await current().flush()).toBe(false)
@@ -458,7 +461,7 @@ describe('文档层：打开草稿与版本', () => {
     expect(current().document?.name).toBe('快的那条')
 
     slow.resolve(draftOf(workflowDocument({ name: '慢的那条' }), { revision: 9 }))
-    expect(await opening).toBe(true)
+    expect(await opening).toBe(false)
     expect(current().document?.name).toBe('快的那条')
     expect(current().revision).toBe(5)
   })
@@ -487,6 +490,17 @@ describe('文档层：发布与版本恢复', () => {
     expect(await current().publish()).toBe(true)
     expect(gateway.putDraft).not.toHaveBeenCalled()
     expect(gateway.publish).toHaveBeenCalledWith(LINEAGE, 2)
+  })
+
+  it('服务端确认发布后，即使版本列表刷新失败仍显示新版本', async () => {
+    const versions = vi.fn<WorkflowGateway['listVersions']>()
+      .mockResolvedValueOnce([versionSummary()])
+      .mockRejectedValueOnce(new WorkflowError('network_error', 0, '暂时断线'))
+    bootstrap({ listVersions: versions, publish: vi.fn(async () => versionSummary({ workflow_id: OTHER_WORKFLOW, version: 2 })) })
+    await current().openLineage(LINEAGE)
+    expect(await current().publish()).toBe(true)
+    expect(current().publishedVersion).toBe(2)
+    expect(current().error).toContain('v2 已发布')
   })
 
   it('本地校验不过就不发布，原因写在页面上', async () => {
@@ -753,6 +767,42 @@ describe('文档层：保存的边界与并发', () => {
     expect(await saving).toBe(false)
     expect(current().document?.name).toBe('新画布')
     expect(current().document?.nodes).toHaveLength(0)
+    expect(current().lineageId).toBe('')
+    expect(current().revision).toBe(0)
+  })
+
+  it('首存完成后撤销早期操作仍写回同一条草稿', async () => {
+    bootstrap()
+    current().addNode(nodeDef('fetch_1'))
+    current().addNode(nodeDef('notify_1'))
+    expect(await current().flush()).toBe(true)
+
+    expect(current().undo()).toBe(true)
+    expect(current().lineageId).toBe(LINEAGE)
+    expect(await current().flush()).toBe(true)
+    expect(gateway.createLineage).toHaveBeenCalledTimes(1)
+    expect(gateway.putDraft.mock.lastCall?.[0]).toBe(LINEAGE)
+  })
+
+  it('保存途中撤销到原样时，已落盘的新内容仍会被正确撤销', async () => {
+    vi.useFakeTimers()
+    const pending = deferred<WorkflowDraft>()
+    const putDraft = vi.fn<WorkflowGateway['putDraft']>(async (lineage, payload) =>
+      draftOf(payload.document, { lineage_id: lineage, revision: payload.base_revision + 1 }),
+    ).mockImplementationOnce(() => pending.promise)
+    bootstrap({ putDraft })
+    await current().openLineage(LINEAGE)
+    current().setMeta({ name: '保存途中撤销' })
+    const sending = current().flush()
+    const sent = putDraft.mock.calls[0]![1].document
+    expect(current().undo()).toBe(true)
+    pending.resolve(draftOf(sent, { revision: 3 }))
+    await sending
+
+    expect(current().isDirty).toBe(true)
+    await vi.advanceTimersByTimeAsync(800)
+    expect(putDraft.mock.lastCall?.[1]).toMatchObject({ base_revision: 3, document: { name: '已存链路' } })
+    expect(current().isDirty).toBe(false)
   })
 
   it('非 WorkflowError 的保存失败按 internal 记账，不谎称可重试', async () => {

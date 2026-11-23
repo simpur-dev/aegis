@@ -13,9 +13,7 @@ import NodePanel from '../NodePanel.vue'
 import { createEditorContext, EDITOR_CONTEXT_KEY, type EditorContext } from '../context'
 
 function context(): EditorContext {
-  const created = createEditorContext()
-  created.document.autoSaveEnabled = false
-  return created
+  return createEditorContext()
 }
 
 function mountedContext(ctx: EditorContext): { provide: Record<symbol, unknown> } {
@@ -89,6 +87,7 @@ describe('块选择器', () => {
   it('已有开始节点 / 从边中点插入时禁用 Start，并把原因写在行尾', async () => {
     const ctx = context()
     ctx.document.addNode(createNodeDef('start', 'start_1'))
+    ctx.document.dispose()
     const wrapper = mount(BlockSelector, {
       props: { request: { x: 400, y: 300 } },
       global: mountedContext(ctx),

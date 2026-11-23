@@ -15,23 +15,8 @@ import { NAV_GROUPS } from '@/router'
 import { useTheme } from '@/theme/useTheme'
 import { installSelectA11y } from '@/utils/selectA11y'
 
-/**
- * 外壳（2026-10-30 起）：透明顶栏 + 全站悬浮助手抽屉，没有侧栏。
- *
- * 沿革：10-17 曾把八页平铺收并为可折叠侧栏分组导航（值班主线 / 系统）；
- * 10-30 `46bf57a` 把侧栏整块移除，导航改回顶栏横向一排。但 `router.ts` 的 `NAV_GROUPS`
- * 仍是导航真源——分组数据保留，只是渲染成横排，当前项用半透明白色胶囊标出。
- * 顶栏右列自左向右固定「状态胶囊 → 浅/深 → AEGIS 品牌」；主题只给两枚按钮，
- * 老用户的 `aegis.theme=system` 仍由 useTheme 按系统偏好解析。
- * 智能助手不占导航分组：`AssistantDock` 是全站右下角的悬浮图标，点开右侧抽屉、
- * 主内容让位（不盖住内容）；`/workflow` 走 `meta.immersive`，顶栏/令牌条/页脚整块不渲染，
- * 但助手图标在沉浸页同样可见。
- *
- * 颜色一律读 `--aeg-*` 令牌（真源 src/theme/tokens.ts），动效只走 `--aeg-motion-*`：
- * 这两条由 src/uiTheme.spec.ts 的棘轮门禁钉住，写字面色就是往回退。
- */
-
 const route = useRoute()
+const contentRegion = ref<HTMLElement | null>(null)
 const immersive = computed(() => route.meta?.immersive === true)
 const currentKey = computed(() => (route.name as string) ?? 'dashboard')
 
@@ -125,10 +110,16 @@ const statusTitle = computed<string>(() =>
     <div class="app-shell" :class="{ 'is-immersive': immersive }">
       <!-- 全局雾底：所有页面共用（含一张图与流程编排）——浅色/深色各一档，地图画布自己仍是深空底 -->
       <div class="app-backdrop" aria-hidden="true" />
-      <!-- 侧栏已退役（2026-10-30）：导航搬到顶栏做横向一排，顶栏不再铺底色。
-           当前页用半透明白色圆角底标出；右侧自左向右是「状态 → 浅/深 → 品牌」。 -->
       <div class="main-col">
+        <a v-if="!immersive" href="#aegis-main" class="skip-content" @click.prevent="contentRegion?.focus()">跳到主要内容</a>
         <header v-if="!immersive" class="topbar">
+          <div class="topbrand" data-testid="brand">
+            <span class="brand-logo" aria-hidden="true"></span>
+            <span class="topbrand__text">
+              <span class="brand-name">AEGIS 山地灾害协同调控平台</span>
+              <span class="brand-sub">西藏山地灾害多智能体协同调控</span>
+            </span>
+          </div>
           <nav class="topnav" aria-label="主导航">
             <template v-for="group in NAV_GROUPS" :key="group.key">
               <router-link
@@ -189,26 +180,29 @@ const statusTitle = computed<string>(() =>
                 {{ opt.short }}
               </button>
             </div>
-            <div class="topbrand" data-testid="brand">
-              <span class="brand-logo" aria-hidden="true">A</span>
-              <span class="topbrand__text">
-                <span class="brand-name">AEGIS</span>
-                <span class="brand-sub">山地灾害协同调控</span>
-              </span>
-            </div>
           </div>
         </header>
 
         <!-- Ⅰ/Ⅱ 级告警的顶部常驻条：抽屉会被自动展开，这条是"关了抽屉也看得见"的兜底 -->
-        <div v-if="urgentCards.length > 0" class="alert-banner" data-testid="alert-banner">
+        <div
+          v-if="urgentCards.length > 0 && route.name !== 'dashboard'"
+          class="alert-banner"
+          :class="{ 'alert-banner--assistant': route.name === 'assistant', 'alert-banner--editor': immersive }"
+          data-testid="alert-banner"
+        >
           <span class="alert-banner__dot" aria-hidden="true"></span>
           <span class="alert-banner__text" data-testid="alert-banner-text">
             {{ urgentCards.length }} 条红色/橙色告警未确认
           </span>
-          <span class="alert-banner__meta">在案 {{ badgeCount }} 条 ｜ 处置入口在右侧助手抽屉</span>
+          <span class="alert-banner__meta">
+            在案 {{ badgeCount }} 条 ｜ {{ route.name === 'assistant' ? '可在告警面板中处置' : '处置入口在右侧助手抽屉' }}
+          </span>
         </div>
 
         <main
+          id="aegis-main"
+          ref="contentRegion"
+          tabindex="-1"
           class="main-content"
           :class="{ 'is-immersive': immersive, 'is-map': route.name === 'map', 'is-desk': route.name === 'assistant' }"
         >
@@ -224,7 +218,7 @@ const statusTitle = computed<string>(() =>
       </div>
       <!-- 全站悬浮的智能助手：所有页面都有（含沉浸式编排页），位置/开合自己持久化 -->
       <!-- 助手页本身就是全屏会话：再叠一份抽屉会出现两份共享同一会话的时间线 -->
-      <AssistantDock v-if="route.name !== 'assistant'" :immersive="immersive" />
+      <AssistantDock v-if="route.name !== 'assistant'" :immersive="immersive" :avoid-map-bar="route.name === 'map'" />
     </div>
   </a-config-provider>
 </template>
@@ -239,13 +233,13 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text);
 }
 
-/* —— 顶栏导航（侧栏退役后横向排）——
-   文字直接落在雾底上：没有底色、没有分隔线；当前页是一枚半透明白色胶囊。 */
 .topnav {
+  grid-area: nav;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--aeg-space-s1);
   min-width: 0;
+  border-top: 1px solid var(--aeg-color-border);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -256,11 +250,11 @@ const statusTitle = computed<string>(() =>
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  height: 32px;
-  padding: 0 var(--aeg-space-s3);
-  border-radius: var(--aeg-radius-pill);
+  height: 36px;
+  padding: 0 var(--aeg-space-s4);
+  border-radius: var(--aeg-radius-md);
   color: var(--aeg-color-text-secondary);
-  font-size: var(--aeg-font-sm);
+  font-size: var(--aeg-font-base);
   font-weight: var(--aeg-weight-semibold);
   text-decoration: none;
   white-space: nowrap;
@@ -273,31 +267,41 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text);
 }
 .topnav__item.is-on {
-  background: var(--aeg-color-topbar-pill-bg);
-  box-shadow: inset 0 0 0 1px var(--aeg-color-glass-border);
-  color: var(--aeg-color-text);
+  background: var(--aeg-color-masthead-tab);
+  box-shadow: 0 3px 12px var(--aeg-color-brand-soft);
+  color: var(--aeg-color-masthead-tab-ink);
 }
 
-/* 品牌：从侧栏搬到顶栏最右。图标 + 两行字横排——竖排会顶破 56px 的栏高。 */
+html[data-theme='dark'] .topnav__item.is-on {
+  background: linear-gradient(120deg, var(--aeg-color-masthead-tab), var(--aeg-color-brand));
+}
+
 .topbrand {
+  grid-area: brand;
   display: flex;
-  flex: 0 0 auto;
   align-items: center;
-  gap: var(--aeg-space-s2);
-  padding-left: var(--aeg-space-s3);
-  border-left: 1px solid var(--aeg-color-glass-border);
+  gap: var(--aeg-space-s3);
+  min-width: 0;
 }
 .brand-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
+  position: relative;
+  flex: 0 0 40px;
+  height: 40px;
+  border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-md);
-  background: var(--aeg-color-brand);
-  color: var(--aeg-color-text-inverse);
-  font-size: var(--aeg-font-md);
-  font-weight: var(--aeg-weight-bold);
+  background: var(--aeg-color-brand-soft);
+}
+.brand-logo::before,
+.brand-logo::after {
+  content: '';
+  position: absolute;
+  inset: 8px 5px;
+  background: var(--aeg-color-overview-accent);
+  clip-path: polygon(0 93%, 32% 19%, 49% 49%, 64% 25%, 100% 93%);
+}
+.brand-logo::after {
+  background: var(--aeg-color-text);
+  clip-path: polygon(23% 39%, 32% 19%, 41% 36%, 33% 32%, 29% 41%, 26% 36%, 56% 39%, 64% 25%, 73% 42%, 65% 35%, 61% 43%, 59% 38%);
 }
 .topbrand__text {
   display: flex;
@@ -306,7 +310,8 @@ const statusTitle = computed<string>(() =>
   line-height: var(--aeg-lh-tight);
 }
 .brand-name {
-  font-size: var(--aeg-font-sm);
+  font-family: var(--aeg-font-display);
+  font-size: var(--aeg-font-md);
   font-weight: var(--aeg-weight-bold);
   letter-spacing: 0.02em;
   color: var(--aeg-color-text);
@@ -317,9 +322,6 @@ const statusTitle = computed<string>(() =>
   white-space: nowrap;
 }
 
-/* —— 顶栏 ——
-   透明：不铺底色、不画分隔线、不留阴影，导航文字直接落在页面雾底上。
-   右侧自左向右是「状态胶囊 → 浅/深 → 品牌」，整组贴右，三者同一竖直中心。 */
 .main-col {
   display: flex;
   flex-direction: column;
@@ -328,17 +330,29 @@ const statusTitle = computed<string>(() =>
   height: 100vh;
 }
 .topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--aeg-space-s4);
-  height: var(--aeg-header-height);
-  padding: 0 var(--aeg-space-s6);
-  background: transparent;
-  border: none;
-  box-shadow: none;
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+  display: grid;
+  flex: 0 0 var(--aeg-header-height);
+  grid-template: 'brand facts' 1fr 'nav nav' 1fr / minmax(0, 1fr) auto;
+  column-gap: var(--aeg-space-s3);
+  padding-inline: var(--aeg-space-s6);
+  border-bottom: 1px solid var(--aeg-color-border);
+  background: var(--aeg-color-masthead-bg);
+}
+html[data-theme='dark'] .topbar::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 0 auto;
+  width: min(36vw, 420px);
+  opacity: 0.25;
+  background: url('/backgrounds/tibet-relief.webp') center / cover;
+  mask-image: linear-gradient(90deg, transparent, black 30%);
 }
 .topbar-right {
+  grid-area: facts;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -470,6 +484,20 @@ const statusTitle = computed<string>(() =>
   padding: var(--aeg-space-s5) var(--aeg-space-s6);
   transition: margin-right var(--aeg-motion-base) ease;
 }
+.skip-content {
+  position: absolute;
+  top: var(--aeg-space-s2);
+  left: var(--aeg-space-s4);
+  z-index: var(--aeg-z-header);
+  padding: var(--aeg-space-s2) var(--aeg-space-s3);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-masthead-tab);
+  color: var(--aeg-color-masthead-tab-ink);
+  transform: translateY(-160%);
+}
+.skip-content:focus {
+  transform: none;
+}
 
 /* Ⅰ/Ⅱ 级告警顶部条：红色系语义槽（status-danger），只做"有事"的宣告，不做操作面 */
 .alert-banner {
@@ -503,6 +531,17 @@ const statusTitle = computed<string>(() =>
 html.assistant-drawer-open .main-content {
   margin-right: var(--assistant-drawer-w, clamp(320px, 25vw, 520px));
 }
+@media (max-width: 720px) {
+  html.assistant-drawer-open .main-content {
+    margin-right: 0;
+  }
+  .alert-banner--assistant {
+    margin-inline: var(--aeg-space-s3);
+  }
+  .alert-banner--assistant .alert-banner__meta {
+    display: none;
+  }
+}
 /* 拖宽度手柄时关掉过渡：否则主内容会滞后于指针 */
 html.assistant-resizing .main-content {
   transition: none;
@@ -526,9 +565,19 @@ html.assistant-resizing .main-content {
   flex: 1 0 auto;
 }
 .main-content.is-immersive {
-  height: 100vh;
   overflow: hidden;
   padding: 0;
+}
+.alert-banner--editor {
+  padding-block: var(--aeg-space-s1);
+}
+@media (max-width: 720px) {
+  .alert-banner--editor {
+    margin-inline: var(--aeg-space-s3);
+  }
+  .alert-banner--editor .alert-banner__meta {
+    display: none;
+  }
 }
 .main-col:has(.main-content.is-immersive),
 .app-shell.is-immersive {
@@ -554,7 +603,7 @@ html.assistant-resizing .main-content {
 .topnav__short {
   display: none;
 }
-@media (max-width: 1290px) {
+@media (max-width: 780px) {
   .status-pill__text {
     position: absolute;
     width: 1px;
@@ -585,10 +634,31 @@ html.assistant-resizing .main-content {
     display: inline;
   }
   .topnav__item {
-    padding: 6px 10px;
+    padding-inline: var(--aeg-space-s2);
   }
   .brand-sub {
     display: none;
+  }
+  .brand-name {
+    font-size: var(--aeg-font-sm);
+  }
+  .topbar,
+  .main-content,
+  .main-content.is-desk {
+    padding-inline: var(--aeg-space-s3);
+  }
+  .topbar,
+  .topbar-right,
+  .topbrand {
+    gap: var(--aeg-space-s2);
+  }
+  .brand-logo {
+    flex-basis: 32px;
+    height: 32px;
+  }
+  .brand-logo::before,
+  .brand-logo::after {
+    inset: 5px 4px;
   }
 }
 
@@ -619,32 +689,27 @@ html.assistant-resizing .main-content {
   transform: scale(1.1);
   opacity: 0.95;
 }
-/* 柔光：左上偏白、右侧一点淡蓝，和参考图的光斑同向；深色主题换成紫蓝 */
+/* 光斑随浅深主题调整，保留面板之间的层次。 */
 .app-backdrop::after {
   content: '';
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 18% 8%, var(--aeg-color-ball-surface), transparent 55%),
+    radial-gradient(circle at 18% 8%, var(--aeg-color-canvas-glow), transparent 55%),
     radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 60%);
   opacity: 0.55;
 }
 html[data-theme='dark'] .app-backdrop::before {
   filter: blur(46px) brightness(0.4) saturate(1.35);
-  opacity: 0.85;
+  opacity: 0.22;
 }
 html[data-theme='dark'] .app-backdrop::after {
   background:
-    radial-gradient(circle at 18% 8%, var(--aeg-color-accent-ball-glow), transparent 58%),
-    radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 62%);
-  opacity: 0.45;
+    radial-gradient(ellipse at 54% 75%, var(--aeg-color-canvas-glow), transparent 55%),
+    radial-gradient(ellipse at 92% 41%, var(--aeg-color-brand-soft), transparent 52%);
+  opacity: 0.8;
 }
 
-/* 顶栏透明：不再盖玻璃底（导航文字直接落在雾底上）；只保留层级，压住雾底 */
-.topbar {
-  position: relative;
-  z-index: 1;
-}
 .main-col {
   position: relative;
   z-index: 1;

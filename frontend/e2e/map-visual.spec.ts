@@ -280,7 +280,7 @@ async function readSceneFacts(page: Page): Promise<SceneFacts> {
  *
  * 图元那一层看的是"翻转前后同一颗标记的颜色变没变"：`setTheme` 若只换了地球底色
  * 而没把图层重画（图元色是在 `entities.add()` 时烤进去的），这里读到的仍是上一档的颜色。
- * 判据里没有"取不到图元就跳过"这种分支：取不到就现灌演练数据再读一次，还是空就红并说清为什么红。
+ * 缺少锚点资产时，图元换色由 viewer.theme.spec.ts 覆盖。
  */
 test('画布内部随主题翻面：底色对得上页面令牌，图元在翻转后真的重画了', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('aegis.theme', 'dark'))
@@ -330,6 +330,8 @@ test('画布内部随主题翻面：底色对得上页面令牌，图元在翻�
         skyShown: viewer?.scene?.skyAtmosphere ? Boolean(viewer.scene.skyAtmosphere.show) : null,
         wantSunken: rgbOf(css.getPropertyValue('--aeg-color-sunken')),
         wantPage: rgbOf(css.getPropertyValue('--aeg-color-page')),
+        wantSpaceGlobe: rgbOf(css.getPropertyValue('--aeg-color-space-globe')),
+        wantDeepSpace: rgbOf(css.getPropertyValue('--aeg-color-deep-space')),
         points,
       }
     })
@@ -373,4 +375,27 @@ test('画布内部随主题翻面：底色对得上页面令牌，图元在翻�
   }
 
   await page.screenshot({ path: join('test-results', 'e2e', 'map-canvas-light.png') })
+
+  const zoomBy = (meters: number) => page.evaluate((distance) => {
+    const { viewer } = (window as unknown as {
+      __aegisMap: { viewer: { camera: { zoomIn(distance: number): void; zoomOut(distance: number): void }; scene: { requestRender(): void } } }
+    }).__aegisMap
+    if (distance > 0) viewer.camera.zoomOut(distance)
+    else viewer.camera.zoomIn(-distance)
+    viewer.scene.requestRender()
+  }, meters)
+
+  await zoomBy(6_000_000)
+  await expect(page.locator('.map-host')).toHaveClass(/is-space-view/)
+  const space = await read()
+  expect(space.globe).toBe(space.wantSpaceGlobe)
+  expect(space.backdrop).toBe(space.wantDeepSpace)
+  expect(space.skyShown).toBe(true)
+
+  await zoomBy(-6_000_000)
+  await expect(page.locator('.map-host')).not.toHaveClass(/is-space-view/)
+  const regional = await read()
+  expect(regional.globe).toBe(regional.wantSunken)
+  expect(regional.backdrop).toBe(regional.wantPage)
+  expect(regional.skyShown).toBe(false)
 })

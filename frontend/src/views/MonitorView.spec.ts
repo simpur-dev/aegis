@@ -327,13 +327,28 @@ describe('监测台账要最新在上，而时序图不许跟着翻', () => {
     const wrapper = mountView()
     await flushPromises()
     const option = wrapper.findComponent({ name: 'EChart' }).props('option') as {
-      xAxis: { data: string[] }
-      series: Array<{ data: Array<number | null> }>
+      xAxis: { type: string; axisLabel: { formatter: (value: number) => string } }
+      series: Array<{ data: Array<[number, number | null]> }>
     }
     // 轴与数据要成对判：只查 series 时，把 xAxis 翻过去的改动能躲过这条用例（实测躲过一次）。
     // operatingClock 是 UTC+8 的时分秒：02:00Z→10:00:00、04:00Z→12:00:00、06:00Z→14:00:00。
-    expect(option.xAxis.data).toEqual(['10:00:00', '12:00:00', '14:00:00'])
-    expect(option.series[0].data).toEqual([1, 2, 3])
+    expect(option.xAxis.type).toBe('time')
+    expect(option.series[0].data).toEqual([oldest, middle, newest].map((row) => [Date.parse(row.observed_at), row.value]))
+    expect(option.xAxis.axisLabel.formatter(Date.parse(oldest.observed_at))).toBe('10:00:00')
+  })
+
+  it('趋势只连接同一个站点的读数，台账仍显示整个查询窗口', async () => {
+    mockedTelemetry.mockResolvedValue({
+      count: 3,
+      items: [oldest, { ...middle, station_id: 'ST-另一站' }, newest],
+    } as never)
+    const wrapper = mountView()
+    await flushPromises()
+    const option = wrapper.findComponent({ name: 'EChart' }).props('option') as {
+      series: Array<{ data: Array<[number, number | null]> }>
+    }
+    expect(option.series[0].data.map((point) => point[1])).toEqual([1, 3])
+    expect(wrapper.findComponent({ name: 'ATable' }).props('dataSource')).toHaveLength(3)
   })
 
   it('列头写明"最新在上"：读的人不用先猜这张表是怎么排的', async () => {

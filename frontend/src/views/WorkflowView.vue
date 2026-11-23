@@ -15,9 +15,10 @@ import { VueFlow, MarkerType, type EdgeMouseEvent, type NodeMouseEvent } from '@
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
+import { useMediaQuery } from '@vueuse/core'
 import { message, Modal } from 'ant-design-vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 
 import DefinitionInspector from '@/components/workflow/DefinitionInspector.vue'
 import NodeInspector from '@/components/workflow/NodeInspector.vue'
@@ -57,8 +58,15 @@ const context = provideEditorContext()
 const { catalog, document: documentStore, editor, run } = context
 const route = useRoute()
 const router = useRouter()
+onBeforeRouteLeave(() => {
+  if (!documentStore.hasUnsavedChanges) return true
+  return new Promise<boolean>((resolve) => {
+    confirmDiscardUnsaved('离开流程编排', () => resolve(true), () => resolve(false))
+  })
+})
 
 const canvasRef = ref<HTMLElement | null>(null)
+const compactEditor = useMediaQuery('(max-width: 560px)')
 
 const {
   view,
@@ -103,7 +111,7 @@ const request = ref<InsertionRequest | null>(null)
 provideBlockInsertion({
   request,
   open: (next) => {
-    request.value = next
+    if (documentStore.canEdit) request.value = next
   },
   close: () => {
     request.value = null
@@ -137,7 +145,7 @@ function nodeMenuItems(multiple: boolean): ContextMenuItem[] {
 }
 
 function paneMenuItems(): ContextMenuItem[] {
-  const writable = documentStore.autoSaveEnabled
+  const writable = documentStore.canEdit
   return [
     { id: 'paste', label: '粘贴', shortcut: 'Mod+V', disabled: !writable },
     { id: 'add', label: '添加节点', disabled: !writable },
@@ -169,7 +177,7 @@ function openNodeMenu({ event, node }: NodeMouseEvent): void {
       x,
       y,
       kind: 'node',
-      items: [{ id: 'delete-note', label: '删除备注', shortcut: 'Delete', danger: true }],
+      items: [{ id: 'delete-note', label: '删除备注', shortcut: 'Delete', danger: true, disabled: !documentStore.canEdit }],
     }
     return
   }
@@ -179,7 +187,10 @@ function openNodeMenu({ event, node }: NodeMouseEvent): void {
     x,
     y,
     kind: multiple ? 'selection' : 'node',
-    items: nodeMenuItems(multiple),
+    items: nodeMenuItems(multiple).map((item) => ({
+      ...item,
+      disabled: !documentStore.canEdit && item.id !== 'open' && item.id !== 'copy',
+    })),
   }
 }
 
@@ -191,7 +202,7 @@ function openEdgeMenu({ event, edge }: EdgeMouseEvent): void {
     x,
     y,
     kind: 'edge',
-    items: [{ id: 'delete-edge', label: '删除连线', shortcut: 'Delete', danger: true }],
+    items: [{ id: 'delete-edge', label: '删除连线', shortcut: 'Delete', danger: true, disabled: !documentStore.canEdit }],
   }
 }
 
@@ -276,9 +287,10 @@ const locatorNodes = computed<LocatorNode[]>(() =>
 )
 
 function pickLocatedNode(id: string): void {
-  void focusNodeById(id)
   selectNode(id)
-  revealPanel('node')
+  if (compactEditor.value) closePanel()
+  else revealPanel('node')
+  void focusNodeById(id)
 }
 
 useWorkflowShortcuts({
@@ -366,15 +378,11 @@ function selectPanel(tab: PanelTab): void {
 async function bootstrap(): Promise<void> {
   const deepLink = readWorkflowDeepLink(route.query)
 
-  const [, , instances] = await Promise.allSettled([
+  const loads = Promise.allSettled([
     catalog.loadNodeTypes(),
     catalog.syncDefinitionsQuietly('定义列表没加载'),
     run.loadInstances(),
   ])
-  // 目录进 `catalog.nodeTypesError`、定义进 `catalog.error`，各自由横幅展示；
-  // 实例是运行态，失败只在控制面留痕，不在画布上抢注意力。
-  if (instances.status === 'rejected') console.warn('实例目录没加载', instances.reason)
-
   if (deepLink.lineage !== '') {
     if (await documentStore.openLineage(deepLink.lineage)) editor.setMode({ kind: 'draft' })
   } else if (deepLink.workflow !== '') {
@@ -383,6 +391,8 @@ async function bootstrap(): Promise<void> {
     }
   }
   if (deepLink.instance !== '') await run.focusInstance(deepLink.instance)
+  const [, , instances] = await loads
+  if (instances.status === 'rejected') console.warn('实例目录没加载', instances.reason)
 
   urlReady = true
   syncUrl()
@@ -401,6 +411,7 @@ function currentUrlState(): WorkflowUrlState {
 let urlReady = false
 
 function syncUrl(): void {
+  if (route.name !== 'workflow') return
   const next = nextWorkflowQuery(route.query, desiredWorkflowQuery(currentUrlState()))
   if (!next.changed) return
   void router.replace({ query: next.query })
@@ -417,8 +428,12 @@ watch(
 )
 
 async function saveDraft(): Promise<void> {
-  if (await documentStore.flush()) message.success('草稿已保存')
-  else if (documentStore.error !== null) message.error(documentStore.error)
+  if (!documentStore.canEdit || !documentStore.isDirty) return
+  if (await documentStore.flush()) {
+    if (!documentStore.isDirty) message.success('草稿已保存')
+  } else {
+    message.error(documentStore.error ?? documentStore.validationErrors[0] ?? '当前草稿无法保存，请检查流程名称')
+  }
 }
 
 async function publish(): Promise<void> {
@@ -431,16 +446,23 @@ async function publish(): Promise<void> {
 }
 
 function createDraft(): void {
+  if (documentStore.loading) return
   const proceed = (): void => {
     documentStore.resetDocument()
-    editor.setMode({ kind: 'draft' })
+    run.leaveInstance({ kind: 'draft' })
     selectNode(null)
     editor.selectNote(null)
     message.success('已新建空白画布')
   }
   // 有未保存改动时先确认：一按就清空、只弹一句 toast 的话，重画的成本全在值班员身上
-  if (documentStore.isDirty) confirmDiscardUnsaved('新建画布', proceed)
+  if (documentStore.hasUnsavedChanges) confirmDiscardUnsaved('新建画布', proceed)
   else proceed()
+}
+
+function reloadServerDraft(): void {
+  confirmDiscardUnsaved('以服务器草稿为准', async () => {
+    if (await documentStore.reloadDraft()) run.leaveInstance({ kind: 'draft' })
+  })
 }
 
 /** 覆盖会用本地内容冲掉别的会话刚存的草稿，草稿没有历史可退——先问一句。 */
@@ -456,6 +478,7 @@ function overwriteDraft(): void {
 
 /** 重排之后把整条链路收进视野——不然重排完节点跑到视口外，看上去像链路被删了。 */
 function autoLayoutAndFit(): void {
+  if (!documentStore.canEdit) return
   documentStore.autoLayout()
   void fitToGraph()
 }
@@ -495,7 +518,7 @@ async function retryNodeTypes(): Promise<void> {
 
 function handleNodeClick(event: NodeMouseEvent): void {
   onNodeClick(event)
-  if (event.node.type !== 'note') revealPanel('node')
+  if (!compactEditor.value && event.node.type !== 'note' && !event.event.shiftKey) revealPanel('node')
 }
 
 /** 运行面板里点一行步骤：把画布带到那颗节点上，并打开它的参数面板。 */
@@ -513,6 +536,7 @@ async function locateCanvasNode(nodeId: string): Promise<void> {
 
 /** 空白处双击：打开块选择器，新节点落在光标处（Dify 画布的同一条动作）。 */
 function onCanvasDoubleClick(event: MouseEvent): void {
+  if (!documentStore.canEdit) return
   const target = event.target
   if (!(target instanceof HTMLElement)) return
   if (
@@ -572,7 +596,7 @@ function selectBlock(type: NodeType): void {
   const def = documentStore.definition
   const next = request.value
   request.value = null
-  if (def === null || next === null) return
+  if (!documentStore.canEdit || def === null || next === null) return
 
   const node = createNodeDef(type, nextNodeId(def, type))
   if (next.edge !== undefined) {
@@ -587,9 +611,11 @@ function selectBlock(type: NodeType): void {
           }
     if (documentStore.insertNodeBetween(next.edge, node, at)) {
       selectNode(node.node_id)
-      revealPanel('node')
-      return
+      if (!compactEditor.value) revealPanel('node')
+    } else {
+      message.warning('原连线已变化，请重新选择插入位置')
     }
+    return
   }
 
   const taken = view.value.nodes.map((item) => ({ x: item.position.x, y: item.position.y }))
@@ -604,7 +630,7 @@ function selectBlock(type: NodeType): void {
     ),
   )
   selectNode(node.node_id)
-  revealPanel('node')
+  if (!compactEditor.value) revealPanel('node')
 }
 
 onMounted(() => {
@@ -628,7 +654,7 @@ onMounted(() => {
   // 「服务端已存定义」那一列同理：助手或同事刚存的那一版，不该靠刷新整页才看得见
   catalog.startDefinitionPolling()
   // 自动保存还在防抖里、或保存失败时，F5 仍会丢内容：守卫照旧装着
-  detachUnsavedGuard = installUnsavedGuard(() => documentStore.isDirty)
+  detachUnsavedGuard = installUnsavedGuard(() => documentStore.hasUnsavedChanges)
 })
 onUnmounted(() => {
   run.stopPolling()
@@ -650,8 +676,13 @@ onUnmounted(() => {
       :version="documentStore.publishedVersion"
       :waiting="waitingTickets.length"
       :polling="run.polling"
+      :read-only="!documentStore.autoSaveEnabled"
       :can-publish="documentStore.canSave"
+      :can-undo="documentStore.canUndo"
+      :can-redo="documentStore.canRedo"
       :busy="documentStore.loading"
+      @undo="undo"
+      @redo="redo"
       @rename="rename"
       @save="saveDraft"
       @publish="publish"
@@ -687,8 +718,10 @@ onUnmounted(() => {
           :delete-key-code="null"
           :selection-key-code="null"
           :elements-selectable="false"
+          :zoom-on-double-click="false"
           :pan-on-drag="editor.canvasMode === 'hand' ? true : [1, 2]"
-          :nodes-draggable="editor.canvasMode === 'pointer'"
+          :nodes-draggable="documentStore.canEdit && editor.canvasMode === 'pointer'"
+          :nodes-connectable="documentStore.canEdit && editor.canvasMode === 'pointer'"
           :min-zoom="0.2"
           :max-zoom="2"
           :default-viewport="{ x: 40, y: 40, zoom: CANVAS_DEFAULT_ZOOM }"
@@ -728,21 +761,23 @@ onUnmounted(() => {
 
         <EditorToolbar
           class="ed-toolbar"
-          :disabled="documentStore.definition === null"
+          :disabled="!documentStore.canEdit || documentStore.definition === null"
           :mode="editor.canvasMode"
+          :show-inspect="compactEditor && editor.selectedNodeId !== null"
           @add="openAddAtCenter"
           @note="addNoteAtCenter"
           @layout="autoLayoutAndFit"
           @fit="fitToGraph"
           @mode="editor.setCanvasMode"
+          @inspect="revealPanel('node')"
         />
 
         <div v-if="view.nodes.length === 0" class="ed-empty" data-testid="canvas-empty">
           <span class="ed-empty__icon" aria-hidden="true">◇</span>
           <h2 class="ed-empty__title">从第一步开始</h2>
-          <p class="ed-empty__desc">添加一个节点，或打开一份已存定义；也可以双击空白处挑选节点。</p>
+          <p class="ed-empty__desc">{{ compactEditor ? '添加节点，或打开一份已存定义。' : '添加节点或打开已存定义，也可双击空白处添加。' }}</p>
           <div class="ed-empty__actions">
-            <button type="button" class="ed-empty__btn is-primary" @click="openFirstBlock">添加第一个节点</button>
+            <button type="button" class="ed-empty__btn is-primary" :disabled="!documentStore.canEdit" @click="openFirstBlock">添加第一个节点</button>
             <button type="button" class="ed-empty__btn" @click="openPanel('def')">打开定义</button>
           </div>
         </div>
@@ -761,8 +796,8 @@ onUnmounted(() => {
                 conflict.localRevision
               }}），自动保存已暂停。
             </span>
-            <a-button size="small" @click="documentStore.reloadDraft()">以服务器为准</a-button>
-            <a-button size="small" danger @click="overwriteDraft">覆盖服务器</a-button>
+            <a-button size="small" :disabled="documentStore.loading" @click="reloadServerDraft">以服务器为准</a-button>
+            <a-button size="small" danger :disabled="documentStore.loading" @click="overwriteDraft">覆盖服务器</a-button>
           </p>
 
           <!-- 试运行结果画在草稿画布上：横幅必须说明它不是一次真实处置，否则按色块会被读成"跑过了" -->
@@ -824,7 +859,7 @@ onUnmounted(() => {
 .ed {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   /* 画布区透出全局雾底（与态势/监测/指标同一张背景），节点与面板自己带底色 */
   background: transparent;
   color: var(--aeg-color-text);
@@ -843,7 +878,8 @@ onUnmounted(() => {
 .ed-toolbar {
   position: absolute;
   top: 12px;
-  left: 12px;
+  left: var(--aeg-space-s3);
+  max-width: calc(100% - 24px);
   z-index: 6;
 }
 /* 框选矩形按客户端坐标 fixed 定位（鼠标事件给的就是视口坐标），不随画布平移缩放。 */
@@ -863,7 +899,12 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  width: min(380px, calc(100% - 48px));
+  width: min(400px, calc(100% - 48px));
+  padding: var(--aeg-space-s5);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-xl);
+  background: var(--aeg-color-overview-panel);
+  box-shadow: var(--aeg-shadow-lg);
   margin: 0;
   transform: translate(-50%, -50%);
   text-align: center;
@@ -882,23 +923,26 @@ onUnmounted(() => {
 }
 .ed-empty__title {
   margin: 0;
-  font-size: 16px;
+  font-family: var(--aeg-font-display);
+  font-size: var(--aeg-font-lg);
   font-weight: 700;
 }
 .ed-empty__desc {
   margin: 0;
   color: var(--aeg-color-text-secondary);
-  font-size: 12px;
+  font-size: var(--aeg-font-base);
   line-height: 1.7;
 }
 .ed-empty__actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
   margin-top: 4px;
   pointer-events: all;
 }
 .ed-empty__btn {
-  height: 32px;
+  min-height: 38px;
   padding: 0 14px;
   border: 1px solid var(--aeg-color-border);
   border-radius: 8px;
@@ -993,8 +1037,25 @@ onUnmounted(() => {
 }
 @media (max-width: 900px) {
   .ed-banners {
-    top: 56px;
+    top: 62px;
     max-width: calc(100% - 24px);
+  }
+}
+@media (max-width: 560px) {
+  .ed-banners {
+    inset-inline: var(--aeg-space-s3);
+    max-width: none;
+    transform: none;
+  }
+  .ed-banner {
+    flex-wrap: wrap;
+  }
+  .ed-canvas :deep(.vue-flow__minimap) {
+    display: none;
+  }
+  .ed-empty {
+    width: min(350px, calc(100% - 24px));
+    padding: var(--aeg-space-s4);
   }
 }
 </style>

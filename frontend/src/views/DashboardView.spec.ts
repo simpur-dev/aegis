@@ -416,6 +416,8 @@ describe('风险区域一览不许拼出假的区划代码', () => {
     const regions = wrapper.findAll('.region').map((cell) => cell.text())
     expect(regions, `网格里出现了拼出来的区划代码：${regions.join(',')}`).toEqual(['未标注区域'])
     expect(wrapper.find('.cell').text()).toContain('无风险')
+    expect(wrapper.get('[data-testid="dashboard-terrain"]').text()).toContain('风险区域 0')
+    expect(wrapper.find('.terrain-preview__region').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -474,6 +476,10 @@ describe('风险瓦片必须标明模拟数据与使用限制', () => {
     const notice = wrapper.find('[data-testid="risk-mock-notice"]')
     expect(notice.exists(), '有 mock 结论就必须在墙上说明它的用途限制').toBe(true)
     expect(notice.text()).toContain('禁止用于实际预警决策')
+    const terrain = wrapper.get('[data-testid="dashboard-terrain"]')
+    expect(terrain.text()).toContain('风险区域 1')
+    expect(terrain.get('.terrain-preview__region').text()).toContain('540121 · 泥石流')
+    expect(terrain.get('.terrain-preview__mock').text()).toBe('模拟')
     wrapper.unmount()
   })
 

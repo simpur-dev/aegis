@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { message } from 'ant-design-vue'
+import { ReloadOutlined } from '@ant-design/icons-vue'
+import { useMediaQuery } from '@vueuse/core'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import api, { ApiError, type TelemetryQuery } from '@/api/client'
@@ -19,11 +21,14 @@ import { ingestLatencyLabel } from '@/utils/ingestLatency'
 
 const REFRESH_MS = 15_000
 const WINDOW_LIMIT = 2_000
+const PAGE_SIZE = 10
+const compact = useMediaQuery('(max-width: 720px)')
 
 const readings = ref<TelemetryReading[]>([])
 const region = ref<string>('')
 const metric = ref<string>('rain_10min')
 const loading = ref(false)
+const loadError = ref('')
 /** 最近一次**成功**取遥测的时刻（UTC ISO）；null = 还没取到过。 */
 const fetchedAt = ref<string | null>(null)
 const drilling = ref(false)
@@ -50,6 +55,27 @@ const reportOpen = ref(false)
 
 /** 图卡配色跟着主题换：canvas 读不到 CSS 变量，取色必须从 theme/chart.ts 派生（见那边的说明）。 */
 const { resolved: themeMode } = useTheme()
+const chartSource = ref('')
+const chartSources = computed(() => {
+  const sources = new Map<string, { id: string; label: string; readings: TelemetryReading[] }>()
+  for (const reading of readings.value) {
+    const id = JSON.stringify([reading.region_code, reading.station_id, reading.unit])
+    let source = sources.get(id)
+    if (!source) {
+      source = { id, label: `${reading.station_id} · ${reading.region_code} · ${reading.unit}`, readings: [] }
+      sources.set(id, source)
+    }
+    source.readings.push(reading)
+  }
+  return [...sources.values()]
+})
+const activeSource = computed(() => chartSources.value.find((source) => source.id === chartSource.value) ?? chartSources.value[0])
+const chartReadings = computed(() => activeSource.value?.readings ?? [])
+const qualityLabels: Record<TelemetryReading['quality_flag'], string> = {
+  ok: '有效', suspect: '可疑', missing: '缺测', drift: '漂移',
+}
+const metricLabels: Record<string, string> = { rain_10min: '10 分钟降雨', debris_level: '沟道泥位' }
+const rowKey = (row: TelemetryReading) => JSON.stringify([row.station_id, row.metric, row.observed_at, row.ingested_at])
 
 /**
  * 最新一条**有效**读数：画布上劣化读数本来就是断点，右上角这块只报能用的数；
@@ -57,33 +83,41 @@ const { resolved: themeMode } = useTheme()
  */
 const latestOk = computed<TelemetryReading | null>(() => {
   let best: TelemetryReading | null = null
-  for (const reading of readings.value) {
+  for (const reading of chartReadings.value) {
     if (reading.quality_flag !== 'ok') continue
     if (!best || reading.observed_at > best.observed_at) best = reading
   }
   return best
 })
 
-/** 图表与表格用的就是 `readings`：筛选已经交给后端，这里不再本地二次过滤（见 `load()`）。 */
+/** 只连接同一站点、区域及计量单位的读数。时间轴保留真实观测间隔。 */
 const chartOption = computed<ChartOption>(() => {
   const hero = chartHero(themeMode.value)
+  const samples = chartReadings.value
   return {
     // 标题由卡片头承担，画布里不再重复一行
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'line', lineStyle: { color: hero.line, type: 'dashed', width: 1 } },
+      axisPointer: {
+        type: 'line',
+        lineStyle: { color: hero.line, type: 'dashed', width: 1 },
+        label: { formatter: ({ value }: { value: number }) => formatOperatingTime(new Date(value).toISOString()) },
+      },
     },
-    grid: { left: 56, right: 24, top: 16, bottom: 48 },
+    grid: { left: 56, right: 20, top: 30, bottom: 36 },
     xAxis: {
-      type: 'category',
-      data: readings.value.map((r) => operatingClock(r.observed_at)),
+      type: 'time',
       axisLine: { lineStyle: { color: hero.axis } },
       axisTick: { show: false },
-      axisLabel: { color: hero.text },
+      axisLabel: {
+        color: hero.text,
+        hideOverlap: true,
+        formatter: (value: number) => operatingClock(new Date(value).toISOString()),
+      },
     },
     yAxis: {
       type: 'value',
-      name: readings.value[0]?.unit ?? '',
+      name: samples[0]?.unit ?? '',
       nameTextStyle: { color: hero.text },
       axisLine: { show: false },
       axisTick: { show: false },
@@ -92,10 +126,10 @@ const chartOption = computed<ChartOption>(() => {
     },
     series: [
       {
-        name: metric.value,
+        name: metricLabels[metric.value] ?? metric.value,
         type: 'line',
         smooth: true,
-        showSymbol: readings.value.length < 60,
+        showSymbol: samples.length < 60,
         // 窗口 2000 条压进 400px 宽会糊成一条白带：按像素做 LTTB 抽样，形状还在、线看得清
         sampling: 'lttb',
         symbolSize: 4,
@@ -109,7 +143,7 @@ const chartOption = computed<ChartOption>(() => {
             { offset: 1, color: hero.areaTo },
           ]),
         },
-        data: readings.value.map((r) => (r.quality_flag === 'ok' ? r.value : null)),
+        data: samples.map((r) => [Date.parse(r.observed_at), r.quality_flag === 'ok' ? r.value : null] as const),
         connectNulls: false,
       },
     ],
@@ -158,9 +192,10 @@ async function load(): Promise<void> {
     readings.value = data.items
     // 只有真取到数那一刻才算"更新于"；失败路径不动它，让"多旧"继续长大
     fetchedAt.value = new Date().toISOString()
+    loadError.value = ''
   } catch (error) {
     if (token !== requestToken) return
-    message.error(error instanceof ApiError ? `读取遥测失败：${error.message}` : '读取遥测失败')
+    loadError.value = error instanceof Error ? error.message : '网络请求未完成'
   } finally {
     if (token === requestToken) loading.value = false
   }
@@ -211,7 +246,8 @@ function latencyOf(row: TelemetryReading): string {
  * 值班员看到的就是"这个区域这个指标没数据"，而事实是筛完的页码还留在原地。
  */
 const tablePage = ref(1)
-const tablePagination = computed(() => ({ current: tablePage.value, pageSize: 10 }))
+const tablePagination = computed(() => ({ current: tablePage.value, pageSize: PAGE_SIZE }))
+const mobileReadings = computed(() => ledgerReadings.value.slice((tablePage.value - 1) * PAGE_SIZE, tablePage.value * PAGE_SIZE))
 
 function onTableChange(pagination: { current?: number }): void {
   tablePage.value = pagination.current ?? 1
@@ -220,7 +256,14 @@ function onTableChange(pagination: { current?: number }): void {
 /** 筛选条件是查询参数而不是本地过滤器：改了就得重取，否则界面显示的仍是上一个区域的数。 */
 watch([region, metric], () => {
   tablePage.value = 1
+  readings.value = []
+  chartSource.value = ''
+  fetchedAt.value = null
+  loadError.value = ''
   void load()
+})
+watch(ledgerReadings, (rows) => {
+  tablePage.value = Math.min(tablePage.value, Math.max(1, Math.ceil(rows.length / PAGE_SIZE)))
 })
 
 onMounted(() => {
@@ -230,57 +273,73 @@ onMounted(() => {
   // 演练发完，表里还是旧数据，而页面标题写着"最新"。与态势总览同一口径——
   // 15 秒一轮，页签切到后台就不打接口，卸载停表。
   timer = setInterval(() => {
-    if (document.visibilityState !== 'visible') return
+    if (document.visibilityState !== 'visible' || loading.value) return
     void load()
   }, REFRESH_MS)
 })
 
 onBeforeUnmount(() => {
+  requestToken++
   if (timer !== null) clearInterval(timer)
   timer = null
 })
 </script>
 
 <template>
-  <div>
-    <PageHero title="监测与演练" badge="实时接入" caption="现场读数与坏数据缺口；一键演练跑通整条处置链。">
+  <div class="monitor-page">
+    <PageHero surface title="监测预警" badge="实时监测" caption="查看站点读数与接入质量，或提交现场险情。">
       <template #actions>
-        <a-button data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
-        <a-button type="primary" :loading="drilling" :disabled="drilling" data-testid="drill-surge" @click="drill('surge')">发起演练：雨强激增</a-button>
-        <a-button :loading="drilling" :disabled="drilling" data-testid="drill-normal" @click="drill('normal')">发起演练：正常背景</a-button>
+        <router-link class="monitor-link" to="/warnings">预警台账</router-link>
+        <a-button type="primary" data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
       </template>
     </PageHero>
 
-    <a-card class="monitor-card" size="small" title="数据接入与监测">
-      <a-space wrap>
-        <a-select v-model:value="region" style="width: 180px" placeholder="区域" aria-label="区域">
-          <a-select-option value="">全部区域</a-select-option>
-          <a-select-option v-for="code in regions" :key="code" :value="code">{{ code }}</a-select-option>
-        </a-select>
-        <a-select v-model:value="metric" style="width: 220px" placeholder="指标" aria-label="指标">
-          <a-select-option v-for="name in metrics" :key="name" :value="name">{{ name }}</a-select-option>
-        </a-select>
-        <a-button @click="load">刷新</a-button>
-      </a-space>
+    <a-card class="monitor-card ops-surface" size="small" title="数据筛选">
+      <div class="ops-filters">
+        <div class="ops-filters__field">
+          <span>监测区域</span>
+          <a-select v-model:value="region" show-search aria-label="监测区域">
+            <a-select-option value="">全部区域</a-select-option>
+            <a-select-option v-for="code in regions" :key="code" :value="code">{{ code }}</a-select-option>
+          </a-select>
+        </div>
+        <div class="ops-filters__field">
+          <span>监测指标</span>
+          <a-select v-model:value="metric" aria-label="监测指标">
+            <a-select-option v-for="name in metrics" :key="name" :value="name">{{ metricLabels[name] ?? name }}</a-select-option>
+          </a-select>
+        </div>
+        <a-button class="monitor-refresh" :loading="loading" @click="load">
+          <template #icon><ReloadOutlined aria-hidden="true" /></template>
+          刷新
+        </a-button>
+      </div>
       <FreshnessBar
         :fetched-at="fetchedAt"
-        :label="`窗口 最近 ${WINDOW_LIMIT} 条 ｜ 每 ${Math.round(REFRESH_MS / 1000)} 秒自刷`"
+        :stacked="compact"
+        :label="`最近 ${WINDOW_LIMIT} 条 · 每 ${REFRESH_MS / 1000} 秒刷新`"
         :interval-ms="REFRESH_MS"
         style="margin-top: 10px"
       />
+      <a-alert
+        v-if="loadError"
+        type="error"
+        show-icon
+        data-testid="monitor-load-error"
+        :message="`读取遥测失败：${loadError}${readings.length ? '。当前显示上次成功读取的数据' : ''}`"
+      />
     </a-card>
 
-    <a-row :gutter="12" style="margin-top: 12px">
-      <a-col :xs="24" :xl="10">
+    <div class="monitor-grid">
         <a-card
           class="monitor-card"
           :class="{ 'monitor-chart-hero': readings.length > 0 }"
           size="small"
-          title="读数曲线（坏读数留缺口，不参与判定）"
+          title="站点读数趋势"
         >
           <!-- 右上角报"最新一条有效读数"：画布上可能全是断点，这块只报能用的数 -->
           <template #extra>
-            <div class="chart-latest">
+            <div v-if="activeSource" class="chart-latest">
               <span class="chart-latest__value">
                 {{ latestOk ? latestOk.value.toFixed(2) : '—'
                 }}<span class="chart-latest__unit">{{ latestOk?.unit ?? '' }}</span>
@@ -288,25 +347,56 @@ onBeforeUnmount(() => {
               <span class="chart-latest__time">{{ latestOk ? operatingClock(latestOk.observed_at) : '尚无有效读数' }}</span>
             </div>
           </template>
+          <div v-if="activeSource" class="chart-source">
+            <a-select :value="activeSource.id" aria-label="曲线站点" @update:value="chartSource = String($event)">
+              <a-select-option v-for="source in chartSources" :key="source.id" :value="source.id">{{ source.label }}</a-select-option>
+            </a-select>
+            <p>无效读数在曲线上留空。时间为 UTC+8。</p>
+          </div>
           <!-- 没读数时不挂蓝底重点卡：一块空色板看着像坏了，空态才告诉值班员下一步做什么 -->
-          <EChart v-if="readings.length > 0" :option="chartOption" height="360px" />
+          <EChart v-if="activeSource" :option="chartOption" :height="compact ? '255px' : '320px'" />
           <div v-else class="empty-hero">
             <span class="empty-hero__icon" aria-hidden="true">◇</span>
-            <p class="empty-hero__title">还没有读数</p>
-            <p class="empty-hero__desc">发起一次演练或人工上报，曲线就会在这里长出来。</p>
-            <a class="empty-hero__action" href="#" @click.prevent="drill('surge')">发起一次演练 →</a>
+            <div>
+              <p class="empty-hero__title">{{ loading ? '正在读取监测数据' : loadError ? '暂时无法读取趋势' : '当前筛选没有站点读数' }}</p>
+              <p v-if="!loading && !loadError" class="empty-hero__desc">可更换监测区域或指标。</p>
+            </div>
           </div>
         </a-card>
-      </a-col>
-      <a-col :xs="24" :xl="14">
-        <a-card class="monitor-card" size="small" title="最新遥测明细" :loading="loading">
-          <!-- 不再声明横向滚动：字号收到 12px、单元格留白收到 8px，七列在版块内换行显示完 -->
-          <div class="monitor-table">
+        <a-card class="monitor-card ops-surface" size="small" title="遥测记录">
+          <div v-if="compact" :aria-busy="loading">
+            <ul v-if="mobileReadings.length" class="ops-list">
+              <li v-for="record in mobileReadings" :key="rowKey(record)" class="ops-record">
+                <div class="ops-record__head">
+                  <span>{{ record.value }} {{ record.unit }}</span>
+                  <a-tag :color="record.quality_flag === 'ok' ? 'green' : 'orange'">{{ qualityLabels[record.quality_flag] }}</a-tag>
+                </div>
+                <div class="ops-record__meta">
+                  <span>{{ record.station_id }} · {{ record.region_code }}</span>
+                  <time :datetime="record.observed_at">{{ formatOperatingTime(record.observed_at) }}（UTC+8）</time>
+                  <span>接入 {{ latencyOf(record) }}</span>
+                </div>
+              </li>
+            </ul>
+            <a-pagination
+              v-if="ledgerReadings.length > PAGE_SIZE"
+              class="mobile-pagination"
+              v-model:current="tablePage"
+              :total="ledgerReadings.length"
+              :page-size="PAGE_SIZE"
+              :show-size-changer="false"
+              simple
+            />
+            <p v-if="!mobileReadings.length" class="ops-record">
+              {{ loading ? '正在读取记录…' : loadError ? '读取失败，可在上方重试。' : '当前筛选无遥测记录。' }}
+            </p>
+          </div>
+          <div v-else class="monitor-table" :aria-busy="loading">
             <a-table
               :columns="columns"
               :data-source="ledgerReadings"
               :pagination="tablePagination"
-              row-key="(r: TelemetryReading) => r.station_id + r.observed_at"
+              :row-key="rowKey"
               size="small"
               @change="onTableChange"
             >
@@ -316,11 +406,8 @@ onBeforeUnmount(() => {
               <div class="empty-hero">
                 <span class="empty-hero__icon" aria-hidden="true">◇</span>
                 <div>
-                  <p class="empty-hero__title">这个筛选下没有遥测读数</p>
-                  <p class="empty-hero__desc">
-                    换区域或指标看看；也可以直接发起一次演练，链路跑起来就会往这里写读数。
-                  </p>
-                  <a class="empty-hero__action" href="#" @click.prevent="drill('surge')">发起一次激增演练 →</a>
+                  <p class="empty-hero__title">{{ loading ? '正在读取记录' : loadError ? '暂时无法读取记录' : '这个筛选下没有遥测读数' }}</p>
+                  <p v-if="!loading && !loadError" class="empty-hero__desc">可更换区域或指标。</p>
                 </div>
               </div>
             </template>
@@ -329,8 +416,9 @@ onBeforeUnmount(() => {
                 {{ record.value }} {{ record.unit }}
               </template>
               <template v-else-if="column.key === 'quality_flag'">
-                <a-tag :color="record.quality_flag === 'ok' ? 'green' : 'orange'">{{ record.quality_flag }}</a-tag>
+                <a-tag :color="record.quality_flag === 'ok' ? 'green' : 'orange'">{{ qualityLabels[record.quality_flag as TelemetryReading['quality_flag']] }}</a-tag>
               </template>
+              <template v-else-if="column.key === 'metric'">{{ metricLabels[record.metric] ?? record.metric }}</template>
               <template v-else-if="column.key === 'latency'">
                 {{ latencyOf(record) }}
               </template>
@@ -341,8 +429,15 @@ onBeforeUnmount(() => {
             </a-table>
           </div>
         </a-card>
-      </a-col>
-    </a-row>
+    </div>
+
+    <a-card class="monitor-card monitor-drills ops-surface" size="small" title="处置链演练">
+      <div class="monitor-drills__actions">
+        <a-button :loading="drilling" :disabled="drilling" data-testid="drill-surge" @click="drill('surge')">发起演练：雨强激增</a-button>
+        <a-button :loading="drilling" :disabled="drilling" data-testid="drill-normal" @click="drill('normal')">发起演练：正常背景</a-button>
+        <router-link class="monitor-link" to="/simulation">参数推演沙盒</router-link>
+      </div>
+    </a-card>
 
     <a-modal v-model:open="reportOpen" title="人工上报（群防群治 / 巡查）" :footer="null" width="720px" data-testid="report-modal">
       <ReportForm :initial-region-code="region" />
@@ -353,10 +448,77 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/*
- * 监测页三块卡统一成「玻璃板 + 大圆角 + 粗标题」：与态势总览同一套语言。
- * 内边距用 16px（≈ 一个正文字的距离），卡片之间靠留白分开、不靠重边框。
- */
+.monitor-page {
+  container: monitor / inline-size;
+}
+.monitor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  align-items: start;
+  gap: var(--aeg-space-s4);
+  margin-block: var(--aeg-space-s4);
+}
+.monitor-refresh {
+  justify-self: start;
+}
+.monitor-page .ops-filters {
+  max-width: 900px;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+}
+.monitor-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding-inline: var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-sunken);
+  color: var(--aeg-color-text);
+}
+.monitor-link:hover {
+  color: var(--aeg-color-brand-hover);
+  border-color: var(--aeg-color-brand-line);
+}
+.monitor-drills__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--aeg-space-s2);
+}
+.chart-source {
+  display: grid;
+  justify-items: start;
+  gap: var(--aeg-space-s1);
+  min-width: 0;
+  color: var(--aeg-color-chart-hero-text);
+  font-size: var(--aeg-font-sm);
+}
+.chart-source :deep(.ant-select) {
+  max-width: 100%;
+}
+.chart-source p {
+  margin: 0;
+}
+.mobile-pagination {
+  margin-block-start: var(--aeg-space-s3);
+  text-align: right;
+}
+@container monitor (max-width: 1040px) {
+  .monitor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@container monitor (max-width: 580px) {
+  .monitor-page .ops-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .monitor-card :deep(.ant-card-head),
+  .monitor-card :deep(.ant-card-body) {
+    padding-inline: var(--aeg-space-s3);
+  }
+  .monitor-drills__actions :is(button, a) {
+    min-height: 40px;
+  }
+}
 .monitor-card {
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-xl);
@@ -476,6 +638,7 @@ onBeforeUnmount(() => {
   padding: var(--aeg-space-s2);
   font-size: var(--aeg-font-sm);
   line-height: var(--aeg-lh-snug);
+  overflow-wrap: anywhere;
 }
 /* 表格不再自带白底白框：透出玻璃卡本身的底，只留发丝分隔线（令牌色，不是纯白） */
 .monitor-table :deep(.ant-table),

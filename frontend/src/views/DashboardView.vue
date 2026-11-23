@@ -12,7 +12,9 @@ import AgentBoard from '@/components/dashboard/AgentBoard.vue'
 import ChainList from '@/components/dashboard/ChainList.vue'
 import EventFeed from '@/components/dashboard/EventFeed.vue'
 import RiskWall from '@/components/dashboard/RiskWall.vue'
+import TerrainOverview from '@/components/dashboard/TerrainOverview.vue'
 import LegStatusPanel from '@/components/system/LegStatusPanel.vue'
+import { useAlerts } from '@/composables/useAlerts'
 import { useEventStream } from '@/composables/useEventStream'
 import { formatOperatingTime } from '@/utils/clock'
 
@@ -43,6 +45,7 @@ let eventTimer: ReturnType<typeof setTimeout> | null = null
  */
 let chainsSeq = 0
 const { events } = useEventStream()
+const { urgentCards } = useAlerts()
 
 /**
  * KPI 只写"量到的数"。取数失败或还没取到时写 `—`，不写 0：
@@ -50,16 +53,18 @@ const { events } = useEventStream()
  * 页脚明明说了取数失败，可三个大数字看着像是"现场确实一个都没有"。
  */
 const kpis = computed<KpiItem[]>(() => [
-  { label: '在线智能体', value: ready.value === null ? '—' : ready.value.agents_online, suffix: '个' },
+  { metric: 'agents', label: '在线智能体', value: ready.value === null ? '—' : ready.value.agents_online, suffix: '个' },
   // 取后端口径的总数，不用列表长度：`warnings` 是按 `limit: 50` 拉回来的，
   // 拿它的长度当"已发布预警"，过 50 条之后这个数字就永远停在 50，而且看着完全正常。
   {
+    metric: 'warnings',
     label: '已发布预警',
     value: ready.value?.store?.warning_count ?? (warnings.value.length > 0 ? warnings.value.length : '—'),
     suffix: '条',
   },
-  { label: '任务单元', value: ready.value?.store?.task_count ?? '—', suffix: '个' },
+  { metric: 'tasks', label: '任务单元', value: ready.value?.store?.task_count ?? '—', suffix: '个' },
   {
+    metric: 'collaboration',
     label: '协同成功率',
     value: latency.value?.collaboration.success_rate == null ? '—' : `${(latency.value.collaboration.success_rate * 100).toFixed(1)}%`,
     // 口径注脚只写给得出目标的数：目标与达标判定都来自时延账本，不是这里估的。
@@ -168,7 +173,7 @@ async function refresh(): Promise<void> {
  */
 const AGENT_PANEL_KEY = 'aegis.dashboard.agent-panel'
 const AGENT_PANEL_MIN = 220
-/** 折叠后只留标题行：16 上内边距 + 69 卡头 + 16 下内边距。 */
+/** 折叠后保留卡头与操作空间。 */
 const AGENT_PANEL_COLLAPSED = 101
 const AGENT_PANEL_MAX_RATIO = 0.8
 const AGENT_PANEL_DEFAULT_RATIO = 0.55
@@ -202,7 +207,7 @@ const panelMax = computed(() => Math.max(AGENT_PANEL_MIN, Math.round(viewportH.v
 const SECOND_ROW_RESERVE = 370
 const panelDefault = computed(() =>
   Math.min(
-    860,
+    552,
     Math.max(
       AGENT_PANEL_MIN,
       Math.min(Math.round(viewportH.value * AGENT_PANEL_DEFAULT_RATIO), viewportH.value - SECOND_ROW_RESERVE),
@@ -349,7 +354,7 @@ watch(
 </script>
 
 <template>
-  <div>
+  <div class="dashboard">
     <!-- 值班员的任务入口：有单在等就顶到第一屏，和流程页的待办条同一句话、同一个数 -->
     <div v-if="pendingSign !== null && pendingSign > 0" class="dash-todos" data-testid="dashboard-todos">
       <span>有 {{ pendingSign }} 张工单在等人签。</span>
@@ -363,39 +368,30 @@ watch(
       data-testid="dashboard-error"
       class="dash-error"
     />
-    <!--
-      三栏骨架（2026-10-25 定，2026-11-18 换实色卡语言）：
-      - KPI 统计格放进主内容列：它的右边缘要和下方「事件处置记录」对齐，
-        同时右侧智能体栏从这一行就起头（与统计格齐平），所以统计格不能再横跨整页。
-      - 主内容 40:60 放「风险区域一览 + 事件处置记录」（原来的 10/14 栅格），事件流通栏；
-        理由是这两块是同一件事的两面（哪片区域危险 → 平台怎么处理），并排才好对读；
-        事件流是时间轴，横着铺一行比挤在半栏里更好扫。
-      - 智能体在线状态放右侧常驻栏：它是"平台还活着吗"的背景信息，
-        不该抢占主内容的首屏，但又必须一直看得见，所以 sticky。
-      - 全部面板共用 .glass-panel 这套实色卡样式（类名沿用，玻璃层已退役），不各写一份装饰。
-    -->
     <div class="dash-layout">
-      <KpiStrip class="dash-kpi" :items="kpis">
-        <!-- 页头并进第一块卡：标题/徽标/说明/更新时间/刷新都与统计格同属"值班员的第一屏"。
-             仍然用统一的 PageHero 组件（uiTheme 门禁要求常规页面必须接它），只是换个宿主。 -->
-        <template #header>
-          <div class="dash-hero">
-            <PageHero
-              title="态势总览"
-              badge="实时"
-              caption="值班第一屏：等人处理的待办、现场读数、风险区域与最新处置。"
-            >
-              <template #actions>
-                <a-button type="primary" data-testid="dashboard-drill" @click="$router.push('/monitor')">发起演练</a-button>
-                <span data-testid="dashboard-updated">
-                  {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
-                </span>
-                <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷 新</a-button>
-              </template>
-            </PageHero>
-          </div>
-        </template>
-      </KpiStrip>
+      <section class="glass-panel dash-overview">
+        <div class="dash-overview__summary">
+          <PageHero
+            title="态势总览"
+            badge="实时"
+            caption="值班第一屏：等人处理的待办、现场读数、风险区域与最新处置。"
+          >
+            <template #actions>
+              <a-button class="dash-drill" type="primary" data-testid="dashboard-drill" @click="$router.push('/monitor')">发起演练</a-button>
+              <span class="dash-updated" data-testid="dashboard-updated">
+                {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
+              </span>
+              <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷新</a-button>
+              <router-link v-if="urgentCards.length" class="dash-urgent" to="/assistant" data-testid="alert-banner">
+                <span aria-hidden="true"></span>
+                <span data-testid="alert-banner-text">{{ urgentCards.length }} 条红色/橙色告警未确认</span>
+              </router-link>
+            </template>
+          </PageHero>
+          <KpiStrip :items="kpis" />
+        </div>
+        <TerrainOverview :cells="regionGrid" :has-snapshot="updatedAt !== null" />
+      </section>
 
       <!-- 第一行右：智能体在线状态。可折叠 + 底缘拉杆调高（默认约 55vh），
            把第二行（风险网格/链路/事件流）让进首屏；状态记忆在 localStorage。 -->
@@ -447,19 +443,16 @@ watch(
         </div>
       </section>
 
-      <!-- 第二行左：风险区域网格 + 链路执行记录（合起来与上方 KPI 同宽） -->
-      <div class="dash-split">
-        <section class="glass-panel">
-          <a-card :title="gridTitle" size="small" :loading="loading">
-            <RiskWall :cells="regionGrid" :window-size="CHAIN_WINDOW" />
-          </a-card>
-        </section>
-        <section class="glass-panel">
-          <a-card :title="chainsTitle" size="small" :loading="loading">
-            <ChainList :chains="recentChains" />
-          </a-card>
-        </section>
-      </div>
+      <section class="glass-panel dash-risks">
+        <a-card :title="gridTitle" size="small" :loading="loading">
+          <RiskWall :cells="regionGrid" :window-size="CHAIN_WINDOW" />
+        </a-card>
+      </section>
+      <section class="glass-panel dash-history">
+        <a-card :title="chainsTitle" size="small" :loading="loading">
+          <ChainList :chains="recentChains" />
+        </a-card>
+      </section>
 
       <!-- 第二行右：实时事件流（与上方智能体卡同宽） -->
       <section class="glass-panel dash-events">
@@ -478,45 +471,81 @@ watch(
 </template>
 
 <style scoped>
-/* KPI 托盘（.stat-cell）与空态（.empty-hero）的样式在 styles/theme.css：两页共用一份。 */
-
-/* 页头并进第一块玻璃卡：仍然用统一的 PageHero（uiTheme 门禁要求常规页面必须接它），
-   只是把宿主从页面顶部挪到 KpiStrip 的 header 插槽里，所以只吃掉它自带的下外边距。 */
-.dash-hero {
-  width: 100%;
+.dashboard {
+  container: dashboard / inline-size;
 }
-.dash-hero :deep(.page-head) {
-  margin-bottom: 0;
-}
-/* KPI 卡里的页头标题与其它卡片标题同档：20px / 700（PageHero 默认 600） */
-.dash-hero :deep(.page-head__title) {
-  font-size: var(--aeg-font-lg);
-  font-weight: var(--aeg-weight-bold);
-}
-
-/* 两行两列大屏骨架：
-   第一行 63 / 37（态势总览 | 智能体在线状态）；
-   第二行 63 / 37（风险区域 + 链路执行 | 实时事件流）；
-   "可选子系统"跨两列垫在最后。
-   用 63fr / 37fr 而不是 63% / 37%：带 gap 的百分比会把一行撑破。 */
 .dash-layout {
   display: grid;
-  grid-template-columns: minmax(0, 63fr) minmax(0, 37fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-template-areas:
-    'kpi agent'
-    'split events'
-    'legs legs';
+    'overview overview agent'
+    'risks history events'
+    'legs legs legs';
   gap: var(--aeg-space-s4);
-  align-items: start;
   min-width: 0;
 }
-.dash-layout > .dash-kpi {
-  grid-area: kpi;
-  /* KpiStrip 自带 margin-bottom，网格 gap 已经负责间距，这里吃掉避免双倍 */
-  margin-bottom: 0;
-  /* 不再与智能体栏强行等高：读数卡按内容收高，智能体栏纵跨两行自己滚动，
-     左列 KPI→风险/链路 顺排，避免卡内或行内出现纯白空洞（真机首屏量到过）。 */
-  align-self: stretch;
+.dash-layout > .dash-overview {
+  grid-area: overview;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+.dash-overview__summary {
+  padding: var(--aeg-space-s3);
+}
+.dash-overview :deep(.page-head) {
+  margin-bottom: var(--aeg-space-s3);
+}
+.dash-overview :deep(.page-head__row),
+.dash-overview :deep(.page-head__actions) {
+  flex-wrap: wrap;
+  gap: var(--aeg-space-s2);
+}
+.dash-overview :deep(.page-head__title) {
+  font-size: var(--aeg-font-xl);
+  font-weight: var(--aeg-weight-bold);
+}
+.dash-overview :deep(.page-head__actions) {
+  flex: 1 1 auto;
+  margin-left: 0;
+}
+.dash-overview :deep(.page-head__actions .dash-drill) {
+  background: var(--aeg-color-masthead-tab);
+  color: var(--aeg-color-masthead-tab-ink);
+}
+.dash-overview :deep(.page-head__actions .dash-drill:hover) {
+  filter: brightness(1.09);
+}
+.dash-updated {
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+  font-variant-numeric: tabular-nums;
+}
+.dash-urgent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  margin-left: auto;
+  padding: var(--aeg-space-s1) var(--aeg-space-s2);
+  border: 1px solid var(--aeg-tag-red-line);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-tag-red-bg);
+  color: var(--aeg-tag-red-text);
+  font-size: var(--aeg-font-sm);
+}
+.dash-urgent:hover {
+  color: var(--aeg-tag-red-text);
+  text-decoration: underline;
+}
+.dash-urgent > :first-child {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.dash-overview > :deep(.terrain-preview) {
+  flex: 1 0 auto;
 }
 .dash-layout > .dash-agent {
   grid-area: agent;
@@ -622,63 +651,85 @@ watch(
   background: var(--aeg-color-brand);
   box-shadow: 0 0 0 3px var(--aeg-color-brand-soft);
 }
-.dash-layout > .dash-split {
-  grid-area: split;
-  min-width: 0;
+.dash-layout > .dash-risks {
+  grid-area: risks;
+}
+.dash-layout > .dash-history {
+  grid-area: history;
 }
 .dash-layout > .dash-events {
   grid-area: events;
   min-width: 0;
 }
+.dash-layout > :is(.dash-risks, .dash-history, .dash-events) {
+  min-height: 224px;
+}
 .dash-layout > .dash-legs {
   grid-area: legs;
 }
-.dash-split {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-  gap: var(--aeg-space-s4);
+.dash-risks :deep(.risk-wall) {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  max-height: 252px;
+  overflow-y: auto;
+  padding-right: var(--aeg-space-s1);
 }
-/* 37% 列比原来的 340px 宽：agent id 放宽，能力标签仍让位（保留"一行读得完"） */
 .dash-agent :deep(.agent__id) {
-  max-width: 140px;
+  flex: 1 1 auto;
+  max-width: none;
 }
 .dash-agent :deep(.agent__caps) {
   display: none;
 }
 .dash-agent :deep(.agent__loadbar) {
-  width: 32px;
+  display: none;
 }
 .dash-agent :deep(.agent) {
-  flex-wrap: wrap;
-  row-gap: 2px;
+  min-height: 42px;
+  border-color: transparent;
+  border-bottom-color: var(--aeg-color-border-subtle);
+  background: transparent;
 }
 .dash-agent :deep(.agent__served) {
-  margin-left: auto;
+  min-width: 0;
+  padding-inline: 0;
+  border: none;
+  background: transparent;
 }
-@media (max-width: 1279px) {
+@container dashboard (max-width: 1020px) {
+  .dash-layout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      'overview overview'
+      'agent risks'
+      'history events'
+      'legs legs';
+  }
+}
+@container dashboard (max-width: 660px) {
   .dash-layout {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      'kpi'
+      'overview'
       'agent'
-      'split'
+      'risks'
+      'history'
       'events'
       'legs';
   }
-}
-@media (max-width: 1100px) {
-  .dash-split {
-    grid-template-columns: minmax(0, 1fr);
+  .dash-overview :deep(.page-head__actions) {
+    flex-basis: 100%;
+  }
+  .dash-urgent {
+    margin-left: 0;
   }
 }
 
-/* 面板卡：实色卡底 + 细描边（2026-11-18 玻璃层退役：页面底已平涂，半透板只会发闷）。
-   里层 antd 卡片的 chrome 全部让位，只留标题的字距与小号字。所有面板共用这一个类。 */
 .glass-panel {
+  min-width: 0;
   padding: var(--aeg-space-s4);
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-xl);
-  background: var(--aeg-color-card);
+  background: var(--aeg-color-overview-panel);
   box-shadow: var(--aeg-shadow-md);
   /* 独立合成层：滚动时整块搬已栅格化的纹理，不重 raster 整页内容层。 */
   transform: translateZ(0);
@@ -689,11 +740,8 @@ watch(
   box-shadow: none;
 }
 .glass-panel :deep(.ant-card-head) {
-  /* 标题顶到卡头第一条线（不再被 antd 垂直居中）：与 KPI 卡页头标题同一水平 */
-  /* 卡头固定成"两行标题"的高度：单行标题的卡（事件流/智能体）也留出第二行，
-     这样同一行卡片的标题顶边与分隔线都齐平；4 + 56 + 8 + 1 = 69 */
-  min-height: 69px;
-  padding: 4px 0 var(--aeg-space-s2);
+  min-height: 54px;
+  padding: var(--aeg-space-s1) 0 var(--aeg-space-s2);
   border-bottom: 1px solid var(--aeg-color-border);
   background: transparent;
   align-items: flex-start;
@@ -717,7 +765,7 @@ watch(
   line-height: var(--aeg-lh-snug);
 }
 .glass-panel :deep(.ant-card-body) {
-  padding: 0;
+  padding: var(--aeg-space-s2) 0 0;
   background: transparent;
 }
 

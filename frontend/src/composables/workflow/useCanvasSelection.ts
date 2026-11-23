@@ -73,6 +73,7 @@ export function useCanvasSelection(options: CanvasSelectionOptions = {}) {
 
   function setNodes(ids: readonly string[]): void {
     selectedNodeIds.value = [...new Set(ids)]
+    if (ids.length > 0) selectedEdgeIds.value = []
     notify()
   }
 
@@ -114,10 +115,15 @@ export function useCanvasSelection(options: CanvasSelectionOptions = {}) {
   }
 
   /** 框选：默认替换，Shift 与现有集合取并集。 */
-  function marquee(nodes: readonly SelectableNode[], rect: MarqueeRect, shift = false): readonly string[] {
+  function marquee(
+    nodes: readonly SelectableNode[],
+    rect: MarqueeRect,
+    shift = false,
+    initialNodes: readonly string[] = selectedNodeIds.value,
+  ): readonly string[] {
     const hit = nodesInMarquee(nodes, rect)
     if (shift) {
-      selectedNodeIds.value = [...new Set([...selectedNodeIds.value, ...hit])]
+      selectedNodeIds.value = [...new Set([...initialNodes, ...hit])]
     } else {
       selectedNodeIds.value = hit
       selectedEdgeIds.value = []

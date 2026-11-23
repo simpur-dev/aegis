@@ -15,13 +15,13 @@ import { useBlockInsertion } from './editor/insertion'
 
 const props = defineProps<EdgeProps<EdgeDef>>()
 
-const { run } = useEditorContext()
+const { document: documentStore, run } = useEditorContext()
 const insertion = useBlockInsertion()
 
 const condition = computed(() => (typeof props.label === 'string' ? props.label.trim() : ''))
 
 function stateOf(nodeId: string): NodeState | null {
-  return run.instance?.nodes.find((node) => node.node_id === nodeId)?.state ?? null
+  return run.canvasRuns.find((node) => node.node_id === nodeId)?.state ?? null
 }
 
 type EdgeTone = 'default' | 'running' | 'awaiting' | 'failed' | 'done'
@@ -77,7 +77,7 @@ function openSelector(event: MouseEvent): void {
     <div class="wf-edge__label" :class="`is-${tone}`" :style="labelStyle">
       <span v-if="condition !== ''" class="wf-edge__condition" :title="condition">{{ condition }}</span>
       <button
-        v-if="insertion !== null"
+        v-if="insertion !== null && documentStore.canEdit"
         type="button"
         class="wf-edge__insert nodrag nopan"
         :aria-label="`在 ${props.source} 与 ${props.target} 之间插入节点`"

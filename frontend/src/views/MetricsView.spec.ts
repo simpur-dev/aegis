@@ -132,8 +132,9 @@ describe('指标页读数', () => {
       number | { value?: number }
     >
     const rows = rowsGivenToTable(wrapper)
-    const secondsIndex = rows.findIndex((row) => row.name === 'ingest_end_to_end_seconds')
-    const msIndex = rows.findIndex((row) => row.name === 'warning_generation_ms')
+    const labels = (wrapper.findComponent({ name: 'EChart' }).props('option') as { yAxis: { data: string[] } }).yAxis.data
+    const secondsIndex = labels.indexOf(String(rows.find((row) => row.name === 'ingest_end_to_end_seconds')?.label))
+    const msIndex = labels.indexOf(String(rows.find((row) => row.name === 'warning_generation_ms')?.label))
     expect(secondsIndex).toBeGreaterThanOrEqual(0)
     expect(barValue(p95[secondsIndex]), '0.015 秒要画成 15 毫秒，否则对数毫秒轴上它比真毫秒还小').toBeCloseTo(15, 6)
     expect(barValue(p95[msIndex])).toBeCloseTo(5200, 6)

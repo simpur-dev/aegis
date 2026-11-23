@@ -41,6 +41,7 @@ export function staticVars(): Record<string, string> {
   out[`${varPrefix}sidebar-collapsed`] = `${layout.sidebarCollapsed}px`
   out[`${varPrefix}content-max`] = `${layout.contentMaxWidth}px`
   out[`${varPrefix}font-sans`] = fontFamily.sans
+  out[`${varPrefix}font-display`] = fontFamily.display
   out[`${varPrefix}font-mono`] = fontFamily.mono
   return out
 }

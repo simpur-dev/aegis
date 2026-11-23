@@ -12,6 +12,8 @@
  */
 
 import { message } from 'ant-design-vue'
+import { AimOutlined, AppstoreOutlined, InfoCircleOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons-vue'
+import { useElementSize } from '@vueuse/core'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 
 import mapApi, { isMissingResource, MAP_ASSET_PATHS, normalizeAnchors } from '@/api/map'
@@ -60,6 +62,8 @@ const host = ref<HTMLElement | null>(null)
 const scene = shallowRef<MapScene | null>(null)
 const sceneInfo = ref<MapSceneInfo | null>(null)
 const sceneError = ref<string | null>(null)
+const sceneLoading = ref(false)
+let sceneSeq = 0
 /** 画布内部读不到 CSS 变量，所以主题要显式喂给场景（见 `@/theme/map`）。 */
 const { resolved: themeMode } = useTheme()
 /**
@@ -82,23 +86,19 @@ const hazardDocument = ref<unknown>(null)
 
 const loading = ref(false)
 const autoRefresh = ref(true)
-/** 左右两列悬浮面板是否收起：收起来只看地图。 */
 const panelsCollapsed = ref(false)
-/** 收起按钮点下去那一刻的位置（相对地图壳），展开按钮就浮回同一个角落 */
-const expandPos = ref<{ right: number; top: number } | null>(null)
 const shellRef = ref<HTMLElement | null>(null)
-
-function collapsePanels(event: MouseEvent): void {
-  const button = event.currentTarget as HTMLElement | null
-  const shell = shellRef.value
-  if (button && shell) {
-    const b = button.getBoundingClientRect()
-    const s = shell.getBoundingClientRect()
-    expandPos.value = { right: Math.max(12, Math.round(s.right - b.right)), top: Math.round(b.top - s.top) }
-  }
-  panelsCollapsed.value = true
+const toolbarRef = ref<HTMLElement | null>(null)
+const { width: mapWidth } = useElementSize(shellRef)
+const { height: toolbarHeight } = useElementSize(toolbarRef)
+const compact = computed(() => mapWidth.value > 0 && mapWidth.value < 820)
+const settingsOpen = ref(false)
+const mobilePane = ref<'status' | 'layers' | null>(null)
+function toggleMobilePane(pane: 'status' | 'layers'): void {
+  mobilePane.value = mobilePane.value === pane ? null : pane
 }
 const regionCode = ref<string>('')
+const observedRegionCodes = ref<string[]>([])
 /** 第几趟 `load()`：换筛选、点刷新、30 秒自动刷新都算一次，只有最新那趟的结果才落页面。 */
 let loadSeq = 0
 const notes = ref<string[]>([])
@@ -143,7 +143,7 @@ const plottedTotal = computed(() =>
   plottedCount(filterLayersByViewport({ bbox: bbox.value, layers: viewLayers.value }), visibility.value),
 )
 const regionOptions = computed(() =>
-  [...new Set([...anchors.value.map((anchor) => anchor.code), ...readings.value.map((reading) => reading.region_code)])]
+  [...new Set([...anchors.value.map((anchor) => anchor.code), ...observedRegionCodes.value, regionCode.value])]
     .filter(Boolean)
     .sort(),
 )
@@ -203,6 +203,12 @@ async function load(): Promise<void> {
   warnings.value = settled(warningList)?.items ?? []
   chains.value = settled(eventList)?.items ?? []
   stations.value = settled(stationList)?.items ?? []
+  observedRegionCodes.value = [...new Set([
+    ...observedRegionCodes.value,
+    ...readings.value.map((item) => item.region_code),
+    ...warnings.value.flatMap((item) => item.region_codes),
+    ...stations.value.map((item) => item.region_code).filter((code): code is string => Boolean(code)),
+  ])]
   const anchorData = settled(anchorFile)
   anchors.value = anchorData ? normalizeAnchors(anchorData) : []
   hazardDocument.value = settled(zoneFile)
@@ -228,12 +234,27 @@ async function load(): Promise<void> {
   await probeNetwork()
 }
 
+function changeRegion(): void {
+  readings.value = []
+  warnings.value = []
+  stations.value = []
+  chains.value = []
+  selectedId.value = null
+  focusNote.value = ''
+  void load()
+}
+
 /** 地图是本页最重的一块：cesium 只在真正建场时动态取；建场失败也不影响右侧文字清单。 */
 async function initScene(): Promise<void> {
-  if (!host.value) return
+  const target = host.value
+  if (!target || sceneLoading.value) return
+  const seq = ++sceneSeq
+  sceneLoading.value = true
+  sceneError.value = null
   try {
     const { createMapScene } = await import('@/components/map/viewer')
-    const created = await createMapScene(host.value, {
+    if (seq !== sceneSeq || target !== host.value) return
+    const created = await createMapScene(target, {
       terrainUrl: MAP_ASSET_PATHS.terrain,
       // prefer:'template'：本地烘过真 OSM 瓦片时优先用它们（探针命中 z0/0/0 才算可达），
       // 没烘（新克隆）就自动退回仓库自带的合成 PMTiles——两条路都是同源，降级链不变。
@@ -246,23 +267,31 @@ async function initScene(): Promise<void> {
       },
       fetchLike: probeFetch,
       onViewChanged: (next, nextZoom) => {
+        if (seq !== sceneSeq) return
         bbox.value = next ? expandBBox(next) : null
         zoom.value = nextZoom
       },
       onSelect: (featureId) => {
-        selectedId.value = featureId
+        if (seq === sceneSeq) showFeature(featureId)
       },
       themeMode: themeMode.value,
       // 「深空皮肤」：只在拉远到能看见地球弧线时生效（高度门槛在 viewer.ts）。
       // 只改画面观感，不动影像/地形/要素；其他页面不传这个开关，表现与之前一致。
       spaceLook: true,
     })
+    if (seq !== sceneSeq || target !== host.value) {
+      created.destroy()
+      return
+    }
     scene.value = created
     sceneInfo.value = created.info
     created.render(plan.value)
   } catch (error) {
+    if (seq !== sceneSeq) return
     sceneError.value = error instanceof Error ? error.message : String(error)
-    message.error('三维场景初始化失败，已退回文字清单模式')
+    message.error('三维地图加载失败，可继续查看图层面板')
+  } finally {
+    if (seq === sceneSeq) sceneLoading.value = false
   }
 }
 
@@ -279,8 +308,13 @@ function onToggleRisk(level: RiskLevel): void {
   riskFilter.value = next.sort((a, b) => a - b)
 }
 
-function selectFeature(id: string): void {
+function showFeature(id: string | null): void {
   selectedId.value = id
+  if (id && compact.value) mobilePane.value = 'layers'
+}
+
+function selectFeature(id: string): void {
+  showFeature(id)
   const feature = detailOf(layers.value, id)
   if (feature && 'lonlat' in feature && feature.lonlat) scene.value?.focusAt(feature.lonlat)
 }
@@ -315,7 +349,7 @@ onMounted(() => {
   void load()
   void initScene()
   dataTimer = window.setInterval(() => {
-    if (autoRefresh.value) void load()
+    if (autoRefresh.value && !loading.value && document.visibilityState === 'visible') void load()
   }, DATA_REFRESH_MS)
   probeTimer = window.setInterval(() => void probeNetwork(), PROBE_REFRESH_MS)
   window.addEventListener('offline', onBrowserOffline)
@@ -323,6 +357,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  loadSeq++
+  sceneSeq++
   if (dataTimer) window.clearInterval(dataTimer)
   if (probeTimer) window.clearInterval(probeTimer)
   window.removeEventListener('offline', onBrowserOffline)
@@ -348,6 +384,8 @@ watch(
      * 所以切走时必须销毁场景，切回时重建。
      */
     if (mode === 'amap') {
+      sceneSeq++
+      sceneLoading.value = false
       scene.value?.destroy()
       scene.value = null
       sceneInfo.value = null
@@ -377,39 +415,63 @@ watch(visibility, (value) => {
 </script>
 
 <template>
-  <div ref="shellRef" class="map-shell" :class="{ 'is-panels-collapsed': panelsCollapsed }">
+  <div
+    ref="shellRef"
+    class="map-shell"
+    :class="{ 'is-panels-collapsed': panelsCollapsed, 'is-compact': compact }"
+    :style="{ '--map-bar-end': toolbarHeight > 0 ? `${toolbarHeight + 24}px` : '78px' }"
+  >
     <!-- 顶部悬浮工具条：标题 + 底图/区域/刷新/定位/自动刷新，半透明压在图上 -->
-    <div class="map-floatbar">
+    <div ref="toolbarRef" class="map-floatbar">
       <PageHero
         class="map-floatbar__hero"
         title="应急一张图"
         :badge="basemapMode === 'amap' ? '在线底图' : '离线三维'"
         :caption="
           basemapMode === 'amap'
-            ? '底图走高德 JS API 官方通道（key 放 frontend/.env.local，不入库）；要素坐标已按 WGS84→GCJ-02 纠偏。加载失败会在图上说明原因，切回「离线自托管」即恢复交付形态。'
+            ? '在线底图使用高德服务，要素坐标已按 GCJ-02 纠偏。'
             : '底图、地形与矢量瓦片由本进程自托管，弱网与断网下仍可用。'
         "
       />
-      <a-space wrap class="map-floatbar__tools">
+      <a-button
+        v-if="compact"
+        class="map-settings-toggle"
+        :aria-expanded="settingsOpen"
+        aria-controls="map-tools"
+        data-testid="map-settings"
+        @click="settingsOpen = !settingsOpen"
+      >
+        <template #icon><SettingOutlined aria-hidden="true" /></template>
+        地图设置
+      </a-button>
+      <div v-show="!compact || settingsOpen" id="map-tools" class="map-floatbar__tools">
         <!-- 底图档：默认离线自托管（交付形态，见 external.ts 的默认档论证）；高德是带 key 的 JS API 档，加载失败会在图上说明 -->
         <a-radio-group v-model:value="basemapMode" size="small" button-style="solid" data-testid="basemap-mode">
           <a-radio-button value="offline">离线自托管</a-radio-button>
           <a-radio-button value="amap">高德在线</a-radio-button>
         </a-radio-group>
-        <a-select v-model:value="regionCode" style="width: 150px" placeholder="全部区域" size="small" aria-label="区域" @change="load">
+        <a-select v-model:value="regionCode" class="map-region" show-search placeholder="全部区域" aria-label="区域" @change="changeRegion">
           <a-select-option value="">全部区域</a-select-option>
           <a-select-option v-for="code in regionOptions" :key="code" :value="code">{{ code }}</a-select-option>
         </a-select>
-        <a-button size="small" :loading="loading" @click="load">刷新</a-button>
-        <a-button size="small" @click="focusAll">定位到有点的区域</a-button>
-        <a-switch v-model:checked="autoRefresh" aria-label="自动刷新" />
-        <span class="muted">自动刷新 30s</span>
-      </a-space>
+        <a-button :loading="loading" @click="load">
+          <template #icon><ReloadOutlined aria-hidden="true" /></template>
+          刷新
+        </a-button>
+        <a-button v-if="basemapMode === 'offline'" @click="focusAll">
+          <template #icon><AimOutlined aria-hidden="true" /></template>
+          定位站点
+        </a-button>
+        <div class="map-auto-refresh">
+          <a-switch v-model:checked="autoRefresh" aria-label="自动刷新" />
+          <span class="muted">30 秒自动刷新</span>
+        </div>
+      </div>
     </div>
 
     <!-- 提示：加载告警与"定位退不回全局"的原因，压在工具条下方 -->
-    <div v-if="notes.length || focusNote" class="map-floatnotes">
-      <a-alert v-for="note in notes" :key="note" type="warning" show-icon :message="note" />
+    <div v-if="(!compact && notes.length) || focusNote" class="map-floatnotes">
+      <a-alert v-for="note in compact ? [] : notes" :key="note" type="warning" show-icon :message="note" />
       <!-- 定位这颗按钮先前点了没反应也不解释；现在把"退不回全局视野的原因"说一句 -->
       <p v-if="focusNote" class="muted" data-testid="focus-note">{{ focusNote }}</p>
     </div>
@@ -420,34 +482,36 @@ watch(visibility, (value) => {
       <AmapMap v-if="basemapMode === 'amap'" :plan="plan" @select="selectFeature" />
       <template v-else>
         <div ref="host" class="map-host" />
-        <div v-if="!sceneInfo && !sceneError" class="map-placeholder">
+        <div v-if="!sceneInfo && !sceneError" class="map-placeholder" role="status">
           <div class="map-placeholder__card">
-            <p class="map-placeholder__title">三维场景未就绪</p>
-            <p class="map-placeholder__desc">离线底图与地形尚未建场；图层面板与要素清单仍可用。</p>
-            <p class="hint">
-              首次部署：把地图引擎静态资源（Workers / Assets / ThirdParty / Widgets）拷到
-              <code>public/cesium/</code>，并按 public/basemaps/README.md、public/terrain/README.md
-              烘焙底图与地形资产。
-            </p>
+            <p class="map-placeholder__title">正在准备离线地图</p>
+            <p class="map-placeholder__desc">加载期间仍可查看图层和数据状态。</p>
           </div>
         </div>
         <div v-if="sceneError" class="map-placeholder">
           <div class="map-placeholder__card">
-            <p class="map-placeholder__title">三维场景不可用</p>
-            <p class="map-placeholder__desc">{{ sceneError }}</p>
-            <p class="hint">
-              右侧面板与清单仍可用。首次部署需把地图引擎的静态资源目录（Workers / Assets / ThirdParty /
-              Widgets）拷到
-              <code>public/cesium/</code>，并烘焙底图与地形资产（清单见
-              public/basemaps/README.md、public/terrain/README.md）。
-            </p>
+            <p class="map-placeholder__title">三维地图加载失败</p>
+            <p class="map-placeholder__desc">图层和数据状态仍可查看。</p>
+            <a-button size="small" @click="initScene">重试地图</a-button>
+            <details class="map-technical-error">
+              <summary>查看原因</summary>
+              <p class="hint">{{ sceneError }}</p>
+            </details>
           </div>
         </div>
       </template>
     </div>
 
     <!-- 左列：离线状态 + 未定位清单 + 未渲染的几何 -->
-    <div class="map-float-col map-float-col--left">
+    <div
+      id="map-status"
+      v-show="!compact || mobilePane === 'status'"
+      class="map-float-col map-float-col--left"
+      :inert="!compact && panelsCollapsed"
+    >
+      <a-alert v-if="compact && notes.length" type="warning" show-icon message="部分地图数据不可用">
+        <template #description><ul class="map-diagnostic"><li v-for="note in notes" :key="note">{{ note }}</li></ul></template>
+      </a-alert>
       <MapStatusPanel
         :status="machine.status"
         :status-reason="machine.reason"
@@ -464,7 +528,12 @@ watch(visibility, (value) => {
     </div>
 
     <!-- 右列：图层 + 风险筛选 + 要素详情；收起/展开按钮挂在「要素详情」卡右下角 -->
-    <div class="map-float-col map-float-col--right">
+    <div
+      id="map-layers"
+      v-show="!compact || mobilePane === 'layers'"
+      class="map-float-col map-float-col--right"
+      :inert="!compact && panelsCollapsed"
+    >
       <MapLayersPanel
         :counts="counts"
         :visibility="visibility"
@@ -478,12 +547,13 @@ watch(visibility, (value) => {
       >
         <template #detail-action>
           <a-button
+            v-if="!compact"
             class="map-panel-toggle"
             size="small"
             :aria-pressed="panelsCollapsed"
             title="收起两侧面板，只看地图"
             data-testid="toggle-panels"
-            @click="collapsePanels"
+            @click="panelsCollapsed = true"
           >
             收起 »
           </a-button>
@@ -493,31 +563,41 @@ watch(visibility, (value) => {
 
     <!-- 收起后右列滑出视口，留一枚悬浮按钮把它拉回来 -->
     <a-button
-      v-if="panelsCollapsed"
+      v-if="panelsCollapsed && !compact"
       class="map-expand-btn"
       size="small"
       title="展开两侧面板"
       data-testid="toggle-panels-expand"
-      :style="expandPos ? { right: `${expandPos.right}px`, top: `${expandPos.top}px` } : undefined"
       @click="panelsCollapsed = false"
     >
       « 展开面板
     </a-button>
 
-    <div class="scene-bar">
+    <div v-if="compact" class="map-pane-switch" role="group" aria-label="地图面板">
+      <a-button :aria-pressed="mobilePane === 'layers'" aria-controls="map-layers" @click="toggleMobilePane('layers')">
+        <template #icon><AppstoreOutlined aria-hidden="true" /></template>
+        图层与详情
+      </a-button>
+      <a-button :aria-pressed="mobilePane === 'status'" aria-controls="map-status" @click="toggleMobilePane('status')">
+        <template #icon><InfoCircleOutlined aria-hidden="true" /></template>
+        数据状态
+      </a-button>
+    </div>
+
+    <div class="scene-bar" :class="{ 'is-compact': compact }" v-show="!compact || mobilePane === null">
       <!-- 视野与缩放是 Cesium 相机的量，高德档下没有这两个数，别摆一个假"未就绪" -->
-      <span v-if="basemapMode === 'offline'">
+      <span v-if="!compact && basemapMode === 'offline'">
         视野：{{
           bbox
             ? `${bbox.west.toFixed(2)}, ${bbox.south.toFixed(2)} → ${bbox.east.toFixed(2)}, ${bbox.north.toFixed(2)}`
             : '未就绪'
         }}
       </span>
-      <span>· 上图要素 {{ plottedTotal }} · 未定位 {{ unlocated.length }}</span>
-      <span v-if="basemapMode === 'offline'">· 缩放 {{ zoom }}</span>
-      <span v-if="plan.clustered" class="hint">· 已按网格聚合（圆点上的数字=该格要素数）</span>
+      <span>上图 {{ plottedTotal }} · 未定位 {{ unlocated.length }}</span>
+      <span v-if="!compact && basemapMode === 'offline'">· 缩放 {{ zoom }}</span>
+      <span v-if="!compact && plan.clustered" class="hint">· 已按网格聚合（圆点上的数字=该格要素数）</span>
       <!-- 底图来源与坐标系要说在画面上：只写在代码注释里，看图的人无从知道落点被纠过偏 -->
-      <span class="hint">· 底图：{{ basemapSummary }}</span>
+      <span v-if="!compact" class="hint">· 底图：{{ basemapSummary }}</span>
     </div>
   </div>
 </template>
@@ -526,7 +606,8 @@ watch(visibility, (value) => {
 /* —— 全屏地图壳：铺满顶栏以下，所有信息都是浮层 —— */
 .map-shell {
   position: relative;
-  height: calc(100vh - var(--aeg-header-height));
+  height: 100%;
+  min-height: 400px;
   overflow: hidden;
 }
 
@@ -543,7 +624,7 @@ watch(visibility, (value) => {
   gap: var(--aeg-space-s3);
   padding: var(--aeg-space-s2) var(--aeg-space-s4);
   border: 1px solid var(--aeg-color-map-panel-border);
-  border-radius: var(--aeg-radius-pill);
+  border-radius: var(--aeg-radius-xl);
   background: var(--aeg-color-map-floatbar-bg);
   box-shadow: var(--aeg-shadow-md);
 }
@@ -565,7 +646,31 @@ watch(visibility, (value) => {
   display: none;
 }
 .map-floatbar__tools {
-  flex: 0 0 auto;
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  min-width: 0;
+  max-width: 100%;
+}
+.map-region {
+  width: 150px;
+  max-width: 100%;
+}
+.map-auto-refresh {
+  display: flex;
+  align-items: center;
+  gap: var(--aeg-space-s1);
+  white-space: nowrap;
+}
+@supports (backdrop-filter: blur(12px)) {
+  @media (prefers-reduced-transparency: no-preference) {
+    .map-floatbar {
+      background: color-mix(in srgb, var(--aeg-color-map-floatbar-bg) 92%, transparent);
+      backdrop-filter: blur(12px) saturate(120%);
+    }
+  }
 }
 /* 自动刷新开关抬到 24px 点击面（small 档 16px 高在值班台上点不准）。 */
 .map-floatbar__tools :deep(.ant-switch) {
@@ -575,9 +680,9 @@ watch(visibility, (value) => {
 /* 告警与定位提示：条下方浮一小块，不挡地图拖拽 */
 .map-floatnotes {
   position: absolute;
-  top: 78px;
-  left: var(--aeg-space-s3);
-  right: var(--aeg-space-s3);
+  top: var(--map-bar-end);
+  left: max(var(--aeg-space-s3), 25%);
+  right: max(var(--aeg-space-s3), 26%);
   z-index: 6;
   display: flex;
   flex-direction: column;
@@ -603,7 +708,7 @@ watch(visibility, (value) => {
   inset: 0;
   width: 100%;
   height: 100%;
-  background: #101923;
+  background: var(--aeg-color-sunken);
 }
 /* Cesium 版权行默认 10px、展开链接 14px 高：抬到 12px 字与 24px 点击面（真机探针量到 10px / 81×14）。
    颜色留给 Cesium 自带的深底白字，不动它以免改出对比度回归。 */
@@ -665,21 +770,26 @@ watch(visibility, (value) => {
   font-size: 12px;
   line-height: 1.7;
 }
+.map-technical-error {
+  margin-top: var(--aeg-space-s2);
+  font-size: var(--aeg-font-sm);
+}
+.map-technical-error summary {
+  cursor: pointer;
+}
 
-/* —— 左右两列悬浮面板 ——
-   列容器不吃鼠标事件，面板本体恢复 auto：中间地图仍可拖拽/缩放。
-   底色与主题相反（浅色主题用深蓝、深色主题用浅蓝），所以列内把"文字三档"整体反转：
-   子组件里的 .note/.label/.count/.risk-chip 都读这几个变量，一处反转、全列生效。 */
+/* 面板透出少量底图，文字对比度由地图专用令牌保证。 */
 .map-float-col {
   --aeg-color-text: var(--aeg-color-map-panel-text);
   --aeg-color-text-secondary: var(--aeg-color-map-panel-text-muted);
   --aeg-color-text-muted: var(--aeg-color-map-panel-text-muted);
   position: absolute;
-  top: 78px;
+  top: var(--map-bar-end);
   bottom: var(--aeg-space-s3);
   z-index: 5;
   width: 300px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 2px;
   pointer-events: none;
   scrollbar-width: thin;
@@ -696,15 +806,15 @@ watch(visibility, (value) => {
   width: 340px;
 }
 /* 收起态：两列滑出视口，底部状态条顺势铺满；收起的卡片也不再吃鼠标事件 */
-.map-shell.is-panels-collapsed .map-float-col--left {
+.map-shell.is-panels-collapsed:not(.is-compact) .map-float-col--left {
   opacity: 0;
   transform: translateX(calc(-100% - var(--aeg-space-s3)));
 }
-.map-shell.is-panels-collapsed .map-float-col--right {
+.map-shell.is-panels-collapsed:not(.is-compact) .map-float-col--right {
   opacity: 0;
   transform: translateX(calc(100% + var(--aeg-space-s3)));
 }
-.map-shell.is-panels-collapsed .map-float-col :deep(.ant-card) {
+.map-shell.is-panels-collapsed:not(.is-compact) .map-float-col :deep(.ant-card) {
   pointer-events: none;
 }
 .map-shell.is-panels-collapsed .scene-bar {
@@ -718,11 +828,9 @@ watch(visibility, (value) => {
   bottom: var(--aeg-space-s3);
   z-index: 2;
 }
-/* 收起后把两列拉回来的悬浮按钮：位置取收起那一刻按钮的角落（内联 style 覆盖），
-   没有量到位置时落到右上角兜底 */
 .map-expand-btn {
   position: absolute;
-  top: 78px;
+  top: var(--map-bar-end);
   right: var(--aeg-space-s3);
   z-index: 7;
   border-color: var(--aeg-color-map-panel-border);
@@ -782,6 +890,67 @@ watch(visibility, (value) => {
 .muted {
   font-size: 12px;
   color: var(--aeg-color-map-floatbar-text-muted);
+}
+.map-diagnostic {
+  margin: 0;
+  padding-inline-start: var(--aeg-space-s3);
+}
+.is-compact .map-floatbar {
+  gap: var(--aeg-space-s2);
+  padding-inline: var(--aeg-space-s3);
+}
+.is-compact .map-floatbar__tools {
+  flex-basis: 100%;
+}
+.is-compact .map-floatbar__tools :deep(.ant-radio-button-wrapper),
+.is-compact .map-floatbar__tools :deep(.ant-btn),
+.is-compact .map-settings-toggle,
+.map-pane-switch :deep(.ant-btn) {
+  min-height: 38px;
+}
+.is-compact .map-floatbar__tools :deep(.ant-radio-button-wrapper) {
+  line-height: 36px;
+}
+.is-compact .map-floatnotes {
+  inset-inline: var(--aeg-space-s3);
+}
+.is-compact .map-float-col {
+  inset-inline: var(--aeg-space-s3);
+  top: auto;
+  bottom: 76px;
+  width: auto;
+  max-height: min(55%, calc(100% - var(--map-bar-end) - 84px));
+  padding: var(--aeg-space-s2);
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-xl);
+  background: var(--aeg-color-map-panel-bg);
+  box-shadow: var(--aeg-shadow-lg);
+  pointer-events: auto;
+}
+.map-pane-switch {
+  position: absolute;
+  bottom: 30px;
+  inset-inline: var(--aeg-space-s3);
+  z-index: 7;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--aeg-space-s1);
+  padding: var(--aeg-space-s1);
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-map-floatbar-bg);
+  box-shadow: var(--aeg-shadow-md);
+}
+.map-pane-switch :deep(.ant-btn[aria-pressed='true']) {
+  background: var(--aeg-color-masthead-tab);
+  border-color: var(--aeg-color-masthead-tab);
+  color: var(--aeg-color-masthead-tab-ink);
+}
+.scene-bar.is-compact {
+  inset-inline: var(--aeg-space-s3);
+  bottom: 86px;
+  width: max-content;
+  max-width: calc(100% - 24px);
 }
 
 /* 1024 档：两列收窄，把中间的地图让出来 */

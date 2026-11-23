@@ -422,7 +422,7 @@ describe('检查器与运行中操作', () => {
     })
     const text = wrapper.text()
     expect(text).not.toContain('不接受 retry 字段')
-    expect(text).toContain('会随定义一起保存')
+    expect(text).toContain('会随草稿自动保存')
   })
 
   it('无实例时运行中操作整体不可用', () => {
@@ -923,7 +923,7 @@ describe('installUnsavedGuard：刷新前的未保存拦截', () => {
 
   it('编排页真的装上了它（只在工具函数里写着等于没写）', () => {
     const view = readRepoFile('frontend', 'src', 'views', 'WorkflowView.vue')
-    expect(view).toContain('installUnsavedGuard(() => documentStore.isDirty)')
+    expect(view).toContain('installUnsavedGuard(() => documentStore.hasUnsavedChanges)')
     expect(view).toContain('detachUnsavedGuard?.()')
   })
 })
