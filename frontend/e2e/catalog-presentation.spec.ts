@@ -9,15 +9,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 const READY = '[data-testid="editor-header"]'
 
-/** 主题令牌的六种强调色；getComputedStyle 统一回报 rgb() 写法。 */
-const ACCENTS = [
-  'rgb(37, 99, 235)',
-  'rgb(124, 58, 237)',
-  'rgb(15, 118, 110)',
-  'rgb(180, 83, 9)',
-  'rgb(190, 18, 60)',
-  'rgb(71, 85, 105)',
-]
+const ACCENT_SLOTS = ['blue', 'violet', 'teal', 'amber', 'rose', 'slate']
 
 const addBlock = async (page: Page): Promise<void> => {
   await page.locator('[data-testid="toolbar-add"]').click()
@@ -94,10 +86,20 @@ test('目录不可达：本地镜像仍画出节点与图标，横幅可重试�
       }
     }),
   )
+  const accents = await page.evaluate((slots) => {
+    const probe = document.createElement('span')
+    document.body.append(probe)
+    const colors = slots.map((slot) => {
+      probe.style.color = `var(--aeg-color-editor-accent-${slot})`
+      return getComputedStyle(probe).color
+    })
+    probe.remove()
+    return colors
+  }, ACCENT_SLOTS)
   for (const card of cards) {
     expect(card.known, `${card.type} 用了镜像里没有的类型`).toBe(true)
     expect(card.paths, `${card.type} 的图标没有路径`).toBeGreaterThan(0)
-    expect(ACCENTS, `${card.type} 的强调色 ${card.color} 不在令牌表里`).toContain(card.color)
+    expect(accents, `${card.type} 的强调色 ${card.color} 不在令牌表里`).toContain(card.color)
   }
 
   /* 重试：仍在离线，横幅不许消失，也不许把图弄丢。 */

@@ -16,17 +16,14 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
 
 <template>
   <div class="agent-board">
-    <div
+    <button
       v-for="agent in agents"
       :key="agent.agent_id"
+      type="button"
       class="agent"
       :data-testid="`agent-row-${agent.agent_id}`"
-      role="button"
-      tabindex="0"
       :aria-label="`查看智能体 ${agent.agent_id} 详情`"
       @click="emit('select', agent)"
-      @keydown.enter.prevent="emit('select', agent)"
-      @keydown.space.prevent="emit('select', agent)"
     >
       <span class="agent__dot" :class="agent.healthy ? 'is-live' : 'is-dead'" aria-hidden="true"></span>
       <span class="agent__id" :title="agent.agent_id">{{ agent.agent_id }}</span>
@@ -40,7 +37,7 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
         <span :class="{ 'agent__failed': agent.failed > 0 }">败 {{ agent.failed }}</span>
       </span>
       <span class="agent__chevron" aria-hidden="true">›</span>
-    </div>
+    </button>
     <div v-if="!agents.length" class="empty-hero" data-testid="agents-empty">
       <span class="empty-hero__icon" aria-hidden="true">◇</span>
       <div>
@@ -54,6 +51,7 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
 
 <style scoped>
 .agent-board {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -66,8 +64,12 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
   column-gap: var(--aeg-space-s3);
   height: 46px;
   padding: 0 var(--aeg-space-s2);
+  border: 0;
   border-bottom: 1px solid var(--aeg-color-border-subtle);
   border-radius: var(--aeg-radius-sm);
+  background: transparent;
+  font: inherit;
+  text-align: start;
   cursor: pointer;
   transition: background-color var(--aeg-motion-base) ease;
 }
@@ -136,5 +138,18 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
   color: var(--aeg-color-text-muted);
   font-size: var(--aeg-font-base);
   line-height: 1;
+}
+@container (max-width: 370px) {
+  .agent {
+    grid-template-columns: 7px minmax(0, 1fr) 46px 30px 56px 8px;
+    column-gap: 6px;
+    padding-inline: 4px;
+  }
+  .agent__type {
+    width: auto;
+  }
+  .agent__served {
+    gap: 3px;
+  }
 }
 </style>

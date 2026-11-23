@@ -27,6 +27,8 @@ body {
   background: var(--aeg-color-page);
   color: var(--aeg-color-text);
   font-family: var(--aeg-font-sans);
+  font-size: var(--aeg-font-base);
+  line-height: var(--aeg-lh-normal);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* 原生控件（勾选/单选）跟着主色走，不留浏览器默认蓝 */
@@ -67,6 +69,67 @@ body .ant-card {
 body .ant-card-hoverable:hover {
   border-color: var(--aeg-color-border-strong);
   box-shadow: var(--aeg-shadow-md);
+}
+
+/* 工作页的卡面和窄屏列表共用同一套层级。记录面保留实底，方便快速读数。 */
+body .ant-card.ops-surface {
+  min-width: 0;
+  border-radius: var(--aeg-radius-xl);
+  background: var(--aeg-color-overview-panel);
+  box-shadow: var(--aeg-shadow-sm);
+}
+.ops-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 156px), 1fr));
+  align-items: end;
+  gap: var(--aeg-space-s3);
+  min-width: 0;
+}
+.ops-filters__field {
+  display: grid;
+  gap: var(--aeg-space-s1);
+  min-width: 0;
+  font-size: var(--aeg-font-sm);
+  color: var(--aeg-color-text-secondary);
+}
+.ops-filters__field > :is(.ant-select, .ant-input, .ant-input-affix-wrapper, .ant-input-number) {
+  width: 100%;
+  min-width: 0;
+}
+.ops-list {
+  display: grid;
+  gap: var(--aeg-space-s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ops-record {
+  padding: var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-overview-tile);
+  color: var(--aeg-color-text);
+  overflow-wrap: anywhere;
+}
+.ops-record__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--aeg-space-s2);
+  margin-bottom: var(--aeg-space-s1);
+  font-weight: var(--aeg-weight-semibold);
+}
+.ops-record__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--aeg-space-s1) var(--aeg-space-s2);
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
+.ops-record__meta time {
+  font-variant-numeric: tabular-nums;
 }
 
 /* —— 卡头：一条实色分隔线就够，渐变细线与 ◆ 已退役 —— */

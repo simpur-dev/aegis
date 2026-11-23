@@ -116,7 +116,7 @@ describe('推演页的显示口径', () => {
     expect(mockedRun).toHaveBeenCalledTimes(1)
     expect(mockedRun.mock.calls[0]?.[0]).toMatchObject({ scenarios: SIMULATION_DEFAULTS.scenarios, playbook: '转移' })
     expect(wrapper.find('[data-testid="sim-note"]').text()).toContain('未实测初值')
-    expect(wrapper.find('[data-testid="stat-角色档位"]').text()).toBe('rule')
+    expect(wrapper.find('[data-testid="stat-角色档位"]').text()).toBe('规则推演')
     expect(wrapper.find('[data-testid="stat-推演轮数"]').text()).toBe('4')
     // 规则档也得报票数：不报就等于把"角色到底被问过没有"藏进语气里
     expect(wrapper.find('[data-testid="sim-roles"]').text()).toContain('应问 16 次、实问 16 次、回落 0 次')

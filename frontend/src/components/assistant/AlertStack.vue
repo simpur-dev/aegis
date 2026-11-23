@@ -81,6 +81,7 @@ const shown = computed(() => openCards.value)
   <section class="alerts" data-testid="alert-stack">
     <header class="alerts__bar">
       <span class="alerts__title">在案告警</span>
+      <span v-if="shown.length" class="alerts__count" :aria-label="`${shown.length} 条在案告警`">{{ shown.length }}</span>
       <span v-if="syncing" class="alerts__sync">对账中…</span>
       <span v-else-if="syncError" class="alerts__sync alerts__sync--bad">{{ syncError }}</span>
       <button class="alerts__refresh" type="button" data-testid="alert-refresh" @click="refresh()">对账</button>
@@ -183,6 +184,14 @@ const shown = computed(() => openCards.value)
   font-weight: var(--aeg-weight-semibold);
   color: var(--aeg-color-text);
 }
+.alerts__count {
+  padding: 0 var(--aeg-space-s2);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-tag-red-bg);
+  color: var(--aeg-tag-red-text);
+  font-size: var(--aeg-font-sm);
+  font-variant-numeric: tabular-nums;
+}
 .alerts__sync {
   font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-muted);
@@ -197,7 +206,7 @@ const shown = computed(() => openCards.value)
   background: transparent;
   color: var(--aeg-color-text-secondary);
   font-size: var(--aeg-font-sm);
-  min-height: 24px;
+  min-height: 28px;
   padding: 2px 8px;
   cursor: pointer;
 }
@@ -220,7 +229,8 @@ const shown = computed(() => openCards.value)
   background: var(--aeg-color-card);
   color: var(--aeg-color-text);
   font-size: var(--aeg-font-xs);
-  padding: 3px 8px;
+  min-height: 28px;
+  padding: var(--aeg-space-s1) var(--aeg-space-s2);
 }
 
 .alerts__notices {
@@ -286,19 +296,21 @@ const shown = computed(() => openCards.value)
   gap: var(--aeg-space-s2);
   padding: var(--aeg-space-s2);
   border: 1px solid var(--aeg-color-border);
-  border-left-width: 3px;
-  border-radius: var(--aeg-radius-sm);
-  background: var(--aeg-color-card);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-sunken);
 }
 .alert--drill {
-  border-style: dashed;
+  border-left-color: var(--aeg-tag-orange-line);
 }
 .alert__level {
   flex: none;
   font-size: var(--aeg-font-xs);
   font-weight: var(--aeg-weight-semibold);
   white-space: nowrap;
-  padding-top: 2px;
+  align-self: flex-start;
+  padding: 2px var(--aeg-space-s1);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-overview-panel);
 }
 .alert__body {
   flex: 1;
@@ -308,6 +320,7 @@ const shown = computed(() => openCards.value)
   margin: 0;
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: var(--aeg-space-s2);
   font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text);
@@ -316,7 +329,10 @@ const shown = computed(() => openCards.value)
 .alert__flag {
   flex: none;
   font-size: var(--aeg-font-xs);
-  color: var(--aeg-color-status-warning);
+  padding-inline: var(--aeg-space-s1);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-tag-orange-bg);
+  color: var(--aeg-tag-orange-text);
 }
 .alert__flag--muted {
   color: var(--aeg-color-text-muted);
@@ -334,10 +350,12 @@ const shown = computed(() => openCards.value)
 
 .alert__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--aeg-space-s2);
   margin-top: var(--aeg-space-s2);
 }
 .alert__btn {
+  min-height: 26px;
   border: 1px solid var(--aeg-color-border-strong);
   border-radius: var(--aeg-radius-sm);
   background: transparent;

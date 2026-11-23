@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { message } from 'ant-design-vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ReloadOutlined } from '@ant-design/icons-vue'
+import { useMediaQuery } from '@vueuse/core'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import api, { ApiError } from '@/api/client'
+import api from '@/api/client'
 import { fetchIntegrations } from '@/api/integrations'
-import type { TaskUnit, WarningRecord } from '@/api/types'
+import type { RiskLevel, TaskUnit, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
 import PageHero from '@/components/PageHero.vue'
 import FreshnessBar from '@/components/FreshnessBar.vue'
@@ -18,9 +19,16 @@ const REFRESH_MS = 15_000
 const EVENT_WINDOW = 200
 /** 列表取多少条预警。也写死一处，"这只是最近 N 条"那句话才与实取窗口一致。 */
 const WARNING_LIST_LIMIT = 100
+const PAGE_SIZE = 10
+const compact = useMediaQuery('(max-width: 720px)')
+const riskLevels = [1, 2, 3, 4, 5] as const
 
 const warnings = ref<WarningRecord[]>([])
 const loading = ref(false)
+const loadError = ref('')
+const search = ref('')
+const levelFilter = ref<RiskLevel | ''>('')
+const tablePage = ref(1)
 const open = ref(false)
 const current = ref<WarningRecord | null>(null)
 const currentTasks = ref<TaskUnit[]>([])
@@ -80,6 +88,20 @@ const columns = computed(() => [
 const orderedWarnings = computed<WarningRecord[]>(() =>
   [...warnings.value].sort((a, b) => (a.generated_at < b.generated_at ? 1 : a.generated_at > b.generated_at ? -1 : 0)),
 )
+const visibleWarnings = computed(() => {
+  const query = search.value.trim().toLowerCase()
+  return orderedWarnings.value.filter((warning) =>
+    (levelFilter.value === '' || warning.risk_level === Number(levelFilter.value)) &&
+    (!query || [warning.warning_id, warning.title_zh, HAZARD_LABELS[warning.hazard_type], ...warning.region_codes]
+      .some((text) => text?.toLowerCase().includes(query))),
+  )
+})
+const mobileWarnings = computed(() => visibleWarnings.value.slice((tablePage.value - 1) * PAGE_SIZE, tablePage.value * PAGE_SIZE))
+const filtersActive = computed(() => Boolean(search.value.trim() || levelFilter.value !== ''))
+const emptyTitle = computed(() => loading.value ? '正在读取预警' : loadError.value ? '暂时无法读取预警' : filtersActive.value ? '未找到符合条件的预警' : '还没有预警')
+const deliveryLabels = { pending: '待投递', delivered: '已送达', failed: '投递失败', retried: '重试送达' }
+watch([search, levelFilter], () => { tablePage.value = 1 })
+watch(visibleWarnings, (rows) => { tablePage.value = Math.min(tablePage.value, Math.max(1, Math.ceil(rows.length / PAGE_SIZE))) })
 
 /**
  * 取满窗口 = 有预警在这一页之外。真机把这台进程演练到 113 条时量到：列表取 100 条，
@@ -95,10 +117,12 @@ const windowNote = computed<string>(() => {
 })
 
 async function load(): Promise<void> {
+  if (loading.value) return
   loading.value = true
   try {
     const [data, legs] = await Promise.all([api.warnings({ limit: WARNING_LIST_LIMIT }), fetchIntegrations().catch(() => null)])
     warnings.value = data.items
+    loadError.value = ''
     // 取到数的那一刻才算"更新于"；失败路径不动它，让"多旧"继续长大（比假装新鲜诚实）
     fetchedAt.value = new Date().toISOString()
     // 台账总数单独取一次，失败绝不把整次取数带红：窗口那句提示可以只报"最近 N 条"。
@@ -115,7 +139,7 @@ async function load(): Promise<void> {
       deliveryMode.value = row?.driver ?? null
     }
   } catch (error) {
-    message.error(error instanceof ApiError ? `加载预警失败：${error.message}` : '加载预警失败')
+    loadError.value = error instanceof Error ? error.message : '网络请求未完成'
   } finally {
     loading.value = false
   }
@@ -146,6 +170,8 @@ async function inspect(record: WarningRecord): Promise<void> {
     if (chain.task_units?.length && currentTasks.value.length < chain.task_units.length) {
       tasksError.value = `${chain.task_units.length} 个任务单元里有 ${chain.task_units.length - currentTasks.value.length} 个取不回来，上面只列取到的`
     }
+  } catch (error) {
+    if (seq === inspectSeq) tasksError.value = error instanceof Error ? `无法回查关联任务：${error.message}` : '无法回查关联任务'
   } finally {
     // 只由"当前这次点开"收尾：否则上一条的迟到响应会把这一条的加载圈关掉，
     // 看着像已经取完了。
@@ -154,6 +180,7 @@ async function inspect(record: WarningRecord): Promise<void> {
 }
 
 function reachText(record: WarningRecord): string {
+  if (!record.deliveries.length) return '无投递记录'
   const delivered = record.deliveries.filter((d) => d.status === 'delivered' || d.status === 'retried').length
   return `${delivered}/${record.deliveries.length} 通道成功`
 }
@@ -185,32 +212,87 @@ function onDrawerVisible(visible: boolean): void {
   drawerTrap?.detach()
   drawerTrap = null
   if (!visible) return
-  drawerTrap = attachFocusTrap(document.querySelector('.ant-drawer-content-wrapper'), () => {
+  drawerTrap = attachFocusTrap(document.querySelector('.warnings-inspector .ant-drawer-content-wrapper'), () => {
     open.value = false
   })
 }
 </script>
 
 <template>
-  <div>
-    <PageHero :status="heroStatus" title="预警发布" badge="靶向触达" caption="红色预警含北斗短报文兜底通道。">
+  <div class="warnings-page">
+    <PageHero surface :status="heroStatus" title="预警台账" caption="查阅已生成的预警、投递回执与关联处置任务。">
       <template #actions>
-        <a-button @click="load">刷新</a-button>
+        <a-button :loading="loading" @click="load">
+          <template #icon><ReloadOutlined aria-hidden="true" /></template>
+          刷新
+        </a-button>
       </template>
     </PageHero>
 
-    <a-card size="small" title="预警发布与靶向触达" :loading="loading">
-      <FreshnessBar :fetched-at="fetchedAt" :label="freshLabel" :interval-ms="REFRESH_MS" />
-      <p v-if="windowNote" data-testid="window-note" style="margin: 0 0 6px; color: var(--aeg-color-text-secondary); font-size: 12px">
+    <a-card class="ops-surface" size="small" title="预警记录">
+      <div class="ops-filters warning-filters">
+        <label class="ops-filters__field">
+          <span>查找预警</span>
+          <input v-model="search" class="warning-filter" type="search" placeholder="标题、区域、预警编号" data-testid="warning-search" />
+        </label>
+        <label class="ops-filters__field">
+          <span>风险等级</span>
+          <select v-model="levelFilter" class="warning-filter" data-testid="warning-level">
+            <option value="">全部等级</option>
+            <option v-for="level in riskLevels" :key="level" :value="level">{{ RISK_LABELS[level] }}</option>
+          </select>
+        </label>
+        <a-button v-if="filtersActive" class="warning-reset" @click="search = ''; levelFilter = ''">清除筛选</a-button>
+      </div>
+      <FreshnessBar :fetched-at="fetchedAt" :label="freshLabel" :interval-ms="REFRESH_MS" :stacked="compact" />
+      <a-alert
+        v-if="loadError"
+        type="error"
+        show-icon
+        class="warning-note"
+        data-testid="warning-load-error"
+        :message="`加载预警失败：${loadError}${warnings.length ? '。当前显示上次读取的记录' : ''}`"
+      />
+      <p v-if="filtersActive" class="warning-note" data-testid="warning-filter-count">最近加载的 {{ warnings.length }} 条中有 {{ visibleWarnings.length }} 条匹配</p>
+      <p v-if="windowNote" class="warning-note" data-testid="window-note">
         {{ windowNote }}
       </p>
+      <div v-if="compact" :aria-busy="loading">
+        <ul v-if="mobileWarnings.length" class="ops-list">
+          <li v-for="record in mobileWarnings" :key="record.warning_id" class="ops-record warning-row">
+            <div class="ops-record__head">
+              <span class="warning-risk" :style="{ '--warning-color': RISK_COLORS[record.risk_level] }">
+                {{ RISK_LABELS[record.risk_level] }}
+              </span>
+              <time class="warning-time" :datetime="record.generated_at">{{ formatOperatingTime(record.generated_at) }}</time>
+            </div>
+            <button class="warning-title-link" type="button" @click="inspect(record)">{{ record.title_zh }}</button>
+            <div class="ops-record__meta">
+              <span>{{ HAZARD_LABELS[record.hazard_type] }} · {{ record.region_codes.join('、') || '区域未标注' }}</span>
+              <span>{{ reachTitle }} {{ reachText(record) }}</span>
+            </div>
+          </li>
+        </ul>
+        <a-pagination
+          v-if="visibleWarnings.length > PAGE_SIZE"
+          v-model:current="tablePage"
+          class="warning-pagination"
+          :total="visibleWarnings.length"
+          :page-size="PAGE_SIZE"
+          :show-size-changer="false"
+          simple
+        />
+        <p v-if="!mobileWarnings.length" class="ops-record" data-testid="warnings-empty">{{ emptyTitle }}</p>
+      </div>
       <a-table
+        v-else
         :columns="columns"
-        :data-source="orderedWarnings"
+        :data-source="visibleWarnings"
         row-key="warning_id"
-        :pagination="{ pageSize: 10 }"
+        :pagination="{ pageSize: PAGE_SIZE, current: tablePage, showSizeChanger: false }"
         size="small"
         :scroll="{ x: 'max-content' }"
+        @change="tablePage = $event.current ?? 1"
       >
         <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：中文值班台上一句英文，
              还分不清"确实还没有"与"取数没成功"，也不说下一步去哪造一条。 -->
@@ -218,14 +300,17 @@ function onDrawerVisible(visible: boolean): void {
           <div class="empty-hero" data-testid="warnings-empty">
             <span class="empty-hero__icon" aria-hidden="true">◇</span>
             <div>
-              <div class="empty-hero__title">还没有预警</div>
-              <div class="empty-hero__desc">这个进程启动后没有产出过预警——在监测页发起一次演练，或提交一条会命中阈值的上报，这里就会有内容。</div>
-              <router-link class="empty-hero__action" to="/monitor">去监测页发起演练 →</router-link>
+              <div class="empty-hero__title">{{ emptyTitle }}</div>
+              <div v-if="!loadError && !loading && !filtersActive" class="empty-hero__desc">现场预警和演练预警生成后会出现在此处。</div>
+              <router-link v-if="!loadError && !loading && !filtersActive" class="empty-hero__action" to="/monitor">查看监测 →</router-link>
             </div>
           </div>
         </template>
         <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'hazard'">{{ HAZARD_LABELS[record.hazard_type as keyof typeof HAZARD_LABELS] }}</template>
+          <template v-if="column.key === 'title_zh'">
+            <button class="warning-title-link" type="button" @click="inspect(record)">{{ record.title_zh }}</button>
+          </template>
+          <template v-else-if="column.key === 'hazard'">{{ HAZARD_LABELS[record.hazard_type as keyof typeof HAZARD_LABELS] }}</template>
           <template v-else-if="column.key === 'level'">
             <a-tag :color="RISK_COLORS[record.risk_level as keyof typeof RISK_COLORS]">
               {{ RISK_LABELS[record.risk_level as keyof typeof RISK_LABELS] }}
@@ -252,7 +337,7 @@ function onDrawerVisible(visible: boolean): void {
       </a-table>
     </a-card>
 
-    <a-drawer v-model:open="open" :width="720" title="预警详情与处置任务" @after-open-change="onDrawerVisible">
+    <a-drawer v-model:open="open" root-class-name="warnings-inspector" width="min(720px, 100vw)" title="预警详情与处置任务" @after-open-change="onDrawerVisible">
       <template v-if="current">
         <a-descriptions :column="1" bordered size="small">
           <!-- 助手页的「解释一条预警」要 wrn_ 编号，此前整个界面没有一处显示它，
@@ -273,6 +358,7 @@ function onDrawerVisible(visible: boolean): void {
 
         <h4>通道投递与回执</h4>
         <a-table
+          class="warning-deliveries"
           :data-source="current.deliveries"
           :columns="[
             { title: '通道', dataIndex: 'channel', key: 'channel' },
@@ -280,11 +366,13 @@ function onDrawerVisible(visible: boolean): void {
             { title: '覆盖人数', dataIndex: 'audience_count', key: 'audience_count' },
             { title: '回执时刻（UTC+8）', dataIndex: 'receipt_at', key: 'receipt_at' },
           ]"
-          row-key="(r: { channel: string; attempted_at: string }) => r.channel + r.attempted_at"
+          :row-key="(row: WarningRecord['deliveries'][number]) => `${row.channel}-${row.attempted_at}`"
           :pagination="false"
           size="small"
+          :scroll="compact ? { x: 460 } : undefined"
         >
           <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'status'">{{ deliveryLabels[record.status as keyof typeof deliveryLabels] }}</template>
             <template v-if="column.key === 'receipt_at'">
               {{ record.receipt_at ? formatOperatingTime(record.receipt_at) : '无回执' }}
             </template>
@@ -318,8 +406,84 @@ function onDrawerVisible(visible: boolean): void {
           row-key="task_unit_id"
           :pagination="false"
           size="small"
+          :scroll="compact ? { x: 540 } : undefined"
         />
       </template>
     </a-drawer>
   </div>
 </template>
+
+<style scoped>
+.warning-filters {
+  grid-template-columns: minmax(150px, 2fr) minmax(110px, 1fr) auto;
+  margin-bottom: var(--aeg-space-s3);
+}
+.warning-filter {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: var(--aeg-space-s1) var(--aeg-space-s2);
+  border: 1px solid var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-sunken);
+  color: var(--aeg-color-text);
+  font: inherit;
+}
+.warning-filter::placeholder {
+  color: var(--aeg-color-text-muted);
+}
+.warning-note,
+.warning-pagination {
+  margin-block: var(--aeg-space-s2);
+}
+.warning-note,
+.warning-time {
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
+.warning-title-link {
+  display: inline-block;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--aeg-color-brand-hover);
+  font-weight: var(--aeg-weight-semibold);
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.warning-title-link:hover {
+  text-decoration: underline;
+}
+.warning-row .warning-title-link {
+  min-height: 36px;
+}
+.warning-risk {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--aeg-space-s1);
+  color: var(--aeg-color-text);
+}
+.warning-risk::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning-color);
+  content: '';
+}
+.warning-pagination {
+  text-align: right;
+}
+@media (max-width: 720px) {
+  .warning-filters {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: var(--aeg-space-s2);
+  }
+  .warning-reset {
+    justify-self: start;
+  }
+  .warning-filter {
+    min-height: 40px;
+  }
+}
+</style>

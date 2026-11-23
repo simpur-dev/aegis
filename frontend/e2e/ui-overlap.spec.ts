@@ -119,6 +119,8 @@ const inspect = (opts: { contrastAllow: string; scope?: string; inOverlay?: bool
     return clip(box, viewportBox())
   }
   const visible = (el: Element) => {
+    const closedDetails = el.closest('details:not([open])')
+    if (closedDetails && !closedDetails.querySelector(':scope > summary')?.contains(el)) return false
     const cs = getComputedStyle(el)
     if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.05) return false
     const r = el.getBoundingClientRect()
@@ -470,6 +472,7 @@ ${r.navTruncated.join('\n')}`,
           const frame = await page.evaluate(() => {
             const head = document.querySelector('[data-testid="editor-header"]')?.getBoundingClientRect()
             const canvas = document.querySelector('[data-testid="workflow-canvas"]')?.getBoundingClientRect()
+            const drawer = document.querySelector('.assistant-drawer.is-open')?.getBoundingClientRect()
             return {
               heads: document.querySelectorAll('[data-testid="editor-header"]').length,
               sidebars: document.querySelectorAll('[data-testid="sidebar"]').length,
@@ -479,6 +482,8 @@ ${r.navTruncated.join('\n')}`,
               ).length,
               canvas: canvas ? { top: canvas.top, bottom: canvas.bottom, width: canvas.width } : null,
               headH: head ? head.height : 0,
+              headBottom: head?.bottom ?? 0,
+              drawerLeft: drawer?.left ?? innerWidth,
               ih: innerHeight,
             }
           })
@@ -490,9 +495,9 @@ ${r.navTruncated.join('\n')}`,
           expect(frame.headH, '编辑器头部高度不是 56px（Dify top-14 那档）').toBeCloseTo(56, 0)
           expect(frame.canvas, '编辑器画布没渲染').not.toBeNull()
           if (frame.canvas) {
-            expect(frame.canvas.top, '画布没从头部下沿开始').toBeCloseTo(frame.headH, 0)
+            expect(frame.canvas.top, '画布没从头部下沿开始').toBeCloseTo(frame.headBottom, 0)
             expect(frame.canvas.bottom, '画布没铺到视口底').toBeCloseTo(frame.ih, 0)
-            expect(frame.canvas.width, `画布宽度 ${frame.canvas.width}，没占满整宽`).toBeCloseTo(width, 0)
+            expect(frame.canvas.width, '画布没铺满助手抽屉左侧的可用宽度').toBeCloseTo(frame.drawerLeft, 0)
           }
         }
       })

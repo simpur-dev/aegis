@@ -26,8 +26,6 @@ export interface RiskCell {
   degraded: boolean
   isMock: boolean
   disclaimer: string
-  /** 已校准的场景锚点；缺省表示“未配置场景位置”，图上不放点 */
-  anchor?: { x: number; y: number }
   updatedAt?: string | null
 }
 
@@ -75,7 +73,6 @@ const mockNotice = computed<string>(() => {
           <span v-if="cell.isMock" class="cell__mock" :title="cell.disclaimer || '该结论来自模拟数据'">模拟数据</span>
           <span v-if="cell.degraded" class="cell__degraded">降级：平台规则兜底</span>
           <span v-else class="cell__status">处置中</span>
-          <span v-if="!cell.anchor" class="cell__noscene" data-testid="risk-no-scene">未配置场景位置</span>
         </div>
       </div>
     </button>
@@ -200,12 +197,5 @@ const mockNotice = computed<string>(() => {
   border-radius: 3px;
   color: var(--aeg-color-status-warning);
   font-weight: var(--aeg-weight-semibold);
-}
-/* 没有校准锚点的记录如实标注：列表里在、图上没有点，不拿随机坐标补 */
-.cell__noscene {
-  padding: 0 4px;
-  border: 1px dashed var(--aeg-color-border-strong);
-  border-radius: 3px;
-  color: var(--aeg-color-text-muted);
 }
 </style>

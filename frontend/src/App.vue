@@ -15,23 +15,8 @@ import { NAV_GROUPS } from '@/router'
 import { useTheme } from '@/theme/useTheme'
 import { installSelectA11y } from '@/utils/selectA11y'
 
-/**
- * 外壳（2026-10-30 起）：透明顶栏 + 全站悬浮助手抽屉，没有侧栏。
- *
- * 沿革：10-17 曾把八页平铺收并为可折叠侧栏分组导航（值班主线 / 系统）；
- * 10-30 `46bf57a` 把侧栏整块移除，导航改回顶栏横向一排。但 `router.ts` 的 `NAV_GROUPS`
- * 仍是导航真源——分组数据保留，只是渲染成横排，当前项用半透明白色胶囊标出。
- * 顶栏右列自左向右固定「状态胶囊 → 浅/深 → AEGIS 品牌」；主题只给两枚按钮，
- * 老用户的 `aegis.theme=system` 仍由 useTheme 按系统偏好解析。
- * 智能助手不占导航分组：`AssistantDock` 是全站右下角的悬浮图标，点开右侧抽屉、
- * 主内容让位（不盖住内容）；`/workflow` 走 `meta.immersive`，顶栏/令牌条/页脚整块不渲染，
- * 但助手图标在沉浸页同样可见。
- *
- * 颜色一律读 `--aeg-*` 令牌（真源 src/theme/tokens.ts），动效只走 `--aeg-motion-*`：
- * 这两条由 src/uiTheme.spec.ts 的棘轮门禁钉住，写字面色就是往回退。
- */
-
 const route = useRoute()
+const contentRegion = ref<HTMLElement | null>(null)
 const immersive = computed(() => route.meta?.immersive === true)
 const currentKey = computed(() => (route.name as string) ?? 'dashboard')
 
@@ -125,59 +110,16 @@ const statusTitle = computed<string>(() =>
     <div class="app-shell" :class="{ 'is-immersive': immersive }">
       <!-- 全局雾底：所有页面共用（含一张图与流程编排）——浅色/深色各一档，地图画布自己仍是深空底 -->
       <div class="app-backdrop" aria-hidden="true" />
-      <!-- 侧栏已退役（2026-10-30）：导航搬到顶栏做横向一排，顶栏不再铺底色。
-           当前页用半透明白色圆角底标出；右侧自左向右是「状态 → 浅/深 → 品牌」。 -->
       <div class="main-col">
+        <a v-if="!immersive" href="#aegis-main" class="skip-content" @click.prevent="contentRegion?.focus()">跳到主要内容</a>
         <header v-if="!immersive" class="topbar">
-          <div class="topbar__lead">
-            <div class="topbrand" data-testid="brand">
-              <!-- 雪山徽标：仓库里没有原版 Logo 资源（git 历史也没有），这里用内联雪山轮廓占位；
-                   拿到原图后替换这个 svg 即可，尺寸/布局不用改。 -->
-              <span class="brand-mark" aria-hidden="true">
-                <svg viewBox="0 0 40 40" role="presentation">
-                  <path d="M2 32 L12 11 L18 21 L23 13 L38 32 Z" fill="var(--aeg-color-brand)" />
-                  <path d="M12 11 L16 18 L13 20 L9.5 17.5 Z" fill="var(--aeg-color-text)" />
-                  <path d="M23 13 L26.5 19 L24 20.5 L21 18 Z" fill="var(--aeg-color-text)" />
-                </svg>
-              </span>
-              <span class="topbrand__text">
-                <span class="brand-name">AEGIS 山地灾害协同调控平台</span>
-                <span class="brand-sub">西藏山地灾害多智能体协同调控</span>
-              </span>
-            </div>
-            <div class="topbar-right">
-              <div class="nav-status" :title="statusTitle" data-testid="nav-status">
-                <span class="status-fact">
-                  <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
-                  <span class="status-pill__text">{{ health ? '后端在线' : '后端不可达' }}</span>
-                </span>
-                <span class="status-fact" data-testid="stream-badge">
-                  <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
-                  <span class="status-pill__text">{{ streamLabel }}</span>
-                </span>
-                <span class="status-fact" data-testid="events-badge" title="最近事件条数">
-                  <span class="events-count">{{ events.length }}</span>
-                  <span class="status-pill__text">事件</span>
-                </span>
-              </div>
-              <div class="theme-switch" role="group" aria-label="主题">
-                <button
-                  v-for="opt in themeOptions"
-                  :key="opt.value"
-                  type="button"
-                  class="theme-switch__btn"
-                  :class="{ 'is-on': resolved === opt.value }"
-                  :aria-pressed="resolved === opt.value"
-                  :title="`${opt.label}主题`"
-                  :data-testid="`theme-${opt.value}`"
-                  @click="setMode(opt.value)"
-                >
-                  {{ opt.short }}
-                </button>
-              </div>
-            </div>
+          <div class="topbrand" data-testid="brand">
+            <span class="brand-logo" aria-hidden="true"></span>
+            <span class="topbrand__text">
+              <span class="brand-name">AEGIS 山地灾害协同调控平台</span>
+              <span class="brand-sub">西藏山地灾害多智能体协同调控</span>
+            </span>
           </div>
-
           <nav class="topnav" aria-label="主导航">
             <template v-for="group in NAV_GROUPS" :key="group.key">
               <router-link
@@ -207,18 +149,60 @@ const statusTitle = computed<string>(() =>
               <span class="topnav__short">助手</span>
             </router-link>
           </nav>
+
+          <div class="topbar-right">
+            <div class="nav-status" :title="statusTitle" data-testid="nav-status">
+              <span class="status-fact">
+                <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
+                <span class="status-pill__text">{{ health ? '后端在线' : '后端不可达' }}</span>
+              </span>
+              <span class="status-fact" data-testid="stream-badge">
+                <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
+                <span class="status-pill__text">{{ streamLabel }}</span>
+              </span>
+              <span class="status-fact" data-testid="events-badge" title="最近事件条数">
+                <span class="events-count">{{ events.length }}</span>
+                <span class="status-pill__text">事件</span>
+              </span>
+            </div>
+            <div class="theme-switch" role="group" aria-label="主题">
+              <button
+                v-for="opt in themeOptions"
+                :key="opt.value"
+                type="button"
+                class="theme-switch__btn"
+                :class="{ 'is-on': resolved === opt.value }"
+                :aria-pressed="resolved === opt.value"
+                :title="`${opt.label}主题`"
+                :data-testid="`theme-${opt.value}`"
+                @click="setMode(opt.value)"
+              >
+                {{ opt.short }}
+              </button>
+            </div>
+          </div>
         </header>
 
         <!-- Ⅰ/Ⅱ 级告警的顶部常驻条：抽屉会被自动展开，这条是"关了抽屉也看得见"的兜底 -->
-        <div v-if="urgentCards.length > 0 && route.name !== 'dashboard'" class="alert-banner" data-testid="alert-banner">
+        <div
+          v-if="urgentCards.length > 0 && route.name !== 'dashboard'"
+          class="alert-banner"
+          :class="{ 'alert-banner--assistant': route.name === 'assistant', 'alert-banner--editor': immersive }"
+          data-testid="alert-banner"
+        >
           <span class="alert-banner__dot" aria-hidden="true"></span>
           <span class="alert-banner__text" data-testid="alert-banner-text">
             {{ urgentCards.length }} 条红色/橙色告警未确认
           </span>
-          <span class="alert-banner__meta">在案 {{ badgeCount }} 条 ｜ 处置入口在右侧助手抽屉</span>
+          <span class="alert-banner__meta">
+            在案 {{ badgeCount }} 条 ｜ {{ route.name === 'assistant' ? '可在告警面板中处置' : '处置入口在右侧助手抽屉' }}
+          </span>
         </div>
 
         <main
+          id="aegis-main"
+          ref="contentRegion"
+          tabindex="-1"
           class="main-content"
           :class="{ 'is-immersive': immersive, 'is-map': route.name === 'map', 'is-desk': route.name === 'assistant' }"
         >
@@ -234,7 +218,12 @@ const statusTitle = computed<string>(() =>
       </div>
       <!-- 全站悬浮的智能助手：所有页面都有（含沉浸式编排页），位置/开合自己持久化 -->
       <!-- 助手页本身就是全屏会话：再叠一份抽屉会出现两份共享同一会话的时间线 -->
-      <AssistantDock v-if="route.name !== 'assistant'" :immersive="immersive" />
+      <AssistantDock
+        v-if="route.name !== 'assistant'"
+        :immersive="immersive"
+        :avoid-map-bar="route.name === 'map'"
+        :keep-overview-visible="route.name === 'dashboard'"
+      />
     </div>
   </a-config-provider>
 </template>
@@ -249,13 +238,13 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text);
 }
 
-/* —— 顶栏导航（侧栏退役后横向排）——
-   文字直接落在雾底上：没有底色、没有分隔线；当前页是一枚半透明白色胶囊。 */
 .topnav {
+  grid-area: nav;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--aeg-space-s1);
   min-width: 0;
+  border-top: 1px solid var(--aeg-color-border);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -266,11 +255,11 @@ const statusTitle = computed<string>(() =>
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  height: 32px;
-  padding: 0 var(--aeg-space-s3);
-  border-radius: var(--aeg-radius-pill);
+  height: 36px;
+  padding: 0 var(--aeg-space-s4);
+  border-radius: var(--aeg-radius-md);
   color: var(--aeg-color-text-secondary);
-  font-size: var(--aeg-font-sm);
+  font-size: var(--aeg-font-base);
   font-weight: var(--aeg-weight-semibold);
   text-decoration: none;
   white-space: nowrap;
@@ -283,31 +272,41 @@ const statusTitle = computed<string>(() =>
   color: var(--aeg-color-text);
 }
 .topnav__item.is-on {
-  background: var(--aeg-color-topbar-pill-bg);
-  box-shadow: inset 0 0 0 1px var(--aeg-color-glass-border);
-  color: var(--aeg-color-text);
+  background: var(--aeg-color-masthead-tab);
+  box-shadow: 0 3px 12px var(--aeg-color-brand-soft);
+  color: var(--aeg-color-masthead-tab-ink);
 }
 
-/* 品牌：从侧栏搬到顶栏最右。图标 + 两行字横排——竖排会顶破 56px 的栏高。 */
+html[data-theme='dark'] .topnav__item.is-on {
+  background: linear-gradient(120deg, var(--aeg-color-masthead-tab), var(--aeg-color-brand));
+}
+
 .topbrand {
+  grid-area: brand;
   display: flex;
-  flex: 0 0 auto;
   align-items: center;
-  gap: var(--aeg-space-s2);
-  padding-left: var(--aeg-space-s3);
-  border-left: 1px solid var(--aeg-color-glass-border);
+  gap: var(--aeg-space-s3);
+  min-width: 0;
 }
 .brand-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
+  position: relative;
+  flex: 0 0 40px;
+  height: 40px;
+  border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-md);
-  background: var(--aeg-color-brand);
-  color: var(--aeg-color-text-inverse);
-  font-size: var(--aeg-font-md);
-  font-weight: var(--aeg-weight-bold);
+  background: var(--aeg-color-brand-soft);
+}
+.brand-logo::before,
+.brand-logo::after {
+  content: '';
+  position: absolute;
+  inset: 8px 5px;
+  background: var(--aeg-color-overview-accent);
+  clip-path: polygon(0 93%, 32% 19%, 49% 49%, 64% 25%, 100% 93%);
+}
+.brand-logo::after {
+  background: var(--aeg-color-text);
+  clip-path: polygon(23% 39%, 32% 19%, 41% 36%, 33% 32%, 29% 41%, 26% 36%, 56% 39%, 64% 25%, 73% 42%, 65% 35%, 61% 43%, 59% 38%);
 }
 .topbrand__text {
   display: flex;
@@ -316,7 +315,8 @@ const statusTitle = computed<string>(() =>
   line-height: var(--aeg-lh-tight);
 }
 .brand-name {
-  font-size: var(--aeg-font-sm);
+  font-family: var(--aeg-font-display);
+  font-size: var(--aeg-font-md);
   font-weight: var(--aeg-weight-bold);
   letter-spacing: 0.02em;
   color: var(--aeg-color-text);
@@ -327,9 +327,6 @@ const statusTitle = computed<string>(() =>
   white-space: nowrap;
 }
 
-/* —— 顶栏 ——
-   透明：不铺底色、不画分隔线、不留阴影，导航文字直接落在页面雾底上。
-   右侧自左向右是「状态胶囊 → 浅/深 → 品牌」，整组贴右，三者同一竖直中心。 */
 .main-col {
   display: flex;
   flex-direction: column;
@@ -339,79 +336,28 @@ const statusTitle = computed<string>(() =>
 }
 .topbar {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  height: var(--aeg-header-height);
-  padding: 0 var(--aeg-space-s6);
-  /* 深蓝品牌横幅：纯色叠层，不再铺会被裁切的山地装饰图 */
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--aeg-color-page) 96%, var(--aeg-color-brand) 4%) 0%,
-    var(--aeg-color-page) 100%
-  );
-  border-bottom: 1px solid var(--aeg-color-glass-border);
-  box-shadow: none;
+  z-index: 1;
+  isolation: isolate;
+  display: grid;
+  flex: 0 0 var(--aeg-header-height);
+  grid-template: 'brand facts' 1fr 'nav nav' 1fr / minmax(0, 1fr) auto;
+  column-gap: var(--aeg-space-s3);
+  padding-inline: var(--aeg-space-s6);
+  border-bottom: 1px solid var(--aeg-color-border);
+  background: var(--aeg-color-masthead-bg);
 }
-/* 两层：上层品牌 + 状态/主题，下层导航。品牌从右侧挪回左上，视觉重心与设计稿一致。 */
-.topbar__lead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--aeg-space-s4);
-  min-height: 52px;
-  border-bottom: 1px solid var(--aeg-color-glass-border);
-}
-.topbar__lead .topbrand {
-  padding-left: 0;
-  border-left: none;
-}
-/* 雪山徽标占位（仓库缺原版资源）：40px，玻璃底衬托 */
-.brand-mark {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--aeg-color-glass-border);
-  border-radius: var(--aeg-radius-md);
-  background: color-mix(in srgb, var(--aeg-color-brand) 14%, transparent);
-}
-.brand-mark svg {
-  width: 32px;
-  height: 32px;
-}
-.brand-name {
-  font-size: 17px;
-  letter-spacing: 0.01em;
-}
-.brand-sub {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  color: var(--aeg-color-text-muted);
-}
-.topnav {
-  height: 48px;
-  gap: 4px;
-  background: color-mix(in srgb, var(--aeg-color-page) 55%, transparent);
-}
-.topnav__item {
-  height: 36px;
-  padding: 0 var(--aeg-space-s4);
-  border-radius: var(--aeg-radius-md);
-}
-/* 选中项：冰川青→辅助蓝的渐变 + 柔和外发光（参考图一的“发光胶囊”） */
-.topnav__item.is-on {
-  border: none;
-  background: linear-gradient(135deg, var(--aeg-color-brand) 0%, var(--aeg-color-brand-alt) 100%);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--aeg-color-brand) 55%, transparent),
-    0 6px 18px -8px var(--aeg-color-brand);
-  color: var(--aeg-color-text-inverse);
+html[data-theme='dark'] .topbar::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 0 auto;
+  width: min(36vw, 420px);
+  opacity: 0.25;
+  background: url('/backgrounds/tibet-relief.webp') center / cover;
+  mask-image: linear-gradient(90deg, transparent, black 30%);
 }
 .topbar-right {
+  grid-area: facts;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -541,6 +487,21 @@ const statusTitle = computed<string>(() =>
   min-height: 0;
   overflow-y: auto;
   padding: var(--aeg-space-s5) var(--aeg-space-s6);
+  transition: margin-right var(--aeg-motion-base) ease;
+}
+.skip-content {
+  position: absolute;
+  top: var(--aeg-space-s2);
+  left: var(--aeg-space-s4);
+  z-index: var(--aeg-z-header);
+  padding: var(--aeg-space-s2) var(--aeg-space-s3);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-masthead-tab);
+  color: var(--aeg-color-masthead-tab-ink);
+  transform: translateY(-160%);
+}
+.skip-content:focus {
+  transform: none;
 }
 
 /* Ⅰ/Ⅱ 级告警顶部条：红色系语义槽（status-danger），只做"有事"的宣告，不做操作面 */
@@ -563,18 +524,33 @@ const statusTitle = computed<string>(() =>
 .alert-banner__text {
   font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
-  /* 深色主题的 status-danger(#F05252) 压在这条半透青底上只有 3.89:1；
-     risk-text-1 两主题都过 AA（深色 #FCA5A5），且与"红/橙告警"同一语义。 */
-  color: var(--aeg-risk-text-1);
+  color: var(--aeg-color-status-danger);
 }
 .alert-banner__meta {
   margin-left: auto;
   font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-secondary);
 }
-/* 助手抽屉是覆盖式浮层（fixed 贴右，z-index 高于主内容）：打开时盖在内容上，
-   不挤压主布局——右列智能体面板与地图保持原宽（用户问题 #4：两者同时占位 → 拥挤）。
-   宽度真源仍是 --assistant-drawer-w，抽屉左侧拖拽时只改浮层自身宽度。 */
+/* 助手抽屉打开时把主内容整体往左挤（抽屉本身固定贴右，不再盖在内容上）；
+   宽度只读 --assistant-drawer-w 一个真源，抽屉左侧拖拽时同步跟随 */
+html.assistant-drawer-open .main-content {
+  margin-right: var(--assistant-drawer-w, clamp(320px, 25vw, 520px));
+}
+@media (max-width: 720px) {
+  html.assistant-drawer-open .main-content {
+    margin-right: 0;
+  }
+  .alert-banner--assistant {
+    margin-inline: var(--aeg-space-s3);
+  }
+  .alert-banner--assistant .alert-banner__meta {
+    display: none;
+  }
+}
+/* 拖宽度手柄时关掉过渡：否则主内容会滞后于指针 */
+html.assistant-resizing .main-content {
+  transition: none;
+}
 /* 一张图全屏：主内容不再留内边距，地图自己铺满顶栏以下 */
 .main-content.is-map {
   padding: 0;
@@ -594,9 +570,19 @@ const statusTitle = computed<string>(() =>
   flex: 1 0 auto;
 }
 .main-content.is-immersive {
-  height: 100vh;
   overflow: hidden;
   padding: 0;
+}
+.alert-banner--editor {
+  padding-block: var(--aeg-space-s1);
+}
+@media (max-width: 720px) {
+  .alert-banner--editor {
+    margin-inline: var(--aeg-space-s3);
+  }
+  .alert-banner--editor .alert-banner__meta {
+    display: none;
+  }
 }
 .main-col:has(.main-content.is-immersive),
 .app-shell.is-immersive {
@@ -622,7 +608,7 @@ const statusTitle = computed<string>(() =>
 .topnav__short {
   display: none;
 }
-@media (max-width: 1290px) {
+@media (max-width: 780px) {
   .status-pill__text {
     position: absolute;
     width: 1px;
@@ -653,18 +639,38 @@ const statusTitle = computed<string>(() =>
     display: inline;
   }
   .topnav__item {
-    padding: 6px 10px;
+    padding-inline: var(--aeg-space-s2);
   }
   .brand-sub {
     display: none;
   }
+  .brand-name {
+    font-size: var(--aeg-font-sm);
+  }
+  .topbar,
+  .main-content,
+  .main-content.is-desk {
+    padding-inline: var(--aeg-space-s3);
+  }
+  .topbar,
+  .topbar-right,
+  .topbrand {
+    gap: var(--aeg-space-s2);
+  }
+  .brand-logo {
+    flex-basis: 32px;
+    height: 32px;
+  }
+  .brand-logo::before,
+  .brand-logo::after {
+    inset: 5px 4px;
+  }
 }
 
-/* ——— 全局指挥中心背景（2026-11-20 用户裁决：换成任务书指定的深蓝波浪素材） ———
-   素材是离线资产 `public/backgrounds/aegis-command-waves.png`（不外链任何 CDN）：
-   深蓝底 + 青蓝波浪光带，深色主题近乎原图呈现（波浪是这版观感的主角，不再糊成色团）；
-   浅色主题把同一张素材压到 14% 透明度叠在浅画布渐变上——只留一层淡淡的波纹肌理，
-   顶栏深字仍落在浅底上。渐变兜底用画布令牌，两主题各一套。所有页面共用。
+/* ——— 全局雾底（2026-11-19 用户裁决恢复） ———
+   素材是离线资产 `public/backgrounds/aegis-horizon.webp`（不外链任何 CDN）：
+   淡蓝→粉紫的地平线渐变，模糊 46px + 放大 1.1 后只剩柔和的色团，不抢卡片的字。
+   渐变兜底用画布令牌，两主题各一套。所有页面共用（含一张图与流程编排）。
    模糊走背景图自身的 filter（一次性栅格化），不用 backdrop-filter——后者每帧重采样。 */
 .app-shell {
   background: transparent;
@@ -680,44 +686,35 @@ const statusTitle = computed<string>(() =>
 .app-backdrop::before {
   content: '';
   position: absolute;
-  inset: -24px;
-  background-image: url('/backgrounds/aegis-command-waves.png');
+  inset: -48px;
+  background-image: url('/backgrounds/aegis-horizon.webp');
   background-size: cover;
   background-position: center;
-  filter: blur(6px) brightness(1.4) saturate(0.6);
-  transform: scale(1.04);
-  opacity: 0.14;
+  filter: blur(46px) saturate(1.12);
+  transform: scale(1.1);
+  opacity: 0.95;
 }
-/* 柔光：左上偏白、右侧一点淡蓝，压在浅画布上给波浪肌理再加一层空间感 */
+/* 光斑随浅深主题调整，保留面板之间的层次。 */
 .app-backdrop::after {
   content: '';
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 18% 8%, var(--aeg-color-halo), transparent 55%),
+    radial-gradient(circle at 18% 8%, var(--aeg-color-canvas-glow), transparent 55%),
     radial-gradient(circle at 88% 78%, var(--aeg-color-brand-soft), transparent 60%);
   opacity: 0.55;
 }
 html[data-theme='dark'] .app-backdrop::before {
-  filter: saturate(1.12) brightness(1.02);
-  opacity: 1;
+  filter: blur(46px) brightness(0.4) saturate(1.35);
+  opacity: 0.22;
 }
-/* 深色：上下两条压暗 scrim 保证顶栏/页脚的字始终落在近实色底上（波浪亮脊不抢字），
-   中间留给波浪原图；scrim 收薄一点让深蓝波浪成为画面主角（用户问题 #1）。 */
 html[data-theme='dark'] .app-backdrop::after {
   background:
-    linear-gradient(180deg, var(--aeg-color-page) 0%, transparent 22%),
-    linear-gradient(0deg, var(--aeg-color-page) 0%, transparent 12%),
-    radial-gradient(circle at 84% 86%, var(--aeg-color-halo), transparent 55%),
-    radial-gradient(circle at 10% 34%, var(--aeg-color-brand-soft), transparent 52%);
-  opacity: 0.82;
+    radial-gradient(ellipse at 54% 75%, var(--aeg-color-canvas-glow), transparent 55%),
+    radial-gradient(ellipse at 92% 41%, var(--aeg-color-brand-soft), transparent 52%);
+  opacity: 0.8;
 }
 
-/* 顶栏透明：不再盖玻璃底（导航文字直接落在雾底上）；只保留层级，压住雾底 */
-.topbar {
-  position: relative;
-  z-index: 1;
-}
 .main-col {
   position: relative;
   z-index: 1;

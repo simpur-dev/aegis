@@ -140,6 +140,8 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     const loading = ref(false)
     const autoSaveEnabled = ref(true)
     const draftStash = ref<DraftStash | null>(null)
+    const canEdit = computed(() => autoSaveEnabled.value && !loading.value)
+    const editableDocument = computed(() => (canEdit.value ? document.value : null))
 
     /**
      * 基线必须是响应式的：`isDirty` 是 computed，只改普通变量不会让它失效，
@@ -161,12 +163,17 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     const definition = computed<WorkflowDef | null>(() =>
       document.value === null ? null : definitionFromDocument(document.value),
     )
+    const editableDefinition = computed(() => (canEdit.value ? definition.value : null))
 
     const lineageId = computed<string>(() => document.value?.lineage_id ?? '')
 
     const isDirty = computed<boolean>(
       () => document.value !== null && canonicalDocumentJson(document.value) !== baseline.value,
     )
+    const hasUnsavedChanges = computed(() => {
+      const stash = draftStash.value
+      return isDirty.value || (stash !== null && canonicalDocumentJson(stash.document) !== stash.baseline)
+    })
 
     const structuralErrors = computed<string[]>(() =>
       document.value === null ? ['画布尚未初始化'] : structuralErrorsOf(document.value),
@@ -206,8 +213,8 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     const statusText = computed<string>(() => saveStateLabel(saveState.value))
 
     /** 只读版本/实例视图照常渲染，但不允许撤销把内容写回。 */
-    const canUndo = computed<boolean>(() => autoSaveEnabled.value && canUndoHistory(historyState.value))
-    const canRedo = computed<boolean>(() => autoSaveEnabled.value && canRedoHistory(historyState.value))
+    const canUndo = computed<boolean>(() => canEdit.value && canUndoHistory(historyState.value))
+    const canRedo = computed<boolean>(() => canEdit.value && canRedoHistory(historyState.value))
     const undoLabel = computed<string | null>(() => undoHistoryLabel(historyState.value))
     const redoLabel = computed<string | null>(() => redoHistoryLabel(historyState.value))
 
@@ -260,17 +267,17 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       suppressWatch = false
     }
 
-    function applyServerDraft(draft: WorkflowDraft): void {
+    function applyServerDraft(draft: WorkflowDraft, keepHistory = false): void {
       const laidOut = ensureDocumentLayout(draft.document)
       revision.value = draft.revision
       baseWorkflowId.value = draft.base_workflow_id
-      applyDocument(laidOut)
+      if (!keepHistory || document.value === null || !documentsEqual(document.value, laidOut)) applyDocument(laidOut)
       saveState.value = { kind: 'clean', savedAt: draft.updated_at }
       error.value = null
     }
 
     function setMeta(meta: { name?: string; description?: string }): void {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null) return
       pendingHistoryLabel = HISTORY_LABELS.rename
       document.value = {
@@ -281,7 +288,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function seedPositions(next: Readonly<Record<string, Position>>): void {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null) return
       let changed = false
       const positions = { ...current.layout.positions }
@@ -299,7 +306,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
 
     /** at 为拖放落点（画布坐标）；省略时继续用视图的自动分层坐标。 */
     function addNode(node: NodeDef, at?: Position): void {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null) return
       const positions = { ...current.layout.positions }
       if (at !== undefined) {
@@ -328,7 +335,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       edges: readonly EdgeDef[],
       positions: Readonly<Record<string, Position>>,
     ): boolean {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null || nodes.length === 0) return false
       const nextPositions = { ...current.layout.positions }
       for (const [nodeId, position] of Object.entries(positions)) {
@@ -345,7 +352,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function moveNodes(positions: Readonly<Record<string, Position>>): void {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null) return
       let changed = false
       const next = { ...current.layout.positions }
@@ -361,7 +368,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function moveNode(nodeId: string, position: Position): void {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null) return
       pendingHistoryLabel = HISTORY_LABELS.moveNodes
       document.value = {
@@ -375,7 +382,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
 
     /** 备注只活在版式里：不进 WorkflowDef，因此不改变引擎眼中的图身份。 */
     function addNote(at?: Position): string | null {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null || current.layout.notes.length >= MAX_STICKY_NOTES) return null
       const taken = new Set(current.layout.notes.map((note) => note.note_id))
       let index = current.layout.notes.length + 1
@@ -397,7 +404,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     type NotePatch = Partial<Pick<StickyNote, 'x' | 'y' | 'width' | 'height' | 'text' | 'color'>>
 
     function updateNote(noteId: string, patch: NotePatch): void {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null) return
       const index = current.layout.notes.findIndex((note) => note.note_id === noteId)
       if (index < 0) return
@@ -408,7 +415,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function removeNote(noteId: string): void {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null) return
       pendingHistoryLabel = HISTORY_LABELS.setNotes
       document.value = {
@@ -418,7 +425,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function autoLayout(): void {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null) return
       const next = autoLayoutDocument(current)
       if (next === current) return
@@ -439,7 +446,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function patchNode(nodeId: string, patch: NodePatch): void {
-      const current = definition.value
+      const current = editableDefinition.value
       if (current === null) return
       pendingHistoryLabel = HISTORY_LABELS.updateNode
       applyGraph(patchNodeDef(current, nodeId, patch))
@@ -447,7 +454,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
 
     /** 返回 false 表示被本地规则（自环/重复边）挡下。 */
     function connect(source: string, target: string): boolean {
-      const current = definition.value
+      const current = editableDefinition.value
       if (current === null || source === target) return false
       const next = upsertEdge(current, source, target, '')
       if (next === current) return false
@@ -462,7 +469,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
      * join/branch 这类声明了 upstream 的配置同步改指新节点，避免“连了线但 upstream 还是旧的”。
      */
     function insertNodeBetween(edge: { source: string; target: string }, node: NodeDef, at?: Position): boolean {
-      const current = document.value
+      const current = editableDocument.value
       if (current === null) return false
       const index = current.edges.findIndex((item) => item.source === edge.source && item.target === edge.target)
       const original = current.edges[index]
@@ -511,7 +518,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function updateEdgeCondition(id: string, condition: string): void {
-      const current = definition.value
+      const current = editableDefinition.value
       if (current === null) return
       if (!current.edges.some((edge, index) => edgeId(index, edge) === id)) return
       const next = setEdgeConditionInDef(current, id, condition)
@@ -520,7 +527,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function removeEdge(id: string): void {
-      const current = definition.value
+      const current = editableDefinition.value
       if (current === null) return
       const next = removeEdgeFromDef(current, id)
       if (next.edges.length === current.edges.length) return
@@ -529,7 +536,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function removeNodes(nodeIds: Iterable<string>): void {
-      const current = definition.value
+      const current = editableDefinition.value
       if (current === null) return
       const next = removeNodesFromDef(current, nodeIds)
       if (next.nodes.length === current.nodes.length) return
@@ -539,7 +546,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
 
     /** Delete/Backspace 一次删掉选中的节点与连线；只写一次文档，历史里也是一步。 */
     function removeSelection(nodeIds: Iterable<string>, edgeIds: Iterable<string>): boolean {
-      const current = definition.value
+      const current = editableDefinition.value
       if (current === null) return false
       const doomedNodes = new Set(nodeIds)
       const doomedEdges = new Set(edgeIds)
@@ -555,7 +562,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function syncUpstreamConfig(nodeId: string): void {
-      const current = definition.value
+      const current = editableDefinition.value
       if (current === null) return
       const node = current.nodes.find((item) => item.node_id === nodeId)
       if (node === undefined || !('upstream' in node.config)) return
@@ -575,7 +582,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function undo(): boolean {
-      if (!autoSaveEnabled.value) return false
+      if (!canEdit.value) return false
       const state = historyState.value
       if (state === null || !canUndoHistory(state)) return false
       const next = undoHistory(state)
@@ -586,7 +593,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function redo(): boolean {
-      if (!autoSaveEnabled.value) return false
+      if (!canEdit.value) return false
       const state = historyState.value
       if (state === null || !canRedoHistory(state)) return false
       const next = redoHistory(state)
@@ -600,9 +607,14 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     function rebaseHistory(next: WorkflowDocument): void {
       const state = historyState.value
       if (state === null) return
+      const attachLineage = (entry: typeof state.present) => ({
+        ...entry,
+        document: { ...entry.document, lineage_id: next.lineage_id },
+      })
       historyState.value = {
-        ...state,
+        past: state.past.map(attachLineage),
         present: { document: cloneWorkflowDocument(next), label: state.present.label },
+        future: state.future.map(attachLineage),
       }
     }
 
@@ -612,6 +624,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       clearDraftStash()
       loadToken += 1
       saveToken += 1
+      loading.value = false
       revision.value = 0
       baseWorkflowId.value = null
       versions.value = []
@@ -621,49 +634,49 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       error.value = null
     }
 
-    async function refreshVersions(): Promise<void> {
-      const lineage = lineageId.value
-      if (lineage === '') {
-        versions.value = []
-        return
-      }
+    async function readVersions(lineage: string): Promise<WorkflowVersionSummary[]> {
+      if (lineage === '') return []
       try {
-        versions.value = await gateway.listVersions(lineage)
+        return await gateway.listVersions(lineage)
       } catch (caught) {
         // 还没有任何发布版本时 listVersions 回 404；这不是"打开失败"。
-        if (caught instanceof WorkflowError && caught.code === 'not_found') versions.value = []
-        else throw caught
+        if (caught instanceof WorkflowError && caught.code === 'not_found') return []
+        throw caught
       }
     }
 
-    async function runLoad(label: string, action: () => Promise<void>): Promise<boolean> {
+    async function refreshVersions(): Promise<void> {
+      const lineage = lineageId.value
+      const token = loadToken
+      const rows = await readVersions(lineage)
+      if (token === loadToken && lineage === lineageId.value) versions.value = rows
+    }
+
+    async function runLoad(label: string, action: (isCurrent: () => boolean) => Promise<void>): Promise<boolean> {
+      const token = ++loadToken
+      const isCurrent = () => token === loadToken
+      cancelScheduledSave()
+      abortInFlight()
       loading.value = true
       error.value = null
       try {
-        await action()
-        return true
+        await action(isCurrent)
+        return isCurrent()
       } catch (caught) {
+        if (!isCurrent()) return false
         error.value = `${label}：${describeFailure(caught)}`
+        if (canAutosave.value && isDirty.value && saveState.value.kind !== 'conflict') void debouncedSave()
         return false
       } finally {
-        loading.value = false
+        if (isCurrent()) loading.value = false
       }
     }
 
     async function openLineage(lineage: string): Promise<boolean> {
-      return runLoad('打开定义失败', async () => {
+      return runLoad('打开定义失败', async (isCurrent) => {
+        const [draft, rows] = await Promise.all([gateway.getDraft(lineage), readVersions(lineage)])
+        if (!isCurrent()) return
         clearDraftStash()
-        const token = ++loadToken
-        cancelScheduledSave()
-        abortInFlight()
-        const [draft, rows] = await Promise.all([
-          gateway.getDraft(lineage),
-          gateway.listVersions(lineage).catch((caught: unknown) => {
-            if (caught instanceof WorkflowError && caught.code === 'not_found') return []
-            throw caught
-          }),
-        ])
-        if (token !== loadToken) return
         autoSaveEnabled.value = true
         applyServerDraft(draft)
         versions.value = rows
@@ -671,20 +684,18 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     async function openVersion(workflowId: string): Promise<boolean> {
-      return runLoad('打开版本失败', async () => {
-        clearDraftStash()
-        const token = ++loadToken
-        cancelScheduledSave()
-        abortInFlight()
+      return runLoad('打开版本失败', async (isCurrent) => {
         const doc = await gateway.getVersionDocument(workflowId)
-        if (token !== loadToken) return
-        // 版本/实例是只读视图：编辑照常渲染，但不会把改动写进这条 lineage 的草稿。
+        if (!isCurrent()) return
+        const rows = await readVersions(doc.lineage_id)
+        if (!isCurrent()) return
+        clearDraftStash()
         autoSaveEnabled.value = false
         revision.value = 0
         baseWorkflowId.value = workflowId
         applyDocument(ensureDocumentLayout(doc))
         saveState.value = { kind: 'clean', savedAt: nowIso() }
-        await refreshVersions()
+        versions.value = rows
       })
     }
 
@@ -695,6 +706,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       cancelScheduledSave()
       abortInFlight()
       loadToken += 1
+      loading.value = false
       autoSaveEnabled.value = false
       revision.value = 0
       baseWorkflowId.value = null
@@ -762,11 +774,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       return true
     }
 
-    async function createRemoteLineage(): Promise<string> {
-      const current = document.value
-      if (current === null) throw new Error('画布尚未初始化')
-      const name = current.name.trim() === '' ? DEFAULT_NAME : current.name.trim()
-      const draft = await gateway.createLineage(name)
+    function acceptNewLineage(draft: WorkflowDraft): void {
       revision.value = draft.revision
       baseWorkflowId.value = draft.base_workflow_id
       // createLineage 分配 lineage；本地快照要跟上，PUT 才过得了"路径与文档一致"的校验。
@@ -776,7 +784,6 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
         suppressWatch = false
         rebaseHistory(document.value)
       }
-      return draft.lineage_id
     }
 
     async function putDraftWithRetry(
@@ -818,23 +825,28 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       const controller = new AbortController()
       inFlightController = controller
       saveState.value = { kind: 'saving', startedAt: nowIso() }
+      const isCurrent = () => token === saveToken && loadAtStart === loadToken && !controller.signal.aborted
 
       try {
         let lineage = lineageId.value
-        if (lineage === '') lineage = await createRemoteLineage()
-        if (token !== saveToken || loadAtStart !== loadToken) return false
+        if (lineage === '') {
+          const draft = await gateway.createLineage(current.name.trim(), controller.signal)
+          if (!isCurrent()) return false
+          acceptNewLineage(draft)
+          lineage = draft.lineage_id
+        }
 
         const sent = document.value
         if (sent === null) return false
         const sentCanonical = canonicalDocumentJson(sent)
         const draft = await putDraftWithRetry(lineage, sent, revision.value, controller.signal)
-        if (token !== saveToken || loadAtStart !== loadToken) return false
+        if (!isCurrent()) return false
 
         revision.value = draft.revision
         baseWorkflowId.value = draft.base_workflow_id
         error.value = null
-        if (document.value !== null && canonicalDocumentJson(document.value) === sentCanonical) {
-          baseline.value = sentCanonical
+        baseline.value = sentCanonical
+        if (!isDirty.value) {
           saveState.value = { kind: 'clean', savedAt: draft.updated_at }
           return true
         }
@@ -843,7 +855,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
         if (autoSaveEnabled.value) void debouncedSave()
         return true
       } catch (caught) {
-        if (isAbortError(caught)) return false
+        if (!isCurrent() || isAbortError(caught)) return false
         if (caught instanceof WorkflowError && caught.code === 'revision_conflict') {
           const raw = caught.details.server_revision
           saveState.value = {
@@ -888,6 +900,7 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     async function publish(): Promise<boolean> {
+      if (loading.value) return false
       const current = document.value
       if (current === null || !autoSaveEnabled.value) {
         error.value = '当前是只读版本视图，先恢复为草稿再发布'
@@ -900,24 +913,37 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
 
       loading.value = true
       error.value = null
+      const token = loadToken
       try {
         const saved = await flush()
-        if (!saved) return false
+        if (!saved || token !== loadToken) return false
         const lineage = lineageId.value
         if (lineage === '') {
           error.value = '草稿尚未建立 lineage，无法发布'
           return false
         }
-        await gateway.publish(lineage, revision.value)
-        const [draft, rows] = await Promise.all([gateway.getDraft(lineage), gateway.listVersions(lineage)])
-        applyServerDraft(draft)
-        versions.value = rows
+        const published = await gateway.publish(lineage, revision.value)
+        if (token !== loadToken) return false
+        revision.value += 1
+        baseWorkflowId.value = published.workflow_id
+        versions.value = [published, ...versions.value.filter((row) => row.workflow_id !== published.workflow_id)
+          .map((row) => ({ ...row, is_current: false }))]
+        const [draft, rows] = await Promise.allSettled([gateway.getDraft(lineage), readVersions(lineage)])
+        if (token !== loadToken) return false
+        if (draft.status === 'fulfilled') applyServerDraft(draft.value, true)
+        if (rows.status === 'fulfilled' && rows.value.some((row) => row.workflow_id === published.workflow_id)) {
+          versions.value = rows.value
+        }
+        if (draft.status === 'rejected' || rows.status === 'rejected') {
+          error.value = `v${published.version} 已发布，版本信息暂未同步，可重新打开定义查看。`
+        }
         return true
       } catch (caught) {
+        if (token !== loadToken) return false
         error.value = `发布失败：${describeFailure(caught)}`
         return false
       } finally {
-        loading.value = false
+        if (token === loadToken) loading.value = false
       }
     }
 
@@ -927,10 +953,11 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
         error.value = '当前画布还没有 lineage，无法恢复版本'
         return false
       }
-      return runLoad('恢复版本失败', async () => {
-        cancelScheduledSave()
-        abortInFlight()
+      if (loading.value) return false
+      return runLoad('恢复版本失败', async (isCurrent) => {
         const draft = await gateway.revertToDraft(lineage, workflowId)
+        if (!isCurrent()) return
+        clearDraftStash()
         autoSaveEnabled.value = true
         applyServerDraft(draft)
         await refreshVersions()
@@ -940,9 +967,10 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     /** 冲突处置一：以服务器草稿为准，本地未保存的修改丢掉（调用方先确认）。 */
     async function reloadDraft(): Promise<boolean> {
       const lineage = lineageId.value
-      if (lineage === '') return false
-      return runLoad('读取服务器草稿失败', async () => {
+      if (lineage === '' || loading.value) return false
+      return runLoad('读取服务器草稿失败', async (isCurrent) => {
         const draft = await gateway.getDraft(lineage)
+        if (!isCurrent()) return
         autoSaveEnabled.value = true
         applyServerDraft(draft)
         await refreshVersions()
@@ -952,24 +980,29 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
     /** 冲突处置二：拿服务器 revision 覆盖写回，本地内容保留。 */
     async function overwriteDraft(): Promise<boolean> {
       const lineage = lineageId.value
-      if (lineage === '') return false
+      if (lineage === '' || loading.value) return false
       loading.value = true
       error.value = null
+      const token = loadToken
       try {
         const server = await gateway.getDraft(lineage)
+        if (token !== loadToken) return false
         revision.value = server.revision
         baseWorkflowId.value = server.base_workflow_id
         saveState.value = { kind: 'dirty', since: nowIso() }
         return await saveNow('manual')
       } catch (caught) {
+        if (token !== loadToken) return false
         error.value = `覆盖草稿失败：${describeFailure(caught)}`
         return false
       } finally {
-        loading.value = false
+        if (token === loadToken) loading.value = false
       }
     }
 
     function dispose(): void {
+      loadToken += 1
+      loading.value = false
       cancelScheduledSave()
       abortInFlight()
     }
@@ -987,7 +1020,9 @@ export function createDocumentStore(gateway: WorkflowGateway = workflowApi) {
       error,
       loading,
       isDirty,
+      hasUnsavedChanges,
       autoSaveEnabled,
+      canEdit,
       canUndo,
       canRedo,
       undoLabel,

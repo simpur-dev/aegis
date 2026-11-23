@@ -1,9 +1,7 @@
 /**
  * 主题模式：`light` / `dark` / `system` 三态，选择持久化到 localStorage。
  *
- * 默认是 `dark`（2026-11-21 指挥中心裁决：本平台是深海军蓝的大屏指挥舱，
- * 首屏就应该是任务书指定的深蓝波浪底，而不是跟随系统落到浅灰）。
- * 老用户显式存过的 `light` / `system` 仍然压过默认值，顶栏切换器三态能力不变。
+ * 首次打开显示深色值班界面。已保存的偏好（含跟随系统）继续生效。
  */
 
 import { computed, ref, watch } from 'vue'
@@ -20,7 +18,6 @@ function readStored(): ThemePreference {
     const raw = localStorage.getItem(STORAGE_KEY)
     return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'dark'
   } catch {
-    // 隐私模式/禁用存储时 localStorage 会抛：不能因此白屏，退回指挥中心默认深色
     return 'dark'
   }
 }

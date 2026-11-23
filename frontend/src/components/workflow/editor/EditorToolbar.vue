@@ -1,11 +1,12 @@
 <script setup lang="ts">
 /** 画布左上角的浮动工具条：添加节点 / 备注 / 自动布局 / 适配画布（对齐 Dify 画布浮层控件的位置与尺寸）。 */
-const props = defineProps<{ disabled?: boolean; mode?: 'pointer' | 'hand' }>()
+const props = defineProps<{ disabled?: boolean; mode?: 'pointer' | 'hand'; showInspect?: boolean }>()
 const emit = defineEmits<{
   add: [event: MouseEvent]
   note: []
   layout: []
   fit: []
+  inspect: []
   mode: [mode: 'pointer' | 'hand']
 }>()
 </script>
@@ -26,14 +27,15 @@ const emit = defineEmits<{
     </button>
     <button
       type="button"
-      class="ed-toolbar__btn"
+      class="ed-toolbar__btn ed-toolbar__wide-action"
       :disabled="disabled"
       data-testid="toolbar-layout"
       @click="emit('layout')"
     >
       自动布局
     </button>
-    <button type="button" class="ed-toolbar__btn" @click="emit('fit')">适配画布</button>
+    <button type="button" class="ed-toolbar__btn ed-toolbar__wide-action" @click="emit('fit')">适配画布</button>
+    <button v-if="showInspect" type="button" class="ed-toolbar__btn" @click="emit('inspect')">节点配置</button>
     <button
       type="button"
       class="ed-toolbar__btn"
@@ -55,15 +57,16 @@ const emit = defineEmits<{
   gap: 4px;
   padding: 4px;
   border: 1px solid var(--aeg-color-border);
-  border-radius: 10px;
-  background: var(--aeg-color-editor-panel);
+  flex-wrap: wrap;
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-overview-panel);
   box-shadow: var(--aeg-shadow-md);
 }
 .ed-toolbar__btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
+  min-height: 34px;
   padding: 0 10px;
   border: 1px solid transparent;
   border-radius: 7px;
@@ -96,5 +99,24 @@ const emit = defineEmits<{
 .ed-toolbar__plus {
   font-size: 15px;
   line-height: 1;
+}
+@supports (backdrop-filter: blur(12px)) {
+  @media (prefers-reduced-transparency: no-preference) {
+    .ed-toolbar {
+      background: color-mix(in srgb, var(--aeg-color-overview-panel) 87%, transparent);
+      backdrop-filter: blur(12px) saturate(125%);
+    }
+  }
+}
+@media (max-width: 560px) {
+  .ed-toolbar__wide-action {
+    display: none;
+  }
+  .ed-toolbar {
+    gap: 2px;
+  }
+  .ed-toolbar__btn {
+    padding-inline: var(--aeg-space-s1);
+  }
 }
 </style>

@@ -17,6 +17,9 @@ const props = defineProps<{
   polling: boolean
   canPublish: boolean
   busy: boolean
+  readOnly?: boolean
+  canUndo?: boolean
+  canRedo?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -27,6 +30,8 @@ const emit = defineEmits<{
   newDraft: []
   layout: []
   fit: []
+  undo: []
+  redo: []
   openPanel: [panel: 'run' | 'def']
 }>()
 
@@ -50,12 +55,14 @@ function run(action: () => void): void {
 </script>
 
 <template>
-  <header class="ed-head" data-testid="editor-header">
+  <header class="ed-head" data-testid="editor-header" aria-label="流程编排">
+    <h1 class="ed-head__page-title">流程编排</h1>
     <div class="ed-head__left">
       <router-link class="ed-head__back" to="/dashboard" aria-label="返回态势总览" title="返回态势总览">←</router-link>
-      <input class="ed-head__name" :value="name" maxlength="64" aria-label="流程名称" @change="rename" />
+      <input class="ed-head__name" :value="name" :readonly="readOnly || busy" maxlength="64" aria-label="流程名称" @change="rename" />
       <span class="ed-head__version">{{ version === null ? '未发布' : `v${version}` }}</span>
-      <span class="ed-head__save" :class="`is-${saveTone}`" :title="saveTitle">
+      <span v-if="readOnly" class="ed-head__save">只读</span>
+      <span v-else class="ed-head__save" :class="`is-${saveTone}`" :title="saveTitle">
         <span class="ed-head__save-dot" aria-hidden="true"></span>{{ saveText }}
       </span>
     </div>
@@ -69,12 +76,12 @@ function run(action: () => void): void {
         定义
       </button>
       <span v-if="polling" class="ed-head__polling" title="实例状态轮询中">轮询中</span>
-      <button type="button" class="ed-head__btn" @click="emit('refresh')">刷新实例</button>
-      <button type="button" class="ed-head__btn" :disabled="busy" @click="emit('save')">保存</button>
+      <button type="button" class="ed-head__btn ed-head__refresh" @click="emit('refresh')">刷新实例</button>
+      <button type="button" class="ed-head__btn" :disabled="readOnly || busy" @click="emit('save')">保存</button>
       <button
         type="button"
         class="ed-head__btn is-primary"
-        :disabled="!canPublish || busy"
+        :disabled="!canPublish || readOnly || busy"
         :title="canPublish ? '发布为不可变版本' : '画布还有待修正项或未保存内容'"
         @click="emit('publish')"
       >
@@ -83,8 +90,11 @@ function run(action: () => void): void {
       <details ref="moreRef" class="ed-head__more">
         <summary class="ed-head__btn">更多</summary>
         <div class="ed-head__menu">
-          <button type="button" @click="run(() => emit('newDraft'))">新建画布</button>
-          <button type="button" @click="run(() => emit('layout'))">自动布局</button>
+          <button class="ed-head__menu-refresh" type="button" @click="run(() => emit('refresh'))">刷新实例</button>
+          <button type="button" :disabled="busy" @click="run(() => emit('newDraft'))">新建画布</button>
+          <button type="button" :disabled="!canUndo" @click="run(() => emit('undo'))">撤销</button>
+          <button type="button" :disabled="!canRedo" @click="run(() => emit('redo'))">重做</button>
+          <button type="button" :disabled="readOnly || busy" @click="run(() => emit('layout'))">自动布局</button>
           <button type="button" @click="run(() => emit('fit'))">适配画布</button>
         </div>
       </details>
@@ -102,8 +112,17 @@ function run(action: () => void): void {
   height: var(--aeg-editor-header-height, 56px);
   padding: 0 12px;
   border-bottom: 1px solid var(--aeg-color-border);
-  background: var(--aeg-color-editor-header);
+  background: var(--aeg-color-masthead-bg);
   color: var(--aeg-color-text);
+}
+.ed-head__page-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .ed-head__left,
 .ed-head__right {
@@ -122,8 +141,8 @@ function run(action: () => void): void {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   border-radius: 7px;
   color: var(--aeg-color-text-secondary);
   font-size: 16px;
@@ -142,8 +161,8 @@ function run(action: () => void): void {
   border-radius: 7px;
   background: transparent;
   color: var(--aeg-color-text);
-  font: inherit;
-  font-size: 14px;
+  font-family: var(--aeg-font-display);
+  font-size: var(--aeg-font-md);
   font-weight: 600;
   text-overflow: ellipsis;
 }
@@ -220,13 +239,12 @@ function run(action: () => void): void {
 }
 .ed-head__btn.is-primary {
   border-color: transparent;
-  background: var(--aeg-color-brand);
-  color: var(--aeg-color-text-inverse);
+  background: var(--aeg-color-masthead-tab);
+  color: var(--aeg-color-masthead-tab-ink);
   font-weight: 600;
 }
 .ed-head__btn.is-primary:hover:not(:disabled) {
-  background: var(--aeg-color-brand-hover);
-  color: var(--aeg-color-text-inverse);
+  filter: brightness(1.08);
 }
 .ed-head__count {
   padding: 0 5px;
@@ -281,13 +299,46 @@ function run(action: () => void): void {
   background: var(--aeg-color-sunken);
   color: var(--aeg-color-text);
 }
+.ed-head__menu .ed-head__menu-refresh {
+  display: none;
+}
 @media (max-width: 900px) {
   .ed-head__name {
     width: 140px;
   }
-  .ed-head__save,
   .ed-head__polling {
     display: none;
+  }
+}
+@media (max-width: 720px) {
+  .ed-head {
+    flex-direction: column;
+    align-items: stretch;
+    height: auto;
+    gap: var(--aeg-space-s1);
+    padding: var(--aeg-space-s1) var(--aeg-space-s3) var(--aeg-space-s2);
+  }
+  .ed-head__name {
+    width: auto;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .ed-head__right {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--aeg-space-s1);
+  }
+  .ed-head__right .ed-head__btn {
+    justify-content: center;
+    width: 100%;
+    height: 36px;
+    padding-inline: var(--aeg-space-s1);
+  }
+  .ed-head__refresh {
+    display: none;
+  }
+  .ed-head__menu .ed-head__menu-refresh {
+    display: block;
   }
 }
 </style>

@@ -36,7 +36,7 @@ const MAP_ROUTE = '/map?mapDebug=1'
 const CESIUM_ERROR_PANEL = '.cesium-widget-errorPanel'
 const MAP_CANVAS = '.cesium-widget canvas'
 /** 真正被当作数据消费的资产：地形瓦与 PMTiles 归档。它们被兜底页顶掉就是故障。 */
-const DATA_PATH = /\/terrain\/|\.pmtiles(\?|$)/i
+const DATA_PATH = /\/terrain(?:-real)?\/|\.pmtiles(\?|$)/i
 /** 只是候选地址的探针（XYZ 模板、可选静态矢量文件）：回兜底页是预期，决策逻辑正靠此判死。 */
 const PROBE_PATH = /\/basemaps\//i
 
@@ -101,6 +101,8 @@ test.beforeEach(async ({ page }) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
 
+  // 即使开发环境另外烘过 OSM 瓦片，也覆盖新克隆仅用仓库自带影像的路径。
+  await page.route(/\/basemaps\/\d+\/\d+\/\d+\.png(?:\?|$)/, (route) => route.fulfill({ status: 404, body: '' }))
   await page.goto(MAP_ROUTE, { waitUntil: 'domcontentloaded' })
   await expect(page.locator(MAP_CANVAS)).toBeVisible({ timeout: 60_000 })
 })
@@ -155,7 +157,7 @@ test('被当数据消费的资产都是 2xx 且是真字节；探针那一路判
   const facts = await settle(page)
   const consumed = await inspect(dataResponses)
   const probes = await inspect(probeResponses)
-  const terrainTiles = consumed.filter((entry) => /\/terrain\/\d+\/\d+\/\d+\.terrain/.test(entry.url))
+  const terrainTiles = consumed.filter((entry) => /\/terrain-real\/\d+\/\d+\/\d+\.terrain/.test(entry.url))
   console.log(
     `[视觉门禁] 消费型资源 ${consumed.length} 次（地形瓦 ${terrainTiles.length}，字节 ` +
       `${terrainTiles.map((entry) => entry.body?.length ?? -1).join('/')}），探针型 ${probes.length} 次；场景=${JSON.stringify(facts)}`,
@@ -172,9 +174,10 @@ test('被当数据消费的资产都是 2xx 且是真字节；探针那一路判
   const undersized = terrainTiles.filter((entry) => (entry.body?.length ?? 0) < 1_000)
   expect(undersized.map((entry) => `${entry.url} → ${entry.body?.length ?? 'no-body'}`), '地形瓦没有一张像样').toEqual([])
 
-  // 探针那一路允许被兜底页顶掉（那正是"没有真 XYZ 瓦片服务"的现场形状），
-  // 但结论必须是"仍然挂上了一层可用影像"，否则就是退化没兜住。
-  if (probes.some((entry) => entry.body !== null && looksLikeHtml(entry.body))) {
+  // XYZ 探针未命中时，仍要从同源的高程阴影归档加载影像。
+  if (probes.some((entry) => new URL(entry.url).pathname === '/basemaps/0/0/0.png' &&
+    (entry.status === 404 || (entry.body !== null && looksLikeHtml(entry.body))))) {
+    expect(consumed.some((entry) => new URL(entry.url).pathname === '/basemaps/relief.pmtiles')).toBe(true)
     expect(facts.imageryLayerCount, '探针被兜底页顶掉后，影像图层应当仍由本地归档提供').toBeGreaterThan(0)
   }
 })
@@ -280,7 +283,7 @@ async function readSceneFacts(page: Page): Promise<SceneFacts> {
  *
  * 图元那一层看的是"翻转前后同一颗标记的颜色变没变"：`setTheme` 若只换了地球底色
  * 而没把图层重画（图元色是在 `entities.add()` 时烤进去的），这里读到的仍是上一档的颜色。
- * 判据里没有"取不到图元就跳过"这种分支：取不到就现灌演练数据再读一次，还是空就红并说清为什么红。
+ * 缺少锚点资产时，图元换色由 viewer.theme.spec.ts 覆盖。
  */
 test('画布内部随主题翻面：底色对得上页面令牌，图元在翻转后真的重画了', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('aegis.theme', 'dark'))
@@ -330,6 +333,8 @@ test('画布内部随主题翻面：底色对得上页面令牌，图元在翻�
         skyShown: viewer?.scene?.skyAtmosphere ? Boolean(viewer.scene.skyAtmosphere.show) : null,
         wantSunken: rgbOf(css.getPropertyValue('--aeg-color-sunken')),
         wantPage: rgbOf(css.getPropertyValue('--aeg-color-page')),
+        wantSpaceGlobe: rgbOf(css.getPropertyValue('--aeg-color-space-globe')),
+        wantDeepSpace: rgbOf(css.getPropertyValue('--aeg-color-deep-space')),
         points,
       }
     })
@@ -373,4 +378,27 @@ test('画布内部随主题翻面：底色对得上页面令牌，图元在翻�
   }
 
   await page.screenshot({ path: join('test-results', 'e2e', 'map-canvas-light.png') })
+
+  const zoomBy = (meters: number) => page.evaluate((distance) => {
+    const { viewer } = (window as unknown as {
+      __aegisMap: { viewer: { camera: { zoomIn(distance: number): void; zoomOut(distance: number): void }; scene: { requestRender(): void } } }
+    }).__aegisMap
+    if (distance > 0) viewer.camera.zoomOut(distance)
+    else viewer.camera.zoomIn(-distance)
+    viewer.scene.requestRender()
+  }, meters)
+
+  await zoomBy(6_000_000)
+  await expect(page.locator('.map-host')).toHaveClass(/is-space-view/)
+  const space = await read()
+  expect(space.globe).toBe(space.wantSpaceGlobe)
+  expect(space.backdrop).toBe(space.wantDeepSpace)
+  expect(space.skyShown).toBe(true)
+
+  await zoomBy(-6_000_000)
+  await expect(page.locator('.map-host')).not.toHaveClass(/is-space-view/)
+  const regional = await read()
+  expect(regional.globe).toBe(regional.wantSunken)
+  expect(regional.backdrop).toBe(regional.wantPage)
+  expect(regional.skyShown).toBe(false)
 })

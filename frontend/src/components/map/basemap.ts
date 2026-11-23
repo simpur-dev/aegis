@@ -18,6 +18,7 @@
 
 import type { Credit, Event, ImageryLayer, ImageryProvider, Proxy, Rectangle, TileDiscardPolicy, UrlTemplateImageryProvider, WebMercatorTilingScheme } from 'cesium'
 
+import { MAP_ASSET_PATHS } from '@/api/map'
 import { isLocalAssetUrl, tileUrlForTemplate } from './offline'
 
 // ---------- 配置与纯决策 ----------
@@ -82,9 +83,10 @@ export function chooseBasemapSource(
 
   // 署名跟着**实际加载的那一份**走：显式给了就用显式的，否则按源类型给。
   // pmtiles 档再按归档分：合成样本不冒领上游出处，真实高程烘焙档必须记 Mapzen/AWS 的署名。
+  const pmtilesPath = new URL(config.pmtilesUrl, origin ?? 'http://localhost').pathname
+  const pmtilesAttribution = pmtilesPath === MAP_ASSET_PATHS.reliefPmtiles ? RELIEF_ATTRIBUTION : BASEMAP_ATTRIBUTION
   const forKind = (kind: 'template' | 'pmtiles') =>
-    config.attribution ||
-    (kind === 'template' ? OSM_BAKE_ATTRIBUTION : config.pmtilesUrl === DEFAULT_PMTILES_URL ? BASEMAP_ATTRIBUTION : RELIEF_ATTRIBUTION)
+    config.attribution || (kind === 'template' ? OSM_BAKE_ATTRIBUTION : pmtilesAttribution)
   const pmtilesFirst = config.prefer === 'pmtiles'
   const first = pmtilesFirst
     ? { ok: reach.pmtilesReachable, source: { kind: 'pmtiles' as const, url: config.pmtilesUrl, attribution: forKind('pmtiles') } }

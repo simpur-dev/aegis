@@ -34,15 +34,6 @@ vi.mock('@/api/workflow', () => ({
   workflowApi: { instances: vi.fn() },
 }))
 
-/**
- * 三维地形嵌入走真实 Cesium + mapApi：本 spec 钉的是取数/账号口径，
- * 让真地图进场会拖起 WebGL、地形请求与 30s 计时器，和这些断言无关。
- * 用一个同名替身占住网格位，保证布局测试仍能看到"地图在这一格"。
- */
-vi.mock('@/components/dashboard/DashboardTerrain.vue', () => ({
-  default: { name: 'DashboardTerrain', template: '<div data-testid="terrain-stub"></div>' },
-}))
-
 const mockedInstances = vi.mocked(workflowApi.instances)
 
 vi.mock('@/composables/useEventStream', async () => {
@@ -431,6 +422,8 @@ describe('风险区域一览不许拼出假的区划代码', () => {
     const regions = wrapper.findAll('.region').map((cell) => cell.text())
     expect(regions, `网格里出现了拼出来的区划代码：${regions.join(',')}`).toEqual(['未标注区域'])
     expect(wrapper.find('.cell').text()).toContain('无风险')
+    expect(wrapper.get('[data-testid="dashboard-terrain"]').text()).toContain('风险区域 0')
+    expect(wrapper.find('.terrain-preview__region').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -489,6 +482,10 @@ describe('风险瓦片必须标明模拟数据与使用限制', () => {
     const notice = wrapper.find('[data-testid="risk-mock-notice"]')
     expect(notice.exists(), '有 mock 结论就必须在墙上说明它的用途限制').toBe(true)
     expect(notice.text()).toContain('禁止用于实际预警决策')
+    const terrain = wrapper.get('[data-testid="dashboard-terrain"]')
+    expect(terrain.text()).toContain('风险区域 1')
+    expect(terrain.get('.terrain-preview__region').text()).toContain('540121 · 泥石流')
+    expect(terrain.get('.terrain-preview__mock').text()).toBe('模拟')
     wrapper.unmount()
   })
 
@@ -585,12 +582,12 @@ describe('智能体面板的折叠与拉杆', () => {
   const DEFAULT_H = Math.min(Math.round(768 * 0.55), 768 - 370)
   const MAX_H = Math.round(768 * 0.8)
 
-  it('默认不写死高度：交给网格与左侧主卡等高（拖过拉杆才记显式高度）', async () => {
+  it('默认高度给第二行让位，拖过拉杆才记住设置', async () => {
     responses()
     const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
     await flushPromises()
     const panel = wrapper.find('[data-testid="agent-panel"]')
-    expect(panel.attributes('style') ?? '').not.toContain('height')
+    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
     wrapper.unmount()
   })
 
@@ -607,7 +604,7 @@ describe('智能体面板的折叠与拉杆', () => {
     expect(JSON.parse(localStorage.getItem(KEY) ?? '{}')).toEqual({ collapsed: true, height: null })
     await toggle.trigger('click')
     expect(panel.classes()).not.toContain('is-collapsed')
-    expect(panel.attributes('style') ?? '').not.toContain('height')
+    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
     expect(JSON.parse(localStorage.getItem(KEY) ?? '{}').collapsed).toBe(false)
     wrapper.unmount()
   })
@@ -629,7 +626,7 @@ describe('智能体面板的折叠与拉杆', () => {
     await handle.trigger('keydown', { key: 'ArrowDown' })
     expect(panel.attributes('style')).toContain(`height: ${MAX_H}px`)
     await handle.trigger('dblclick')
-    expect(panel.attributes('style') ?? '').not.toContain('height')
+    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
     wrapper.unmount()
   })
 
@@ -653,7 +650,7 @@ describe('智能体面板的折叠与拉杆', () => {
     await handle.trigger('pointermove', { clientY: 560, pointerId: 1 })
     // 帧回调落地前高度不动：多发事件合进同一帧，不许逐发回流
     expect(frames).toHaveLength(1)
-    expect(panel.attributes('style') ?? '').not.toContain('height')
+    expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H}px`)
     frames.splice(0).forEach((cb) => cb(performance.now()))
     expect(panel.attributes('style')).toContain(`height: ${DEFAULT_H + 60}px`)
     expect(handle.attributes('aria-valuenow')).toBe(String(DEFAULT_H + 60))

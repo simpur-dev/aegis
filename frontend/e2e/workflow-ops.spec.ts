@@ -131,6 +131,53 @@ const addBlock = async (page: Page): Promise<void> => {
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] })
 
+test('快捷保存提交当前输入；窄屏只读版本可选节点查看配置', async ({ page }) => {
+  const lineage = 'wf_0123456789ab'
+  const version = 'wf_0123456789ac'
+  const document = {
+    schema_version: 1, lineage_id: lineage, name: '现场研判流程', description: '',
+    nodes: [{ node_id: 'start', type: 'start', name: '开始', config: { variables: [] },
+      sla_ms: 5000, timeout_ms: 5000, on_failure: 'retry', retry: { max_attempts: 1, backoff_ms: 0 } }],
+    edges: [], layout: { positions: { start: { x: 0, y: 0 } }, viewport: null, notes: [] },
+  }
+  const draft = { lineage_id: lineage, revision: 2, document, base_workflow_id: null, updated_at: '2026-01-01T00:00:00Z' }
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith(`/lineages/${lineage}/draft`)) {
+      if (route.request().method() === 'PUT') {
+        const body = route.request().postDataJSON() as { document: typeof document }
+        return route.fulfill({ json: { ...draft, revision: 3, document: body.document } })
+      }
+      return route.fulfill({ json: draft })
+    }
+    if (path.endsWith(`/versions/${version}`)) return route.fulfill({ json: document })
+    if (path.endsWith('/versions') || path.endsWith('/definitions') || path.endsWith('/instances')) {
+      return route.fulfill({ json: { count: 0, items: [] } })
+    }
+    return route.abort()
+  })
+
+  await page.goto(`/workflow?lineage=${lineage}`)
+  const name = page.getByRole('textbox', { name: '流程名称' })
+  await expect(name).toHaveValue(document.name)
+  await name.fill('调整后的流程名称')
+  const saving = page.waitForRequest((request) => request.method() === 'PUT' && request.url().endsWith('/draft'))
+  await name.press('Control+s')
+  expect((await saving).postDataJSON().document.name).toBe('调整后的流程名称')
+  await expect(page.locator('.ed-head__save')).toHaveText('已保存')
+
+  await page.goto(`/workflow?workflow=${version}`)
+  await expect(page.locator('.ed-head__save')).toHaveText('只读')
+  await expect(name).not.toBeEditable()
+  await expect(page.getByTestId('toolbar-add')).toBeDisabled()
+  await page.locator('.wf-node').click()
+  await expect(page.getByTestId('editor-panel')).toHaveCount(0)
+  await page.getByRole('button', { name: '节点配置' }).click()
+  await expect(page.getByLabel('节点显示名')).toBeDisabled()
+  await expect(page.getByRole('button', { name: '删除节点', exact: true })).toHaveCount(0)
+})
+
 test.describe('画布操作语法 @1440', () => {
   test('框选→复制→粘贴→拖动→撤销 3 次→重做 3 次；输入框 Delete 不删节点；坏剪贴板只报错', async ({ page }) => {
     test.setTimeout(180_000)

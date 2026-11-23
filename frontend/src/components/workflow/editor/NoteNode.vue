@@ -65,11 +65,12 @@ function remove(): void {
     <header class="ed-note__head" title="拖动备注">
       <span class="ed-note__grip" aria-hidden="true">⋮⋮</span>
       <span class="ed-note__id">{{ note.note_id }}</span>
-      <button type="button" class="ed-note__delete nodrag nopan" aria-label="删除备注" @click.stop="remove">×</button>
+      <button v-if="documentStore.canEdit" type="button" class="ed-note__delete nodrag nopan" aria-label="删除备注" @click.stop="remove">×</button>
     </header>
     <textarea
       class="ed-note__text nodrag nopan nowheel"
       :value="note.text"
+      :readonly="!documentStore.canEdit"
       placeholder="输入备注…"
       aria-label="备注内容"
       maxlength="2000"
@@ -86,6 +87,7 @@ function remove(): void {
         :class="[`is-${color}`, { 'is-active': note.color === color }]"
         :aria-label="`备注颜色 ${color}`"
         :aria-pressed="note.color === color"
+        :disabled="!documentStore.canEdit"
         @click.stop="setColor(color)"
       />
     </footer>

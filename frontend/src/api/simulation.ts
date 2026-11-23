@@ -138,6 +138,9 @@ export function preflightSimulation(body: SimulationBody): string {
       return `${SIMULATION_FIELD_LABELS[key]} ${value} 超出后端的 ${range.min}..${range.max}：这一份推演没有发出去。`
     }
   }
+  for (const key of ['scenarios', 'rounds', 'token_budget'] as const) {
+    if (!Number.isInteger(body[key])) return `${SIMULATION_FIELD_LABELS[key]}必须是整数：这一份推演没有发出去。`
+  }
   if (!Number.isInteger(body.seed)) return `${SIMULATION_FIELD_LABELS.seed} 必须是整数：这一份推演没有发出去。`
   if (!(PLAYBOOK_ACTIONS as readonly string[]).includes(body.playbook)) {
     return `预案档位「${body.playbook}」不在白名单里（只接受 ${PLAYBOOK_ACTIONS.join(' / ')}）：这一份推演没有发出去。`

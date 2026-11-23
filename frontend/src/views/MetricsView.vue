@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { message } from 'ant-design-vue'
+import { ReloadOutlined } from '@ant-design/icons-vue'
+import { useMediaQuery } from '@vueuse/core'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import api from '@/api/client'
@@ -11,13 +12,16 @@ import type { ChartOption } from '@/components/echarts'
 import { echarts } from '@/components/echarts'
 import { colorSlots, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/useTheme'
-import { latencyRows } from '@/views/metrics/rows'
+import { latencyRows, type LatencyRow } from '@/views/metrics/rows'
 import { formatMetricValue, toMillis } from '@/utils/metricUnits'
 
 /** 与其他页同一节奏：这页写着"数据来自运行时埋点"，不自己更新就成了摆旧账。 */
 const REFRESH_MS = 15_000
+const compact = useMediaQuery('(max-width: 720px)')
 
 const report = ref<LatencyReport | null>(null)
+const rows = ref<LatencyRow[]>([])
+const tableFilter = ref<'all' | 'breached' | 'no-budget'>('all')
 const loading = ref(false)
 /** 这一屏数字是什么时候取的；没取到就还是 null，页面写"尚未取到数据"。 */
 const updatedAt = ref<string | null>(null)
@@ -65,13 +69,24 @@ const ringOffset = computed<number | null>(() =>
  * 现在只出档位，具体颜色交给 scoped 样式里的 `--aeg-color-status-*`：两主题各自成立，也不用在这份文件里存 hex。
  */
 const successTone = computed<'idle' | 'ok' | 'bad'>(() =>
-  report.value === null ? 'idle' : report.value.collaboration.pass ? 'ok' : 'bad',
+  report.value?.collaboration.success_rate == null ? 'idle' : report.value.collaboration.pass ? 'ok' : 'bad',
 )
 const violationsTone = computed<'idle' | 'ok' | 'bad'>(() =>
   report.value === null ? 'idle' : Object.keys(report.value.violations).length > 0 ? 'bad' : 'ok',
 )
 
-const rows = computed(() => latencyRows(report.value?.metrics ?? {}, INDICATOR_LABELS))
+const visibleRows = computed(() => {
+  if (tableFilter.value === 'all') return rows.value
+  return rows.value.filter((row) =>
+    tableFilter.value === 'breached' ? row.count > 0 && row.pass === false : row.budget === null,
+  )
+})
+const chartRows = computed(() =>
+  [...rows.value]
+    .filter((row) => row.count > 0 && row.p95 > 0)
+    .sort((a, b) => toMillis(b.unit, b.p95) - toMillis(a.unit, a.p95))
+    .slice(0, compact.value ? 5 : 8),
+)
 
 const { resolved } = useTheme()
 
@@ -85,32 +100,21 @@ const chartOption = computed<ChartOption>(() => {
   const p50Gradient = grad(c['chart-bar-p50-from'], c['chart-bar-p50-to'])
   const p95Gradient = grad(c['chart-bar-p95-from'], c['chart-bar-p95-to'])
 
-  // 统一成毫秒轴：秒制那几条先按出口声明的单位换算，否则轴标签说的"ms"对它们不成立
-  const p50Values = rows.value.map((r) => Math.max(toMillis(r.unit, r.p50), 0.1))
-  const p95Values = rows.value.map((r) => Math.max(toMillis(r.unit, r.p95), 0.1))
-  // 图三的重点：只高亮 P95 最大的那一对柱，其余压暗
-  let peak = -1
-  p95Values.forEach((value, index) => {
-    if (peak < 0 || value > p95Values[peak]) peak = index
-  })
-  const bars = (gradient: unknown, values: number[]) =>
-    values.map((value, index) => ({
-      value,
-      itemStyle: {
-        color: gradient,
-        borderRadius: [8, 8, 4, 4],
-        opacity: index === peak ? 1 : 0.55,
-        shadowBlur: index === peak ? 12 : 0,
-        shadowColor: c['brand-soft'],
-      },
-    }))
+  // 以同一毫秒轴画正值。零值留在明细，不能在对数轴上冒充 0.1 ms。
+  const quantile = (key: 'p50' | 'p95') => chartRows.value.map((row) =>
+    row[key] > 0 ? toMillis(row.unit, row[key]) : null,
+  )
+  const p50 = quantile('p50')
+  const p95 = quantile('p95')
+  const positive = [...p50, ...p95].filter((value): value is number => value !== null)
+  const shortest = Math.min(...positive)
 
   return {
     tooltip: {
       trigger: 'axis',
       backgroundColor: c.elevated,
       borderColor: 'transparent',
-      borderRadius: 999,
+      borderRadius: 12,
       padding: [8, 12],
       textStyle: { color: c.text, fontSize: font.size.sm },
       axisPointer: { type: 'shadow', shadowStyle: { color: 'transparent' } },
@@ -124,18 +128,22 @@ const chartOption = computed<ChartOption>(() => {
       itemGap: 16,
       textStyle: { color: c['text-secondary'], fontSize: font.size.sm },
     },
-    grid: { left: 56, right: 16, top: 28, bottom: 96 },
-    xAxis: {
+    grid: { left: compact.value ? 100 : 174, right: 20, top: 34, bottom: 38 },
+    yAxis: {
       type: 'category',
-      data: rows.value.map((r) => r.label),
-      axisLabel: { rotate: 40, fontSize: 10, color: c['text-muted'], margin: 12 },
+      inverse: true,
+      data: chartRows.value.map((r) => r.label),
+      axisLabel: { width: compact.value ? 86 : 155, overflow: 'truncate', color: c['text-secondary'] },
       axisLine: { show: false },
       axisTick: { show: false },
     },
-    yAxis: {
+    xAxis: {
       type: 'log',
+      min: positive.length ? 10 ** Math.min(0, Math.floor(Math.log10(shortest)) - 1) : 1,
       logBase: 10,
       name: 'ms（对数轴）',
+      nameLocation: 'middle',
+      nameGap: 29,
       nameTextStyle: { color: c['text-muted'], fontSize: font.size.xs },
       axisLabel: { color: c['text-muted'], fontSize: font.size.xs },
       axisLine: { show: false },
@@ -146,34 +154,35 @@ const chartOption = computed<ChartOption>(() => {
       {
         name: 'P50',
         type: 'bar',
-        barWidth: 14,
-        barGap: '35%',
-        barCategoryGap: '45%',
-        data: bars(p50Gradient, p50Values),
+        barMaxWidth: 10,
+        itemStyle: { color: p50Gradient, borderRadius: 6 },
+        data: p50,
       },
       {
         name: 'P95',
         type: 'bar',
-        barWidth: 14,
-        barGap: '35%',
-        barCategoryGap: '45%',
-        data: bars(p95Gradient, p95Values),
+        barMaxWidth: 10,
+        itemStyle: { color: p95Gradient, borderRadius: 6 },
+        data: p95,
       },
     ],
   }
 })
 
 async function load(): Promise<void> {
+  if (loading.value) return
   loading.value = true
   try {
-    report.value = await api.latency()
+    const nextReport = await api.latency()
+    const nextRows = latencyRows(nextReport.metrics, INDICATOR_LABELS)
+    report.value = nextReport
+    rows.value = nextRows
     loadError.value = null
     updatedAt.value = new Date().toISOString()
   } catch (error) {
     // ApiError 与"账本没声明单位"都要把原因写出来：吞成一句"读取指标失败"就等于
     // 让人无从判断是后端没起、还是出口形状对不上
     loadError.value = error instanceof Error ? error.message : String(error)
-    message.error(loadError.value)
   } finally {
     loading.value = false
   }
@@ -198,9 +207,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="metrics-page">
-    <PageHero title="考核指标" badge="实测" caption="数据来自运行时埋点，非人工填写。">
+    <PageHero surface title="指标量测" badge="运行实测" caption="查看协同成功率、接入时延与超限指标。">
       <template #actions>
-        <a-button @click="load">重新读取</a-button>
+        <a-button :loading="loading" @click="load">
+          <template #icon><ReloadOutlined aria-hidden="true" /></template>
+          重新读取
+        </a-button>
       </template>
     </PageHero>
 
@@ -246,15 +258,15 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <a-card class="metrics-card" size="small" title="考核指标实测" :loading="loading">
-      <FreshnessBar
-        :fetched-at="updatedAt"
-        :label="`本页 ${Object.keys(report?.violations ?? {}).length} 项越限 ｜ 每 ${Math.round(REFRESH_MS / 1000)} 秒自动取一次`"
-        :interval-ms="REFRESH_MS"
-      />
-      <a-alert type="info" show-icon message="口径说明">
-        <!-- 三条口径挤在一句里读要回头重读；按 NexusMind 的"使用提示"列表拆开，一条一句 -->
-        <template #description>
+      <a-card class="metrics-card ops-surface" size="small" title="数据状态">
+        <FreshnessBar
+          :fetched-at="updatedAt"
+          :stacked="compact"
+          :label="`${report ? `${Object.keys(report.violations).length} 项越限` : '尚无量测账本'} · 每 ${REFRESH_MS / 1000} 秒刷新`"
+          :interval-ms="REFRESH_MS"
+        />
+        <details class="metrics-definition">
+          <summary>量测口径</summary>
           <ul class="tip-list">
             <li>时延类指标以 P95 判定</li>
             <li>协同成功率取事务台账（request→response）</li>
@@ -264,23 +276,47 @@ onBeforeUnmount(() => {
               · 不以估算充数
             </li>
           </ul>
-        </template>
-      </a-alert>
-      <p v-if="loadError !== null" class="metrics__error" data-testid="metrics-error">
-        本页当前读不到账本：{{ loadError }}{{ report === null ? '' : '（下面显示的是上一次成功取到的数字，不是现场实况）' }}
-      </p>
+        </details>
+        <p v-if="loadError !== null" class="metrics__error" data-testid="metrics-error">
+          本页当前读不到账本：{{ loadError }}{{ report === null ? '' : '（下面显示的是上一次成功取到的数字，不是现场实况）' }}
+        </p>
       </a-card>
     </div>
 
     <div class="metrics-pair">
-      <a-card class="metrics-card" size="small" title="时延分布">
-        <EChart :option="chartOption" height="360px" />
+      <a-card class="metrics-card ops-surface" size="small" title="P95 时延排行">
+        <p v-if="chartRows.length" class="metrics-chart-note">显示 P95 最高的 {{ chartRows.length }} 项，统一为毫秒。零值和未测得项见指标明细。</p>
+        <EChart v-if="chartRows.length" :option="chartOption" :height="compact ? '270px' : '326px'" />
+        <div v-else class="ops-record">{{ loading ? '正在读取量测…' : loadError ? '暂时无法读取量测。' : '尚无可绘制的时延样本。' }}</div>
       </a-card>
 
-      <a-card class="metrics-card" size="small" title="指标明细">
-        <div class="metrics-table">
+      <a-card class="metrics-card ops-surface" size="small" title="指标明细">
+        <div class="metrics-filters" role="group" aria-label="指标筛选">
+          <button type="button" :aria-pressed="tableFilter === 'all'" @click="tableFilter = 'all'">全部</button>
+          <button type="button" :aria-pressed="tableFilter === 'breached'" @click="tableFilter = 'breached'">超限</button>
+          <button type="button" :aria-pressed="tableFilter === 'no-budget'" @click="tableFilter = 'no-budget'">未设阈值</button>
+        </div>
+        <template v-if="compact">
+          <ul v-if="visibleRows.length" class="ops-list">
+            <li v-for="row in visibleRows" :key="row.name" class="ops-record">
+              <div class="ops-record__head">
+                <span>{{ row.label }}</span>
+                <a-tag v-if="!row.count || row.pass === null">{{ row.count ? '未设阈值' : '未测得' }}</a-tag>
+                <a-tag v-else :color="row.pass ? 'green' : 'red'">{{ row.pass ? '达标' : '超标' }}</a-tag>
+              </div>
+              <div class="ops-record__meta">
+                <span>样本 {{ row.count }}</span>
+                <span>P50 {{ formatMetricValue(row.unit, row.count ? row.p50 : null) }}</span>
+                <span>P95 {{ formatMetricValue(row.unit, row.count ? row.p95 : null) }}</span>
+                <span>阈值 {{ formatMetricValue(row.unit, row.budget) }}</span>
+              </div>
+            </li>
+          </ul>
+          <p v-else class="ops-record">{{ loading ? '正在读取指标…' : '当前筛选没有可显示的指标。' }}</p>
+        </template>
+        <div v-else class="metrics-table">
           <a-table
-            :data-source="rows"
+            :data-source="visibleRows"
             row-key="name"
             :pagination="false"
             size="small"
@@ -299,11 +335,12 @@ onBeforeUnmount(() => {
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'pass'">
-                <a-tag v-if="record.pass === null" color="default">未设阈值</a-tag>
+                <a-tag v-if="!record.count" color="default">未测得</a-tag>
+                <a-tag v-else-if="record.pass === null" color="default">未设阈值</a-tag>
                 <a-tag v-else :color="record.pass ? 'green' : 'red'">{{ record.pass ? '达标' : '超标' }}</a-tag>
               </template>
               <template v-else-if="['p50', 'p95', 'max', 'budget'].includes(String(column.key))">
-                {{ formatMetricValue(record.unit, record[column.key as 'p50']) }}
+                {{ !record.count && column.key !== 'budget' ? '—' : formatMetricValue(record.unit, record[column.key as 'p50']) }}
               </template>
             </template>
           </a-table>
@@ -369,7 +406,7 @@ onBeforeUnmount(() => {
 /* 上方两卡同一行、各占一半：三格数字托盘 ｜ 考核指标实测 */
 .metrics-top-pair {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   gap: var(--aeg-space-s4);
   align-items: start;
   margin-top: var(--aeg-space-s4);
@@ -381,7 +418,7 @@ onBeforeUnmount(() => {
   padding: var(--aeg-space-s4);
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-xl);
-  background: var(--aeg-color-card);
+  background: var(--aeg-color-overview-panel);
   box-shadow: var(--aeg-shadow-md);
 }
 .metrics-top-pair .metrics-card {
@@ -424,10 +461,69 @@ onBeforeUnmount(() => {
 .metrics-pair .metrics-card {
   margin-top: 0;
 }
-@media (max-width: 1279px) {
+.metrics-definition {
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
+.metrics-definition summary {
+  cursor: pointer;
+  color: var(--aeg-color-brand-hover);
+}
+.metrics-filters {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--aeg-space-s1);
+  margin-bottom: var(--aeg-space-s3);
+  padding: var(--aeg-space-s1);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-sunken);
+}
+.metrics-filters button {
+  min-height: 34px;
+  padding-inline: var(--aeg-space-s2);
+  border: none;
+  border-radius: var(--aeg-radius-sm);
+  background: transparent;
+  color: var(--aeg-color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.metrics-filters [aria-pressed='true'] {
+  background: var(--aeg-color-masthead-tab);
+  color: var(--aeg-color-masthead-tab-ink);
+}
+.metrics-chart-note {
+  margin: 0 0 var(--aeg-space-s2);
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
+.metrics-table :deep(.ant-table-cell) {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1000px) {
   .metrics-top-pair,
   .metrics-pair {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .metrics-stats {
+    gap: var(--aeg-space-s1);
+    padding: var(--aeg-space-s2);
+  }
+  .metrics-stats .stat-cell {
+    min-width: 0;
+    padding-inline: var(--aeg-space-s1);
+  }
+  .metrics-stats :deep(.ant-statistic-title) {
+    font-size: var(--aeg-font-sm);
+  }
+  .metrics-stats :deep(.ant-statistic-content) {
+    font-size: var(--aeg-font-md);
+  }
+  .ring {
+    display: none;
   }
 }
 </style>

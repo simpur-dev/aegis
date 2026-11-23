@@ -5,9 +5,9 @@
  *
  * 三档内容沿用 AEGIS 的“运行态 / 定义 / 节点”；关闭后焦点归还给打开它的按钮。
  */
-import { onBeforeUnmount, ref } from 'vue'
+import { nextTick, onBeforeUnmount, ref, useId } from 'vue'
 
-defineProps<{
+const props = defineProps<{
   panel: 'run' | 'def' | 'node'
   waiting: number
   hasSelection: boolean
@@ -17,6 +17,9 @@ const emit = defineEmits<{ close: []; select: [panel: 'run' | 'def' | 'node'] }>
 
 const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
 const bodyRef = ref<HTMLElement | null>(null)
+const tabs = ['run', 'def', 'node'] as const
+const tabList = ref<HTMLElement | null>(null)
+const panelId = useId()
 
 onBeforeUnmount(() => {
   returnFocus?.focus()
@@ -26,18 +29,36 @@ function select(panel: 'run' | 'def' | 'node'): void {
   emit('select', panel)
   bodyRef.value?.scrollTo({ top: 0 })
 }
+function navigateTabs(event: KeyboardEvent): void {
+  const current = tabs.indexOf(props.panel)
+  const positions: Record<string, number> = {
+    ArrowRight: (current + 1) % tabs.length,
+    ArrowLeft: (current + tabs.length - 1) % tabs.length,
+    Home: 0,
+    End: tabs.length - 1,
+  }
+  const position = positions[event.key]
+  if (position === undefined) return
+  event.preventDefault()
+  event.stopPropagation()
+  select(tabs[position])
+  void nextTick(() => tabList.value?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus())
+}
 </script>
 
 <template>
-  <aside class="ed-panel" data-testid="editor-panel" aria-label="编排面板">
+  <aside class="ed-panel" data-testid="editor-panel" aria-label="编排面板" @keydown.esc.stop="emit('close')">
     <header class="ed-panel__head">
-      <div class="ed-panel__tabs" role="tablist" aria-label="编排面板">
+      <div ref="tabList" class="ed-panel__tabs" role="tablist" aria-label="编排面板" @keydown="navigateTabs">
         <button
           type="button"
           role="tab"
           class="ed-panel__tab"
           :class="{ 'is-active': panel === 'run' }"
           :aria-selected="panel === 'run'"
+          :tabindex="panel === 'run' ? 0 : -1"
+          :id="`${panelId}-run`"
+          :aria-controls="panelId"
           data-testid="panel-run"
           @click="select('run')"
         >
@@ -50,6 +71,9 @@ function select(panel: 'run' | 'def' | 'node'): void {
           class="ed-panel__tab"
           :class="{ 'is-active': panel === 'def' }"
           :aria-selected="panel === 'def'"
+          :tabindex="panel === 'def' ? 0 : -1"
+          :id="`${panelId}-def`"
+          :aria-controls="panelId"
           data-testid="panel-def"
           @click="select('def')"
         >
@@ -61,6 +85,9 @@ function select(panel: 'run' | 'def' | 'node'): void {
           class="ed-panel__tab"
           :class="{ 'is-active': panel === 'node' }"
           :aria-selected="panel === 'node'"
+          :tabindex="panel === 'node' ? 0 : -1"
+          :id="`${panelId}-node`"
+          :aria-controls="panelId"
           data-testid="panel-node"
           @click="select('node')"
         >
@@ -77,7 +104,7 @@ function select(panel: 'run' | 'def' | 'node'): void {
         ×
       </button>
     </header>
-    <div ref="bodyRef" class="ed-panel__body">
+    <div ref="bodyRef" :id="panelId" class="ed-panel__body" role="tabpanel" :aria-labelledby="`${panelId}-${panel}`">
       <p v-if="panel === 'node' && !hasSelection" class="ed-panel__empty">
         先在画布上点一个节点，这里会显示它的参数与运行操作。
       </p>
@@ -97,7 +124,9 @@ function select(panel: 'run' | 'def' | 'node'): void {
   flex-direction: column;
   width: min(var(--aeg-editor-panel-width, 400px), 100%);
   border-left: 1px solid var(--aeg-color-border);
-  background: var(--aeg-color-editor-panel);
+  border-radius: var(--aeg-radius-xl) 0 0 var(--aeg-radius-xl);
+  overflow: hidden;
+  background: var(--aeg-color-overview-tile);
   box-shadow: var(--aeg-shadow-lg);
   color: var(--aeg-color-text);
 }
@@ -107,12 +136,16 @@ function select(panel: 'run' | 'def' | 'node'): void {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 8px 0;
+  padding: var(--aeg-space-s2);
   border-bottom: 1px solid var(--aeg-color-border-subtle);
 }
 .ed-panel__tabs {
   display: flex;
-  gap: 2px;
+  gap: var(--aeg-space-s1);
+  padding: var(--aeg-space-s1);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-sunken);
 }
 .ed-panel__tab {
   display: inline-flex;
@@ -121,7 +154,7 @@ function select(panel: 'run' | 'def' | 'node'): void {
   height: 32px;
   padding: 0 10px;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--aeg-radius-sm);
   background: transparent;
   color: var(--aeg-color-text-muted);
   font: inherit;
@@ -133,8 +166,8 @@ function select(panel: 'run' | 'def' | 'node'): void {
   color: var(--aeg-color-text);
 }
 .ed-panel__tab.is-active {
-  border-bottom-color: var(--aeg-color-brand);
-  color: var(--aeg-color-brand);
+  background: var(--aeg-color-masthead-tab);
+  color: var(--aeg-color-masthead-tab-ink);
 }
 .ed-panel__count {
   padding: 0 5px;
@@ -144,6 +177,9 @@ function select(panel: 'run' | 'def' | 'node'): void {
   font-family: var(--aeg-font-mono);
   font-size: 10px;
   font-weight: 700;
+}
+.ed-panel__tab.is-active .ed-panel__count {
+  color: inherit;
 }
 .ed-panel__close {
   display: grid;
@@ -167,6 +203,7 @@ function select(panel: 'run' | 'def' | 'node'): void {
   min-height: 0;
   padding: 8px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .ed-panel__empty {
   margin: 0;
@@ -178,6 +215,7 @@ function select(panel: 'run' | 'def' | 'node'): void {
 @media (max-width: 720px) {
   .ed-panel {
     width: 100%;
+    border-radius: 0;
   }
 }
 </style>

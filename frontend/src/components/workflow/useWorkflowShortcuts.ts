@@ -101,7 +101,9 @@ export function useWorkflowShortcuts(actions: WorkflowShortcutActions) {
   }
 
   function handleKeydown(event: KeyboardEvent): void {
-    if (event.defaultPrevented) return
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return
+    const target = event.target
+    if (target instanceof Element && target.closest('[role="dialog"]')) return
 
     const typing = isTypingTarget(event.target)
     if (typing && !matchesWorkflowHotkey('Mod+S', event)) return
@@ -111,6 +113,11 @@ export function useWorkflowShortcuts(actions: WorkflowShortcutActions) {
     event.preventDefault()
 
     if (resolved.kind === 'shortcut') {
+      if (resolved.id === 'workflow.save' && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+        // 提交由 change 驱动的字段，让快捷保存与点击保存按钮的结果一致。
+        target.blur()
+        if (target.isConnected) target.focus({ preventScroll: true })
+      }
       runShortcut(resolved.id)
       return
     }

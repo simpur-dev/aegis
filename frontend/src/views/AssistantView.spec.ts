@@ -1002,7 +1002,7 @@ describe('值班台：左会话全高、右栏竖排互补拉杆', () => {
     wrapper.unmount()
   })
 
-  /** jsdom 没有主内容盒：造一个量好尺寸的 .main-content，让 fitDesk 能算出"一屏适配"。 */
+  /** jsdom 没有布局：手动提供主内容区的尺寸，测试首屏布局和拖动。 */
   function stubMain(fit: { client: number; scroll: number; top: number }) {
     const main = document.createElement('div')
     main.className = 'main-content'
@@ -1027,7 +1027,7 @@ describe('值班台：左会话全高、右栏竖排互补拉杆', () => {
     return () => fire()
   }
 
-  it('值班台默认高＝一屏适配×4/3：适配 488 就立 651 的最低高', async () => {
+  it('值班台默认高覆盖首屏可用空间，让会话与两个右侧面板都在同一屏', async () => {
     const fire = stubBudgetObserver()
     const main = stubMain({ client: 700, scroll: 700, top: 100 })
     const wrapper = await renderView()
@@ -1035,8 +1035,8 @@ describe('值班台：左会话全高、右栏竖排互补拉杆', () => {
     desk.element.getBoundingClientRect = () => ({ top: 214, bottom: 702, height: 488 }) as DOMRect
     fire()
     await flushPromises()
-    // fit = 700 − (214−100) − (700−(702−100)) = 488；×4/3 ≈ 651
-    expect(desk.attributes('style')).toContain('min-height: 651px')
+    // 700 − (214−100) − 16 = 570
+    expect((desk.element as HTMLElement).style.height).toBe('570px')
     wrapper.unmount()
     main.remove()
   })
@@ -1060,7 +1060,7 @@ describe('值班台：左会话全高、右栏竖排互补拉杆', () => {
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb))
     vi.stubGlobal('cancelAnimationFrame', () => {})
     const fire = stubBudgetObserver()
-    // desk 已高 651（比适配 488 多 163），主内容 scrollHeight 跟着长同样的量
+    // 模拟已拖高到 651px 的值班台。
     const main = stubMain({ client: 700, scroll: 863, top: 100 })
     const wrapper = await renderView()
     const desk = byTestid(wrapper, 'assistant-desk')
@@ -1083,7 +1083,7 @@ describe('值班台：左会话全高、右栏竖排互补拉杆', () => {
     expect(handle.attributes('aria-valuenow')).toBe('711')
     await handle.trigger('dblclick')
     expect(localStorage.getItem(DESK_KEY)).toBe(null)
-    expect(desk.attributes('style')).toContain('min-height: 651px')
+    expect((desk.element as HTMLElement).style.height).toBe('570px')
     expect(desk.attributes('style')).not.toContain('height: 711px')
     wrapper.unmount()
     main.remove()
@@ -1126,10 +1126,10 @@ describe('值班台：左会话全高、右栏竖排互补拉杆', () => {
     const handle = byTestid(wrapper, 'desk-handle')
     stubCapture(handle)
     await handle.trigger('pointerdown', { clientY: 500, pointerId: 1 })
-    await handle.trigger('pointermove', { clientY: 900, pointerId: 1 })
+    await handle.trigger('pointermove', { clientY: 1100, pointerId: 1 })
     frames.forEach((cb) => cb(0))
-    // fit 488×2=976 > 自然高 951；651+400=1051 被夹到 976
-    expect(desk.attributes('style')).toContain('height: 976px')
+    // 首屏 570×2=1140 > 自然高 951；651+600=1251 被夹到 1140。
+    expect((desk.element as HTMLElement).style.height).toBe('1140px')
     wrapper.unmount()
     main.remove()
   })

@@ -46,9 +46,9 @@ const rightLabel = computed<string>(() => {
 
 <template>
   <p class="fresh" :class="{ 'is-stale': stale, 'is-stacked': stacked }" data-testid="freshness">
-    <span class="fresh__side fresh__left">{{ label }}</span>
+    <span class="fresh__side fresh__left" :title="label">{{ label }}</span>
     <span class="fresh__rule" aria-hidden="true"></span>
-    <span class="fresh__side fresh__right">{{ rightLabel }}</span>
+    <span class="fresh__side fresh__right" :title="rightLabel">{{ rightLabel }}</span>
   </p>
 </template>
 
@@ -91,6 +91,7 @@ const rightLabel = computed<string>(() => {
   flex: 0 0 auto;
   overflow: visible;
   text-overflow: clip;
+  white-space: normal;
 }
 .fresh.is-stacked .fresh__rule {
   order: 3;

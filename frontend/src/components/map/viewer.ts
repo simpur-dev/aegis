@@ -421,6 +421,7 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
    * 拿到尺寸后必须补一次，否则画布恢复成 811×490 了、画面却停在星空里。
    */
   let viewApplied = el.clientWidth > 0
+  let destroyed = false
   /**
    * 容器尺寸变化 → 让 Cesium 跟着重排。
    *
@@ -442,16 +443,18 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
         })
   resizeObserver?.observe(el)
 
+  let inSpaceView = false
+
   /**
-   * 主题落到场景上：地球底色 + 画面外底色，并把太阳/月亮/天空大气关掉——
-   * 那三样是不表达任何状态的装饰光，而深色档下那条蓝色地平线辉光是画布里唯一不肯翻面的亮面。
+   * 区域视图使用页面的主题色。缩远到深空视图后才显示大气和深空配色。
    */
   function applyPalette(): void {
-    viewer.scene.globe.baseColor = cesium.Color.fromCssColorString(palette.globeBase)
-    viewer.scene.backgroundColor = cesium.Color.fromCssColorString(palette.spaceBackdrop)
-    if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false
-    if (viewer.scene.sun) viewer.scene.sun.show = false
-    if (viewer.scene.moon) viewer.scene.moon.show = false
+    const scene = viewer.scene
+    scene.globe.baseColor = cesium.Color.fromCssColorString(inSpaceView ? palette.spaceGlobe : palette.globeBase)
+    scene.backgroundColor = cesium.Color.fromCssColorString(inSpaceView ? palette.deepSpace : palette.spaceBackdrop)
+    if (scene.skyAtmosphere) scene.skyAtmosphere.show = inSpaceView
+    if (scene.sun) scene.sun.show = false
+    if (scene.moon) scene.moon.show = false
   }
   /**
    * 深空皮肤（仅 options.spaceLook）：深蓝地球 + 蓝色大气边缘 + 泛光。
@@ -460,20 +463,18 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
    * 所以拉回区域视图时还是原来那张图。默认关，其余页面与 `viewer.theme.spec.ts`
    * 钉住的画面口径都不受影响。
    */
-  function applySpaceLook(): void {
+  function configureSpaceLook(): void {
     if (!options.spaceLook) return
     const scene = viewer.scene
     if (scene.skyAtmosphere) {
-      scene.skyAtmosphere.show = true
       scene.skyAtmosphere.hueShift = 0.62
       scene.skyAtmosphere.saturationShift = 0.42
       scene.skyAtmosphere.brightnessShift = -0.3
       scene.skyAtmosphere.atmosphereLightIntensity = 7
     }
-    scene.globe.baseColor = cesium.Color.fromCssColorString(palette.spaceGlobe)
-    scene.backgroundColor = cesium.Color.fromCssColorString(palette.deepSpace)
     const bloom = scene.postProcessStages?.bloom
     if (!bloom) return
+    bloom.enabled = false
     bloom.uniforms.glowOnly = false
     bloom.uniforms.brightness = -0.35
     bloom.uniforms.contrast = 128
@@ -516,22 +517,20 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
    */
   function updateSpaceView(): void {
     if (!options.spaceLook) return
-    const inSpace = viewer.camera.positionCartographic.height > SPACE_LOOK_HEIGHT_M
-    el.classList?.toggle('is-space-view', inSpace)
+    const nextSpaceView = viewer.camera.positionCartographic.height > SPACE_LOOK_HEIGHT_M
+    if (inSpaceView === nextSpaceView) return
+    inSpaceView = nextSpaceView
+    el.classList.toggle('is-space-view', inSpaceView)
+    applyPalette()
     const bloom = viewer.scene.postProcessStages?.bloom
-    if (bloom) bloom.enabled = inSpace
-    if (inSpace) ensureEnergyLayer()
-    if (energyLayer) {
-      const next = inSpace ? 0.97 : 0
-      if (energyLayer.alpha !== next) {
-        energyLayer.alpha = next
-        viewer.scene.requestRender()
-      }
-    }
+    if (bloom) bloom.enabled = inSpaceView
+    if (inSpaceView) ensureEnergyLayer()
+    if (energyLayer) energyLayer.alpha = inSpaceView ? 0.97 : 0
+    viewer.scene.requestRender()
   }
 
   applyPalette()
-  applySpaceLook()
+  configureSpaceLook()
   viewer.scene.globe.enableLighting = false
   /**
    * 瓦片队列有变化就重绘，而不是只在"排空"那一刻重绘。
@@ -557,8 +556,11 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   viewer.scene.requestRender()
   if (typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(() => {
+      if (destroyed) return
       viewer.scene.requestRender()
-      requestAnimationFrame(() => viewer.scene.requestRender())
+      requestAnimationFrame(() => {
+        if (!destroyed) viewer.scene.requestRender()
+      })
     })
   }
   // `?mapDebug` 时才挂只读句柄：视觉烟雾门禁要读 globe.getHeight() 这类真场景状态（见 debugHandle.ts）。
@@ -600,8 +602,6 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     if (palette.mode === mode) return
     palette = mapPalette(mode)
     applyPalette()
-    // 深空皮肤会覆盖底色/大气，翻主题后要按新档再上一次，否则翻一次就掉回普通画布
-    applySpaceLook()
     for (const name of LAYER_NAMES) signatures[name] = '#aegis-rebuild-for-theme#'
     if (lastData) render(lastData)
     viewer.scene.requestRender()
@@ -643,7 +643,6 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     return zoomForCameraHeight(position ? position.height : Number.POSITIVE_INFINITY)
   }
 
-  let destroyed = false
   return {
     render,
     setTheme,

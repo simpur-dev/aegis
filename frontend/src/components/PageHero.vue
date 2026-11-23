@@ -16,13 +16,14 @@ defineProps<{
   title: string
   badge?: string
   caption?: string
+  surface?: boolean
   /** 一眼看得出的当下状态（只写"现在怎么样了"，不复述标题；tone 由数据决定，不许拿它当装饰）。 */
   status?: { tone: 'ok' | 'warn' | 'bad' | 'idle'; text: string }
 }>()
 </script>
 
 <template>
-  <header class="page-head">
+  <header class="page-head" :class="{ 'page-head--surface': surface }">
     <div class="page-head__row">
       <h1 class="page-head__title">{{ title }}</h1>
       <span v-if="badge" class="page-head__badge">{{ badge }}</span>
@@ -45,15 +46,32 @@ defineProps<{
 .page-head {
   margin-bottom: var(--aeg-space-s4);
 }
+.page-head--surface {
+  padding: var(--aeg-space-s4);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-xl);
+  background: var(--aeg-color-overview-panel);
+  box-shadow: inset 0 1px 0 var(--aeg-color-glass-border), var(--aeg-shadow-sm);
+}
+@supports (backdrop-filter: blur(12px)) {
+  @media (prefers-reduced-transparency: no-preference) {
+    .page-head--surface {
+      background: color-mix(in srgb, var(--aeg-color-overview-panel) 84%, transparent);
+      backdrop-filter: blur(12px) saturate(120%);
+    }
+  }
+}
 .page-head__row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--aeg-space-s3);
 }
 .page-head__title {
   margin: 0;
-  font-size: var(--aeg-font-lg);
-  font-weight: var(--aeg-weight-semibold);
+  font-family: var(--aeg-font-display);
+  font-size: var(--aeg-font-xl);
+  font-weight: var(--aeg-weight-bold);
   line-height: var(--aeg-lh-snug);
   color: var(--aeg-color-text);
 }
@@ -66,10 +84,9 @@ defineProps<{
   border-radius: var(--aeg-radius-sm);
   background: var(--aeg-color-sunken);
   color: var(--aeg-color-text-secondary);
-  font-family: var(--aeg-font-mono);
+  font-family: var(--aeg-font-sans);
   font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-bold);
-  letter-spacing: 0.06em;
 }
 .page-head__status {
   display: inline-flex;
@@ -104,8 +121,13 @@ defineProps<{
 .page-head__actions {
   margin-left: auto;
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
   align-items: center;
   gap: var(--aeg-space-s2);
+}
+.page-head__actions:empty {
+  display: none;
 }
 /* 动作区里是各页模板塞进来的 antd 按钮，scoped 样式够不到，必须 :deep。
    36px 这个下限是真机量的：small 档 24px 高在窄屏上点不准。 */
@@ -114,10 +136,25 @@ defineProps<{
 }
 .page-head__caption {
   margin: var(--aeg-space-s2) 0 0;
-  font-size: var(--aeg-font-sm);
+  font-size: var(--aeg-font-base);
   line-height: var(--aeg-lh-normal);
   color: var(--aeg-color-text-secondary);
   max-width: 72ch;
+}
+@media (max-width: 720px) {
+  .page-head__row {
+    gap: var(--aeg-space-s2);
+  }
+  .page-head__actions {
+    flex: 1 0 100%;
+    margin-left: 0;
+  }
+  .page-head__actions :deep(.ant-btn) {
+    min-height: 40px;
+  }
+  .page-head__status {
+    flex-basis: 100%;
+  }
 }
 .page-head__stats {
   display: flex;

@@ -329,6 +329,7 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
     }
 
     function leaveInstance(mode: EditorMode): void {
+      viewToken += 1
       stopPolling()
       instance.value = null
       capture.value = null
@@ -499,6 +500,7 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
       clearPreview,
       focusInstance,
       exitInstance,
+      leaveInstance,
       openFirstWaiting,
       refreshInstance,
       refreshAll,

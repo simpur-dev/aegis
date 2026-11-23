@@ -12,15 +12,16 @@
  * 3. **能力面读不到 ≠ 一切正常**。503（腿没装配）与 404（出口未启用）是两句话；
  *    `llm_configured=false` 的口径由页头 caps-state 标签承担（黄色横幅已按要求移除）。
  * 4. **角色不够的动作照样列出来**，置灰并说明缺什么——把动作藏起来，用户只会以为助手不会这个。
- * 5. **page 模式是值班台布局**：两侧留白 48，左栏会话 : 右栏 = 2:1、缝 24px；
- *    台高默认"一屏适配×4/3"、内容更高时跟内容走（整页可滚），台底一条整页拉杆；
- *    会话栏 sticky 定高、问答框常驻栏底（时间线内部滚），边框墨色单色（浅近黑／深近白）、发送用黑白强动作；
- *    右栏「在案告警／处置空间」竖排、拉杆互补；dock 模式会话优先：两块收进图标栏
- *    （实时计数徽标、点开滑出 ≤45%、一次一块、Esc 先收层），问答框常驻抽屉底；
- *    两套容器共用这一份会话逻辑。
+ * 5. 独立桌面页的告警和处置区同时可见，保留面板高度调节。
+ *    抽屉和窄屏独立页通过工具栏切换这两个区，输入区始终在会话底部。
  */
 import { message } from 'ant-design-vue'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import {
+  ApartmentOutlined, BellOutlined, DownOutlined, LockOutlined, PlayCircleOutlined, RightOutlined,
+  SearchOutlined, SendOutlined, ToolOutlined, UploadOutlined,
+} from '@ant-design/icons-vue'
+import { useMediaQuery } from '@vueuse/core'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
 import type { Component, ComponentPublicInstance } from 'vue'
 
 import type { ActionSpecDto, ConfirmResultDto, ProposalFrame } from '@/api/assistant'
@@ -36,6 +37,9 @@ import { useHandlingSpace } from '@/composables/useHandlingSpace'
 import { frameText, proposalText } from '@/utils/frameText'
 
 const props = withDefaults(defineProps<{ mode?: 'page' | 'dock' }>(), { mode: 'page' })
+const narrowViewport = useMediaQuery('(max-width: 720px)')
+const compact = computed(() => props.mode === 'dock' || narrowViewport.value)
+const fieldId = useId()
 
 const {
   capabilities,
@@ -54,6 +58,7 @@ const draft = ref('')
 const streaming = ref(false)
 const streamError = ref('')
 const reportOpen = ref(false)
+const composerBox = ref<HTMLElement | null>(null)
 
 // 抽屉「会话优先」：告警/处置收进两枚图标，点开才占空间，一次只开一块
 const dockPane = ref<'alerts' | 'handling' | null>(null)
@@ -66,7 +71,7 @@ function toggleDockPane(pane: 'alerts' | 'handling'): void {
 }
 /** Esc 先收展开层、再按才关抽屉：capture 阶段拦在 AssistantDock 的 bubble 监听之前。 */
 function onDockEscape(ev: KeyboardEvent): void {
-  if (props.mode !== 'dock' || dockPane.value === null || ev.key !== 'Escape') return
+  if (!compact.value || dockPane.value === null || ev.key !== 'Escape') return
   ev.stopPropagation()
   dockPane.value = null
 }
@@ -92,44 +97,50 @@ watch([() => frames.value.length, streaming], async () => {
 function useExample(spec: ActionSpecDto): void {
   if (spec.example === '') return
   draft.value = spec.example
+  composerBox.value?.querySelector('textarea')?.focus({ preventScroll: true })
 }
 
-/**
- * 能力面按动作域分组呈现：二十几条平铺是一面墙，每条还拖着同一句"需要 duty 及以上角色"。
- * 分组后值班员先找"哪一类"再找"哪一条"；权限门槛压成四个字缀注，完整原因进 tooltip。
- * 域的真源在后端注册表（ActionDomain），这里只给中文标签与展示顺序；新域落进"其他"不丢条。
- */
-const DOMAIN_GROUPS: ReadonlyArray<{ domain: string; label: string }> = [
-  { domain: 'query', label: '查询与解读' },
-  { domain: 'drill', label: '演练与上报' },
-  { domain: 'warning', label: '预警处置' },
-  { domain: 'task', label: '处置任务' },
-  { domain: 'notify', label: '通知' },
-  { domain: 'workflow', label: '流程' },
-  { domain: 'rule', label: '规则' },
-  { domain: 'device', label: '设备' },
-]
+const catalogId = useId()
+const showCatalog = ref(false)
+
+const QUICK_TASKS = [
+  { action: 'warning.list', title: '查询预警', detail: '查看近期风险预警', icon: SearchOutlined },
+  { action: 'chain.explain', title: '解释链路', detail: '回看研判与处置', icon: ApartmentOutlined },
+  { action: 'drill.start', title: '发起演练', detail: '推演应急处置流程', icon: PlayCircleOutlined },
+  { action: 'report.submit', title: '上报险情', detail: '记录现场异常与风险', icon: UploadOutlined },
+] as const
+const DOMAIN_LABELS = {
+  query: '查询与解读', drill: '演练与上报', warning: '预警处置', task: '处置任务',
+  notify: '通知', workflow: '流程', rule: '规则', device: '设备',
+}
 const ROLE_LABELS: Record<string, string> = { duty: '值班员', lead: '值班长', admin: '管理员' }
 
-const groupedCaps = computed(() => {
-  const actions = capabilities.value?.actions ?? []
-  const groups = DOMAIN_GROUPS.map((group) => ({ ...group, items: actions.filter((a) => a.domain === group.domain) })).filter(
-    (group) => group.items.length > 0,
-  )
-  const known = new Set(DOMAIN_GROUPS.map((group) => group.domain))
-  const rest = actions.filter((a) => !known.has(a.domain))
-  if (rest.length > 0) groups.push({ domain: 'other', label: '其他', items: rest })
-  return groups
+const quickTasks = computed(() => QUICK_TASKS.flatMap((task) => {
+  const spec = capabilities.value?.actions.find((action) => action.action === task.action)
+  return spec ? [{ ...task, spec }] : []
+}))
+
+const catalogGroups = computed(() => {
+  const featured = new Set<string>(quickTasks.value.map((task) => task.action))
+  const remaining = capabilities.value?.actions.filter((action) => !featured.has(action.action)) ?? []
+  const groups = Object.entries(DOMAIN_LABELS).map(([domain, label]) => ({
+    domain, label, items: remaining.filter((action) => action.domain === domain),
+  }))
+  groups.push({
+    domain: 'other',
+    label: '其他',
+    items: remaining.filter((action) => !Object.hasOwn(DOMAIN_LABELS, action.domain)),
+  })
+  return groups.filter((group) => group.items.length)
 })
 
 function roleNote(spec: ActionSpecDto): string {
   return ROLE_LABELS[spec.required_role] ?? spec.required_role
 }
 
-function chipTitle(spec: ActionSpecDto): string {
-  const parts = [spec.example === '' ? '能力面没给这条动作的示例句' : `填入：${spec.example}`]
-  if (!spec.allowed) parts.push(spec.denied_reason || '当前席位无权限')
-  return parts.join('｜')
+function actionTitle(spec: ActionSpecDto): string {
+  const hint = spec.example ? `填入：${spec.example}` : '该动作没有示例句'
+  return spec.allowed ? hint : `${hint} ｜ ${spec.denied_reason || '当前席位无权限'}`
 }
 
 /**
@@ -463,7 +474,7 @@ function resetPane(): void {
   }
 }
 
-/* ── 整页拉杆：值班台默认"适配高度×4/3"，内容更高时跟内容走；整页可滚 ── */
+/* 值班台默认适配首屏。列表单独滚动，拉杆可调整整台高度。 */
 const DESK_MIN = 420
 const DESK_STORAGE = 'aegis.assistant.desk-height'
 const deskRef = ref<HTMLElement | null>(null)
@@ -480,42 +491,30 @@ function readDeskHeight(): number | null {
     return null
   }
 }
-/** 一屏里留给值班台的高度：主内容盒减掉它上下的一切（页头/留白/令牌条/页脚）。
- *  用 scrollHeight 减 desk 底边求"下方一切"，desk 自己长多高都不影响这个差值。 */
-function fitDesk(): number {
+/** 给两栏留出同一个首屏高度，页脚跟在值班台之后。 */
+function viewportDeskHeight(): number {
   const main = document.querySelector('.main-content') as HTMLElement | null
   const el = deskRef.value
   if (main === null || el === null) return 0
-  const top = main.getBoundingClientRect().top
-  const r = el.getBoundingClientRect()
-  const above = r.top - top
-  const below = main.scrollHeight - (r.bottom - top)
-  return Math.max(0, Math.round(main.clientHeight - above - below))
+  const above = el.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop
+  return Math.max(DESK_MIN, Math.round(main.clientHeight - above - 16))
 }
 function deskMax(): number {
-  // 上限不能低于内容自然高，否则默认台高就在滑轨外、往下拖反而缩
-  const natural = deskRef.value?.scrollHeight ?? 0
-  return Math.max(DESK_MIN, fitDesk() * 2, natural)
+  return Math.max(DESK_MIN, viewportDeskHeight() * 2, deskRef.value?.scrollHeight ?? 0)
 }
 function clampDesk(height: number): number {
   return Math.min(deskMax(), Math.max(DESK_MIN, Math.round(height)))
 }
 const deskStyle = computed(() => {
   if (deskOverride.value !== null) return { height: `${deskOverride.value}px`, minHeight: '0px' }
-  return deskMin.value > 0 ? { minHeight: `${deskMin.value}px` } : undefined
+  return deskMin.value > 0 ? { height: `${deskMin.value}px` } : undefined
 })
-function refreshDeskMin(): void {
-  deskMin.value = Math.round((fitDesk() * 4) / 3)
-}
-/** 会话栏 sticky 定高：静止时页头下刚好放满、吸顶后顶部留一道呼吸。
- *  above 要加回 scrollTop，否则页面一滚这个差值就跟着滚走。 */
-function refreshChatPin(): void {
-  const main = document.querySelector('.main-content') as HTMLElement | null
-  const el = deskRef.value
-  if (main === null || el === null) return
-  const above = el.getBoundingClientRect().top - main.getBoundingClientRect().top + (main.scrollTop || 0)
-  const h = Math.max(DESK_MIN, Math.round(main.clientHeight - above - 16))
-  el.style.setProperty('--chat-pin-h', `${h}px`)
+function refreshDeskGeometry(): void {
+  if (compact.value) return
+  sideBudget.value = sideColRef.value?.clientHeight ?? 0
+  reconcilePanes()
+  deskMin.value = viewportDeskHeight()
+  if (deskMin.value > 0) deskRef.value?.style.setProperty('--chat-pin-h', `${deskMin.value}px`)
 }
 function paintDesk(height: number): void {
   const el = deskRef.value
@@ -541,8 +540,8 @@ function resetDesk(): void {
   }
   const el = deskRef.value
   if (el === null) return
-  el.style.height = ''
-  el.style.minHeight = deskMin.value > 0 ? `${deskMin.value}px` : ''
+  el.style.height = deskMin.value > 0 ? `${deskMin.value}px` : ''
+  el.style.minHeight = ''
   el.parentElement?.querySelector('[data-testid="desk-handle"]')?.setAttribute('aria-valuenow', String(deskMin.value || DESK_MIN))
 }
 
@@ -595,22 +594,16 @@ function onDeskHandleKey(ev: KeyboardEvent): void {
 onMounted(() => {
   void loadCapabilities()
   if (props.mode !== 'page') return
-  const el = sideColRef.value
-  if (el === null) return
-  sideBudget.value = el.clientHeight
-  reconcilePanes()
-  refreshDeskMin()
-  refreshChatPin()
-  if (typeof ResizeObserver !== 'undefined') {
-    budgetObserver = new ResizeObserver(() => {
-      sideBudget.value = sideColRef.value?.clientHeight ?? 0
-      reconcilePanes()
-      refreshDeskMin()
-      refreshChatPin()
-    })
-    budgetObserver.observe(el)
+  refreshDeskGeometry()
+  const desk = deskRef.value
+  if (desk && typeof ResizeObserver !== 'undefined') {
+    budgetObserver = new ResizeObserver(refreshDeskGeometry)
+    budgetObserver.observe(desk)
+    const main = desk.closest('.main-content')
+    if (main) budgetObserver.observe(main)
   }
 })
+watch(compact, refreshDeskGeometry, { flush: 'post' })
 
 onBeforeUnmount(() => {
   budgetObserver?.disconnect()
@@ -620,7 +613,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="panel" :class="`panel--${props.mode}`" data-testid="assistant-panel">
+  <div class="panel" :class="[`panel--${props.mode}`, { 'panel--compact': compact }]" data-testid="assistant-panel">
     <a-alert
       v-if="capabilitiesError && capabilitiesKind === 'unavailable'"
       type="error"
@@ -644,16 +637,16 @@ onBeforeUnmount(() => {
     <div
       ref="deskRef"
       class="desk"
-      :style="props.mode === 'page' ? deskStyle : undefined"
+      :style="!compact ? deskStyle : undefined"
       :data-testid="props.mode === 'page' ? 'assistant-desk' : undefined"
     >
       <div class="chat">
         <!-- 抽屉模式会话优先：两块收进图标栏，点开才滑出；问答框常驻底 -->
-        <template v-if="props.mode === 'dock'">
-          <div class="dockbar" data-testid="dock-bar">
+        <template v-if="compact">
+          <div class="dockbar" role="group" aria-label="值班工具" data-testid="dock-bar">
             <button
               type="button"
-              class="dockbar__icon"
+              class="dockbar__button"
               :class="{ 'is-open': dockPane === 'alerts' }"
               :aria-expanded="dockPane === 'alerts'"
               aria-controls="dock-pane"
@@ -661,15 +654,14 @@ onBeforeUnmount(() => {
               data-testid="dock-toggle-alerts"
               @click="toggleDockPane('alerts')"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 3a6 6 0 0 0-6 6v3.2l-1.6 3.3a1 1 0 0 0 .9 1.5h13.4a1 1 0 0 0 .9-1.5L18 12.2V9a6 6 0 0 0-6-6Z" />
-                <path d="M10 19a2 2 0 0 0 4 0" />
-              </svg>
+              <BellOutlined aria-hidden="true" />
+              <span>在案告警</span>
               <span v-if="dockAlertCount > 0" class="dockbar__badge is-alert" data-testid="dock-badge-alerts">{{ dockAlertCount }}</span>
+              <RightOutlined class="dockbar__chevron" aria-hidden="true" />
             </button>
             <button
               type="button"
-              class="dockbar__icon"
+              class="dockbar__button"
               :class="{ 'is-open': dockPane === 'handling' }"
               :aria-expanded="dockPane === 'handling'"
               aria-controls="dock-pane"
@@ -677,10 +669,10 @@ onBeforeUnmount(() => {
               data-testid="dock-toggle-handling"
               @click="toggleDockPane('handling')"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-              </svg>
+              <ToolOutlined aria-hidden="true" />
+              <span>处置空间</span>
               <span v-if="dockHandlingCount > 0" class="dockbar__badge" data-testid="dock-badge-handling">{{ dockHandlingCount }}</span>
+              <RightOutlined class="dockbar__chevron" aria-hidden="true" />
             </button>
           </div>
           <Transition name="dockpane">
@@ -691,54 +683,94 @@ onBeforeUnmount(() => {
           </Transition>
         </template>
         <div ref="scrollHost" class="chat__scroll" data-testid="timeline">
-        <!-- 空态：欢迎 + 建议（点芯片只填句子，发不发由人） -->
-        <div v-if="!frames.length && !streaming" class="chat__empty" data-testid="timeline-empty">
-          <div class="chat__greeting">有什么可以帮你？</div>
-          <p class="chat__hint">查询预警与态势、发起演练、上报险情。执行类动作先提案，经你确认才落地。</p>
-          <div v-if="capabilities" class="caps" data-testid="caps-actions">
-            <section v-for="group in groupedCaps" :key="group.domain" class="caps__group">
-              <p class="caps__label">{{ group.label }}</p>
-              <div class="caps__row">
-                <button
-                  v-for="spec in group.items"
-                  :key="spec.action"
-                  type="button"
-                  class="caps__chip"
-                  :class="spec.allowed ? 'is-available' : 'is-denied'"
-                  :data-testid="`action-${spec.action}`"
-                  :disabled="spec.example === ''"
-                  :title="chipTitle(spec)"
-                  @click="useExample(spec)"
-                >
-                  <svg
-                    v-if="!spec.allowed"
-                    class="caps__lock"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
+        <div v-if="!frames.length && !streaming" class="welcome" data-testid="timeline-empty">
+          <section class="welcome__intro">
+            <span class="welcome__mark" aria-hidden="true">✦</span>
+            <div class="welcome__copy">
+              <h2>有什么可以帮你？</h2>
+              <p>查询预警与态势、发起演练或上报险情。</p>
+            </div>
+          </section>
+
+          <section v-if="capabilities && (quickTasks.length || catalogGroups.length)" class="welcome__actions" data-testid="caps-actions">
+            <header class="welcome__head">
+              <h3>{{ quickTasks.length ? '快捷任务' : '可用任务' }}</h3>
+              <button
+                v-if="quickTasks.length && catalogGroups.length"
+                type="button"
+                class="welcome__disclosure"
+                :aria-expanded="showCatalog"
+                :aria-controls="catalogId"
+                data-testid="caps-disclosure"
+                @click="showCatalog = !showCatalog"
+              >
+                {{ showCatalog ? '收起能力' : '更多能力' }} <DownOutlined aria-hidden="true" />
+              </button>
+            </header>
+
+            <div v-if="quickTasks.length" class="welcome__grid" data-testid="quick-tasks">
+              <button
+                v-for="task in quickTasks"
+                :key="task.action"
+                type="button"
+                class="quick-task"
+                :class="task.spec.allowed ? 'is-available' : 'is-denied'"
+                :data-testid="`action-${task.action}`"
+                :disabled="!task.spec.example"
+                :title="actionTitle(task.spec)"
+                @click="useExample(task.spec)"
+              >
+                <span class="quick-task__icon"><component :is="task.icon" aria-hidden="true" /></span>
+                <span class="quick-task__copy">
+                  <strong>{{ task.title }}</strong>
+                  <span class="quick-task__detail">{{ task.detail }}</span>
+                  <span v-if="!task.spec.allowed || task.spec.needs_confirm" class="quick-task__rules">
+                    <span v-if="!task.spec.allowed"><LockOutlined aria-hidden="true" /> 需{{ roleNote(task.spec) }}</span>
+                    <span v-if="task.spec.needs_confirm">需确认</span>
+                  </span>
+                </span>
+              </button>
+            </div>
+
+            <div
+              v-if="catalogGroups.length"
+              v-show="showCatalog || !quickTasks.length"
+              :id="catalogId"
+              class="caps"
+              data-testid="caps-catalog"
+            >
+              <section v-for="group in catalogGroups" :key="group.domain" class="caps__group">
+                <h4>{{ group.label }}</h4>
+                <div class="caps__row">
+                  <button
+                    v-for="spec in group.items"
+                    :key="spec.action"
+                    type="button"
+                    class="caps__chip"
+                    :class="spec.allowed ? 'is-available' : 'is-denied'"
+                    :data-testid="`action-${spec.action}`"
+                    :disabled="!spec.example"
+                    :title="actionTitle(spec)"
+                    @click="useExample(spec)"
                   >
-                    <rect x="5" y="11" width="14" height="9" rx="2" />
-                    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-                  </svg>
-                  {{ spec.title }}<span v-if="spec.needs_confirm" class="caps__chip__note">需确认</span><span
-                    v-if="!spec.allowed"
-                    class="caps__chip__note is-warn"
-                  >需{{ roleNote(spec) }}</span>
-                </button>
-              </div>
-            </section>
-          </div>
-          <div v-if="capabilities" class="chat__ttl" data-testid="caps-ttl">
-            会话保留 {{ Math.round(capabilities.session_ttl_seconds / 60) }} 分钟
-            ｜ 待确认动作 {{ Math.round(capabilities.confirm_ttl_seconds / 60) }} 分钟内有效
-            ｜ 动作台账
-            <span v-if="capabilities.control_actions_persistent">已持久化</span>
-            <span v-else class="pill-dashed">内存形态，重启即失</span>
-          </div>
+                    <LockOutlined v-if="!spec.allowed" aria-hidden="true" />
+                    {{ spec.title }}
+                    <span v-if="spec.needs_confirm">需确认</span>
+                    <span v-if="!spec.allowed">需{{ roleNote(spec) }}</span>
+                  </button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <details v-if="capabilities" class="welcome__retention">
+            <summary>会话与操作记录</summary>
+            <p data-testid="caps-ttl">
+              会话保留 {{ Math.round(capabilities.session_ttl_seconds / 60) }} 分钟 ·
+              待确认动作 {{ Math.round(capabilities.confirm_ttl_seconds / 60) }} 分钟内有效 ·
+              动作台账{{ capabilities.control_actions_persistent ? '已持久化' : '为内存形态，重启即失' }}
+            </p>
+          </details>
         </div>
 
         <!-- 会话流：按轮分组，用户在右、助手在左；答案先给，过程帧折一行 -->
@@ -818,45 +850,63 @@ onBeforeUnmount(() => {
       <div class="composer">
         <p v-if="streamError" class="error" data-testid="stream-error">{{ streamError }}</p>
         <div class="composer__context">
-          <a-input v-model:value="reporter" :maxlength="CHAT_LIMITS.reporter.max" style="width: 130px" size="small" placeholder="上报人名义" data-testid="field-reporter" />
-          <a-input
-            v-model:value="regionCode"
-            :maxlength="24"
-            style="width: 170px"
-            size="small"
-            placeholder="区划代码（可留空）"
-            data-testid="field-region"
-          />
+          <div class="composer__field">
+            <label :for="`${fieldId}-reporter`">上报人</label>
+            <a-input
+              :id="`${fieldId}-reporter`"
+              v-model:value="reporter"
+              :maxlength="CHAT_LIMITS.reporter.max"
+              placeholder="上报人名义"
+              data-testid="field-reporter"
+            />
+          </div>
+          <div class="composer__field">
+            <label :for="`${fieldId}-region`">区域代码（选填）</label>
+            <a-input
+              :id="`${fieldId}-region`"
+              v-model:value="regionCode"
+              :maxlength="24"
+              placeholder="如 540121"
+              data-testid="field-region"
+            />
+          </div>
           <a-button size="small" data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
-          <span class="muted" data-testid="session-id" :title="sessionId ? '' : '会话号由后端首帧给出'">{{ sessionId ? `会话 ${sessionId}` : '会话未开始' }}</span>
         </div>
-        <div class="composer__box">
+        <div ref="composerBox" class="composer__box">
           <a-textarea
             v-model:value="draft"
             :rows="2"
-            :auto-size="{ minRows: 2, maxRows: 6 }"
+            :auto-size="{ minRows: 2, maxRows: compact ? 3 : 6 }"
             :maxlength="CHAT_LIMITS.message.max"
-            placeholder="如：最近发布了哪些预警 / 帮我上报 540121 沟道泥位抬升"
+            aria-label="输入你的问题或指令"
+            placeholder="输入你的问题或指令…"
             data-testid="field-message"
             @keydown="onMessageKeydown"
           />
         </div>
         <!-- 计数自己渲染而不是用 antd 的 show-count：那一个的文本挂在 data-count 上，界面上看得见却测不着 -->
         <div class="composer__meta">
-          <span class="muted" data-testid="char-count">
-            {{ draft.length }} / {{ CHAT_LIMITS.message.max }} 字 ｜ Enter 发送，Shift+Enter 换行
-          </span>
+          <div class="composer__info">
+            <span class="composer__count" data-testid="char-count">
+              <span>{{ draft.length }} / {{ CHAT_LIMITS.message.max }} 字</span>
+              <span class="composer__keys">Enter 发送，Shift+Enter 换行</span>
+            </span>
+            <span v-if="sessionId" class="composer__session" data-testid="session-id" :title="sessionId">会话 {{ sessionId }}</span>
+          </div>
           <div class="composer__actions">
             <a-button v-if="streaming" danger size="small" data-testid="stop" @click="stopStream">停止</a-button>
             <a-button size="small" type="text" data-testid="clear" @click="clearTimeline">清空</a-button>
-            <a-button type="primary" :loading="streaming" data-testid="send" @click="send">发送</a-button>
+            <a-button type="primary" :loading="streaming" data-testid="send" @click="send">
+              <template #icon><SendOutlined aria-hidden="true" /></template>
+              发送
+            </a-button>
           </div>
         </div>
       </div>
       </div>
 
       <!-- 右栏：在案告警 上、处置空间 下，竖排满高；每板底边一条拉杆，两板高度互补 -->
-      <div v-if="props.mode === 'page'" ref="sideColRef" class="side" data-testid="assistant-side">
+      <div v-if="!compact" ref="sideColRef" class="side" data-testid="assistant-side">
         <section
           v-for="pane in PANES"
           :key="pane.kind"
@@ -894,6 +944,7 @@ onBeforeUnmount(() => {
     <!-- 整页拉杆：值班台比一屏高时整页可滚，这条负责把整台高度拖回来/放出去 -->
     <div
       v-if="props.mode === 'page'"
+      v-show="!compact"
       class="desk-handle"
       role="slider"
       tabindex="0"
@@ -931,20 +982,16 @@ onBeforeUnmount(() => {
   min-height: 380px;
   gap: var(--aeg-space-s4);
 }
-/*
- * 值班台一行两栏：右栏在 16:15 基础上再横向压 1/3 → 左:右 = 2:1，中缝 24px。
- * 1280 档（两侧 48 留白）左≈773 / 右≈387，右栏恰为上一版的 2/3；宽屏按同比例放大。
- * 高度不锁一屏：min-height 由 JS 量成"适配高度×4/3"，内容更高时跟着内容长，整页可滚。
- */
-.panel--page .desk {
+
+.panel--page:not(.panel--compact) .desk {
+  display: grid;
   flex: none;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: var(--aeg-space-s6);
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--aeg-space-s4);
 }
-/* 抽屉里没有值班台：desk 退化掉，chat 仍是 panel 的直接 flex 子项 */
-.panel--dock .desk {
+.panel--compact .desk {
   display: contents;
 }
 .side {
@@ -962,9 +1009,9 @@ onBeforeUnmount(() => {
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--aeg-color-card);
+  background: linear-gradient(145deg, var(--aeg-color-overview-panel), var(--aeg-color-overview-tile));
   border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-md);
+  border-radius: var(--aeg-radius-xl);
   overflow: hidden;
   /* 与驾驶舱同一口径：自成合成层，面板内滚动只动纹理，不重栅整页 */
   transform: translateZ(0);
@@ -973,6 +1020,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 /* 面板自己就是卡片面：里面两个组件在抽屉模式自带的那层边框/底色在这里脱掉，避免卡中卡 */
 .side-pane--alerts :deep(.alerts) {
@@ -981,8 +1029,11 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 .side-pane--handling :deep(.handling) {
-  border-bottom: none;
+  border: none;
   background: transparent;
+}
+.side-pane :deep(:is(.alerts__title, .handling__title)) {
+  font-size: var(--aeg-font-md);
 }
 .side-pane--handling :deep(.handling__tasks) {
   max-height: none;
@@ -1037,133 +1088,125 @@ onBeforeUnmount(() => {
   outline: 2px solid var(--aeg-color-brand);
   outline-offset: -2px;
 }
-/* 窄屏兜底：会话在上、两板横排在下；拉杆是桌面 affordance，这一档收起 */
-@media (max-width: 999px) {
-  .panel--page .desk {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
-  }
-  .panel--page .chat {
-    position: static;
-    height: auto;
-  }
-  .side {
-    flex-direction: row;
-  }
-  .side-pane {
-    height: 100%;
-    min-height: 0;
-    width: calc(50% - var(--aeg-space-s2));
-  }
-  .side-pane__handle {
-    display: none;
-  }
-}
+
 .panel--dock {
   height: 100%;
 }
-.muted {
-  color: var(--aeg-color-text-secondary);
-  font-size: var(--aeg-font-sm);
+.panel--page.panel--compact {
+  flex: none;
+  height: clamp(400px, calc(100dvh - 228px), 780px);
 }
 .chat {
-  margin: 0 auto;
-  max-width: 820px;
+  min-width: 0;
+  min-height: 0;
   width: 100%;
-  height: calc(100vh - var(--aeg-header-height) - 208px);
-  min-height: 480px;
+  container: assistant-chat / inline-size;
   display: flex;
   flex-direction: column;
-  background: var(--aeg-color-card);
+  background: var(--aeg-color-overview-tile);
   border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-lg);
+  border-radius: var(--aeg-radius-xl);
+  box-shadow: inset 0 1px 0 var(--aeg-color-glass-border), var(--aeg-shadow-md);
   overflow: hidden;
 }
-/* 抽屉里没有页头，高度跟着容器走 */
+.panel--compact .chat {
+  flex: 1;
+}
 .panel--dock .chat {
-  height: 100%;
-  min-height: 0;
   border: none;
   border-radius: 0;
   background: transparent;
+  box-shadow: none;
 }
-/* page 模式：会话是值班台左栏、占满全高；超出部分时间线内部滚，输入区永远露出 */
-.panel--page .chat {
-  /* 会话栏吸顶定高：问答框常驻栏底，右栏跟整页滚；高度由 refreshChatPin 量给 */
+.panel--page:not(.panel--compact) .chat {
   position: sticky;
   top: var(--aeg-space-s4);
   align-self: start;
-  height: var(--chat-pin-h, auto);
-  min-height: 0;
-  max-width: none;
-  margin: 0;
+  height: min(100%, var(--chat-pin-h, 100%));
+}
+@supports (backdrop-filter: blur(14px)) {
+  @media (prefers-reduced-transparency: no-preference) {
+    .panel--page .chat {
+      background: color-mix(in srgb, var(--aeg-color-overview-tile) 86%, transparent);
+      backdrop-filter: blur(14px) saturate(125%);
+    }
+  }
 }
 .chat__scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--aeg-space-s6) var(--aeg-space-s6) var(--aeg-space-s5);
   display: flex;
+  flex: 1;
   flex-direction: column;
-  gap: var(--aeg-space-s6);
+  gap: var(--aeg-space-s4);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--aeg-space-s4);
 }
-.panel--dock .chat__scroll {
+.panel--compact .chat__scroll {
   padding: var(--aeg-space-s3);
 }
-/* 抽屉上下文栏：收起只占这一行；徽标与面板同源实时计数 */
 .dockbar {
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--aeg-space-s2);
-  padding: var(--aeg-space-s2) var(--aeg-space-s3);
-  border-bottom: 1px solid var(--aeg-color-border-subtle);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--aeg-space-s1);
+  margin: var(--aeg-space-s3) var(--aeg-space-s3) 0;
+  padding: var(--aeg-space-s1);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-sunken);
 }
-.dockbar__icon {
-  position: relative;
-  width: 32px;
-  height: 32px;
+.dockbar__button {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-sm);
+  gap: var(--aeg-space-s1);
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 var(--aeg-space-s2);
+  border: 1px solid transparent;
+  border-radius: var(--aeg-radius-md);
   background: transparent;
-  color: var(--aeg-color-text-secondary);
-  cursor: pointer;
-  transition:
-    color var(--aeg-motion-base) ease,
-    border-color var(--aeg-motion-base) ease;
-}
-.dockbar__icon svg {
-  width: 17px;
-  height: 17px;
-}
-.dockbar__icon:hover,
-.dockbar__icon.is-open {
   color: var(--aeg-color-text);
-  border-color: var(--aeg-color-text);
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--aeg-motion-base), background-color var(--aeg-motion-base);
+}
+.dockbar__button > :first-child {
+  color: var(--aeg-color-overview-accent);
+  font-size: var(--aeg-font-md);
+}
+.dockbar__button:is(:hover, .is-open) {
+  background: var(--aeg-color-overview-panel);
+  border-color: var(--aeg-color-brand-line);
+}
+.dockbar__chevron {
+  margin-left: auto;
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-xs);
 }
 .dockbar__badge {
-  position: absolute;
-  top: -7px;
-  right: -7px;
   min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--aeg-color-text);
-  color: var(--aeg-color-card);
+  padding: 0 var(--aeg-space-s1);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-text);
   font-size: var(--aeg-font-xs);
   line-height: 16px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 .dockbar__badge.is-alert {
-  background: var(--aeg-color-status-danger);
-  color: var(--aeg-color-text-inverse);
+  background: var(--aeg-tag-red-bg);
+  color: var(--aeg-tag-red-text);
+  box-shadow: inset 0 0 0 1px var(--aeg-tag-red-line);
 }
 /* 展开层：点开才占空间，上限抽屉 45%，内部滚；一次只开一块 */
 .dockpane {
-  flex: none;
+  flex: 0 1 auto;
+  min-height: 0;
+  overscroll-behavior: contain;
   max-height: 45%;
   overflow-y: auto;
   padding: var(--aeg-space-s2) var(--aeg-space-s3);
@@ -1185,102 +1228,209 @@ onBeforeUnmount(() => {
     transform: translateY(0);
   }
 }
-.chat__empty {
-  margin: auto;
-  width: 100%;
-  max-width: 600px;
-  text-align: left;
-  padding: var(--aeg-space-s6) var(--aeg-space-s5);
-}
-.chat__greeting {
-  font-size: var(--aeg-font-lg);
-  font-weight: var(--aeg-weight-semibold);
-}
-.chat__hint {
-  margin: var(--aeg-space-s2) 0 0;
-  max-width: 48ch;
-  color: var(--aeg-color-text-secondary);
-  font-size: var(--aeg-font-sm);
-  line-height: var(--aeg-lh-relaxed);
-}
-.caps {
-  margin-top: var(--aeg-space-s5);
-  display: flex;
-  flex-direction: column;
+.welcome {
+  display: grid;
   gap: var(--aeg-space-s4);
+  min-width: 0;
+  width: 100%;
+  max-width: 920px;
+  margin-inline: auto;
 }
-.caps__group {
+.welcome__intro {
+  position: relative;
+  isolation: isolate;
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--aeg-space-s3);
+  overflow: hidden;
+  padding: var(--aeg-space-s4);
+  border: 1px solid var(--aeg-color-brand-line);
+  border-radius: var(--aeg-radius-xl);
+  background:
+    radial-gradient(ellipse at 86% 8%, var(--aeg-color-brand-soft), transparent 64%),
+    linear-gradient(135deg, var(--aeg-color-overview-panel), var(--aeg-color-overview-tile));
+  box-shadow: inset 0 1px 0 var(--aeg-color-glass-border);
+}
+.welcome__intro::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 0 38%;
+  background: url('/backgrounds/tibet-relief.webp') 66% 46% / cover;
+  opacity: 0.15;
+  mask-image: linear-gradient(90deg, transparent, black);
+  content: '';
+}
+.welcome__mark,
+.quick-task__icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border: 1px solid var(--aeg-color-brand-line);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-overview-accent);
+  font-size: var(--aeg-font-md);
+}
+.welcome__mark {
+  font-size: var(--aeg-font-xl);
+}
+.welcome__copy {
+  min-width: 0;
+}
+.welcome__copy h2,
+.welcome__head h3 {
+  margin: 0;
+  color: var(--aeg-color-text);
+  font-weight: var(--aeg-weight-bold);
+}
+.welcome__copy h2 {
+  font-size: var(--aeg-font-xl);
+  line-height: var(--aeg-lh-tight);
+}
+.welcome__copy p {
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-base);
+  line-height: var(--aeg-lh-normal);
+  margin: var(--aeg-space-s2) 0 0;
+}
+.welcome__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--aeg-space-s2);
+  margin-bottom: var(--aeg-space-s2);
+}
+.welcome__head h3 {
+  font-size: var(--aeg-font-md);
+}
+.welcome__disclosure {
+  min-height: 32px;
+  padding: 0 var(--aeg-space-s1);
+  border: 0;
+  background: transparent;
+  color: var(--aeg-color-overview-accent);
+  cursor: pointer;
+  font-size: var(--aeg-font-sm);
+}
+.welcome__disclosure[aria-expanded='true'] :deep(svg) {
+  transform: rotate(180deg);
+}
+.welcome__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--aeg-space-s2);
 }
-.caps__label {
-  margin: 0;
+.quick-task {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--aeg-space-s2);
+  min-width: 0;
+  min-height: 96px;
+  padding: var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: linear-gradient(145deg, var(--aeg-color-overview-panel), var(--aeg-color-overview-tile) 76%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--aeg-color-glass-border) 43%, transparent);
+  color: var(--aeg-color-text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--aeg-motion-base), background-color var(--aeg-motion-base);
+}
+.quick-task:hover:not(:disabled) {
+  border-color: var(--aeg-color-overview-accent);
+  background: var(--aeg-color-overview-panel);
+}
+.quick-task:disabled,
+.caps__chip:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.quick-task__copy {
+  display: grid;
+  gap: var(--aeg-space-s1);
+  min-width: 0;
+}
+.quick-task:nth-child(2) .quick-task__icon {
+  color: var(--aeg-color-editor-cat-human);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-color: color-mix(in srgb, currentColor 26%, transparent);
+}
+.quick-task:nth-child(3) .quick-task__icon {
+  color: var(--aeg-color-brand-hover);
+}
+.quick-task:nth-child(4) .quick-task__icon {
+  color: var(--aeg-color-editor-cat-logic);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-color: color-mix(in srgb, currentColor 26%, transparent);
+}
+.quick-task__copy strong {
+  font-size: var(--aeg-font-md);
+  font-weight: var(--aeg-weight-bold);
+}
+.quick-task__detail,
+.quick-task__rules {
+  color: var(--aeg-color-text-secondary);
   font-size: var(--aeg-font-sm);
-  font-weight: var(--aeg-weight-semibold);
-  color: var(--aeg-color-text-muted);
+}
+.quick-task__rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--aeg-space-s1);
+}
+.quick-task__rules > span {
+  padding-inline: var(--aeg-space-s1);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-sunken);
+  white-space: nowrap;
+}
+.caps {
+  display: grid;
+  gap: var(--aeg-space-s3);
+  padding: var(--aeg-space-s3) 0 0;
+}
+.caps__group h4 {
+  margin: 0 0 var(--aeg-space-s1);
+  font-size: var(--aeg-font-sm);
+  color: var(--aeg-color-text-secondary);
 }
 .caps__row {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--aeg-space-s2);
+  gap: var(--aeg-space-s1);
 }
-.caps__lock {
-  flex: none;
-  width: 12px;
-  height: 12px;
-}
-/*
- * 芯片改中性：可用的就是一块安静的表面，点上去才知道；「需确认」「无权限」降为小字缀注。
- * 2026-11-18 视觉裁决：无权限缀注不再用红字——角色门槛是说明信息不是故障，
- * 二十几条红字排在一起就是一面报警墙，把真正的告警淹掉。红只留给量出来的失败态。
- */
 .caps__chip {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--aeg-space-s1);
-  min-height: 26px;
-  padding: 3px var(--aeg-space-s3);
+  min-height: 30px;
+  padding: var(--aeg-space-s1) var(--aeg-space-s2);
   border: 1px solid var(--aeg-color-border);
-  /* 999px 写字面而不写 var(--aeg-radius-pill)：uiTheme 的芯片形状判据钉着这个字面，值本就相同 */
-  border-radius: 999px;
-  background: var(--aeg-color-alter);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-overview-tile);
   color: var(--aeg-color-text);
   font-size: var(--aeg-font-sm);
-  font-weight: var(--aeg-weight-medium);
-  line-height: var(--aeg-lh-snug);
   cursor: pointer;
-  transition:
-    background-color var(--aeg-motion-base) ease,
-    border-color var(--aeg-motion-base) ease;
 }
 .caps__chip:hover:not(:disabled) {
   border-color: var(--aeg-color-brand-line);
-  background: var(--aeg-color-brand-soft);
 }
-.caps__chip__note {
-  color: var(--aeg-color-text-secondary);
-  font-weight: var(--aeg-weight-regular);
-}
-.caps__chip__note.is-warn {
-  color: var(--aeg-color-text-muted);
-}
-.caps__chip.is-denied {
-  border-style: dashed;
-  background: transparent;
+.caps__chip.is-denied,
+.caps__chip > span {
   color: var(--aeg-color-text-secondary);
 }
-.caps__chip.is-denied:hover:not(:disabled) {
-  border-color: var(--aeg-color-border-strong);
-}
-.caps__chip:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-.chat__ttl {
-  margin-top: var(--aeg-space-s4);
+.welcome__retention {
+  color: var(--aeg-color-text-secondary);
   font-size: var(--aeg-font-sm);
-  color: var(--aeg-color-text-secondary);
+}
+.welcome__retention summary {
+  cursor: pointer;
+}
+.welcome__retention p {
+  margin: var(--aeg-space-s2) 0 0;
 }
 .turn {
   display: flex;
@@ -1417,104 +1567,148 @@ onBeforeUnmount(() => {
   margin: 0 0 var(--aeg-space-s2);
 }
 .composer {
-  /* 墨色（浅近黑／深近白）一线到底：大框、小输入框同色，单色强动作收尾——简约高级感 */
-  border-top: 1px solid var(--aeg-color-text);
-  padding: var(--aeg-space-s3) var(--aeg-space-s6) var(--aeg-space-s4);
-  background: var(--aeg-color-card);
+  flex: none;
+  border-top: 1px solid var(--aeg-color-border);
+  padding: var(--aeg-space-s3) var(--aeg-space-s4);
+  background: var(--aeg-color-overview-panel);
 }
-.panel--dock .composer {
-  padding: var(--aeg-space-s2) var(--aeg-space-s3) var(--aeg-space-s3);
+.panel--compact .composer {
+  padding-inline: var(--aeg-space-s3);
 }
 .composer__context {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) auto;
   gap: var(--aeg-space-s2);
-  align-items: center;
+  align-items: end;
   margin-bottom: var(--aeg-space-s2);
 }
-.composer__context :deep(.ant-input) {
-  border-color: var(--aeg-color-text);
-  border-radius: var(--aeg-radius-sm);
+.composer__field {
+  display: grid;
+  gap: var(--aeg-space-s1);
+  min-width: 0;
+}
+.composer__field label {
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
+.composer__context :deep(.ant-input),
+.composer__context :deep(.ant-btn) {
+  min-height: 32px;
+  border-color: var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-sunken);
   box-shadow: none;
 }
-.composer__context :deep(.ant-btn:not(.ant-btn-dangerous)) {
-  border-color: var(--aeg-color-text);
-  border-radius: var(--aeg-radius-sm);
-  color: var(--aeg-color-text);
-  box-shadow: none;
-}
-.composer__context :deep(.ant-btn:not(.ant-btn-dangerous):not(:disabled):hover) {
-  background: transparent;
-  border-color: var(--aeg-color-text);
-  color: var(--aeg-color-text);
+.composer__context :deep(.ant-btn:not(:disabled):hover) {
+  border-color: var(--aeg-color-overview-accent);
+  color: var(--aeg-color-overview-accent);
 }
 .composer__box {
   display: flex;
   align-items: flex-end;
-  gap: var(--aeg-space-s2);
-  border: 1px solid var(--aeg-color-text);
-  border-radius: var(--aeg-radius-md);
-  background: var(--aeg-color-card);
-  padding: var(--aeg-space-s2) var(--aeg-space-s2) var(--aeg-space-s2) var(--aeg-space-s3);
-  transition: box-shadow var(--aeg-motion-base) ease;
+  border: 1px solid var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-sunken);
+  padding: var(--aeg-space-s2) var(--aeg-space-s3);
+  transition: border-color var(--aeg-motion-base), box-shadow var(--aeg-motion-base);
 }
 .composer__box:focus-within {
-  box-shadow: 0 0 0 1px var(--aeg-color-text);
+  border-color: var(--aeg-color-overview-accent);
+  box-shadow: 0 0 0 2px var(--aeg-color-brand-soft);
 }
-.composer__box :deep(.ant-input),
-.composer__box textarea {
-  flex: 1;
+.composer__box :deep(.ant-input) {
   min-height: 40px;
+  padding: 0;
   border: none;
   box-shadow: none;
   background: transparent;
-  padding: var(--aeg-space-s1) 0;
   resize: none;
   font-size: var(--aeg-font-base);
   line-height: var(--aeg-lh-normal);
+}
+.composer :deep(.ant-input::placeholder) {
+  color: var(--aeg-color-text-muted);
 }
 .composer__actions {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--aeg-space-s2);
+  gap: var(--aeg-space-s1);
 }
-/* 权重必须压过 theme.css 的 `body .ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled)`
-   （0,4,1）——scoped 少写一个类就会输给它，发送按钮退回品牌蓝。 */
-.composer__actions :deep(.ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled)) {
-  background: var(--aeg-color-action-bg);
-  border-color: var(--aeg-color-action-bg);
-  color: var(--aeg-color-action-text);
-  box-shadow: none;
+.composer__actions :deep(.ant-btn) {
+  min-height: 36px;
+  border-radius: var(--aeg-radius-md);
 }
-.composer__actions :deep(.ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover) {
-  background: var(--aeg-color-action-bg-hover);
-  border-color: var(--aeg-color-action-bg-hover);
-  color: var(--aeg-color-action-text);
+.composer__meta .composer__actions :deep(.ant-btn-primary:not(:disabled)) {
+  background: var(--aeg-color-masthead-tab);
+  border-color: var(--aeg-color-masthead-tab);
+  color: var(--aeg-color-masthead-tab-ink);
+  font-weight: var(--aeg-weight-semibold);
+  box-shadow: var(--aeg-shadow-sm);
 }
-.composer__actions :deep(.ant-btn.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):active) {
-  background: var(--aeg-color-action-bg-active);
-  border-color: var(--aeg-color-action-bg-active);
-  color: var(--aeg-color-action-text);
-}
-.composer__actions :deep(.ant-btn:focus-visible) {
-  box-shadow:
-    0 0 0 2px var(--aeg-color-card),
-    0 0 0 4px var(--aeg-color-text);
+.composer__meta .composer__actions :deep(.ant-btn-primary:not(:disabled):hover) {
+  filter: brightness(1.08);
 }
 .composer__actions :deep(.ant-btn-text) {
   color: var(--aeg-color-text-secondary);
 }
-.composer__actions :deep(.ant-btn-text:not(:disabled):hover) {
-  color: var(--aeg-color-text);
-  background: transparent;
-}
 .composer__meta {
   margin-top: var(--aeg-space-s2);
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--aeg-space-s2);
+}
+.composer__info {
+  min-width: 0;
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
+.composer__count {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--aeg-space-s2);
+  font-variant-numeric: tabular-nums;
+}
+.composer__session {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@container assistant-chat (max-width: 410px) {
+  .quick-task {
+    flex-direction: column;
+    min-height: 0;
+  }
+  .quick-task__icon {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
+  }
+  .quick-task__copy strong {
+    font-size: var(--aeg-font-base);
+  }
+  .dockbar__chevron {
+    display: none;
+  }
+  .composer__keys {
+    font-size: var(--aeg-font-xs);
+  }
+  .panel--page.panel--compact .welcome {
+    gap: var(--aeg-space-s3);
+  }
+  .panel--page.panel--compact .welcome__intro {
+    padding: var(--aeg-space-s3);
+  }
+  .panel--page.panel--compact .welcome__copy h2 {
+    font-size: var(--aeg-font-lg);
+  }
+  .panel--page.panel--compact .quick-task {
+    flex-direction: row;
+    gap: var(--aeg-space-s1);
+    min-height: 92px;
+    padding: var(--aeg-space-s2);
+  }
 }
 </style>

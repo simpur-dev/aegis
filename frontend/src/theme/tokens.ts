@@ -19,6 +19,13 @@
 
 import { RISK_COLORS, type RiskLevel } from '@/api/types'
 
+const terrainColors = {
+  'terrain-bg': '#09192D',
+  'terrain-ink': '#EDF5FF',
+  'terrain-line': '#3B5877',
+  'terrain-accent': '#7DE4F4',
+} as const
+
 /** 品牌色阶（浅色主题用偏深的蓝，深色主题用偏亮的蓝——同一族，两个方向） */
 export const brand = {
   /** 浅色主题主色：白字压上去 5.98:1（AA 过） */
@@ -29,14 +36,13 @@ export const brand = {
     soft: 'rgba(37, 99, 235, 0.12)',
     line: 'rgba(37, 99, 235, 0.22)',
   },
-  /** 深色主题主色：指挥中心裁决取用户指定的主交互青蓝 #19C8F3。
-   *  深底上的按钮字走 text-inverse（深色字压亮青 8.25:1），不沿用白字——白字压这支青只有 2.2:1。 */
+  /** 深色主题主色：底是深蓝黑，同一段蓝要提一档才够对比 */
   dark: {
-    base: '#19C8F3',
-    hover: '#4FD2FF',
-    active: '#0E9CCB',
-    soft: 'rgba(25, 200, 243, 0.16)',
-    line: 'rgba(25, 200, 243, 0.38)',
+    base: '#3B82F6',
+    hover: '#60A5FA',
+    active: '#2563EB',
+    soft: 'rgba(59, 130, 246, 0.20)',
+    line: 'rgba(59, 130, 246, 0.34)',
   },
 } as const
 
@@ -94,18 +100,12 @@ export const colorSlots = {
     // 一张图「深空皮肤」的太空底：两主题同值——那是"宇宙"，不随页面主题翻面
     'space-globe': '#061326',
     'deep-space': '#05030E',
-    /* 指挥中心裁决（2026-11-20）：统计球退役，KPI 改横向数据卡；雾底素材换成
-       用户指定的深蓝波浪背景（public/backgrounds/aegis-command-waves.png）。
-       浅色主题仍是 daylight 档：同一张素材压低透明度叠在浅画布渐变上，顶栏深字不受影响。
-       brand-alt 是辅助蓝（图形/连线/图标用，不当正文色——深底上它只有 3.57:1）；
-       halo 是背景柔光斑。球面/球环/紫球六档随球一起退役。 */
+    /* 离线背景素材在 public/backgrounds/aegis-horizon.webp。 */
     'canvas-from': '#EAF4FF',
     'canvas-via': '#F5FAFF',
     'canvas-to': '#E8F1FF',
-    'glass-bg': 'rgba(255, 255, 255, 0.62)',
+    'canvas-glow': 'rgba(255, 255, 255, 0.86)',
     'glass-border': 'rgba(255, 255, 255, 0.78)',
-    'brand-alt': '#1E40AF',
-    halo: 'rgba(255, 255, 255, 0.85)',
     // 空态里的强动作按钮（黑底白字）；两主题各自一套，不复用 text-inverse（深色主题里它是深色字）
     'action-bg': '#1A1A1C',
     'action-bg-hover': '#2C2C31',
@@ -117,18 +117,20 @@ export const colorSlots = {
     'stat-chip-text': '#3F4A5C',
     // 透明顶栏上的"当前项"胶囊：半透明白，压在雾底上有层次但不抢戏
     'topbar-pill-bg': 'rgba(255, 255, 255, 0.78)',
-    // 一张图全屏：面板底色与主题相反（浅色主题用深蓝、深色主题用浅蓝）
-    // 2026-10-30 二次调整：透明度再降一档（更实），色相去饱和——压在白底高德地图上不再泛灰
-    'map-panel-bg': 'rgba(24, 42, 70, 0.64)',
-    'map-panel-border': 'rgba(150, 180, 220, 0.28)',
-    /* 玻璃卡叠在地图影像上，实测合成底 rgb(102,115,134)：原 #E6EDF7 只有 4.09、
-       次要字 #B9C6DA 只有 2.79，12px 小字根本读不清。字色-only 的上限就是近白——
-       主/次两档因此几乎同色，层级退回字号撑。 */
-    'map-panel-text': '#FFFFFF',
-    'map-panel-text-muted': '#FAFCFF',
+    'masthead-bg': '#F6FAFF',
+    'masthead-tab': '#2466C4',
+    'masthead-tab-ink': '#FFFFFF',
+    'overview-panel': '#F8FBFF',
+    'overview-tile': '#FFFFFF',
+    'overview-accent': '#087994',
+    'brand-alt': '#1E40AF',
+    ...terrainColors,
+    // 地图面板需要在最亮和最暗的瓦片上都保持文字可读。
+    'map-panel-bg': 'rgba(248, 251, 255, 0.95)',
+    'map-panel-border': '#C6D8EB',
+    'map-panel-text': '#102039',
+    'map-panel-text-muted': '#42546C',
     'map-floatbar-bg': '#E9F1FB',
-    // 悬浮胶囊（顶栏/底栏/浮注）坐在**浅**底上，与左右深色面板相反：
-    // 字色不能跟面板反转那一套走，否则浅主题下是近白字压浅胶囊（真机 axe 量到对比度不足）。
     'map-floatbar-text': '#0A0A0C',
     'map-floatbar-text-muted': '#5A6072',
     // 监测页「时序曲线」重点卡：蓝底白线（白字压两端渐变都要过 AA，见 tokens.spec）
@@ -150,33 +152,28 @@ export const colorSlots = {
     'chart-bar-p95-to': '#F6C46B',
   },
   dark: {
-    /* 指挥中心色板（用户裁决，逐值来自任务书）：
-       主背景 #04152B / 一级面板 #0A2342 / 二级面板 #102F52 / 主交互 #19C8F3 / 辅助蓝 #2678E8 /
-       正常 #25D6A0 / 中风险 #FFAD3D / 高风险 #F05252 / 主文字 #EDF6FF / 辅助文字 #91A9C3。
-       每一对文字/表面的 AA 由 tokens.spec 现算。 */
-    page: '#04152B',
-    card: '#0A2342',
-    elevated: '#102F52',
-    sunken: '#081B36',
-    alter: '#102F52',
-    border: '#1B3A61',
-    'border-subtle': '#14304F',
-    'border-strong': '#2A4E7E',
-    text: '#EDF6FF',
-    'text-secondary': '#91A9C3',
-    /** 弱字比辅助字再暗一档，但压在次级面板 #102D50 上仍要过 4.5（实算 5.29）。 */
-    'text-muted': '#8AA2BF',
-    'text-inverse': '#04152B',
+    page: '#0B1220',
+    card: '#111A2B',
+    elevated: '#16223A',
+    sunken: '#0E1728',
+    alter: '#13203A',
+    border: '#24344F',
+    'border-subtle': '#1B2942',
+    'border-strong': '#33475F',
+    text: '#E6EDF7',
+    'text-secondary': '#A7B4C9',
+    'text-muted': '#8595AD',
+    'text-inverse': '#0B1220',
     brand: brand.dark.base,
     'brand-hover': brand.dark.hover,
     'brand-active': brand.dark.active,
     'brand-soft': brand.dark.soft,
     'brand-line': brand.dark.line,
-    'status-success': '#25D6A0',
-    'status-warning': '#FFAD3D',
-    'status-danger': '#F05252',
-    'status-info': '#63A4F5',
-    'overlay-scrim': 'rgba(3, 10, 24, 0.66)',
+    'status-success': '#4ADE80',
+    'status-warning': '#FBBF24',
+    'status-danger': '#F87171',
+    'status-info': '#60A5FA',
+    'overlay-scrim': 'rgba(2, 6, 16, 0.62)',
     'editor-canvas': '#151A21',
     'editor-header': '#171D26',
     'editor-panel': '#1A202B',
@@ -200,28 +197,32 @@ export const colorSlots = {
     'editor-state-awaiting': '#C4B5FD',
     'space-globe': '#061326',
     'deep-space': '#05030E',
-    'canvas-from': '#041022',
-    'canvas-via': '#04152B',
-    'canvas-to': '#030C1C',
-    'glass-bg': 'rgba(10, 35, 66, 0.72)',
-    'glass-border': 'rgba(94, 140, 190, 0.28)',
-    'brand-alt': '#2678E8',
-    halo: 'rgba(38, 120, 232, 0.4)',
+    'canvas-from': '#07162D',
+    'canvas-via': '#091634',
+    'canvas-to': '#080F2B',
+    'canvas-glow': 'rgba(32, 92, 216, 0.58)',
+    'glass-border': 'rgba(120, 150, 200, 0.22)',
     // 深色主题下"最强的动作"是提亮：浅底深字（若沿用黑底，必须换成亮字，见提示词 §4.1）
     'action-bg': '#E8EDF7',
     'action-bg-hover': '#F7FAFF',
     'action-bg-active': '#CBD6E6',
-    'action-text': '#04152B',
-    'stat-chip-bg': 'rgba(16, 45, 80, 0.86)',
-    'stat-chip-border': '#2A4E7E',
-    'stat-chip-text': '#C9DCF2',
-    'topbar-pill-bg': 'rgba(120, 170, 230, 0.18)',
-    'map-panel-bg': 'rgba(208, 224, 244, 0.72)',
-    'map-panel-border': 'rgba(255, 255, 255, 0.6)',
-    'map-panel-text': '#0B1220',
-    /* 深主题这张卡是浅玻璃（合成底 rgb(153,166,185)）：#33415A 实测 4.16，差 4.5 一点点；
-       再深一档到 #273349 拿到 5.14，主/次两档的色差仍然看得出。 */
-    'map-panel-text-muted': '#273349',
+    'action-text': '#0B1220',
+    'stat-chip-bg': 'rgba(28, 42, 64, 0.86)',
+    'stat-chip-border': '#2C3E5C',
+    'stat-chip-text': '#C9D5E6',
+    'topbar-pill-bg': 'rgba(255, 255, 255, 0.18)',
+    'masthead-bg': '#0A1629',
+    'masthead-tab': '#46BDDF',
+    'masthead-tab-ink': '#07192D',
+    'overview-panel': '#102342',
+    'overview-tile': '#10203A',
+    'overview-accent': '#43C6E8',
+    'brand-alt': '#2678E8',
+    ...terrainColors,
+    'map-panel-bg': 'rgba(12, 28, 50, 0.94)',
+    'map-panel-border': '#2B4564',
+    'map-panel-text': '#EAF2FF',
+    'map-panel-text-muted': '#B5C5DB',
     'map-floatbar-bg': '#151D30',
     'map-floatbar-text': '#E6EDF7',
     'map-floatbar-text-muted': '#A7B4C9',
@@ -328,8 +329,7 @@ export const z = { sticky: 10, header: 100, drawer: 200, modal: 300, toast: 400 
 
 /** 顶栏定高：提示条 top 与"浮层不压顶栏"那条判据都依赖它，收成一处 */
 export const layout = {
-  // 两层顶栏：品牌行 52 + 导航行 48（图一要求 100–112）
-  headerHeight: 100,
+  headerHeight: 104,
   sidebarWidth: 232,
   sidebarCollapsed: 64,
   contentMaxWidth: 1720,
@@ -340,6 +340,7 @@ export const layout = {
 
 /** 字体栈（离线自托管，不外链 CDN） */
 export const fontFamily = {
-  sans: "'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif",
+  sans: "-apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', sans-serif",
+  display: "'Space Grotesk', 'Segoe UI Variable Display', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif",
   mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
 } as const

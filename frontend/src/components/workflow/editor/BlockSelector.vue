@@ -7,6 +7,7 @@
  * Start 已存在或准备插进边中间时禁用 Start（后端 Start 唯一、链路中间不能另起根）。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useWindowSize } from '@vueuse/core'
 
 import { NODE_SPECS, PANEL_NODE_TYPES, type NodeCategory, type NodeType } from '@/utils/graph'
 
@@ -27,6 +28,7 @@ const search = ref('')
 const searchRef = ref<HTMLInputElement | null>(null)
 const rootRef = ref<HTMLElement | null>(null)
 const activeIndex = ref(0)
+const { width: viewportWidth, height: viewportHeight } = useWindowSize({ type: 'visual' })
 const recent = ref<NodeType[]>(readRecent())
 
 const CATEGORY_LABELS: Record<NodeCategory, string> = {
@@ -144,6 +146,7 @@ function move(delta: number): void {
 }
 
 function onSearchKeydown(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return
   if (event.key === 'ArrowDown') {
     event.preventDefault()
     move(1)
@@ -189,14 +192,17 @@ const POPUP_HEIGHT = 480
 const MARGIN = 8
 
 const popupStyle = computed(() => {
-  const width = Math.min(POPUP_WIDTH, window.innerWidth - MARGIN * 2)
-  const left = Math.min(Math.max(props.request.x, MARGIN), window.innerWidth - width - MARGIN)
-  const openDown = props.request.y + MARGIN + POPUP_HEIGHT <= window.innerHeight - MARGIN
+  const width = Math.min(POPUP_WIDTH, viewportWidth.value - MARGIN * 2)
+  const height = Math.min(POPUP_HEIGHT, viewportHeight.value - MARGIN * 2)
+  const bottom = Math.max(MARGIN, viewportHeight.value - height - MARGIN)
+  const left = Math.min(Math.max(props.request.x, MARGIN), viewportWidth.value - width - MARGIN)
+  if (viewportWidth.value <= 560) return { left: `${MARGIN}px`, top: `${bottom}px`, width: `${width}px`, maxHeight: `${height}px` }
+  const openDown = props.request.y + MARGIN + height <= viewportHeight.value - MARGIN
   const top = Math.min(
-    Math.max(openDown ? props.request.y + MARGIN : props.request.y - POPUP_HEIGHT - MARGIN, MARGIN),
-    Math.max(MARGIN, window.innerHeight - MARGIN - POPUP_HEIGHT),
+    Math.max(openDown ? props.request.y + MARGIN : props.request.y - height - MARGIN, MARGIN),
+    bottom,
   )
-  return { left: `${left}px`, top: `${top}px`, width: `${width}px` }
+  return { left: `${left}px`, top: `${top}px`, width: `${width}px`, maxHeight: `${height}px` }
 })
 </script>
 
@@ -221,6 +227,7 @@ const popupStyle = computed(() => {
         role="combobox"
         aria-expanded="true"
         aria-controls="block-options"
+        :aria-activedescendant="activeOption >= 0 ? `block-option-${activeOption}` : undefined"
         @keydown="onSearchKeydown"
         @input="activeIndex = 0"
       />
@@ -285,8 +292,8 @@ const popupStyle = computed(() => {
   max-height: 480px;
   overflow: hidden;
   border: 1px solid var(--aeg-color-border);
-  border-radius: 12px;
-  background: var(--aeg-color-editor-panel);
+  border-radius: var(--aeg-radius-xl);
+  background: var(--aeg-color-overview-tile);
   box-shadow: var(--aeg-shadow-lg);
   color: var(--aeg-color-text);
 }
@@ -343,6 +350,7 @@ const popupStyle = computed(() => {
   min-height: 0;
   padding: 4px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .block-selector__group-title {
   margin: 0;
@@ -421,5 +429,12 @@ const popupStyle = computed(() => {
   padding: 16px 12px;
   color: var(--aeg-color-text-muted);
   font-size: 12px;
+}
+@media (max-width: 560px) {
+  .block-selector__input,
+  .block-selector__row,
+  .block-selector__tab {
+    min-height: 38px;
+  }
 }
 </style>

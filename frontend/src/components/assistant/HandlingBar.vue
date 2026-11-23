@@ -226,6 +226,7 @@ onMounted(() => {
 .handling__select {
   flex: 1;
   min-width: 0;
+  min-height: 28px;
 }
 .handling__message {
   color: var(--aeg-color-status-danger);
@@ -260,11 +261,14 @@ onMounted(() => {
   align-items: center;
   gap: var(--aeg-space-s2);
   padding: var(--aeg-space-s2);
-  background: var(--aeg-color-alter);
+  border: 1px solid var(--aeg-color-border);
+  background: var(--aeg-color-sunken);
   border-radius: var(--aeg-radius-md);
 }
 .handling__status {
-  min-width: 52px;
+  padding-inline: var(--aeg-space-s1);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-brand-soft);
   color: var(--aeg-color-text);
   font-weight: 600;
 }

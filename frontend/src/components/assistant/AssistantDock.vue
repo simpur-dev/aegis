@@ -9,9 +9,10 @@
  * 纯计算（夹紧 / 点击判定）在 dock.ts，本组件只管 DOM 与事件。
  */
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import { useAlerts } from '@/composables/useAlerts'
 import {
   clampDrawerWidth,
   clampTop,
@@ -22,7 +23,7 @@ import {
   isClick,
 } from '@/components/assistant/dock'
 
-const props = defineProps<{ immersive?: boolean }>()
+const props = defineProps<{ immersive?: boolean; avoidMapBar?: boolean; keepOverviewVisible?: boolean }>()
 
 const STORAGE_KEY = 'aegis.assistant.dock'
 
@@ -45,12 +46,23 @@ const headerVar = computed(() => (props.immersive ? '--aeg-editor-header-height'
 /** 抽屉顶部的落点（跟随顶栏/编辑器头部高度；水平位置与宽度由 CSS 变量算）。 */
 const drawerTopStyle = computed(() => ({ top: `${headerH.value}px` }))
 
-// 2026-11-21 指挥中心裁决：Ⅰ/Ⅱ 级告警不再自动展开抽屉。
-// 自动展开会把主内容整体往左挤，与右列智能体面板同时占位 → 拥挤（用户问题 #4）。
-// 告警的"强打断"由 App.vue 顶部常驻 alert-banner 承担（关了抽屉也看得见），
-// 抽屉只在值班员主动点图标时打开，保持首屏的地图主视觉完整。
+const { urgentCards } = useAlerts()
+watch(
+  () => urgentCards.value.length,
+  (now, prev) => {
+    // 总览用页头告警入口保留地图空间，其余页面有新紧急告警时展开抽屉。
+    if (now > 0 && (prev ?? 0) === 0 && !props.keepOverviewVisible) {
+      open.value = true
+      saveState()
+    }
+  },
+)
 
 function readHeaderHeight(): number {
+  const header = document.querySelector(props.immersive ? '[data-testid="editor-header"]' : '.topbar')
+  const banner = document.querySelector('.alert-banner')
+  const bottom = Math.max(header?.getBoundingClientRect().bottom ?? 0, banner?.getBoundingClientRect().bottom ?? 0)
+  if (bottom > 0) return Math.round(bottom)
   const raw = getComputedStyle(document.documentElement).getPropertyValue(headerVar.value).trim()
   const px = Number.parseFloat(raw)
   return Number.isFinite(px) && px > 0 ? px : 68
@@ -85,6 +97,10 @@ function saveState(): void {
 function measure(): void {
   headerH.value = readHeaderHeight()
   maxWidth.value = Math.max(DRAWER_MIN, Math.min(DRAWER_MAX, Math.round(window.innerWidth * 0.6)))
+}
+function boundDockTop(value: number): number {
+  const mapClearance = props.avoidMapBar && window.innerWidth <= 820 ? 82 : 0
+  return clampTop(value, window.innerHeight, headerH.value, DOCK_SIZE + mapClearance)
 }
 
 /**
@@ -184,7 +200,7 @@ function onPointerMove(event: PointerEvent): void {
   const dy = event.clientY - startY
   if (Math.abs(dy) > 0) dragging.value = true
   if (!isClick(0, dy)) moved = true
-  top.value = clampTop(startTop + dy, window.innerHeight, headerH.value)
+  top.value = boundDockTop(startTop + dy)
 }
 
 function onPointerUp(event: PointerEvent): void {
@@ -207,11 +223,12 @@ function onKeydown(event: KeyboardEvent): void {
 
 function onResize(): void {
   measure()
-  top.value = clampTop(top.value, window.innerHeight, headerH.value)
+  top.value = boundDockTop(top.value)
   /* 视口变窄后把抽屉夹回新的上限（1024 时上限是 614） */
   width.value = clampDrawerWidth(width.value, window.innerWidth)
   applyWidth()
 }
+watch([() => props.immersive, () => props.avoidMapBar, () => urgentCards.value.length], onResize, { flush: 'post' })
 
 function onEscape(event: KeyboardEvent): void {
   if (event.key === 'Escape') close()
@@ -222,23 +239,22 @@ onMounted(() => {
   const saved = loadState()
   width.value = clampDrawerWidth(saved.width ?? defaultDrawerWidth(window.innerWidth), window.innerWidth)
   applyWidth()
-  // 图标固定落在右下角安全区：历史版本存过的 top 不再复用，避免旧位置压住智能体面板
-  top.value = clampTop(
-    window.innerHeight - DOCK_SIZE - 24,
-    window.innerHeight,
-    headerH.value,
-  )
+  top.value = boundDockTop(saved.top ?? window.innerHeight - DOCK_SIZE - 24)
   open.value = saved.open === true
   window.addEventListener('resize', onResize)
   window.addEventListener('keydown', onEscape)
 })
 
-/* 抽屉是覆盖式浮层：打开时盖在主内容上（不挤压布局），根元素类只供测试与外部样式钩子用 */
+/* 抽屉不再悬浮在内容上：打开时给主内容让出宽度（App.vue 里的 margin-right），
+   由根元素上的一个类驱动，页面自己不用知道抽屉状态 */
 watch(
   open,
   (value) => {
     document.documentElement.classList.toggle('assistant-drawer-open', value)
-    if (value) panelMounted.value = true
+    if (value) {
+      panelMounted.value = true
+      void nextTick(onResize)
+    }
   },
   { immediate: true },
 )
@@ -301,7 +317,13 @@ onBeforeUnmount(() => {
       @dblclick="onResizeDoubleClick"
     />
     <header class="assistant-drawer__head">
-      <span class="assistant-drawer__title">智能助手</span>
+      <div class="assistant-drawer__identity">
+        <span class="assistant-drawer__mark" aria-hidden="true">✦</span>
+        <div>
+          <span class="assistant-drawer__title">智能助手</span>
+          <span class="assistant-drawer__caption">AEGIS · 值班协作</span>
+        </div>
+      </div>
       <button type="button" class="assistant-drawer__close" aria-label="收起助手" @click="close">×</button>
     </header>
     <div class="assistant-drawer__body">
@@ -354,10 +376,12 @@ onBeforeUnmount(() => {
   z-index: 39;
   display: flex;
   flex-direction: column;
-  width: var(--assistant-drawer-w, clamp(320px, 25vw, 520px));
-  border-left: 1px solid var(--aeg-color-border);
-  background: var(--aeg-color-card);
-  box-shadow: var(--aeg-shadow-lg);
+  width: min(100vw, var(--assistant-drawer-w, clamp(320px, 25vw, 520px)));
+  border: 1px solid var(--aeg-color-border);
+  border-right: none;
+  border-radius: var(--aeg-radius-xl) 0 0 var(--aeg-radius-xl);
+  background: var(--aeg-color-masthead-bg);
+  box-shadow: inset 0 1px 0 var(--aeg-color-glass-border), var(--aeg-shadow-lg);
   transform: translateX(100%);
   visibility: hidden;
   transition:
@@ -370,6 +394,14 @@ onBeforeUnmount(() => {
 .assistant-drawer.is-open {
   transform: translateX(0);
   visibility: visible;
+}
+@supports (backdrop-filter: blur(18px)) {
+  @media (prefers-reduced-transparency: no-preference) {
+    .assistant-drawer {
+      background: color-mix(in srgb, var(--aeg-color-masthead-bg) 85%, transparent);
+      backdrop-filter: blur(18px) saturate(140%);
+    }
+  }
 }
 /* 左边缘宽度手柄：8px 命中区，平时透明，hover/拖动/聚焦时亮一条 2px 主色线 */
 .assistant-drawer__resize {
@@ -404,17 +436,39 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--aeg-space-s3);
-  padding: var(--aeg-space-s4);
-  border-bottom: 1px solid var(--aeg-color-border);
+  padding: var(--aeg-space-s3) var(--aeg-space-s4);
+}
+.assistant-drawer__identity {
+  display: flex;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+}
+.assistant-drawer__mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 1px solid var(--aeg-color-brand-line);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-overview-accent);
+  font-size: var(--aeg-font-xl);
 }
 .assistant-drawer__title {
-  font-size: var(--aeg-font-md);
+  display: block;
+  font-size: var(--aeg-font-lg);
+  line-height: var(--aeg-lh-tight);
   font-weight: var(--aeg-weight-bold);
   color: var(--aeg-color-text);
 }
+.assistant-drawer__caption {
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
 .assistant-drawer__close {
-  width: 28px;
-  height: 28px;
+  flex: 0 0 36px;
+  height: 36px;
   padding: 0;
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-pill);
@@ -437,6 +491,14 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+@media (max-width: 720px) {
+  .assistant-drawer__resize {
+    display: none;
+  }
+  .assistant-dock.is-open {
+    visibility: hidden;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .assistant-dock,
   .assistant-drawer {

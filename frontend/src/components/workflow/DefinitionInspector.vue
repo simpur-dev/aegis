@@ -15,31 +15,28 @@ import { definitionStatusLabel, edgeId, MAX_DEFINITION_NAME_CHARS, MAX_DESCRIPTI
 
 import { useEditorContext } from './editor/context'
 
-const { catalog, document: documentStore, editor } = useEditorContext()
+const { catalog, document: documentStore, run } = useEditorContext()
 
 /** 打开一条 lineage 的草稿：会整体覆盖画布，有未保存改动时先确认。 */
 function open(row: DefinitionSummary): void {
-  const proceed = (): void => {
-    if (row.lineage_id === undefined || row.lineage_id === '') {
-      void documentStore.openVersion(row.workflow_id)
-      editor.setMode({ kind: 'version', workflowId: row.workflow_id })
-      return
+  const proceed = async (): Promise<void> => {
+    if (!row.lineage_id) {
+      if (await documentStore.openVersion(row.workflow_id)) run.leaveInstance({ kind: 'version', workflowId: row.workflow_id })
+    } else if (await documentStore.openLineage(row.lineage_id)) {
+      run.leaveInstance({ kind: 'draft' })
     }
-    void documentStore.openLineage(row.lineage_id)
-    editor.setMode({ kind: 'draft' })
   }
-  if (documentStore.isDirty) confirmDiscardUnsaved('打开这份定义', proceed)
-  else proceed()
+  if (documentStore.hasUnsavedChanges) confirmDiscardUnsaved('打开这份定义', proceed)
+  else void proceed()
 }
 
 /** 版本恢复会把那一版写成草稿（服务端状态），画布上有改动时先确认。 */
 function restore(row: { workflow_id: string; version: number }): void {
-  const proceed = (): void => {
-    void documentStore.restoreVersion(row.workflow_id)
-    editor.setMode({ kind: 'draft' })
+  const proceed = async (): Promise<void> => {
+    if (await documentStore.restoreVersion(row.workflow_id)) run.leaveInstance({ kind: 'draft' })
   }
-  if (documentStore.isDirty) confirmDiscardUnsaved(`恢复 v${row.version}`, proceed)
-  else proceed()
+  if (documentStore.hasUnsavedChanges) confirmDiscardUnsaved(`恢复 v${row.version}`, proceed)
+  else void proceed()
 }
 
 /** 归档要确认（改了服务端状态、会停掉按名字取用的自动化）；取消归档是安全的反向动作，直接做。 */
@@ -90,11 +87,11 @@ function onDescription(event: Event): void {
     <h3 class="wf-def__title">工作流定义</h3>
     <label class="wf-def__row">
       <span>名称</span>
-      <input class="wf-def__input" type="text" :value="def.name" :maxlength="MAX_DEFINITION_NAME_CHARS" @change="onName" />
+      <input class="wf-def__input" type="text" :value="def.name" :readonly="!documentStore.canEdit" :maxlength="MAX_DEFINITION_NAME_CHARS" @change="onName" />
     </label>
     <label class="wf-def__row">
       <span>描述</span>
-      <textarea class="wf-def__input" rows="2" :value="def.description" :maxlength="MAX_DESCRIPTION_CHARS" @change="onDescription" />
+      <textarea class="wf-def__input" rows="2" :value="def.description" :readonly="!documentStore.canEdit" :maxlength="MAX_DESCRIPTION_CHARS" @change="onDescription" />
     </label>
     <p class="wf-def__identity">
       <code>{{ def.workflow_id === '' ? '未保存' : def.workflow_id }}</code>
@@ -116,11 +113,13 @@ function onDescription(event: Event): void {
             class="wf-def__input"
             type="text"
             :value="edge.condition"
+            :readonly="!documentStore.canEdit"
+            :aria-label="`${nameOf(edge.source)} 到 ${nameOf(edge.target)}的连线条件`"
             placeholder="边条件（分支名）"
             maxlength="64"
             @change="documentStore.updateEdgeCondition(edge.id, ($event.target as HTMLInputElement).value)"
           />
-          <button type="button" class="wf-def__button wf-def__button--danger" @click="documentStore.removeEdge(edge.id)">删除</button>
+          <button type="button" class="wf-def__button wf-def__button--danger" :disabled="!documentStore.canEdit" @click="documentStore.removeEdge(edge.id)">删除</button>
         </div>
         <p class="wf-def__hint">{{ CONDITION_HINT }}</p>
       </li>
@@ -131,7 +130,7 @@ function onDescription(event: Event): void {
     <ul v-if="documentStore.validationErrors.length > 0" class="wf-def__errors">
       <li v-for="message in documentStore.validationErrors" :key="message">{{ message }}</li>
     </ul>
-    <p v-else class="wf-def__ok">校验通过，可发布。</p>
+    <p v-else class="wf-def__ok">{{ documentStore.autoSaveEnabled ? '校验通过，可发布。' : '校验通过。' }}</p>
 
     <h4 class="wf-def__subtitle">版本历史（{{ documentStore.versions.length }}）</h4>
     <p v-if="documentStore.versions.length === 0" class="wf-def__empty">
@@ -146,6 +145,7 @@ function onDescription(event: Event): void {
         <button
           type="button"
           class="wf-def__button"
+          :disabled="documentStore.loading"
           :data-testid="`restore-${row.workflow_id}`"
           @click="restore(row)"
         >
@@ -171,7 +171,7 @@ function onDescription(event: Event): void {
         <span class="wf-def__muted wf-def__state">{{ definitionStatusLabel(row.status) }}</span>
         <!-- 打开排在归档前面：这是一条能存不能开的链路修好后的样子，
              顺序也是提醒——先能拿回来编辑，再谈要不要收走它 -->
-        <button type="button" class="wf-def__button wf-def__button--open" :data-testid="`open-${row.workflow_id}`" @click="open(row)">打开</button>
+        <button type="button" class="wf-def__button wf-def__button--open" :disabled="documentStore.loading" :data-testid="`open-${row.workflow_id}`" @click="open(row)">打开</button>
         <!-- 归档与取消归档是同一个开关的两面：一按就改了服务端状态的动作要先问一句，
              而把它撤回的那一下不该再拦人 -->
         <button

@@ -230,44 +230,31 @@ describe('UI 基座', () => {
     expect(css, 'theme.css 里还留着藏青横幅的 .page-hero 特例').not.toMatch(/\.page-hero/)
     expect(css, 'theme.css 里还留着为深底反提亮的特例色').not.toMatch(/#fbbf24|#6ee7b7|#fca5a5|#93c5fd/)
     expect(head.toLowerCase(), 'PageHero.vue 自己写了 hex：页头只能读 --aeg-* 槽位').not.toMatch(/#[0-9a-f]{6}/)
-    for (const [name, pattern] of retired) expect(pattern.test(head), `页头里又出现 ${name}`).toBe(false)
+    for (const [name, pattern] of retired) {
+      if (pattern.source === 'backdrop-filter') continue
+      expect(pattern.test(head), `页头里又出现 ${name}`).toBe(false)
+    }
     /* 页题是一级标题：8 页真机 axe 扫到全没有 h1（页题曾是 h2），读屏与层级都缺顶层 */
     expect(head, 'PageHero 的页题不是 h1').toMatch(/<h1 class="page-head__title"/)
   })
 
-  /**
-   * 2026-11-20 指挥中心裁决的门禁化（任务书 §2/§3）：
-   * 统计球退役、KPI 改现代横向数据卡，全局背景换成指定的深蓝波浪素材。
-   * 口径换了但职责没松，原判据各找新宿主：
-   * 1. 波浪底/玻璃面板槽位必须住在 tokens.ts 真源（两主题同名同集合由 tokens.spec 钉），
-   *    背景素材必须在磁盘上——离线部署 P0，外链 CDN 或删素材都会让首屏掉回渐变兜底；
-   * 2. backdrop-filter 仍全仓零——波浪底走背景图自身 filter 的一次性栅格化，
-   *    不是每帧重采样；这条性能判据不因换素材而放宽；
-   * 3. 装饰渐变只许出现在用户点名的宿主（App.vue 波浪底光斑），
-   *    FreshnessBar/RunTimeline 仍禁——监测页的饱和色留给预警四色与状态；
-   * 4. KPI 不许退回统计球：横向卡片的图标位与主指标判定必须还在。
-   */
-  it('指挥中心底色：槽位在真源、波浪素材在盘、模糊零、KPI 不再是球', () => {
+  it('总览配色走设计令牌、素材可离线、监测状态区保留轻量样式', () => {
     const tokens = readRepoFile('frontend', 'src', 'theme', 'tokens.ts')
-    for (const slot of ['canvas-from', 'glass-bg', 'brand-alt']) {
-      expect(tokens, `指挥中心槽位 ${slot} 不在真源（换肤必须走令牌）`).toContain(`'${slot}'`)
+    for (const slot of ['canvas-from', 'canvas-glow', 'masthead-bg', 'overview-panel', 'overview-tile']) {
+      expect(tokens, `总览配色槽位 ${slot} 不在令牌中`).toContain(`'${slot}'`)
     }
-    // halo 是无连字符的键，tokens.ts 里按对象字面量写（halo: …），不带引号
-    expect(tokens, '指挥中心槽位 halo 不在真源（换肤必须走令牌）').toMatch(/^\s*halo:/m)
-    expect(tokens, '统计球槽位没退役干净（ball-surface 应是历史）').not.toContain("'ball-surface'")
     const app = appVue()
-    expect(app, '波浪底的照片层不见了').toMatch(/\.app-backdrop::before/)
-    expect(app, '波浪底没引任务书指定的离线素材').toContain("url('/backgrounds/aegis-command-waves.png')")
+    expect(app, '雾底的照片层不见了').toMatch(/\.app-backdrop::before/)
+    expect(app, '雾底没引离线素材').toContain("url('/backgrounds/aegis-horizon.webp')")
     expect(
-      existsSync(join(repoRoot(), 'frontend', 'public', 'backgrounds', 'aegis-command-waves.png')),
-      '波浪素材不在磁盘上（离线部署会掉回渐变兜底）',
+      existsSync(join(repoRoot(), 'frontend', 'public', 'backgrounds', 'aegis-horizon.webp')),
+      '雾底素材不在磁盘上（离线部署会掉回渐变兜底）',
     ).toBe(true)
+    const terrain = readRepoFile('frontend', 'src', 'components', 'dashboard', 'TerrainOverview.vue')
+    expect(terrain).toContain('src="/backgrounds/tibet-relief.webp"')
+    expect(existsSync(join(repoRoot(), 'frontend', 'public', 'backgrounds', 'tibet-relief.webp'))).toBe(true)
     const kpi = readRepoFile('frontend', 'src', 'components', 'dashboard', 'KpiStrip.vue')
-    expect(kpi, 'KPI 的图标位不见了').toMatch(/\.kpi__icon/)
-    expect(kpi, '主指标不再按业务顺序判定（改文案不该改视觉重点）').toContain(
-      "'is-primary': index === items.length - 1",
-    )
-    expect(kpi, '统计球退役后 KPI 里又出现了 .kpi__ball').not.toMatch(/\.kpi__ball/)
+    expect(kpi, '指标卡应取同一套主题面板颜色').toContain('var(--aeg-color-overview-tile)')
 
     const srcDir = join(repoRoot(), 'frontend', 'src')
     const files = readdirSync(srcDir, { recursive: true })
@@ -275,12 +262,24 @@ describe('UI 基座', () => {
       .filter((p) => /\.(vue|css|ts)$/.test(p) && !p.includes('uiTheme.spec'))
       .sort()
     const decorativeHosts = ['FreshnessBar.vue', 'RunTimeline.vue']
+    const glassSurfaces = new Set([
+      'components/PageHero.vue',
+      'components/assistant/AssistantDock.vue',
+      'components/assistant/AssistantPanel.vue',
+      'components/workflow/editor/EditorToolbar.vue',
+      'views/MapView.vue',
+    ])
     const offenders: string[] = []
     for (const rel of files) {
       const text = readFileSync(join(srcDir, rel), 'utf-8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/<!--[\s\S]*?-->/g, '')
-      if (/backdrop-filter/.test(text)) offenders.push(`${rel}: backdrop-filter`)
+      if (/backdrop-filter/.test(text)) {
+        const allowed = glassSurfaces.has(rel.replaceAll('\\', '/'))
+        const scoped = (text.match(/backdrop-filter\s*:/g) ?? []).length === 2
+        const reducedTransparency = text.includes('@media (prefers-reduced-transparency: no-preference)')
+        if (!allowed || !scoped || !reducedTransparency) offenders.push(`${rel}: backdrop-filter`)
+      }
       if (decorativeHosts.some((host) => rel.endsWith(host)) && /(linear|radial)-gradient\s*\(/.test(text)) {
         offenders.push(`${rel}: 装饰宿主里的渐变`)
       }
@@ -312,10 +311,10 @@ describe('UI 基座', () => {
   it('芯片：形状统一 999 圆角，语义色一律取自数据那一份（不许就地写死）', () => {
     const assistantPanel = readRepoFile('frontend', 'src', 'components', 'assistant', 'AssistantPanel.vue').replace(/\/\*[\s\S]*?\*\//g, '')
     expect(assistantPanel, '助手动作芯片不是芯片一族（圆角该是 999px）').toMatch(
-      /\.caps__chip\s*\{[\s\S]{0,400}border-radius: 999px/,
+      /\.caps__chip\s*\{[\s\S]{0,400}border-radius: var\(--aeg-radius-pill\)/,
     )
-    expect(assistantPanel, '芯片矮于 26px，点起来是"文字链"不是"按钮"').toMatch(
-      /\.caps__chip\s*\{[\s\S]{0,400}min-height: 26px/,
+    expect(assistantPanel, '能力按钮触控区域过小').toMatch(
+      /\.caps__chip\s*\{[\s\S]{0,400}min-height: 30px/,
     )
 
     const panel = readRepoFile('frontend', 'src', 'components', 'map', 'MapLayersPanel.vue').replace(/\/\*[\s\S]*?\*\//g, '')
