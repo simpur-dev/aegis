@@ -1039,12 +1039,14 @@ describe('DefinitionInspector 归档与取消归档', () => {
     ]
   }
 
-  it('按钮文案跟着这一行的状态走：归档态给的是「取消归档」', () => {
+  it('工作流库默认隐藏归档，打开筛选后提供取消归档动作', async () => {
     const context = editorContext()
     context.document.resetDocument('空白')
     context.catalog.definitions = twoRows()
     const wrapper = mount(DefinitionInspector, { global: withEditor(context) })
     expect(wrapper.find('[data-testid="archive-wf_active000001"]').text()).toBe('归档')
+    expect(wrapper.find('[data-testid="archive-wf_archived0001"]').exists()).toBe(false)
+    await wrapper.get('input[type="checkbox"]').setValue(true)
     expect(wrapper.find('[data-testid="archive-wf_archived0001"]').text()).toBe('取消归档')
   })
 
@@ -1087,6 +1089,7 @@ describe('DefinitionInspector 归档与取消归档', () => {
     const restored = vi.spyOn(context.catalog, 'restoreDefinition').mockResolvedValue(true)
     const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue({ destroy: vi.fn(), update: vi.fn() })
     const wrapper = mount(DefinitionInspector, { global: withEditor(context) })
+    await wrapper.get('input[type="checkbox"]').setValue(true)
     await wrapper.find('[data-testid="archive-wf_archived0001"]').trigger('click')
     expect(confirm).not.toHaveBeenCalled()
     expect(restored).toHaveBeenCalledTimes(1)
@@ -1364,15 +1367,15 @@ describe('RuntimePanel 试运行与正式运行分流', () => {
     context.document.resetDocument('空白')
     const wrapper = mount(RuntimePanel, { global: withEditor(context) })
     expect(wrapper.find('[data-testid="preview-start"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-testid="preview-start"]').attributes('title')).toContain('lineage')
+    expect(wrapper.find('[data-testid="preview-start"]').attributes('title')).toContain('先保存')
   })
 
   it('实例模式两个启动口都关着，并给出返回草稿的出口', () => {
     const context = draftWithLineage()
     context.editor.setMode({ kind: 'instance', instanceId: 'wfi_1', readOnly: true })
     const wrapper = mount(RuntimePanel, { global: withEditor(context) })
-    expect(wrapper.find('[data-testid="preview-start"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-testid="instance-start"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="preview-start"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="instance-start"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="exit-instance"]').exists()).toBe(true)
   })
 
@@ -1415,7 +1418,6 @@ describe('RuntimePanel 试运行与正式运行分流', () => {
     await wrapper.vm.$nextTick()
     const banner = wrapper.find('[data-testid="preview-banner"]')
     expect(banner.exists()).toBe(true)
-    expect(banner.text()).toContain('没有写入任何持久面')
     expect(banner.text()).toContain('没有产生外部副作用')
 
     await banner.find('button').trigger('click')

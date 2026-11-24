@@ -9,7 +9,6 @@ import type { TelemetryReading } from '@/api/types'
 import mapApi, { normalizeAnchors } from '@/api/map'
 import EChart from '@/components/EChart.vue'
 import PageHero from '@/components/PageHero.vue'
-import SystemTerminal from '@/components/SystemTerminal.vue'
 import FreshnessBar from '@/components/FreshnessBar.vue'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import type { ChartOption } from '@/components/echarts'
@@ -267,6 +266,9 @@ watch(ledgerReadings, (rows) => {
 })
 
 onMounted(() => {
+  if (window.location.hash === '#drill') {
+    document.getElementById('drill')?.scrollIntoView({ block: 'start' })
+  }
   void loadCatalog()
   void load()
   // 这是盯实时遥测的页面，只取一次数就等于把"最新读数"冻在打开那一刻：
@@ -289,10 +291,13 @@ onBeforeUnmount(() => {
   <div class="monitor-page">
     <PageHero surface title="监测预警" badge="实时监测" caption="查看站点读数与接入质量，或提交现场险情。">
       <template #actions>
-        <router-link class="monitor-link" to="/warnings">预警台账</router-link>
         <a-button type="primary" data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
       </template>
     </PageHero>
+    <nav class="ops-nav" aria-label="监测与预警">
+      <router-link to="/monitor">监测数据</router-link>
+      <router-link to="/warnings">预警台账</router-link>
+    </nav>
 
     <a-card class="monitor-card ops-surface" size="small" title="数据筛选">
       <div class="ops-filters">
@@ -431,11 +436,10 @@ onBeforeUnmount(() => {
         </a-card>
     </div>
 
-    <a-card class="monitor-card monitor-drills ops-surface" size="small" title="处置链演练">
+    <a-card id="drill" class="monitor-card monitor-drills ops-surface" size="small" title="处置链演练">
       <div class="monitor-drills__actions">
         <a-button :loading="drilling" :disabled="drilling" data-testid="drill-surge" @click="drill('surge')">发起演练：雨强激增</a-button>
         <a-button :loading="drilling" :disabled="drilling" data-testid="drill-normal" @click="drill('normal')">发起演练：正常背景</a-button>
-        <router-link class="monitor-link" to="/simulation">参数推演沙盒</router-link>
       </div>
     </a-card>
 
@@ -443,7 +447,6 @@ onBeforeUnmount(() => {
       <ReportForm :initial-region-code="region" />
     </a-modal>
 
-    <SystemTerminal />
   </div>
 </template>
 
@@ -464,20 +467,6 @@ onBeforeUnmount(() => {
 .monitor-page .ops-filters {
   max-width: 900px;
   grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
-}
-.monitor-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-  padding-inline: var(--aeg-space-s3);
-  border: 1px solid var(--aeg-color-border-strong);
-  border-radius: var(--aeg-radius-md);
-  background: var(--aeg-color-sunken);
-  color: var(--aeg-color-text);
-}
-.monitor-link:hover {
-  color: var(--aeg-color-brand-hover);
-  border-color: var(--aeg-color-brand-line);
 }
 .monitor-drills__actions {
   display: flex;

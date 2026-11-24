@@ -4,7 +4,8 @@
  * 服务端定义列表只回摘要（workflow_api.py:113-130），不含节点与连线，
  * 所以"打开"要走单条定义的出口（GET /definitions/{id}）把全文取回画布。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { ApartmentOutlined, SearchOutlined } from '@ant-design/icons-vue'
 
 import FreshnessBar from '@/components/FreshnessBar.vue'
 import { confirmDiscardUnsaved } from './confirmDiscard'
@@ -17,10 +18,22 @@ import { useEditorContext } from './editor/context'
 
 const { catalog, document: documentStore, run } = useEditorContext()
 
-/** 打开一条 lineage 的草稿：会整体覆盖画布，有未保存改动时先确认。 */
+const STANDARD_CHAIN_NAME = '标准五段处置链路'
+const query = ref('')
+const showArchived = ref(false)
+const archivedCount = computed(() => catalog.definitions.filter((row) => row.status === 'archived').length)
+const visibleDefinitions = computed(() => {
+  const keyword = query.value.trim().toLocaleLowerCase()
+  return catalog.definitions
+    .filter((row) => showArchived.value || row.status !== 'archived')
+    .filter((row) => !keyword || row.name.toLocaleLowerCase().includes(keyword) || row.workflow_id.toLowerCase().includes(keyword))
+    .sort((a, b) => Number(b.name === STANDARD_CHAIN_NAME) - Number(a.name === STANDARD_CHAIN_NAME))
+})
+
+/** 系统链路打开发布快照，其余定义有 lineage 时打开草稿。 */
 function open(row: DefinitionSummary): void {
   const proceed = async (): Promise<void> => {
-    if (!row.lineage_id) {
+    if (!row.lineage_id || row.name === STANDARD_CHAIN_NAME) {
       if (await documentStore.openVersion(row.workflow_id)) run.leaveInstance({ kind: 'version', workflowId: row.workflow_id })
     } else if (await documentStore.openLineage(row.lineage_id)) {
       run.leaveInstance({ kind: 'draft' })
@@ -84,7 +97,47 @@ function onDescription(event: Event): void {
 
 <template>
   <section v-if="def !== null" class="wf-def">
-    <h3 class="wf-def__title">工作流定义</h3>
+    <div class="wf-def__library">
+      <div class="wf-def__heading">
+        <h3 class="wf-def__title">工作流库</h3>
+        <label v-if="archivedCount > 0" class="wf-def__filter">
+          <input v-model="showArchived" type="checkbox" />
+          显示归档（{{ archivedCount }}）
+        </label>
+      </div>
+      <label class="wf-def__search">
+        <SearchOutlined aria-hidden="true" />
+        <input v-model="query" type="search" class="wf-def__input" aria-label="搜索工作流" placeholder="搜索流程名称或 ID" />
+      </label>
+      <ul v-if="visibleDefinitions.length" class="wf-def__list">
+        <li v-for="row in visibleDefinitions" :key="row.workflow_id" class="wf-def__list-item"
+          :class="{ 'is-standard': row.name === STANDARD_CHAIN_NAME }">
+          <span class="wf-def__name" :title="row.name">
+            <ApartmentOutlined v-if="row.name === STANDARD_CHAIN_NAME" aria-hidden="true" />
+            {{ row.name }}
+          </span>
+          <span class="wf-def__ver">v{{ row.version }}</span>
+          <span class="wf-def__muted wf-def__meta">{{ row.node_count }} 节点 / {{ row.edge_count }} 连线</span>
+          <span class="wf-def__muted wf-def__state">{{ definitionStatusLabel(row.status) }}</span>
+          <button type="button" class="wf-def__button wf-def__button--open" :disabled="documentStore.loading"
+            :data-testid="`open-${row.workflow_id}`" @click="open(row)">打开</button>
+          <button type="button" class="wf-def__button wf-def__button--archive"
+            :disabled="documentStore.loading" :data-testid="`archive-${row.workflow_id}`" @click="toggleArchive(row)">
+            {{ row.status === 'archived' ? '取消归档' : '归档' }}
+          </button>
+        </li>
+      </ul>
+      <p v-else class="wf-def__empty">
+        {{ catalog.definitions.length === 0 ? '尚无已保存定义。' : (query.trim() ? '没有匹配的工作流。' : '当前没有启用的工作流。') }}
+      </p>
+      <FreshnessBar
+        :fetched-at="catalog.definitionsUpdatedAt"
+        :label="`服务端定义（${catalog.definitions.length}） · 每 15 秒更新`"
+        :interval-ms="15_000"
+        stacked
+      />
+    </div>
+    <h3 class="wf-def__title">当前画布</h3>
     <label class="wf-def__row">
       <span>名称</span>
       <input class="wf-def__input" type="text" :value="def.name" :readonly="!documentStore.canEdit" :maxlength="MAX_DEFINITION_NAME_CHARS" @change="onName" />
@@ -154,37 +207,7 @@ function onDescription(event: Event): void {
       </li>
     </ul>
 
-    <h4 class="wf-def__subtitle">服务端已存定义</h4>
-    <!-- 这一列此前只在进页/保存/归档时对账，别人刚存的那一版要刷新整页才看得见。
-         现在每 15 秒自查一次，并把"什么时候取的、多旧"写在同一栏里。 -->
-    <FreshnessBar
-      :fetched-at="catalog.definitionsUpdatedAt"
-      :label="`服务端定义（${catalog.definitions.length}） ｜ 每 15 秒自己对一遍`"
-      :interval-ms="15_000"
-      stacked
-    />
-    <ul class="wf-def__list">
-      <li v-for="row in catalog.definitions" :key="row.workflow_id" class="wf-def__list-item">
-        <span class="wf-def__name" :title="row.name">{{ row.name }}</span>
-        <span class="wf-def__ver">v{{ row.version }}</span>
-        <span class="wf-def__muted wf-def__meta">{{ row.node_count }} 节点 / {{ row.edge_count }} 连线</span>
-        <span class="wf-def__muted wf-def__state">{{ definitionStatusLabel(row.status) }}</span>
-        <!-- 打开排在归档前面：这是一条能存不能开的链路修好后的样子，
-             顺序也是提醒——先能拿回来编辑，再谈要不要收走它 -->
-        <button type="button" class="wf-def__button wf-def__button--open" :disabled="documentStore.loading" :data-testid="`open-${row.workflow_id}`" @click="open(row)">打开</button>
-        <!-- 归档与取消归档是同一个开关的两面：一按就改了服务端状态的动作要先问一句，
-             而把它撤回的那一下不该再拦人 -->
-        <button
-          type="button"
-          class="wf-def__button wf-def__button--archive"
-          :data-testid="`archive-${row.workflow_id}`"
-          @click="toggleArchive(row)"
-        >
-          {{ row.status === 'archived' ? '取消归档' : '归档' }}
-        </button>
-      </li>
-    </ul>
-    <p v-if="catalog.definitions.length === 0" class="wf-def__empty">尚无已保存定义。</p>
+
   </section>
 </template>
 
@@ -192,14 +215,54 @@ function onDescription(event: Event): void {
 .wf-def {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  border-top: 1px solid #f0f0f0;
+  min-width: 0;
+  gap: 10px;
+  padding: 14px;
+  border-top: 1px solid var(--aeg-color-border);
+}
+.wf-def__library {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--aeg-color-border);
+}
+.wf-def__heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px 8px;
+}
+.wf-def__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  color: var(--aeg-color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.wf-def__search {
+  position: relative;
+  display: grid;
+  color: var(--aeg-color-text-secondary);
+}
+.wf-def__search > .anticon {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.wf-def__search > input {
+  min-height: 36px;
+  padding-left: 31px;
 }
 .wf-def__title,
 .wf-def__subtitle {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
 }
 .wf-def__subtitle {
   margin-top: 6px;
@@ -214,9 +277,12 @@ function onDescription(event: Event): void {
   font-size: 12px;
 }
 .wf-def__input {
-  padding: 2px 6px;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-sunken);
+  color: var(--aeg-color-text);
   font-size: 12px;
 }
 .wf-def__identity {
@@ -266,43 +332,40 @@ function onDescription(event: Event): void {
   font-weight: 600;
 }
 .wf-def__errors {
-  color: #cf1322;
+  color: var(--aeg-color-status-danger);
   font-size: 12px;
 }
-.wf-def__edge,
-/**
- * 「服务端已存定义」每一行。
- *
- * 之前是 `flex-wrap: wrap`（为了修更早的"打/开竖排"），结果折到哪一行没人管：
- * 真机 @1440 量到行高 62px，而两颗按钮落在**不同行的不同位置**
- * （"打开" top=599 靠右、"归档" top=625 靠左下）。322px 的右栏里
- * 名字 + "N 节点 / M 连线" + 状态 + 两颗按钮（各 42px）+ 间距 ≈ 347px，
- * 一行**装不下**——所以问题不是"该不该折"，而是"折得有没有规矩"。
- * 这里改成两行网格：第一行 名字 + 打开，第二行 计数 + 状态 + 归档，
- * 两颗按钮右缘对齐成一列（扫一眼就能比长短），行高由内容决定而不是由 wrap 决定。
- */
+.wf-def__edge {
+  padding: 8px;
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-sm);
+}
 .wf-def__list-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   column-gap: 6px;
-  row-gap: 2px;
+  row-gap: 1px;
   align-items: center;
-  padding: 6px 10px;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  padding: 3px 8px;
+  border: 1px solid var(--aeg-color-border-subtle);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-overview-tile);
   font-size: 12px;
-  /* 0.15s 是 NexusMind 全站的微动效基准（284 处 `transition: all .15s`） */
   transition: background var(--aeg-motion-base) ease, border-color var(--aeg-motion-base) ease;
 }
-.wf-def__list-item:hover {
-  background: rgba(37, 99, 235, 0.05);
-  border-color: rgba(37, 99, 235, 0.18);
+.wf-def__list-item:hover,
+.wf-def__list-item.is-standard {
+  background: var(--aeg-color-brand-soft);
+  border-color: var(--aeg-color-brand-line);
+}
+.wf-def__list-item.is-standard .anticon {
+  margin-right: 2px;
+  color: var(--aeg-color-brand-hover);
 }
 .wf-def__name {
   grid-area: 1 / 1 / 2 / 2;
   min-width: 0;
-  /* 名字单行收尾、全文进 title——和画布节点卡同一套口径（长标题不许把行撑高，
-     否则一列长短不齐，"扫一眼比数量"就失效了）。真机量到一份长名字的定义把行撑到 63px。 */
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -343,17 +406,38 @@ function onDescription(event: Event): void {
 }
 .wf-def__button {
   flex: 0 0 auto;
+  min-height: 29px;
   padding: 2px 8px;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
-  background: #fff;
+  border: 1px solid var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-card);
+  color: var(--aeg-color-text);
   font-size: 12px;
   white-space: nowrap;
   cursor: pointer;
 }
+.wf-def__button--open {
+  border-color: var(--aeg-color-brand-line);
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-brand-hover);
+}
+.wf-def__button--archive {
+  min-height: 22px;
+  padding-block: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--aeg-color-text-secondary);
+}
+.wf-def__button:not(:disabled):hover {
+  border-color: var(--aeg-color-brand-hover);
+}
+.wf-def__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
 .wf-def__button--danger {
-  border-color: #ffa39e;
-  color: #cf1322;
+  border-color: var(--aeg-color-status-danger);
+  color: var(--aeg-color-status-danger);
 }
 .wf-def__hint,
 .wf-def__empty,
@@ -364,6 +448,6 @@ function onDescription(event: Event): void {
   font-size: 11px;
 }
 .wf-def__ok {
-  color: #389e0d;
+  color: var(--aeg-color-status-success);
 }
 </style>

@@ -7,6 +7,7 @@ import api from '@/api/client'
 import type { LatencyReport } from '@/api/types'
 import EChart from '@/components/EChart.vue'
 import PageHero from '@/components/PageHero.vue'
+import SystemTerminal from '@/components/SystemTerminal.vue'
 import FreshnessBar from '@/components/FreshnessBar.vue'
 import type { ChartOption } from '@/components/echarts'
 import { echarts } from '@/components/echarts'
@@ -347,6 +348,7 @@ onBeforeUnmount(() => {
         </div>
       </a-card>
     </div>
+    <SystemTerminal />
   </div>
 </template>
 

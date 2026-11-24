@@ -126,9 +126,17 @@ function navigateTabs(event: KeyboardEvent): void {
   border-left: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-xl) 0 0 var(--aeg-radius-xl);
   overflow: hidden;
-  background: var(--aeg-color-overview-tile);
+  background: var(--aeg-color-overview-panel);
   box-shadow: var(--aeg-shadow-lg);
   color: var(--aeg-color-text);
+}
+@supports (backdrop-filter: blur(12px)) {
+  @media (prefers-reduced-transparency: no-preference) and (min-width: 721px) {
+    .ed-panel {
+      background: color-mix(in srgb, var(--aeg-color-overview-panel) 88%, transparent);
+      backdrop-filter: blur(12px) saturate(1.15);
+    }
+  }
 }
 .ed-panel__head {
   display: flex;
@@ -202,6 +210,7 @@ function navigateTabs(event: KeyboardEvent): void {
   flex: 1;
   min-height: 0;
   padding: 8px;
+  padding-bottom: 84px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }

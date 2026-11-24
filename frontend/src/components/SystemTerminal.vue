@@ -46,11 +46,11 @@ const statusLine = computed<string>(() => {
       @click="open = !open"
     >
       <span class="sys-term__dots" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span class="sys-term__label">系统输出</span>
+      <span class="sys-term__label">运行诊断</span>
       <span class="sys-term__count">{{ events.length }}</span>
       <span class="sys-term__caret" aria-hidden="true">{{ open ? '▾' : '▴' }}</span>
     </button>
-    <div v-if="open" class="sys-term__body" role="log" aria-label="系统输出">
+    <div v-if="open" class="sys-term__body" role="log" aria-label="运行诊断">
       <p v-if="statusLine !== ''" class="sys-term__warn">{{ statusLine }}</p>
       <p v-if="lines.length === 0 && statusLine === ''" class="sys-term__empty">
         还没有事件。链路跑起来之后，引擎与通道的每一帧都会落在这里。

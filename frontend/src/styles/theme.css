@@ -78,6 +78,35 @@ body .ant-card.ops-surface {
   background: var(--aeg-color-overview-panel);
   box-shadow: var(--aeg-shadow-sm);
 }
+.ops-nav {
+  display: inline-flex;
+  gap: var(--aeg-space-s1);
+  margin: 0 0 var(--aeg-space-s4);
+  padding: var(--aeg-space-s1);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-overview-panel);
+  box-shadow: var(--aeg-shadow-sm);
+}
+.ops-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding-inline: var(--aeg-space-s4);
+  border-radius: var(--aeg-radius-md);
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  text-decoration: none;
+}
+.ops-nav a:hover {
+  background: var(--aeg-color-sunken);
+  color: var(--aeg-color-text);
+}
+.ops-nav a[aria-current='page'] {
+  background: var(--aeg-color-masthead-tab);
+  color: var(--aeg-color-masthead-tab-ink);
+}
 .ops-filters {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 156px), 1fr));
@@ -469,7 +498,6 @@ body .stat-cell .ant-statistic-content-suffix {
 @media (prefers-reduced-motion: reduce) {
   body .ant-card,
   .status-dot.live,
-  .marker__pulse,
   .agent__dot.is-live,
   .ed-head__polling::before {
     animation: none !important;

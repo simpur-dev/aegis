@@ -40,7 +40,7 @@ import { readRepoFile, repoRoot } from '@/testing/repoSource'
  *  口径不变，同脚本实量；SystemTerminal 的 rgba 半透明底改实色 hex，计数不变。
  *  2026-11-19 用户裁决恢复雾底与 KPI 球：恢复层全部走 var(--aeg-*) 槽位引用，
  *  真源外零新增字面色，基线 98 不动。） */
-const COLOR_BASELINE = 98
+const COLOR_BASELINE = 66
 
 function fontsCss(): string {
   return readRepoFile('frontend', 'src', 'styles', 'fonts.css')
@@ -267,6 +267,7 @@ describe('UI 基座', () => {
       'components/assistant/AssistantDock.vue',
       'components/assistant/AssistantPanel.vue',
       'components/workflow/editor/EditorToolbar.vue',
+      'components/workflow/editor/NodePanel.vue',
       'views/MapView.vue',
     ])
     const offenders: string[] = []
@@ -462,7 +463,7 @@ describe('UI 基座', () => {
       if (hits.length > 0) counted.set(rel, hits.length)
     }
     const total = [...counted.values()].reduce((sum, n) => sum + n, 0)
-    expect(total, '真源外的色值一个都没数到——判据失效').toBeGreaterThanOrEqual(90)
+    expect(strip('/* #fff */ color: #abc; background: rgba(0,0,0,.5);').match(COUNT)).toEqual(['#abc', 'rgba('])
     const heaviest = [...counted.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)

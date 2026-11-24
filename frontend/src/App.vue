@@ -19,6 +19,11 @@ const route = useRoute()
 const contentRegion = ref<HTMLElement | null>(null)
 const immersive = computed(() => route.meta?.immersive === true)
 const currentKey = computed(() => (route.name as string) ?? 'dashboard')
+const navSection = computed(() => {
+  if (currentKey.value === 'warnings') return 'monitor'
+  if (currentKey.value === 'simulation') return 'workflow'
+  return currentKey.value
+})
 
 const health = ref<{ status: string; version: string } | null>(null)
 const { events, connected, stalled } = useEventStream()
@@ -126,7 +131,7 @@ const statusTitle = computed<string>(() =>
                 v-for="item in group.items"
                 :key="item.key"
                 class="topnav__item"
-                :class="{ 'is-on': currentKey === item.key }"
+                :class="{ 'is-on': navSection === item.key }"
                 :to="item.to"
                 :title="item.label"
                 :aria-current="currentKey === item.key ? 'page' : undefined"

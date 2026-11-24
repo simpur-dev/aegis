@@ -1,15 +1,4 @@
 <script setup lang="ts">
-/**
- * 竖向运行时间线：一条实例走到哪一步、卡在哪一步、每步花了多久。
- *
- * 形状移植自 NexusMind `Step4Report.vue:3627-3740`（`grid-template-columns:24px 1fr`、10px 圆点带
- * 2px 白 knockout 描边、2px 连接线、未开始的一档用 dashed 边框 + 透明底）。它的 token 属于
- * nm-teal 那一支（`--wf-active-dot: #006680`），我们只移植蓝系：底纹与描边一律走 #2563eb 系。
- *
- * 状态文案与色值**不另立表**——直接取 `utils/graph.ts` 的 `NODE_STATE_STYLES`（画布节点卡用的就是它），
- * 免得界面上一处说"待人工核签"另一处说"等待人工决策"。圆点色只作装饰：状态同时以文字写出，
- * 所以它不是唯一信息载体（WCAG 1.4.11 的例外），画布与这条也永远同色。
- */
 import { computed } from 'vue'
 
 import type { InstanceNodeRun } from '@/api/workflow'
@@ -18,13 +7,19 @@ import { stateStyle, type JsonValue } from '@/utils/graph'
 const props = defineProps<{
   runs: InstanceNodeRun[]
   names?: Record<string, string>
-  /** 试运行时按节点展示产出；正式实例不传，避免把大段载荷塞进时间线。 */
   outputs?: Record<string, Record<string, JsonValue>> | null
+  includeLiveOutput?: boolean
 }>()
 
 const emit = defineEmits<{ select: [nodeId: string] }>()
 
 const MAX_OUTPUT_CHARS = 1_200
+const STAGE_MODES = new Map([
+  ['agent', '智能体执行'],
+  ['local', '本地执行'],
+  ['hybrid', '混合执行'],
+  ['skipped', '跳过'],
+])
 
 type Tone = 'todo' | 'active' | 'done' | 'bad'
 
@@ -59,14 +54,18 @@ function metaOf(run: InstanceNodeRun): string {
   return bits.join(' ｜ ')
 }
 
-const rows = computed(() => props.runs.map((run, index) => ({ run, index, tone: toneOf(run.state) })))
-
-function outputOf(nodeId: string): string {
-  const output = props.outputs?.[nodeId]
+function formatOutput(output: Record<string, JsonValue> | undefined): string {
   if (output === undefined || Object.keys(output).length === 0) return ''
   const text = JSON.stringify(output, null, 2)
   return text.length > MAX_OUTPUT_CHARS ? `${text.slice(0, MAX_OUTPUT_CHARS)}\n…（已截断）` : text
 }
+
+const rows = computed(() => props.runs.map((run, index) => {
+  const output = props.outputs?.[run.node_id] ?? (props.includeLiveOutput ? run.output : undefined)
+  const stageMode = run.type === 'chain_stage' && typeof output?.mode === 'string' ? STAGE_MODES.get(output.mode) : undefined
+  const stageNote = run.type === 'chain_stage' && typeof output?.note === 'string' ? output.note : ''
+  return { run, index, tone: toneOf(run.state), meta: metaOf(run), output: formatOutput(output), stageMode, stageNote }
+}))
 </script>
 
 <template>
@@ -89,17 +88,21 @@ function outputOf(nodeId: string): string {
             <span class="wf-tl__name" :title="row.run.node_id">{{ nameOf(row.run.node_id) }}</span>
             <span class="wf-tl__state">{{ styleOf(row.run.state).label }}</span>
           </span>
-          <span v-if="metaOf(row.run) !== ''" class="wf-tl__meta">{{ metaOf(row.run) }}</span>
-          <span v-if="row.run.error !== null" class="wf-tl__err" :title="row.run.error">{{ row.run.error }}</span>
-          <span v-if="outputOf(row.run.node_id) !== ''" class="wf-tl__output" @click.stop>
-            <span class="wf-tl__output-label">产出</span>
-            <pre class="wf-tl__pre">{{ outputOf(row.run.node_id) }}</pre>
+          <span v-if="row.meta !== ''" class="wf-tl__meta">{{ row.meta }}</span>
+          <span v-if="row.stageMode || row.stageNote" class="wf-tl__evidence">
+            <span v-if="row.stageMode" class="wf-tl__mode">{{ row.stageMode }}</span>
+            <span v-if="row.stageNote" class="wf-tl__note" :title="row.stageNote">{{ row.stageNote }}</span>
           </span>
+          <span v-if="row.run.error !== null" class="wf-tl__err" :title="row.run.error">{{ row.run.error }}</span>
         </span>
       </button>
+      <details v-if="row.output !== ''" class="wf-tl__output">
+        <summary class="wf-tl__output-label">节点产出</summary>
+        <pre class="wf-tl__pre">{{ row.output }}</pre>
+      </details>
     </li>
   </ol>
-  <p v-else class="wf-tl__empty">还没选中实例——在上方点一条实例，这里就列出它每一步走到哪了。</p>
+  <p v-else class="wf-tl__empty">暂无步骤。也可在实例记录中点一条实例查看。</p>
 </template>
 
 <style scoped>
@@ -117,13 +120,13 @@ function outputOf(nodeId: string): string {
 }
 .wf-tl__step {
   display: grid;
-  grid-template-columns: 24px 1fr;
-  gap: 12px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #eef4f6;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-overview-tile);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -137,17 +140,17 @@ function outputOf(nodeId: string): string {
   outline-offset: 1px;
 }
 .wf-tl__step.is-active {
-  border-color: rgba(37, 99, 235, 0.3);
-  background: var(--aeg-color-alter);
+  border-color: var(--aeg-color-brand-line);
+  background: var(--aeg-color-brand-soft);
 }
 .wf-tl__step.is-bad {
-  border-color: rgba(185, 28, 28, 0.28);
-  background: rgba(239, 68, 68, 0.06);
+  border-color: color-mix(in srgb, var(--aeg-color-status-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--aeg-color-status-danger) 8%, transparent);
 }
 /* 没走到的步骤：透明底 + dashed 边框。实心色块在界面上意味着"这是测出来的状态" */
 .wf-tl__step.is-todo {
   border-style: dashed;
-  border-color: rgba(37, 99, 235, 0.28);
+  border-color: var(--aeg-color-border);
   background: transparent;
 }
 .wf-tl__axis {
@@ -161,19 +164,19 @@ function outputOf(nodeId: string): string {
   box-sizing: border-box;
   width: 10px;
   height: 10px;
-  border: 2px solid #fff;
+  border: 2px solid var(--aeg-color-card);
   border-radius: 50%;
   z-index: 1;
   flex: 0 0 auto;
 }
 .is-active .wf-tl__dot {
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+  box-shadow: 0 0 0 3px var(--aeg-color-brand-soft);
 }
 .wf-tl__line {
   width: 2px;
   flex: 1;
   margin-top: -2px;
-  background: #e6e8ef;
+  background: var(--aeg-color-border);
 }
 .wf-tl__body {
   display: block;
@@ -198,7 +201,7 @@ function outputOf(nodeId: string): string {
   white-space: nowrap;
   font-size: 13px;
   font-weight: 600;
-  color: #1d2129;
+  color: var(--aeg-color-text);
 }
 .wf-tl__state {
   flex: 0 0 auto;
@@ -214,6 +217,24 @@ function outputOf(nodeId: string): string {
   color: var(--aeg-color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
+.wf-tl__evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: baseline;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.wf-tl__mode {
+  padding: 1px 6px;
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-brand-hover);
+}
+.wf-tl__note {
+  color: var(--aeg-color-text-secondary);
+  overflow-wrap: anywhere;
+}
 .wf-tl__err {
   display: block;
   margin: 4px 0 0;
@@ -221,19 +242,17 @@ function outputOf(nodeId: string): string {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: #b91c1c;
+  color: var(--aeg-color-status-danger);
 }
 .wf-tl__output {
-  display: block;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--aeg-color-border-subtle);
-  cursor: default;
+  padding: 0 8px 0 44px;
 }
 .wf-tl__output-label {
-  color: var(--aeg-color-text-muted);
-  font-size: 10px;
-  font-weight: 600;
+  min-height: 32px;
+  padding-block: 7px;
+  color: var(--aeg-color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
 }
 .wf-tl__pre {
   max-height: 220px;

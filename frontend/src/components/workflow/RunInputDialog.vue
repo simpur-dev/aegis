@@ -9,10 +9,11 @@ import { computed, ref, watch } from 'vue'
 
 import type { JsonValue } from '@/utils/graph'
 import type { StartVariable, StartVariableType } from '@/utils/graph/document'
+import type { RunTarget } from '@/stores/workflow/run'
 
 import { useEditorContext } from './editor/context'
 
-const props = defineProps<{ mode: 'preview' | 'start'; busy: boolean }>()
+const props = defineProps<{ mode: 'preview' | 'start'; busy: boolean; target?: RunTarget | null }>()
 const emit = defineEmits<{ close: []; submit: [payload: Record<string, JsonValue>] }>()
 
 const { document: documentStore } = useEditorContext()
@@ -25,11 +26,10 @@ const inputs = ref<Record<string, string>>({})
 const START_TYPES: readonly StartVariableType[] = ['string', 'number', 'boolean', 'json']
 
 function variablesOf(): StartVariable[] {
-  const def = documentStore.definition
-  if (def === null) return []
+  const nodes = props.mode === 'start' && props.target ? props.target.nodes : documentStore.definition?.nodes ?? []
   const out: StartVariable[] = []
   const seen = new Set<string>()
-  for (const node of def.nodes) {
+  for (const node of nodes) {
     if (node.type !== 'start') continue
     const raw = node.config.variables
     if (!Array.isArray(raw)) continue
@@ -75,11 +75,12 @@ const title = computed(() =>
   props.mode === 'preview' ? '试运行（不产生外部副作用）' : '正式启动实例（会写实例并产生真实副作用）',
 )
 
-const scopeNote = computed(() =>
-  props.mode === 'preview'
-    ? '跑的是当前画布草稿（含未保存改动）；不写定义、不写草稿、不进实例账本，通知/外呼/设备控制/预警发布只给回执。'
-    : `跑的是已发布版本 v${documentStore.publishedVersion ?? '—'}；画布上未发布的改动不参与本次执行。`,
-)
+const scopeNote = computed(() => {
+  if (props.mode === 'preview') return '使用当前画布草稿。通知、外呼、设备控制和预警发布仅返回模拟回执。'
+  const version = props.target?.version ?? documentStore.publishedVersion
+  const label = version === null ? (props.target?.workflowId ?? '—') : `v${version}`
+  return `将执行已发布版本 ${label}，输入表单也以该版本为准。`
+})
 
 type Coerced = { ok: true; value: JsonValue } | { ok: true; skip: true } | { ok: false; reason: string }
 

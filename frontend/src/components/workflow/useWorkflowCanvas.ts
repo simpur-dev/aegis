@@ -84,7 +84,7 @@ export function useWorkflowCanvas(
   { catalog, document: documentStore, editor, run }: EditorContext,
   options: WorkflowCanvasOptions = {},
 ) {
-  const { screenToFlowCoordinate, findNode, fitView, zoomIn, zoomOut, zoomTo, viewport, setViewport } = useVueFlow()
+  const { dimensions, screenToFlowCoordinate, findNode, fitView, zoomIn, zoomOut, zoomTo, viewport, setViewport } = useVueFlow()
 
   /** 描边补偿系数（数学在 `strokeCompensation`，那里有单测）。 */
   const strokeScale = computed<number>(() => strokeCompensation(viewport.value.zoom))
@@ -115,7 +115,9 @@ export function useWorkflowCanvas(
         const size = findNode(id)?.dimensions
         return size !== undefined && size.width > 0 && size.height > 0
       })
-      if (measured && await fitView({ padding: 0.2, maxZoom: 1 })) return
+      const canvas = options.canvasRef?.value
+      const resized = !canvas || Math.abs(canvas.clientWidth - dimensions.value.width) <= 1
+      if (resized && measured && await fitView({ padding: 0.2, maxZoom: 1 })) return
       await new Promise((resolve) => window.setTimeout(resolve, 50))
     }
   }
@@ -415,12 +417,10 @@ export function useWorkflowCanvas(
     const canvas = options.canvasRef?.value
     const width = canvas?.clientWidth ?? window.innerWidth
     const height = canvas?.clientHeight ?? window.innerHeight
-    const overlayWidth = canvas?.closest('.ed-body')?.querySelector('.ed-panel')?.clientWidth ?? 0
-    const availableWidth = width - overlayWidth
     return focusNode(
       nodes,
       nodeId,
-      { width: availableWidth >= 320 ? availableWidth : width, height },
+      { width, height },
       async (transform, transformOptions) => {
         await setViewport(transform, transformOptions)
       },

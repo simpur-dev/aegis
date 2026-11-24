@@ -44,7 +44,6 @@ import {
   readWorkflowDeepLink,
   type WorkflowUrlState,
 } from '@/composables/workflow/urlState'
-import { layout as layoutTokens } from '@/theme/tokens'
 import {
   CANVAS_DEFAULT_ZOOM,
   NODE_FOOTPRINT,
@@ -323,6 +322,9 @@ type PanelTab = 'run' | 'def' | 'node'
 const PANEL_STORAGE_KEY = 'aegis.workflow.panel'
 const panelOpen = ref(false)
 const panelTab = ref<PanelTab>(readPanelTab())
+watch(panelOpen, () => {
+  if (run.systemChain && window.matchMedia('(min-width: 721px)').matches) void fitToGraph()
+}, { flush: 'post' })
 
 function readPanelTab(): PanelTab {
   try {
@@ -576,9 +578,7 @@ function project(point: Position): Position {
 function addNoteAtCenter(): void {
   const rect = canvasRef.value?.getBoundingClientRect()
   if (rect === undefined) return
-  /* 面板是覆盖式的：中心按“面板之外仍可见的那块”算，新备注才不会一出生就藏在面板底下。 */
-  const usableWidth = panelOpen.value ? Math.max(rect.width - layoutTokens.editorPanelWidth, 240) : rect.width
-  const point = screenPointToFlow(rect.left + usableWidth / 2, rect.top + rect.height / 2)
+  const point = screenPointToFlow(rect.left + rect.width / 2, rect.top + rect.height / 2)
   /* 备注垫在所有执行节点下面：落点若压着节点，便签会整张被盖住、连拖都拖不出来。 */
   const taken = view.value.nodes.map((item) => ({ x: item.position.x, y: item.position.y }))
   const at = freeDropPosition(
@@ -910,6 +910,11 @@ onUnmounted(() => {
   text-align: center;
   pointer-events: none;
 }
+@media (min-width: 721px) {
+  .ed-body.has-panel .ed-canvas {
+    right: var(--aeg-editor-panel-width, 400px);
+  }
+}
 .ed-empty__icon {
   display: grid;
   place-items: center;
@@ -1021,11 +1026,6 @@ onUnmounted(() => {
 .ed-banner__retry:disabled {
   opacity: 0.55;
   cursor: progress;
-}
-/* 浮层的样子（描边/圆角/投影/控件按钮）在 `theme.css` 的 `.ed-canvas` 那一段，这里只管站位：
-   面板是覆盖式的，小地图要让开那 400px，否则节点会被它盖住。 */
-.ed-body.has-panel :deep(.vue-flow__minimap) {
-  right: calc(var(--aeg-editor-panel-width, 400px) + 12px);
 }
 .ed-canvas :deep(.vue-flow__minimap) {
   right: 12px;

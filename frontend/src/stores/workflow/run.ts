@@ -45,6 +45,13 @@ import { describeFailure } from './shared'
 
 const POLL_INTERVAL_MS = 1_500
 const QUEUE_POLL_INTERVAL_MS = 15_000
+const INTERNAL_CHAIN_MESSAGE = '标准五段由监测或上报触发，可到监测页发起处置链演练'
+
+export interface RunTarget {
+  workflowId: string
+  version: number | null
+  nodes: readonly NodeDef[]
+}
 
 function describeCapture(raw: LabelCapture | undefined): { text: string; landed: boolean } {
   if (raw === undefined) {
@@ -87,6 +94,17 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
       const raw = instance.value?.status
       return raw !== undefined && isInstanceStatus(raw) ? raw : null
     })
+    const startWorkflowId = computed(() =>
+      editorStore.mode.kind === 'version' ? editorStore.mode.workflowId : documentStore.publishedWorkflowId,
+    )
+    const startVersion = computed(() => {
+      const row = documentStore.versions.find((version) => version.workflow_id === startWorkflowId.value)
+      if (editorStore.mode.kind === 'version') return row?.version ?? null
+      return row?.version ?? documentStore.publishedVersion
+    })
+    const systemChain = computed(() =>
+      documentStore.document?.nodes.some((node) => node.type === 'chain_stage') ?? false,
+    )
 
     const previewStatus = computed<InstanceStatus | null>(() => {
       const raw = preview.value?.status
@@ -218,8 +236,29 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
       return (awaiting ?? failed ?? detail.nodes[0])?.node_id ?? null
     }
 
-    async function startInstance(payload: Record<string, JsonValue> = {}): Promise<boolean> {
-      const workflowId = documentStore.publishedWorkflowId
+    async function loadRunTarget(): Promise<RunTarget | null> {
+      const workflowId = startWorkflowId.value
+      if (workflowId === null || systemChain.value) return null
+      const version = startVersion.value
+      const mode = editorStore.mode.kind
+      let target: RunTarget | null = null
+      await editorStore.runAction(async () => {
+        const published = await gateway.getVersionDocument(workflowId)
+        if (editorStore.mode.kind !== mode || startWorkflowId.value !== workflowId) return
+        if (published.nodes.some((node) => node.type === 'chain_stage')) {
+          editorStore.setError(INTERNAL_CHAIN_MESSAGE)
+          return
+        }
+        target = { workflowId, version, nodes: published.nodes }
+      }, '读取启动版本失败')
+      return target
+    }
+
+    async function startInstance(payload: Record<string, JsonValue> = {}, workflowId = startWorkflowId.value): Promise<boolean> {
+      if (systemChain.value) {
+        editorStore.setError(INTERNAL_CHAIN_MESSAGE)
+        return false
+      }
       if (workflowId === null) {
         editorStore.setError('请先发布工作流版本再启动实例')
         return false
@@ -279,19 +318,35 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
         editorStore.setError('当前是只读版本视图：先恢复为草稿，再试运行')
         return false
       }
+      if (systemChain.value) {
+        editorStore.setError(INTERNAL_CHAIN_MESSAGE)
+        return false
+      }
       if (document.lineage_id === '') {
         editorStore.setError('空白画布还没有 lineage：先保存草稿或打开一份定义，再试运行')
         return false
       }
-      return editorStore.runAction(async () => {
+      let applied = false
+      await editorStore.runAction(async () => {
         const token = ++previewToken
+        const signature = canonicalDocumentJson(document)
         const result = await gateway.createPreview({ document: encodeDocument(document), payload })
-        if (token !== previewToken) return
+        if (token !== previewToken) {
+          applied = true
+          return
+        }
+        const current = documentStore.document
+        if (editorStore.mode.kind !== 'draft' || current === null || canonicalDocumentJson(current) !== signature) {
+          editorStore.setError('试运行期间画布已变化，请按当前草稿重新试运行')
+          return
+        }
         preview.value = result
-        previewSignature = canonicalDocumentJson(document)
+        previewSignature = signature
         editorStore.setMode({ kind: 'draft' })
         editorStore.select(currentNodeOf(result))
+        applied = true
       }, '试运行失败')
+      return applied
     }
 
     /** 草稿一改，旧试运行结果就不能再画在画布上：它说的是另一张图。 */
@@ -485,6 +540,9 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
       capture,
       instanceStatus,
       previewStatus,
+      startWorkflowId,
+      startVersion,
+      systemChain,
       canvasRuns,
       instanceMutable,
       awaitingNodes,
@@ -495,6 +553,7 @@ export function createRunStore(gateway: WorkflowGateway = workflowApi) {
       canDecideNode,
       decisionOptions,
       loadInstances,
+      loadRunTarget,
       startInstance,
       startPreview,
       clearPreview,

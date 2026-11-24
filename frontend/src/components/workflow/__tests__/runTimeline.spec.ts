@@ -135,6 +135,20 @@ describe('RunTimeline', () => {
     expect(output.length).toBeLessThan(1_400)
   })
 
+  it('标准链路显示实际执行方式，节点产出独立折叠', () => {
+    const wrapper = mount(RunTimeline, {
+      props: {
+        runs: [run({ type: 'chain_stage', state: 'degraded', output: { mode: 'local', note: '智能体调用超时' } })],
+        includeLiveOutput: true,
+      },
+    })
+    expect(wrapper.get('.wf-tl__mode').text()).toBe('本地执行')
+    expect(wrapper.get('.wf-tl__note').text()).toBe('智能体调用超时')
+    expect(wrapper.get('details').attributes('open')).toBeUndefined()
+    expect(wrapper.get('details pre').text()).toContain('"mode": "local"')
+    expect(wrapper.get('button').find('details').exists()).toBe(false)
+  })
+
   it('空产出不画一块空白的 pre', () => {
     const wrapper = mount(RunTimeline, {
       props: { runs: [run({ node_id: 'n1', state: 'succeeded' })], names, outputs: { n1: {} } },

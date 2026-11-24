@@ -2081,7 +2081,7 @@ test.describe('运行时间线 @1440', () => {
 test.describe('系统输出浮层 @1440', () => {
   test('展开后：面板在视口内、不压分页、深底文字读得清', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
-    await page.goto('/monitor')
+    await page.goto('/metrics')
     await page.waitForSelector(READY, { timeout: 45_000 })
     await settle(page)
     await page.waitForTimeout(2_500)

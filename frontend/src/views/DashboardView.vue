@@ -410,7 +410,7 @@ watch(
             caption="值班第一屏：等人处理的待办、现场读数、风险区域与最新处置。"
           >
             <template #actions>
-              <a-button class="dash-drill" type="primary" data-testid="dashboard-drill" @click="$router.push('/monitor')">发起演练</a-button>
+              <a-button class="dash-drill" type="primary" data-testid="dashboard-drill" @click="$router.push('/monitor#drill')">发起演练</a-button>
               <span class="dash-updated" data-testid="dashboard-updated">
                 {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
               </span>

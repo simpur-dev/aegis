@@ -123,6 +123,21 @@ describe('运行层：启动实例', () => {
     runtime().stopPolling()
     expect(runtime().polling).toBe(false)
   })
+
+  it('启动目标绑定发布快照，草稿参数与后来发布的版本均不改变已准备的请求', async () => {
+    const publishedStart = nodeDef('start_1', 'start', { variables: [{ name: 'published_input', type: 'number' }] })
+    bootstrap({ getVersionDocument: vi.fn(async () => workflowDocument({ nodes: [publishedStart] })) })
+    documents.document = workflowDocument({ nodes: [nodeDef('start_1', 'start', { variables: [] })] })
+    documents.versions = [versionSummary()]
+
+    const target = await runtime().loadRunTarget()
+    expect(gateway.getVersionDocument).toHaveBeenCalledWith(PUBLISHED)
+    expect(target).toEqual({ workflowId: PUBLISHED, version: 1, nodes: [publishedStart] })
+
+    documents.versions = [versionSummary({ workflow_id: 'wf_000000000099', version: 2 })]
+    expect(await runtime().startInstance({ published_input: 7 }, target?.workflowId)).toBe(true)
+    expect(gateway.startInstance).toHaveBeenCalledWith({ workflow_id: PUBLISHED, payload: { published_input: 7 } })
+  })
 })
 
 describe('运行层：聚焦实例与画布', () => {
@@ -330,6 +345,19 @@ describe('运行层：试运行', () => {
 
     expect(await pending).toBe(true)
     expect(runtime().preview).toBeNull()
+  })
+
+  it('试运行途中编辑草稿，响应返回时不绑定到已经变化的画布', async () => {
+    const gate = deferred<ReturnType<typeof instanceDetail>>()
+    bootstrap({ createPreview: vi.fn(() => gate.promise) })
+    draftWithLineage()
+    const pending = runtime().startPreview()
+    documents.setMeta({ name: '另一个草稿版本' })
+    gate.resolve(instanceDetail({ preview: true, status: 'succeeded' }))
+
+    expect(await pending).toBe(false)
+    expect(runtime().preview).toBeNull()
+    expect(editor.error).toContain('画布已变化')
   })
 
   it('空白画布没有 lineage 就不发试运行，先把缺什么说清', async () => {

@@ -228,6 +228,10 @@ function onDrawerVisible(visible: boolean): void {
         </a-button>
       </template>
     </PageHero>
+    <nav class="ops-nav" aria-label="监测与预警">
+      <router-link to="/monitor">监测数据</router-link>
+      <router-link to="/warnings">预警台账</router-link>
+    </nav>
 
     <a-card class="ops-surface" size="small" title="预警记录">
       <div class="ops-filters warning-filters">
