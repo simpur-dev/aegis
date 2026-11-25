@@ -9,9 +9,9 @@
  * - 席位从本组件顶部一行选择（`operatorSeat`），写动作全站共用这一个来源。
  */
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, useId, watch } from 'vue'
 
-import { operatorSeat, setOperatorSeat } from '@/api/operatorSeat'
+import { clearOperatorSeat, lookupOperatorSeat, operatorSeat, setOperatorSeat } from '@/api/operatorSeat'
 import { RISK_LABELS, type RiskLevel } from '@/api/types'
 import { useAlerts } from '@/composables/useAlerts'
 
@@ -19,11 +19,34 @@ const { cards, syncing, syncError, openCards, refresh, ack, transfer, snooze, sn
   useAlerts()
 
 const seatDraft = ref(operatorSeat.value)
+const seatInputId = useId()
+const seatInput = ref<HTMLInputElement | null>(null)
+const seatProfile = ref<Awaited<ReturnType<typeof lookupOperatorSeat>> | null>(null)
+const seatError = ref('')
+const checkingSeat = ref(false)
 const busyId = ref('')
 const message = ref('')
+let seatCheck = 0
+
+const seatRoles = { duty: '值班员', lead: '值班长', admin: '管理员' }
+const confirmedSeat = computed(() => {
+  const profile = seatProfile.value
+  if (!profile?.active || profile.operator_id !== operatorSeat.value || !profile.role) return ''
+  return `${profile.display_name || profile.operator_id} · ${seatRoles[profile.role]}`
+})
 
 onMounted(() => {
   refresh()
+  void checkSeat(operatorSeat.value)
+})
+
+watch(operatorSeat, (seat) => {
+  seatDraft.value = seat
+  message.value = ''
+  if (seatProfile.value?.operator_id !== seat) {
+    seatProfile.value = null
+    void checkSeat(seat)
+  }
 })
 
 const levelLabel = (level: number): string => RISK_LABELS[(level as RiskLevel) in RISK_LABELS ? (level as RiskLevel) : 5]
@@ -33,15 +56,16 @@ function timeOf(card: { created_at: string }): string {
   return Number.isFinite(moment) ? new Date(moment).toLocaleTimeString('zh-CN', { hour12: false }) : '时间未取到'
 }
 
-function statusLine(card: { status: string; drill: boolean }): string {
-  if (card.drill) return '演练'
-  if (card.status === 'escalated') return '已升级'
-  if (card.status === 'acked') return '已接手'
-  return ''
+function canAct(): boolean {
+  if (checkingSeat.value) return false
+  if (confirmedSeat.value && seatDraft.value.trim() === operatorSeat.value) return true
+  if (!seatError.value) seatError.value = '请在这里确认值班席位后再处置。'
+  seatInput.value?.focus()
+  return false
 }
 
 async function run(card: (typeof cards.value)[number], action: () => Promise<string>): Promise<void> {
-  if (busyId.value !== '') return
+  if (busyId.value !== '' || !canAct()) return
   busyId.value = card.alert_id || card.warning_id
   message.value = await action()
   busyId.value = ''
@@ -54,6 +78,7 @@ const transferTarget = ref('')
 const transferringId = ref('')
 
 function toggleTransfer(card: (typeof cards.value)[number]): void {
+  if (!canAct()) return
   transferringId.value = transferringId.value === card.alert_id ? '' : card.alert_id
   transferTarget.value = ''
   message.value = ''
@@ -62,16 +87,46 @@ function toggleTransfer(card: (typeof cards.value)[number]): void {
 async function confirmTransfer(card: (typeof cards.value)[number]): Promise<void> {
   const target = transferTarget.value.trim()
   if (target === '') {
-    message.value = '先填受理席位的 ID（如 op-lead）'
+    message.value = '请输入受理席位编号。'
     return
   }
   await run(card, () => transfer(card, target))
   transferringId.value = ''
 }
 
-function saveSeat(): void {
-  setOperatorSeat(seatDraft.value)
-  message.value = operatorSeat.value === '' ? '已清空席位：写动作将被拒绝' : ''
+async function checkSeat(seat: string, save = false): Promise<void> {
+  if (save && !/^[a-zA-Z0-9_-]{4,32}$/.test(seat)) {
+    seatError.value = seat ? '席位编号为 4–32 位字母、数字、连字符或下划线。' : '请输入已配置的值班席位编号。'
+    seatInput.value?.focus()
+    return
+  }
+  const check = ++seatCheck
+  checkingSeat.value = true
+  seatError.value = ''
+  try {
+    const profile = await lookupOperatorSeat(seat)
+    if (check !== seatCheck) return
+    if (seat && (profile.operator_id !== seat || !profile.active || !profile.role)) {
+      if (seat === operatorSeat.value) seatProfile.value = null
+      seatError.value = '这个席位不存在或已停用，请核对席位编号。'
+      return
+    }
+    seatProfile.value = profile
+    if (save) {
+      setOperatorSeat(seat)
+      seatDraft.value = seat
+      refresh()
+    }
+  } catch (error) {
+    if (check === seatCheck) seatError.value = error instanceof Error ? error.message : '暂时无法验证值班席位。'
+  } finally {
+    if (check === seatCheck) checkingSeat.value = false
+  }
+}
+
+function leaveSeat(): void {
+  clearOperatorSeat()
+  refresh()
 }
 
 const shown = computed(() => openCards.value)
@@ -87,16 +142,40 @@ const shown = computed(() => openCards.value)
       <button class="alerts__refresh" type="button" data-testid="alert-refresh" @click="refresh()">对账</button>
     </header>
 
-    <div class="alerts__seat">
-      <label class="alerts__seat-label" for="alert-seat-input">当前席位</label>
-      <input
-        id="alert-seat-input"
-        v-model="seatDraft"
-        class="alerts__seat-input"
-        data-testid="alert-seat"
-        placeholder="如 op-duty（页脚同源）"
-        @change="saveSeat()"
-      />
+    <div class="alerts__seat" :aria-busy="checkingSeat">
+      <form class="alerts__seat-form" @submit.prevent="checkSeat(seatDraft.trim(), true)">
+        <label class="alerts__seat-label" :for="seatInputId">值班席位</label>
+        <input
+          :id="seatInputId"
+          ref="seatInput"
+          v-model="seatDraft"
+          class="alerts__seat-input"
+          data-testid="alert-seat"
+          placeholder="输入已配置的席位编号"
+          autocomplete="off"
+          spellcheck="false"
+          maxlength="32"
+          :disabled="checkingSeat || busyId !== ''"
+          :aria-describedby="`${seatInputId}-status`"
+        />
+        <button
+          class="alert__btn"
+          :class="{ 'alert__btn--primary': !confirmedSeat || seatDraft.trim() !== operatorSeat }"
+          type="submit"
+          data-testid="alert-seat-confirm"
+          :disabled="checkingSeat || busyId !== ''"
+        >
+          {{ checkingSeat ? '验证中' : '确认席位' }}
+        </button>
+      </form>
+      <div :id="`${seatInputId}-status`" class="alerts__seat-status" aria-live="polite">
+        <p v-if="confirmedSeat" class="alerts__seat-current" data-testid="alert-seat-current">当前使用 {{ confirmedSeat }}</p>
+        <p v-if="seatError" class="alerts__message" data-testid="alert-seat-error">{{ seatError }}</p>
+        <p v-else-if="!confirmedSeat" class="alerts__seat-help">确认后可用于告警接手、任务认领和助手处置。</p>
+        <button v-if="operatorSeat" class="alerts__seat-clear" type="button" :disabled="checkingSeat || busyId !== ''" @click="leaveSeat">
+          退出席位
+        </button>
+      </div>
     </div>
 
     <p v-if="message" class="alerts__message" data-testid="alert-message">{{ message }}</p>
@@ -124,7 +203,9 @@ const shown = computed(() => openCards.value)
         <div class="alert__body">
           <p class="alert__headline">
             <strong>{{ card.title || '标题未取到' }}</strong>
-            <span v-if="statusLine(card)" class="alert__flag">{{ statusLine(card) }}</span>
+            <span v-if="card.drill" class="alert__flag">演练</span>
+            <span v-if="card.status === 'escalated'" class="alert__flag">已升级</span>
+            <span v-if="card.status === 'acked'" class="alert__flag alert__flag--muted">已接手</span>
             <span v-if="isSnoozed(card)" class="alert__flag alert__flag--muted">稍后提醒中</span>
           </p>
           <p class="alert__meta">
@@ -212,9 +293,36 @@ const shown = computed(() => openCards.value)
 }
 
 .alerts__seat {
+  display: grid;
+  gap: var(--aeg-space-s1);
+}
+.alerts__seat-form,
+.alerts__seat-status {
   display: flex;
   align-items: center;
   gap: var(--aeg-space-s2);
+}
+.alerts__seat-status {
+  flex-wrap: wrap;
+  font-size: var(--aeg-font-xs);
+  color: var(--aeg-color-text-secondary);
+}
+.alerts__seat-current,
+.alerts__seat-help {
+  margin: 0;
+}
+.alerts__seat-current {
+  color: var(--aeg-color-text);
+  font-weight: var(--aeg-weight-semibold);
+}
+.alerts__seat-clear {
+  margin-left: auto;
+  padding: 2px 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-decoration: underline;
+  cursor: pointer;
 }
 .alerts__seat-label {
   font-size: var(--aeg-font-sm);
@@ -335,7 +443,8 @@ const shown = computed(() => openCards.value)
   color: var(--aeg-tag-orange-text);
 }
 .alert__flag--muted {
-  color: var(--aeg-color-text-muted);
+  background: var(--aeg-color-overview-panel);
+  color: var(--aeg-color-text-secondary);
 }
 .alert__meta {
   margin: 2px 0 0;

@@ -3,7 +3,7 @@
  *
  * 后端口径（`api/routers/alerts.py`）：接手/稍后需要 `duty` 及以上席位，转派需要 `lead`；
  * 重复接手不报错（`already: true`）；404 = 没有这条，409 = 状态不允许（已合并/已关闭）。
- * 席位从页脚选择（`X-Aegis-Operator` 头），与其它写动作同一个来源。
+ * 席位在告警面板设置（`X-Aegis-Operator` 头），与其它写动作同一个来源。
  */
 
 import axios, { AxiosError } from 'axios'

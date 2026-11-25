@@ -48,6 +48,11 @@ function snoozeActive(card: AlertDto): boolean {
   return card.snooze_until !== null && Date.parse(card.snooze_until) > Date.now()
 }
 
+const urgentCards = computed(() => cards.value.filter(
+  (card) => isOpen(card) && card.status !== 'acked' && card.level <= 2 && !snoozeActive(card),
+))
+const urgentDrillCount = computed(() => urgentCards.value.filter((card) => card.drill).length)
+
 function sortByUrgency(rows: AlertDto[]): void {
   rows.sort((a, b) => a.level - b.level || Date.parse(b.created_at) - Date.parse(a.created_at))
 }
@@ -66,12 +71,19 @@ async function sync(): Promise<void> {
   syncing.value = true
   syncError.value = ''
   try {
-    const body = await alertApi.list({ open_only: true, limit: 100 })
+    const beforeSync = new Map(cards.value.map((card) => [card.warning_id, card]))
+    const body = await alertApi.list({ open_only: true, limit: MAX_CARDS })
     const byWarning = new Map(cards.value.map((card) => [card.warning_id, card]))
-    const merged = body.items.map((row) => mergeAlert(row, byWarning.get(row.warning_id)))
-    // 本地有、台账没有的（刚广播还没落账）保留在队尾，等下一次同步补
+    const onLedger = new Set(body.items.map((row) => row.warning_id))
+    const merged = body.items.map((row) => {
+      const local = byWarning.get(row.warning_id)
+      // 对账发出后收到的处置回执，比这次列表快照更新。
+      if (local?.alert_id && local !== beforeSync.get(row.warning_id)) return local
+      return mergeAlert(row, local)
+    })
+    // 大页可能截断历史。完整列表则只保留尚未落账的广播，清掉已经结案的卡。
     for (const card of cards.value) {
-      if (!body.items.some((row) => row.warning_id === card.warning_id)) merged.push(card)
+      if (!onLedger.has(card.warning_id) && (!card.alert_id || body.count >= MAX_CARDS)) merged.push(card)
     }
     sortByUrgency(merged)
     cards.value = merged.slice(0, MAX_CARDS)
@@ -84,14 +96,18 @@ async function sync(): Promise<void> {
 }
 
 async function syncNotices(): Promise<void> {
-  if (operatorSeat.value === '') return
+  const seat = operatorSeat.value
+  notices.value = notices.value.filter((item) => item.recipient === seat)
+  noticeError.value = ''
+  if (!seat) return
   try {
     const body = await notificationApi.list({ unread_only: true, limit: MAX_NOTICES })
+    if (operatorSeat.value !== seat) return
     const byId = new Map(notices.value.map((item) => [item.id, item]))
     for (const row of body.items) byId.set(row.id, row)
     notices.value = [...byId.values()].sort((a, b) => b.id - a.id).slice(0, MAX_NOTICES)
-    noticeError.value = ''
   } catch (error) {
+    if (operatorSeat.value !== seat) return
     noticeError.value = error instanceof Error ? error.message : '通知对账失败'
   }
 }
@@ -168,7 +184,7 @@ async function runAction(card: AlertDto, run: (alertId: string) => Promise<Alert
     return ''
   } catch (error) {
     if (error instanceof AlertApiError) {
-      if (error.status === 401) return '先在页脚选择席位，再执行处置'
+      if (error.code === 'E_OPERATOR_REQUIRED') return '请先在在案告警面板确认值班席位。'
       if (error.status === 403) return error.message || '当前席位没有这个处置权限'
       if (error.status === 409) return '这条告警已被处置，刷新后以台账为准'
       if (error.status === 404) return '告警不存在或台账形态不可用'
@@ -223,9 +239,10 @@ export function useAlerts() {
     dismissNotice,
     /** 还在桌上的（未合并、未关闭），已按严重度排序。 */
     openCards: computed(() => cards.value.filter(isOpen)),
-    /** Ⅰ/Ⅱ 级且未被稍后提醒挡住：触发自动展开与顶部条。 */
-    urgentCards: computed(() => cards.value.filter((card) => isOpen(card) && card.level <= 2 && !snoozeActive(card))),
-    /** 角标数：桌上的全部告警（含被稍后的——它们仍是未确认）。 */
+    /** Ⅰ/Ⅱ 级待确认且未稍后提醒：触发自动展开与顶部条。 */
+    urgentCards,
+    urgentDrillCount,
+    /** 角标数：在案告警总量，包含已接手的告警。 */
     badgeCount: computed(() => cards.value.filter(isOpen).length),
     attachStream,
     refresh,

@@ -891,7 +891,7 @@ onBeforeUnmount(() => {
         <div class="composer__meta">
           <div class="composer__info">
             <div class="composer__identity">
-              <span class="composer__seat" :title="operatorSeat ? `当前声明席位 ${operatorSeat}` : '访客可以查询。处置前请在告警面板选择值班席位。'">
+              <span class="composer__seat" :title="operatorSeat ? `当前值班席位 ${operatorSeat}` : '访客可以查询。处置前请在告警面板确认值班席位。'">
                 {{ operatorSeat ? `席位 ${operatorSeat}` : '访客查询' }}
               </span>
               <span v-if="sessionId" class="composer__session" data-testid="session-id" :title="sessionId">会话 {{ sessionId }}</span>

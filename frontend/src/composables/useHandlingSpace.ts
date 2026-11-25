@@ -63,7 +63,7 @@ function applyTask(incoming: HandlingTaskDto): void {
 
 function readableFailure(err: unknown): string {
   if (!(err instanceof SpaceApiError)) return err instanceof Error ? err.message : '处置空间对账失败'
-  if (err.status === 401) return '先在告警卡选择席位，再执行处置'
+  if (err.code === 'E_OPERATOR_REQUIRED') return '请先在在案告警面板确认值班席位。'
   if (err.status === 403) return err.message || '当前席位没有这个处置权限'
   if (err.status === 404) return '空间或任务不存在（可能已被关闭）'
   return err.message

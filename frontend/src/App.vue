@@ -91,7 +91,7 @@ watch([() => route.path, () => route.hash], () => {
 const health = ref<{ status: string; version: string } | null>(null)
 const { events, connected, stalled } = useEventStream()
 // 告警卡片挂在全应用唯一的这条共享流上；顶部条与助手抽屉（AssistantDock 内）共用同一份卡片状态
-const { attachStream, urgentCards, badgeCount, refresh } = useAlerts()
+const { attachStream, urgentCards, urgentDrillCount, badgeCount, refresh } = useAlerts()
 attachStream({ events, connected })
 void refresh()
 // 同一条共享流同时喂告警卡与处置空间：按 subject 分流，不开第二条 SSE 连接。
@@ -281,7 +281,7 @@ const statusTitle = computed<string>(() =>
         >
           <span class="alert-banner__dot" aria-hidden="true"></span>
           <span class="alert-banner__text" data-testid="alert-banner-text">
-            {{ urgentCards.length }} 条红色/橙色告警未确认
+            {{ urgentCards.length }} 条红色/橙色告警待确认<template v-if="urgentDrillCount">（演练 {{ urgentDrillCount }} 条）</template>
           </span>
           <span class="alert-banner__meta">
             在案 {{ badgeCount }} 条 ｜ {{ route.name === 'assistant' ? '可在告警面板中处置' : '处置入口在右侧助手抽屉' }}

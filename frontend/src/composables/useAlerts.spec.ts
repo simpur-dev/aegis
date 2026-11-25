@@ -47,9 +47,11 @@ vi.mock('@/api/alerts', () => ({
   },
   AlertApiError: class extends Error {
     status: number
-    constructor(status: number, message: string) {
+    code: string
+    constructor(status: number, message: string, detail?: { detail: { code: string } }) {
       super(message)
       this.status = status
+      this.code = detail?.detail.code ?? ''
     }
   },
 }))
@@ -157,6 +159,8 @@ describe('useAlerts', () => {
     expect(alerts.cards.value[0]?.status).toBe('acked')
     expect(alerts.cards.value[0]?.title).toBe('告警1')
     expect(alerts.cards.value[0]?.ack_by).toBe('op-duty')
+    expect(alerts.urgentCards.value).toHaveLength(0)
+    expect(alerts.badgeCount.value).toBe(1)
   })
 
   it('断线重连触发对账，翻 true 的沿才翻', async () => {
@@ -167,6 +171,39 @@ describe('useAlerts', () => {
     expect(listMock).not.toHaveBeenCalled()
     connected.value = true
     await vi.waitFor(() => expect(listMock).toHaveBeenCalled())
+  })
+
+  it('完整在案列表中已结案的卡片从待确认数和在案数消失', async () => {
+    listMock.mockResolvedValueOnce({ count: 1, items: [ledgerRow('wrn_a', 1)], persistent: true, escalation_minutes: 5 })
+    const alerts = await fresh()
+    alerts.refresh()
+    await vi.waitFor(() => expect(alerts.urgentCards.value).toHaveLength(1))
+
+    alerts.refresh()
+    await vi.waitFor(() => expect(alerts.urgentCards.value).toHaveLength(0))
+    expect(alerts.badgeCount.value).toBe(0)
+  })
+
+  it('接手回执先到时，晚到的旧列表不恢复待确认计数', async () => {
+    const card = ledgerRow('wrn_a', 1)
+    const oldList = { count: 1, items: [card], persistent: true, escalation_minutes: 5 }
+    listMock.mockResolvedValueOnce(oldList)
+    const alerts = await fresh()
+    alerts.refresh()
+    await vi.waitFor(() => expect(alerts.urgentCards.value).toHaveLength(1))
+
+    let finishRefresh!: () => void
+    listMock.mockImplementationOnce(() => new Promise((resolve) => {
+      finishRefresh = () => resolve(oldList)
+    }))
+    alerts.refresh()
+    ackMock.mockResolvedValue({ alert: { ...card, status: 'acked', ack_by: 'op-duty' }, already: false })
+    expect(await alerts.ack(card)).toBe('')
+    finishRefresh()
+
+    await vi.waitFor(() => expect(alerts.syncing.value).toBe(false))
+    expect(alerts.urgentCards.value).toHaveLength(0)
+    expect(alerts.badgeCount.value).toBe(1)
   })
 
   it('接手成功回写卡片；失败返回可读原因而不是抛异常', async () => {
@@ -183,10 +220,12 @@ describe('useAlerts', () => {
     const other = await fresh()
     listMock.mockResolvedValue({ count: 1, items: [ledgerRow('wrn_b', 2)], persistent: false, escalation_minutes: 5 })
     await other.refresh()
-    const error = new (await import('@/api/alerts')).AlertApiError(401, '需要席位')
+    const error = new (await import('@/api/alerts')).AlertApiError(401, '需要席位', {
+      detail: { code: 'E_OPERATOR_REQUIRED' },
+    })
     ;(ackMock as Mock).mockRejectedValue(error)
     const target = other.cards.value[0]
-    expect(await other.ack(target!)).toBe('先在页脚选择席位，再执行处置')
+    expect(await other.ack(target!)).toBe('请先在在案告警面板确认值班席位。')
   })
 
   it('被稍后提醒挡住的告警不进紧急集', async () => {
@@ -194,7 +233,7 @@ describe('useAlerts', () => {
       count: 2,
       items: [
         ledgerRow('wrn_a', 1, { snooze_until: new Date(Date.now() + 60_000).toISOString() }),
-        ledgerRow('wrn_b', 2),
+        ledgerRow('wrn_b', 2, { drill: true }),
       ],
       persistent: false,
       escalation_minutes: 5,
@@ -202,6 +241,7 @@ describe('useAlerts', () => {
     const alerts = await fresh()
     await alerts.refresh()
     expect(alerts.urgentCards.value.map((card) => card.warning_id)).toEqual(['wrn_b'])
+    expect(alerts.urgentDrillCount.value).toBe(1)
     expect(alerts.badgeCount.value).toBe(2)
   })
 

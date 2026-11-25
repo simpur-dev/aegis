@@ -2,19 +2,46 @@
  * 值班席位（声明身份，P0 决策 D2）：`X-Aegis-Operator` 头的前端一侧。
  *
  * 为什么像 `serviceToken` 一样是模块级 ref：席位是"这台浏览器当前是谁在值班"，
- * 换页不丢、页脚与告警卡/助手写动作读同一个来源——两处各存一份就会出现
+ * 换页不丢，告警面板、处置空间和助手写动作读同一个来源——各存一份就会出现
  * "这边以为自己是值班员，那边以为自己是值班长"。
  *
  * 存 localStorage 而不是登录态：平台没有账号体系（P4 才有），这是声明身份，
  * 不是认证。界面上必须始终让"你是谁"可见，否则写动作的审计就无人认领。
  */
 
-import type { AxiosInstance } from 'axios'
+import axios, { type AxiosInstance } from 'axios'
 import { ref, type Ref } from 'vue'
+
+import { installServiceToken } from '@/api/serviceToken'
 
 export const OPERATOR_HEADER = 'X-Aegis-Operator'
 
 const STORAGE_KEY = 'aegis.operatorSeat'
+const http = installServiceToken(axios.create({ baseURL: '/', timeout: 8_000 }))
+
+interface OperatorProfile {
+  operator_id: string | null
+  display_name: string | null
+  role: 'duty' | 'lead' | 'admin' | null
+  active: boolean | null
+}
+
+export async function lookupOperatorSeat(value: string): Promise<OperatorProfile> {
+  try {
+    const { data } = await http.get<OperatorProfile>('/api/v1/operators/me', {
+      headers: value ? { [OPERATOR_HEADER]: value } : {},
+    })
+    return data
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      if (error.response?.data?.detail?.code === 'E_OPERATOR_UNAVAILABLE') {
+        throw new Error('当前后端未启用席位台账，暂时无法接手告警或认领任务。')
+      }
+      if (error.response?.status === 401) throw new Error('请先在页脚配置服务令牌，再验证值班席位。')
+    }
+    throw new Error('暂时无法验证值班席位，请检查后端连接后重试。')
+  }
+}
 
 function readStored(): string {
   try {

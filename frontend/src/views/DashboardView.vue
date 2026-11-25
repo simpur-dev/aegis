@@ -46,7 +46,7 @@ let eventTimer: ReturnType<typeof setTimeout> | null = null
  */
 let chainsSeq = 0
 const { events, connected } = useEventStream()
-const { urgentCards } = useAlerts()
+const { urgentCards, urgentDrillCount } = useAlerts()
 
 /**
  * KPI 只写"量到的数"。取数失败或还没取到时写 `—`，不写 0：
@@ -417,7 +417,9 @@ watch(
               <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷新</a-button>
               <router-link v-if="urgentCards.length" class="dash-urgent" to="/assistant" data-testid="alert-banner">
                 <span aria-hidden="true"></span>
-                <span data-testid="alert-banner-text">{{ urgentCards.length }} 条红色/橙色告警未确认</span>
+                <span data-testid="alert-banner-text">
+                  {{ urgentCards.length }} 条红色/橙色告警待确认<template v-if="urgentDrillCount">（演练 {{ urgentDrillCount }} 条）</template>
+                </span>
               </router-link>
             </template>
           </PageHero>
