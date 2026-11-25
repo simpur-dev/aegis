@@ -19,6 +19,8 @@
 
 ## 重新生成吉隆格网
 
+五份原始 NetCDF 和 `SHA256SUMS.txt` 可在 [GitHub Releases](https://github.com/simpur-dev/aegis/releases/tag/chm-pre-v2-2020-2024) 下载。将原件放在 `backend/data/precip/chm_pre_v2/daily/` 即可运行派生脚本。
+
 从仓库根目录运行下列命令。派生脚本需要后端 Python 环境的 `[data]` 扩展。
 
 ```bash
