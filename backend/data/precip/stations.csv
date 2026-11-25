@@ -1,0 +1,4 @@
+station_id,region_code,latitude,longitude,name_zh,hazard_focus,elevation_m
+PR-540121-01,540121,29.63799,94.36766,巴宜区县域降水代理点,landslide|debris_flow,2900
+PR-540221-01,540221,28.3679,87.76631,定结县县域降水代理点,lake_outburst,
+PR-540321-01,540321,30.05552,96.91811,八宿县县域降水代理点,avalanche|rockfall,

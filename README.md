@@ -482,7 +482,7 @@ memory / mcp / mqtt / weather / **precip** / **precip_hourly** / **simulator** /
 
 地图「天气与雨情」有独立的只读接口。当前天气由后端从 Open-Meteo 取吉隆口岸和上游两个参考点的模式数据，界面展示有效时间、降雨和未来 6 小时预报。回放使用本地 CHM_PRE V2 逐日网格和已有 Open-Meteo 县域小时表，保留缺测，不参与遥测摄取。Open-Meteo 公共接口供非商业用途，可通过 `AEGIS_WEATHER_MAP_ENABLED=false` 关闭外部取数。
 
-有 CHM_PRE 原始数据的环境，在带 `[data]` 扩展的后端环境里运行 `python backend/scripts/derive_map_rain.py`，将吉隆窗口裁成 `backend/data/precip/map_rain/{year}.json`。部署可用 `AEGIS_WEATHER_MAP_DATA_DIR` 指向包含 `map_rain/`、`stations.csv` 和 `openmeteo/openmeteo_hourly.csv` 的目录。
+地图可直接读取仓库随附的历史降水数据。数据来源、日期范围和重新生成方法见[历史降水数据说明](backend/data/precip/README.md)。部署可用 `AEGIS_WEATHER_MAP_DATA_DIR` 指向包含 `map_rain/`、`stations.csv` 和 `openmeteo/openmeteo_hourly.csv` 的目录。
 
 | 腿 | 驱动取值 | 关闭 / 降级时的行为 |
 | --- | --- | --- |

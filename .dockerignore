@@ -25,6 +25,13 @@
 **/.coverage
 **/htmlcov/
 backend/data/
+# 在镜像中提供同一份回放数据和署名，保留对原始 NetCDF、模型和临时文件的排除。
+!backend/data/precip/README.md
+!backend/data/precip/stations.csv
+!backend/data/precip/stations.provenance.jsonl
+!backend/data/precip/station_daily.csv
+!backend/data/precip/map_rain/20[0-9][0-9].json
+!backend/data/precip/openmeteo/openmeteo_hourly.csv
 backend/reports/
 **/test-results/
 **/dist/
