@@ -488,6 +488,16 @@ class ControlActionStore:
         row = self._rows.get(action_id)
         return None if row is None else self._public(row)
 
+    async def cancel_proposal(self, action_id: str, *, audit: AuditRecord) -> dict[str, Any] | None:
+        row = self._rows.get(action_id)
+        now = self._now()
+        if row is None or row["status"] != "proposed" or (row["expires_at"] is not None and row["expires_at"] <= now):
+            return None
+        row["status"] = "revoked"
+        row["updated_at"] = now
+        self._audit.append(audit.as_row())
+        return self._public(row)
+
     async def list_actions(self, *, operator_id: str | None = None, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         capped = max(1, min(int(limit), 200))
         rows = [self._rows[aid] for aid in self._order if aid in self._rows]
@@ -1117,6 +1127,9 @@ class PlatformStore:
     async def get_action(self, action_id: str) -> dict[str, Any] | None:
         return await self.control_actions.get_action(action_id)
 
+    async def cancel_proposal(self, action_id: str, *, audit: AuditRecord) -> dict[str, Any] | None:
+        return await self.control_actions.cancel_proposal(action_id, audit=audit)
+
     async def list_actions(self, *, operator_id: str | None = None, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         return await self.control_actions.list_actions(operator_id=operator_id, status=status, limit=limit)
 
@@ -1567,6 +1580,8 @@ class SupportsControlActions(Protocol):
     async def revoke_action(self, action_id: str) -> dict[str, Any] | None: ...
 
     async def get_action(self, action_id: str) -> dict[str, Any] | None: ...
+
+    async def cancel_proposal(self, action_id: str, *, audit: AuditRecord) -> dict[str, Any] | None: ...
 
     async def list_actions(self, *, operator_id: str | None = None, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]: ...
 

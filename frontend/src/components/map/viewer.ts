@@ -22,6 +22,7 @@ import type {
   CustomDataSource,
   Entity,
   EntityCollection,
+  ImageryLayer,
   ScreenSpaceEventHandler,
   TerrainProvider,
   Viewer as CesiumViewer,
@@ -32,7 +33,6 @@ import { BASEMAP_ATTRIBUTION, chooseBasemapSource, createBasemapSetup, DEFAULT_B
 import { mapPalette, type MapPalette } from '@/theme/map'
 import type { ThemeMode } from '@/theme/tokens'
 import { clearMapDebugHandle, publishMapDebugHandle } from './debugHandle'
-import { createEnergyPlanetCanvas } from './energyPlanet'
 import type {
   BBox,
   HazardZoneFeature,
@@ -45,9 +45,11 @@ import type {
   WarningFeature,
 } from './entities'
 import { PLAN_LAYERS, TIBET_RECTANGLE, zoomForCameraHeight } from './entities'
+import type { HistoricalSite } from './gyirongCase'
 import type { ProbeFetch } from './offline'
 import { collectFacts, tileUrlForTemplate } from './offline'
 import { chooseTerrainMode, createTerrainSetup, DEFAULT_TERRAIN_URL, terrainProbeUrl } from './terrain'
+import { EMPTY_WEATHER_LAYER, rainCellOpacity, type WeatherMapLayer } from './weather'
 
 /** Cesium 命名空间的类型别名（type-only，不产生运行时导入）。 */
 type CesiumModule = typeof import('cesium')
@@ -65,10 +67,56 @@ export type LayerVisibility = Record<LayerName, boolean>
 /** 渲染载荷：契约定义在 entities.ts（纯逻辑层），本文件只按它画，不再另立形状。 */
 export type RenderData = RenderPlan
 
+export interface MapScale {
+  meters: number
+  width: number
+}
+
+export type HistoricalReliefStatus = 'visible' | 'closeup' | 'street' | 'surroundings' | 'outside' | 'unavailable'
+
+interface ReliefImage {
+  url: string
+  bounds: BBox
+}
+
+interface CloseupImage extends ReliefImage {
+  attribution: string
+  status: 'closeup' | 'street'
+  maxHeightM: number
+}
+
+interface CloseupLayer {
+  image: CloseupImage
+  layer: ImageryLayer | null
+  state: 'idle' | 'loading' | 'ready' | 'unavailable'
+}
+
+interface ReferenceLine {
+  name: string
+  labelAt: readonly number[]
+  coordinates: readonly (readonly number[])[]
+}
+
+interface MappedDetail {
+  osmId: number
+  coordinates: readonly (readonly number[])[]
+}
+
 export interface MapSceneOptions {
   terrainUrl?: string
   basemap?: Partial<BasemapConfig>
+  worldReliefUrl?: string
   initialRectangle?: BBox
+  historicalSites?: readonly HistoricalSite[]
+  historicalRelief?: ReliefImage & { surroundings?: ReliefImage; closeups?: readonly CloseupImage[] }
+  historicalGeography?: {
+    waterways: readonly ReferenceLine[]
+    roads: readonly ReferenceLine[]
+    closeup?: { localRoads: readonly MappedDetail[]; buildings: readonly MappedDetail[]; riverBanks: readonly MappedDetail[] }
+  }
+  onHistoricalRelief?: (status: HistoricalReliefStatus | null) => void
+  onScaleChanged?: (scale: MapScale | null) => void
+  onGlobalViewChanged?: (global: boolean) => void
   /** 探针用 fetch：生产传 window.fetch，特殊环境可注入假实现。 */
   fetchLike?: ProbeFetch
   browserOnline?: () => boolean
@@ -77,13 +125,6 @@ export interface MapSceneOptions {
   onSelect?: (featureId: string | null) => void
   /** 建场时所处主题；之后的翻转由 `setTheme` 推进。缺省按浅色。 */
   themeMode?: ThemeMode
-  /**
-   * 「深空皮肤」：拉远到能看见地球弧线时，给地球叠一层程序化能量纹理 + 蓝色大气边缘 + 泛光。
-   *
-   * 默认关：其余页面（以及 `viewer.theme.spec.ts` 钉住的画面口径）保持原样，
-   * 只有「一张图」传 true。区域视图（默认约 1.7e6 m）不叠纹理，底图与要素色不变。
-   */
-  spaceLook?: boolean
 }
 
 export interface MapSceneInfo {
@@ -96,6 +137,7 @@ export interface MapSceneInfo {
 export interface MapScene {
   /** 幂等：要素 id 集合不变时跳过重建（相机每挪一点就重画会掉帧）。 */
   render(data: RenderData): void
+  setWeather(layer: WeatherMapLayer): void
   /**
    * 换主题：把地球底色/图元色换到新档，并**重画全部图层**。
    * 必须重画——Cesium 的图元色是在 `entities.add()` 那一刻烤进去的，
@@ -106,9 +148,11 @@ export interface MapScene {
   readonly palette: MapPalette
   focusAt(point: LngLat): void
   fitBBox(box: BBox): void
-  currentBBox(): BBox | null
+  zoomBy(direction: 1 | -1): void
+  basemapSwitchBounds(): BBox | null
   currentZoom(): number
   setLayerVisible(layer: LayerName, visible: boolean): void
+  setHistoryVisible(visible: boolean): void
   destroy(): void
   readonly info: MapSceneInfo
 }
@@ -326,11 +370,12 @@ async function waitForContainerSize(element: HTMLElement, timeoutMs = 3_000): Pr
   })
 }
 
-/**
- * 「深空视图」的高度门槛（米）。默认区域视野（西藏全域）相机高度约 1.7e6 m，
- * 这个高度上还在看地图；3.5e6 m 以上才看得见地球弧线与大气边缘，那时才叠能量纹理。
- */
-const SPACE_LOOK_HEIGHT_M = 3_500_000
+const WORLD_RELIEF_TRANSITION_START_M = 3_200_000
+const WORLD_RELIEF_TRANSITION_END_M = 6_200_000
+const GLOBAL_ZOOM_DISTANCE_M = 40_000_000
+const CASE_ZOOM_DISTANCE_M = 75_000
+const CASE_RELIEF_FADE_START_M = 78_000
+const CASE_RELIEF_FADE_END_M = 120_000
 
 export async function createMapScene(el: HTMLElement, options: MapSceneOptions = {}): Promise<MapScene> {
   ensureCesiumBaseUrl()
@@ -385,9 +430,20 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     options.origin,
   )
   const basemapSetup = await createBasemapSetup(cesium, source)
+  let worldLayer: ImageryLayer | null = null
+  if (options.worldReliefUrl) {
+    try {
+      const provider = await cesium.TileMapServiceImageryProvider.fromUrl(options.worldReliefUrl, {
+        credit: '全球地形 · Natural Earth II',
+      })
+      worldLayer = new cesium.ImageryLayer(provider)
+    } catch {
+      // 全球影像读取失败时保留自托管全域瓦片。
+    }
+  }
 
   const viewer: CesiumViewer = new cesium.Viewer(el, {
-    baseLayer: basemapSetup.layer,
+    baseLayer: worldLayer ?? basemapSetup.layer,
     baseLayerPicker: false,
     geocoder: false,
     homeButton: false,
@@ -405,6 +461,7 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     maximumRenderTimeChange: Number.POSITIVE_INFINITY,
     terrainProvider: terrainSetup.provider as TerrainProvider,
   })
+  if (worldLayer && basemapSetup.layer) viewer.imageryLayers.add(basemapSetup.layer)
 
   let palette = mapPalette(options.themeMode ?? 'light')
   const initialRectangle = options.initialRectangle ?? TIBET_RECTANGLE
@@ -435,94 +492,33 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
         })
   resizeObserver?.observe(el)
 
-  let inSpaceView = false
-
-  /**
-   * 区域视图使用页面的主题色。缩远到深空视图后才显示大气和深空配色。
-   */
   function applyPalette(): void {
     const scene = viewer.scene
-    scene.globe.baseColor = cesium.Color.fromCssColorString(inSpaceView ? palette.spaceGlobe : palette.globeBase)
-    scene.backgroundColor = cesium.Color.fromCssColorString(inSpaceView ? palette.deepSpace : palette.spaceBackdrop)
-    if (scene.skyAtmosphere) scene.skyAtmosphere.show = inSpaceView
+    scene.globe.baseColor = cesium.Color.fromCssColorString(palette.globeBase)
+    scene.backgroundColor = cesium.Color.fromCssColorString(palette.spaceBackdrop)
+    if (scene.skyAtmosphere) scene.skyAtmosphere.show = false
     if (scene.sun) scene.sun.show = false
     if (scene.moon) scene.moon.show = false
   }
-  /**
-   * 深空皮肤（仅 options.spaceLook）：深蓝地球 + 蓝色大气边缘 + 泛光。
-   *
-   * 只改"看着像能量球"的那几件事——地球上的影像、地形与要素一个像素都不动，
-   * 所以拉回区域视图时还是原来那张图。默认关，其余页面与 `viewer.theme.spec.ts`
-   * 钉住的画面口径都不受影响。
-   */
-  function configureSpaceLook(): void {
-    if (!options.spaceLook) return
-    const scene = viewer.scene
-    if (scene.skyAtmosphere) {
-      scene.skyAtmosphere.hueShift = 0.62
-      scene.skyAtmosphere.saturationShift = 0.42
-      scene.skyAtmosphere.brightnessShift = -0.3
-      scene.skyAtmosphere.atmosphereLightIntensity = 7
+
+  let globalView = false
+  function updateWorldView(): void {
+    if (!worldLayer) return
+    const height = viewer.camera.positionCartographic.height
+    const fine = basemapSetup.layer
+    if (fine) {
+      const range = WORLD_RELIEF_TRANSITION_END_M - WORLD_RELIEF_TRANSITION_START_M
+      fine.alpha = cesium.Math.clamp((WORLD_RELIEF_TRANSITION_END_M - height) / range, 0, 1)
+      fine.show = fine.alpha > 0
     }
-    const bloom = scene.postProcessStages?.bloom
-    if (!bloom) return
-    bloom.enabled = false
-    bloom.uniforms.glowOnly = false
-    bloom.uniforms.brightness = -0.35
-    bloom.uniforms.contrast = 128
-    bloom.uniforms.delta = 1
-    bloom.uniforms.sigma = 2
-    bloom.uniforms.stepSize = 1
-  }
-
-  /**
-   * 覆盖在球面上的程序化能量纹理。只在第一次真正进入深空视图时才生成——
-   * 常规区域视图进页面不该为一张 1024×512 的噪声付渲染成本。
-   */
-  let energyLayer: { alpha: number } | null = null
-  let energyLayerFailed = false
-
-  function ensureEnergyLayer(): void {
-    if (energyLayer || energyLayerFailed) return
-    try {
-      const canvas = createEnergyPlanetCanvas()
-      const provider = new cesium.SingleTileImageryProvider({
-        url: canvas.toDataURL('image/png'),
-        rectangle: cesium.Rectangle.MAX_VALUE,
-        // Cesium 1.x 把这两个当必填：缺了会抛 DevError 并停掉渲染循环
-        tileWidth: canvas.width,
-        tileHeight: canvas.height,
-      })
-      const layer = viewer.imageryLayers.addImageryProvider(provider) as unknown as { alpha: number }
-      layer.alpha = 0
-      energyLayer = layer
-    } catch (error) {
-      // 纹理只是观感增强：拿不到就退回纯深蓝地球，绝不能让一张贴图把地图渲染搞停
-      energyLayerFailed = true
-      console.warn('[map] 深空纹理不可用，回退到纯深蓝地球：', error)
-    }
-  }
-
-  /**
-   * 按相机高度切"深空视图"：只有看得见地球弧线时才叠能量纹理、开泛光。
-   * 区域视图（默认约 1.7e6 m）纹理透明度归零，底图、要素、取色全部保持原样。
-   */
-  function updateSpaceView(): void {
-    if (!options.spaceLook) return
-    const nextSpaceView = viewer.camera.positionCartographic.height > SPACE_LOOK_HEIGHT_M
-    if (inSpaceView === nextSpaceView) return
-    inSpaceView = nextSpaceView
-    el.classList.toggle('is-space-view', inSpaceView)
-    applyPalette()
-    const bloom = viewer.scene.postProcessStages?.bloom
-    if (bloom) bloom.enabled = inSpaceView
-    if (inSpaceView) ensureEnergyLayer()
-    if (energyLayer) energyLayer.alpha = inSpaceView ? 0.97 : 0
+    const next = height >= WORLD_RELIEF_TRANSITION_END_M
+    if (globalView === next) return
+    globalView = next
+    options.onGlobalViewChanged?.(next)
     viewer.scene.requestRender()
   }
 
   applyPalette()
-  configureSpaceLook()
   viewer.scene.globe.enableLighting = false
   /**
    * 瓦片队列有变化就重绘，而不是只在"排空"那一刻重绘。
@@ -533,10 +529,11 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
    * 建场首帧没能排出请求，队列一直"空"，`0` 事件再也不来 ⇒ 一张瓦片都不请求、画面停在星空里。
    * 现在队列每变一次就要一帧（进队/出队都算），静置时仍然一帧都不多画。
    */
-  viewer.scene.globe.tileLoadProgressEvent.addEventListener(() => {
+  viewer.scene.globe.tileLoadProgressEvent.addEventListener((remaining) => {
     viewer.scene.requestRender()
+    if (remaining === 0 && options.onScaleChanged) options.onScaleChanged(mapScale())
   })
-  viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000
+  viewer.scene.screenSpaceCameraController.maximumZoomDistance = GLOBAL_ZOOM_DISTANCE_M
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 200
   viewer.camera.setView({ destination: cesium.Rectangle.fromDegrees(...rectArray(initialRectangle)) })
   /**
@@ -559,6 +556,336 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   publishMapDebugHandle(viewer, location.search)
 
   const handles = createLayerHandles(cesium, viewer)
+  const history = options.historicalSites?.length ? new cesium.CustomDataSource('historical-case') : null
+  if (history) {
+    history.show = false
+    void viewer.dataSources.add(history)
+  }
+  const geography = options.historicalGeography ? new cesium.CustomDataSource('gyirong-geography') : null
+  const geographyCredit = geography ? new cesium.Credit('© OpenStreetMap', true) : null
+  if (geography) {
+    geography.show = false
+    void viewer.dataSources.add(geography)
+  }
+  const closeupDetails = options.historicalGeography?.closeup
+  const detail = closeupDetails ? new cesium.CustomDataSource('gyirong-closeup') : null
+  if (detail) {
+    detail.show = false
+    void viewer.dataSources.add(detail)
+  }
+  let localRelief: ImageryLayer | null = null
+  let loadingRelief = false
+  let surroundingRelief: ImageryLayer | null = null
+  let loadingSurroundings = false
+  const closeups: CloseupLayer[] = (options.historicalRelief?.closeups ?? []).map((image) => ({ image, layer: null, state: 'idle' }))
+  let historicalView = false
+  let reliefFailed = false
+  let reliefStatus: HistoricalReliefStatus | null = null
+
+  function centerInReliefBounds(bounds: BBox): boolean {
+    const { canvas, globe } = viewer.scene
+    const center = new cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2)
+    const position = viewer.camera.pickEllipsoid(center, globe.ellipsoid)
+    if (!position) return false
+    const { longitude, latitude } = globe.ellipsoid.cartesianToCartographic(position)
+    const lon = cesium.Math.toDegrees(longitude)
+    const lat = cesium.Math.toDegrees(latitude)
+    return bounds.west <= lon && lon <= bounds.east && bounds.south <= lat && lat <= bounds.north
+  }
+
+  function updateHistoricalView(): void {
+    if (!history) return
+    const height = viewer.camera.positionCartographic.height
+    const inCaseScale = historicalView && height < CASE_RELIEF_FADE_END_M
+    const bounds = options.historicalRelief?.bounds
+    const inCaseArea = inCaseScale && (!bounds || centerInReliefBounds(bounds))
+    history.show = inCaseArea
+    if (geography && geographyCredit && geography.show !== inCaseArea) {
+      geography.show = inCaseArea
+      if (inCaseArea) viewer.creditDisplay.addStaticCredit(geographyCredit)
+      else viewer.creditDisplay.removeStaticCredit(geographyCredit)
+    }
+
+    const surroundings = options.historicalRelief?.surroundings
+    if (surroundingRelief) {
+      surroundingRelief.alpha = cesium.Math.clamp((360_000 - height) / 140_000, 0, 1)
+      surroundingRelief.show = historicalView && surroundingRelief.alpha > 0
+    }
+    if (localRelief) {
+      const fadeRange = CASE_RELIEF_FADE_END_M - CASE_RELIEF_FADE_START_M
+      localRelief.alpha = cesium.Math.clamp((CASE_RELIEF_FADE_END_M - height) / fadeRange, 0, 1)
+      localRelief.show = inCaseScale
+    }
+    let closeupStatus: CloseupImage['status'] | null = null
+    for (const entry of closeups) {
+      const { image } = entry
+      const show = inCaseScale && height < image.maxHeightM && centerInReliefBounds(image.bounds)
+      if (show && entry.state === 'idle') void loadCloseup(entry)
+      if (!entry.layer) continue
+      entry.layer.show = show
+      entry.layer.alpha = cesium.Math.clamp((image.maxHeightM - height) / (image.maxHeightM * 0.22), 0, 1)
+      if (show) closeupStatus = image.status
+    }
+    const detailBounds = closeups[0]?.image.bounds
+    if (detail) detail.show = inCaseScale && height < 8_500 && !!detailBounds && centerInReliefBounds(detailBounds)
+    viewer.scene.screenSpaceCameraController.minimumZoomDistance = detail?.show ? 90 : 200
+
+    let nextStatus: HistoricalReliefStatus | null = null
+    if (historicalView) {
+      if (closeupStatus) nextStatus = closeupStatus
+      else if (localRelief && inCaseArea) nextStatus = 'visible'
+      else if (surroundingRelief?.show && surroundings && centerInReliefBounds(surroundings.bounds)) nextStatus = 'surroundings'
+      else if (localRelief) nextStatus = 'outside'
+      else if (reliefFailed) nextStatus = 'unavailable'
+    }
+    if (reliefStatus !== nextStatus) {
+      reliefStatus = nextStatus
+      options.onHistoricalRelief?.(nextStatus)
+    }
+  }
+
+  async function loadCloseup(entry: CloseupLayer): Promise<void> {
+    entry.state = 'loading'
+    try {
+      const { image } = entry
+      const provider = await cesium.SingleTileImageryProvider.fromUrl(image.url, {
+        rectangle: cesium.Rectangle.fromDegrees(...rectArray(image.bounds)),
+        credit: new cesium.Credit(image.attribution),
+      })
+      if (destroyed) return
+      const above = closeups.slice(closeups.indexOf(entry) + 1).find((item) => item.layer)?.layer
+      entry.layer = viewer.imageryLayers.addImageryProvider(provider, above ? viewer.imageryLayers.indexOf(above) : undefined)
+      entry.state = 'ready'
+      updateHistoricalView()
+      viewer.scene.requestRender()
+    } catch {
+      entry.state = 'unavailable'
+    }
+  }
+
+  async function loadHistoricalRelief(): Promise<void> {
+    const relief = options.historicalRelief
+    if (!relief || localRelief || loadingRelief) return
+    loadingRelief = true
+    reliefFailed = false
+    try {
+      const provider = await cesium.SingleTileImageryProvider.fromUrl(relief.url, {
+        rectangle: cesium.Rectangle.fromDegrees(...rectArray(relief.bounds)),
+        credit: new cesium.Credit('吉隆高程 © Mapzen / AWS Terrain Tiles'),
+      })
+      if (destroyed) return
+      const layerAbove = closeups.find((item) => item.layer)?.layer
+      const index = layerAbove ? viewer.imageryLayers.indexOf(layerAbove) : undefined
+      localRelief = viewer.imageryLayers.addImageryProvider(provider, index)
+      updateHistoricalView()
+      viewer.scene.requestRender()
+    } catch {
+      if (!destroyed) {
+        reliefFailed = true
+        updateHistoricalView()
+      }
+    } finally {
+      loadingRelief = false
+    }
+  }
+
+  async function loadSurroundingRelief(): Promise<void> {
+    const relief = options.historicalRelief?.surroundings
+    if (!relief || surroundingRelief || loadingSurroundings) return
+    loadingSurroundings = true
+    try {
+      const provider = await cesium.SingleTileImageryProvider.fromUrl(relief.url, {
+        rectangle: cesium.Rectangle.fromDegrees(...rectArray(relief.bounds)),
+        credit: new cesium.Credit('周边高程 © Mapzen / AWS Terrain Tiles'),
+      })
+      if (destroyed) return
+      // 请求并行，周边影像始终垫在案例影像下方。
+      const layerAbove = localRelief ?? closeups.find((item) => item.layer)?.layer
+      const index = layerAbove ? viewer.imageryLayers.indexOf(layerAbove) : undefined
+      surroundingRelief = viewer.imageryLayers.addImageryProvider(provider, index)
+      updateHistoricalView()
+      viewer.scene.requestRender()
+    } catch {
+      // 周边影像缺失时继续使用全域瓦片和已加载的案例影像。
+    } finally {
+      loadingSurroundings = false
+    }
+  }
+
+  const weather = new cesium.CustomDataSource('map-weather')
+  void viewer.dataSources.add(weather)
+  let weatherLayer = EMPTY_WEATHER_LAYER
+
+  function drawWeather(): void {
+    const { points, cells } = weatherLayer
+    const ground = cesium.HeightReference.CLAMP_TO_GROUND
+    const known = new Set([...points, ...cells].map((item) => item.id))
+    weather.entities.suspendEvents()
+    try {
+      for (const entity of [...weather.entities.values]) {
+        if (!known.has(entity.id)) weather.entities.remove(entity)
+      }
+      for (const cell of cells) {
+        const color = cesium.Color.fromCssColorString(cell.color).withAlpha(rainCellOpacity(cell.value, weatherLayer.subdued))
+        const existing = weather.entities.getById(cell.id)
+        if (existing?.rectangle?.material instanceof cesium.ColorMaterialProperty) {
+          existing.rectangle.material.color = new cesium.ConstantProperty(color)
+        } else {
+          const { west, south, east, north } = cell.bounds
+          const gap = 0.0008
+          weather.entities.add({
+            id: cell.id,
+            rectangle: {
+              coordinates: cesium.Rectangle.fromDegrees(west + gap, south + gap, east - gap, north - gap),
+              material: color,
+              classificationType: cesium.ClassificationType.TERRAIN,
+              zIndex: 4,
+            },
+          })
+        }
+      }
+      for (const point of points) {
+        const color = cesium.Color.fromCssColorString(point.color)
+        weather.entities.removeById(point.id)
+        weather.entities.add({
+          id: point.id,
+          position: cesium.Cartesian3.fromDegrees(point.lonlat.lon, point.lonlat.lat),
+          point: {
+            pixelSize: 13, color, outlineColor: cesium.Color.fromCssColorString(palette.labelBackground), outlineWidth: 3,
+            heightReference: ground, disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            distanceDisplayCondition: point.id.startsWith('weather-history-') ? new cesium.DistanceDisplayCondition(0, 160_000) : undefined,
+          },
+          label: {
+            text: point.label ? `${point.title}  ·  ${point.label}` : point.title,
+            font: '600 14px "Microsoft YaHei", sans-serif',
+            fillColor: cesium.Color.fromCssColorString(palette.labelText),
+            showBackground: true,
+            backgroundColor: cesium.Color.fromCssColorString(palette.labelBackground).withAlpha(0.94),
+            backgroundPadding: new cesium.Cartesian2(9, 6),
+            pixelOffset: new cesium.Cartesian2(point.mainlandChina ? 0 : -8, -20),
+            horizontalOrigin: point.mainlandChina ? cesium.HorizontalOrigin.CENTER : cesium.HorizontalOrigin.RIGHT,
+            verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+            heightReference: ground, disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            distanceDisplayCondition: point.id.startsWith('weather-history-') ? new cesium.DistanceDisplayCondition(0, 160_000) : undefined,
+          },
+        })
+      }
+      for (const entity of history?.entities.values ?? []) {
+        entity.show = !known.has(`weather-${entity.id}`) && !(entity.id === 'history-gyirong-port' && known.has('weather-gyirong-grid-reference'))
+      }
+    } finally {
+      weather.entities.resumeEvents()
+    }
+    viewer.scene.requestRender()
+  }
+
+  function drawHistory(): void {
+    if (!history || !options.historicalSites) return
+    history.entities.removeAll()
+    const accent = cesium.Color.fromCssColorString(palette.historicalMarker)
+    const ground = cesium.HeightReference.CLAMP_TO_GROUND
+    for (const site of options.historicalSites) {
+      history.entities.add({
+        id: site.id,
+        position: cesium.Cartesian3.fromDegrees(site.lonlat.lon, site.lonlat.lat),
+        point: {
+          pixelSize: 14,
+          color: accent,
+          outlineColor: cesium.Color.fromCssColorString(palette.labelBackground),
+          outlineWidth: 3,
+          heightReference: ground,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+        label: {
+          text: site.label,
+          font: '600 15px "Microsoft YaHei", sans-serif',
+          fillColor: cesium.Color.fromCssColorString(palette.labelText),
+          showBackground: true,
+          backgroundColor: cesium.Color.fromCssColorString(palette.labelBackground).withAlpha(0.95),
+          backgroundPadding: new cesium.Cartesian2(9, 6),
+          pixelOffset: new cesium.Cartesian2(0, -23),
+          horizontalOrigin: cesium.HorizontalOrigin.CENTER,
+          verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+          heightReference: ground,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      })
+    }
+    if (!geography || !options.historicalGeography) return
+    geography.entities.removeAll()
+    const lineStyles = [
+      { lines: options.historicalGeography.waterways, color: accent.withAlpha(0.72), zIndex: 0 },
+      { lines: options.historicalGeography.roads, color: cesium.Color.fromCssColorString(palette.historicalRoad), zIndex: 1 },
+    ]
+    for (const { lines, color, zIndex } of lineStyles) {
+      for (const line of lines) geography.entities.add({
+        name: line.name,
+        position: cesium.Cartesian3.fromDegrees(line.labelAt[0], line.labelAt[1]),
+        polyline: {
+          positions: cesium.Cartesian3.fromDegreesArray(line.coordinates.flat()),
+          width: 3,
+          clampToGround: true,
+          zIndex,
+          material: new cesium.PolylineOutlineMaterialProperty({
+            color,
+            outlineColor: cesium.Color.fromCssColorString(palette.labelBackground).withAlpha(0.72),
+            outlineWidth: 1,
+          }),
+        },
+        label: {
+          text: line.name,
+          font: '500 13px "Microsoft YaHei", sans-serif',
+          fillColor: cesium.Color.fromCssColorString(palette.labelText),
+          outlineColor: cesium.Color.fromCssColorString(palette.labelBackground),
+          outlineWidth: 3,
+          style: cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new cesium.Cartesian2(5, 10),
+          heightReference: ground,
+          distanceDisplayCondition: new cesium.DistanceDisplayCondition(0, 52_000),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      })
+    }
+  }
+  drawHistory()
+
+  function drawCloseup(): void {
+    if (!detail || !closeupDetails) return
+    detail.entities.removeAll()
+    const outline = cesium.Color.fromCssColorString(palette.labelBackground).withAlpha(0.8)
+    const road = cesium.Color.fromCssColorString(palette.closeupRoad)
+    const building = cesium.Color.fromCssColorString(palette.closeupBuilding)
+    const water = cesium.Color.fromCssColorString(palette.historicalMarker)
+    for (const way of closeupDetails.localRoads) {
+      detail.entities.add({
+        id: `local-road-${way.osmId}`,
+        polyline: {
+          positions: cesium.Cartesian3.fromDegreesArray(way.coordinates.flat()),
+          material: new cesium.PolylineOutlineMaterialProperty({ color: road, outlineColor: outline, outlineWidth: 1 }),
+          width: 4,
+          zIndex: 0,
+          clampToGround: true,
+        },
+      })
+    }
+    for (const [kind, features, color] of [
+      ['building', closeupDetails.buildings, building.withAlpha(0.76)],
+      ['water', closeupDetails.riverBanks, water.withAlpha(0.20)],
+    ] as const) {
+      for (const way of features) {
+        detail.entities.add({
+          id: `${kind}-${way.osmId}`,
+          polygon: {
+            hierarchy: cesium.Cartesian3.fromDegreesArray(way.coordinates.slice(0, -1).flat()),
+            material: color,
+            classificationType: cesium.ClassificationType.TERRAIN,
+            zIndex: kind === 'building' ? 2 : 1,
+          },
+        })
+      }
+    }
+  }
+  drawCloseup()
 
   const signatures = {} as Record<LayerName, string>
   for (const name of LAYER_NAMES) signatures[name] = ''
@@ -596,21 +923,29 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     applyPalette()
     for (const name of LAYER_NAMES) signatures[name] = '#aegis-rebuild-for-theme#'
     if (lastData) render(lastData)
+    drawHistory()
+    drawCloseup()
+    if (weatherLayer.points.length) drawWeather()
     viewer.scene.requestRender()
   }
 
   const handler = new cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
   handler.setInputAction((event: ScreenSpaceEventHandler.PositionedEvent) => {
     const picked = viewer.scene.pick(event.position) as { id?: unknown } | undefined
-    options.onSelect?.(typeof picked?.id === 'string' ? picked.id : null)
+    const feature = picked?.id
+    const id = typeof feature === 'object' && feature !== null && 'id' in feature ? feature.id : feature
+    options.onSelect?.(typeof id === 'string' ? id : null)
   }, cesium.ScreenSpaceEventType.LEFT_CLICK)
 
   const onCameraChanged = (): void => {
-    updateSpaceView()
+    updateWorldView()
+    updateHistoricalView()
     options.onViewChanged?.(currentBBox(), currentZoom())
+    if (options.onScaleChanged) options.onScaleChanged(mapScale())
   }
-  viewer.camera.percentageChanged = 0.25
+  viewer.camera.percentageChanged = options.onScaleChanged ? 0.08 : 0.25
   viewer.camera.changed.addEventListener(onCameraChanged)
+  if (options.onScaleChanged || history) viewer.camera.moveEnd.addEventListener(onCameraChanged)
   // 装配完先推一次：`camera.changed` 只在**变化**时发，不推的话面板一直停在"视野：未就绪"、
   // 缩放报 0，而且按视野过滤图层的那条路一直拿不到 bbox（浏览器实测：不动鼠标就一直是未就绪）。
   onCameraChanged()
@@ -631,8 +966,42 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     return zoomForCameraHeight(position ? position.height : Number.POSITIVE_INFINITY)
   }
 
+  function mapScale(): MapScale | null {
+    const canvas = viewer.scene.canvas
+    const x = canvas.clientWidth / 2
+    const y = canvas.clientHeight / 2
+    const ellipsoid = viewer.scene.globe.ellipsoid
+    const groundAt = (screenX: number) => {
+      const pixel = new cesium.Cartesian2(screenX, y)
+      const ray = viewer.camera.getPickRay(pixel)
+      const ground = ray && viewer.scene.globe.pick(ray, viewer.scene)
+      return ground ?? viewer.camera.pickEllipsoid(pixel, ellipsoid)
+    }
+    const left = groundAt(x - 50)
+    const right = groundAt(x + 50)
+    if (!left || !right) return null
+    const distance = new cesium.EllipsoidGeodesic(
+      ellipsoid.cartesianToCartographic(left),
+      ellipsoid.cartesianToCartographic(right),
+      ellipsoid,
+    ).surfaceDistance
+    if (!Number.isFinite(distance) || distance <= 0) return null
+    const unit = 10 ** Math.floor(Math.log10(distance))
+    const step = distance / unit
+    const meters = unit * (step >= 5 ? 5 : step >= 2 ? 2 : 1)
+    return { meters, width: (100 * meters) / distance }
+  }
+
+  let pendingFitBounds: BBox | null = null
+  const clearPendingFit = (): void => { pendingFitBounds = null }
+
   return {
     render,
+    setWeather: (layer) => {
+      if (weatherLayer === layer) return
+      weatherLayer = layer
+      drawWeather()
+    },
     setTheme,
     get palette() {
       return palette
@@ -641,12 +1010,41 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
       viewer.camera.flyTo({ destination: cesium.Cartesian3.fromDegrees(point.lon, point.lat, 20_000), duration: 1.2 })
     },
     fitBBox: (box) => {
-      viewer.camera.flyTo({ destination: cesium.Rectangle.fromDegrees(...rectArray(box)), duration: 1.2 })
+      viewer.camera.cancelFlight()
+      pendingFitBounds = box
+      viewer.camera.flyTo({
+        destination: cesium.Rectangle.fromDegrees(...rectArray(box)),
+        duration: 1.2,
+        complete: clearPendingFit,
+        cancel: clearPendingFit,
+      })
     },
-    currentBBox,
+    zoomBy: (direction) => {
+      const position = viewer.camera.positionCartographic
+      const ground = viewer.scene.globe.getHeight(position) ?? 0
+      const height = Math.max(0, position.height - ground)
+      const { minimumZoomDistance, maximumZoomDistance: limit } = viewer.scene.screenSpaceCameraController
+      if (direction === -1 && height >= limit) return
+      const next = cesium.Math.clamp(height * (direction === 1 ? 0.66 : 1.5), minimumZoomDistance * 1.3, limit)
+      viewer.camera.cancelFlight()
+      viewer.camera.zoomIn(height - next)
+      viewer.scene.requestRender()
+    },
+    basemapSwitchBounds: () => pendingFitBounds ?? currentBBox(),
     currentZoom,
     setLayerVisible: (layer, visible) => {
       handles[layer].dataSource.show = visible
+      viewer.scene.requestRender()
+    },
+    setHistoryVisible: (visible) => {
+      if (!history) return
+      historicalView = visible
+      viewer.scene.screenSpaceCameraController.maximumZoomDistance = visible ? CASE_ZOOM_DISTANCE_M : GLOBAL_ZOOM_DISTANCE_M
+      updateHistoricalView()
+      if (visible) {
+        void loadHistoricalRelief()
+        void loadSurroundingRelief()
+      }
       viewer.scene.requestRender()
     },
     destroy: () => {
@@ -654,6 +1052,7 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
       destroyed = true
       resizeObserver?.disconnect()
       viewer.camera.changed.removeEventListener(onCameraChanged)
+      if (options.onScaleChanged || history) viewer.camera.moveEnd.removeEventListener(onCameraChanged)
       handler.removeInputAction(cesium.ScreenSpaceEventType.LEFT_CLICK)
       handler.destroy()
       viewer.dataSources.removeAll(true)

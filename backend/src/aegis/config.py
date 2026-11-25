@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     weather_api_base_url: str = ""
     weather_api_path: str = "/observation"
     weather_api_timeout_ms: int = 4_000
+    # 地图天气读面与摄取腿独立。研究演示可用 Open-Meteo，部署时可关闭外部取数。
+    weather_map_enabled: bool = True
+    weather_map_data_dir: str = ""
     # 外部逐日降水腿（本地派生表）：留空且默认关。这条腿是平台第一个**真实**雨量来源——
     # 派生表由 `scripts/derive_precip_station_daily.py` 从 CHM_PRE V2 原件产出，
     # 落在运行态目录（不进仓库）。默认关：没派生表就不该有这条腿。

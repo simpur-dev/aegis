@@ -31,12 +31,24 @@ DEFAULT_BACKOFF_FACTOR = 2.0
 DEFAULT_JITTER_RATIO = 0.25
 
 
+@dataclass(slots=True)
+class WriteReceipt:
+    """单个写请求的实际队列结果，独立于全局缓冲计数。"""
+
+    queued: int = 0
+    flushed: int = 0
+    dropped: int = 0
+    retries: int = 0
+    last_error: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class WriteRequest:
     """一次逻辑写出：kind 只是可观测标签，rows 的内容由调用方定义（本模块从不解释）。"""
 
     kind: str
     rows: tuple[Any, ...]
+    receipt: WriteReceipt | None = field(default=None, compare=False, repr=False)
 
     @property
     def size(self) -> int:
@@ -164,12 +176,12 @@ class WriteBuffer:
 
     # ---------- 热路径入口（同步、永不抛） ----------
 
-    def submit(self, kind: str, rows: Sequence[Any]) -> int:
+    def submit(self, kind: str, rows: Sequence[Any], *, receipt: WriteReceipt | None = None) -> int:
         """入队并返回实际接收的行数；被丢弃的行只计数，不向上表达为异常。"""
         batch = tuple(rows)
         if not batch:
             return 0
-        request = WriteRequest(kind=kind, rows=batch)
+        request = WriteRequest(kind=kind, rows=batch, receipt=receipt)
         if self._closed:
             self._counters.dropped += request.size
             self._counters.last_error = "缓冲已关闭，写出被丢弃"
@@ -184,7 +196,11 @@ class WriteBuffer:
             victim = self._queue.popleft()
             self._depth -= victim.size
             self._counters.dropped += victim.size
+            if victim.receipt is not None:
+                victim.receipt.dropped += victim.size
         self._queue.append(request)
+        if receipt is not None:
+            receipt.queued = request.size
         self._depth += request.size
         self._counters.buffered += request.size
         self._wake.set()
@@ -231,6 +247,9 @@ class WriteBuffer:
             self._counters.last_error = f"关停排空未完成：{type(exc).__name__}"
         if self._depth:
             self._counters.dropped += self._depth
+        for request in self._queue:
+            if request.receipt is not None:
+                request.receipt.dropped += request.size
         self._queue.clear()
         self._depth = 0
         return self.metrics
@@ -250,6 +269,10 @@ class WriteBuffer:
                 raise
             except Exception as exc:
                 self._counters.retries += 1
+                for request in batch:
+                    if request.receipt is not None:
+                        request.receipt.retries += 1
+                        request.receipt.last_error = type(exc).__name__
                 self._hold_for_retry(batch)
                 raise WriteFailedError(f"写出失败：{batch[0].kind}", detail=describe(exc)) from exc
             return self._account_flushed(batch)
@@ -278,6 +301,9 @@ class WriteBuffer:
 
     def _account_flushed(self, batch: list[WriteRequest]) -> int:
         rows = sum(request.size for request in batch)
+        for request in batch:
+            if request.receipt is not None:
+                request.receipt.flushed += request.size
         self._counters.flushed += rows
         return rows
 

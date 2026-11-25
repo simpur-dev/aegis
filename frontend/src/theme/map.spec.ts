@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest'
 import { RISK_COLORS, type RiskLevel } from '@/api/types'
 
 import { colorSlots, riskFill } from './tokens'
-import { amapStyleName, mapPalette } from './map'
+import { mapPalette } from './map'
 
 function channel(v: number): number {
   const c = v / 255
@@ -99,9 +99,8 @@ describe('theme/map —— Cesium 场景调色板派生层', () => {
     expect(dark.fillFor('#1677ff')).toBe(riskFill.dark[4])
   })
 
-  it('高德样式名两档不同、都来自官方样式表，且浅色就是官方默认（组件不许自挑档位）', () => {
-    expect(amapStyleName('light')).toBe('amap://styles/normal')
-    expect(amapStyleName('dark')).toBe('amap://styles/grey')
-    expect(amapStyleName('light')).not.toBe(amapStyleName('dark'))
+  it('案例道路在两种主题下使用各自的琥珀色令牌', () => {
+    expect(mapPalette('light').historicalRoad).toBe(colorSlots.light['editor-accent-amber'])
+    expect(mapPalette('dark').historicalRoad).toBe(colorSlots.dark['editor-accent-amber'])
   })
 })

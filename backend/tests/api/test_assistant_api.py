@@ -29,6 +29,7 @@ class _FakeLedger:
     def __init__(self) -> None:
         self.rows = {
             "duty-01": Operator(operator_id="duty-01", display_name="值班员", role="duty"),
+            "duty-02": Operator(operator_id="duty-02", display_name="另一席位", role="duty"),
             "lead-01": Operator(operator_id="lead-01", display_name="值班长", role="lead"),
         }
 
@@ -97,10 +98,34 @@ async def test_对话返回结构化帧序列而不是裸文本(container: Platf
         response = await client.post("/api/v1/assistant/chat", json={"message": "在线智能体有几个", "reporter": "值班员"})
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
+        assert response.headers["x-accel-buffering"] == "no"
         frames = _frames(response.text)
         assert [frame["type"] for frame in frames] == ["meta", "intent", "status", "result", "answer", "done"]
         assert frames[1]["action"] == "agent.list"
         assert frames[0]["llm_configured"] is False
+        assert frames[0]["stream_version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_proposal_is_authorized_and_audited_once(container: PlatformContainer) -> None:
+    async with _client(container) as client:
+        body = {"action": "drill.start", "params": {"scenario": "surge", "ticks": 1}, "idempotency_key": "cancel-regression"}
+        created = await client.post("/api/v1/assistant/actions", headers=DUTY_HEADERS, json=body)
+        action_path = f"/api/v1/assistant/actions/{created.json()['action_id']}"
+        assert (await client.post(f"{action_path}/cancel")).status_code == 401
+        assert (await client.post(f"{action_path}/cancel", headers={"X-Aegis-Operator": "duty-02"})).status_code == 403
+        for _ in range(2):
+            reply = await client.post(f"{action_path}/cancel", headers=DUTY_HEADERS)
+            assert reply.status_code == 200
+            assert reply.json()["status"] == "revoked"
+        assert (await client.get(action_path)).json()["status"] == "revoked"
+        confirmed = await client.post(f"{action_path}/confirm", headers=DUTY_HEADERS, json={})
+        assert confirmed.json()["status"] == "rejected"
+        assert (await client.post("/api/v1/assistant/actions", headers=DUTY_HEADERS, json=body)).status_code == 409
+        service = container.assistant
+        assert service is not None and service._repo is not None
+        audit = await service._repo.read_audit(action_id=created.json()["action_id"], phase="result")
+        assert sum(row["after"].get("cancelled") is True for row in audit if row.get("after")) == 1
 
 
 @pytest.mark.asyncio

@@ -230,7 +230,7 @@ describe('栅格 PMTiles provider', () => {
     expect(instance.pickFeatures(0, 0, 1, 0, 0)).toBeUndefined()
   })
 
-  it('取到瓦片时按头部 MIME 解成位图', async () => {
+  it('按归档 MIME 解码原瓦，翻转位图以对齐 Cesium 纹理方向', async () => {
     const bitmap = vi.fn((_input: unknown) => ({ kind: 'bitmap' }))
     vi.stubGlobal('createImageBitmap', bitmap)
     const { instance, source } = provider()
@@ -239,6 +239,7 @@ describe('栅格 PMTiles provider', () => {
     expect(source.calls).toEqual(['6/3/2'])
     const blob = (bitmap.mock.calls[0] as unknown[])[0] as Blob
     expect(blob.type).toBe('image/png')
+    expect(bitmap).toHaveBeenCalledWith(blob, { imageOrientation: 'flipY' })
   })
 
   it('缺瓦 / 越界层级 → 透明瓦而不是抛错，且空白瓦复用同一实例', async () => {
@@ -254,6 +255,26 @@ describe('栅格 PMTiles provider', () => {
     expect(beyond).toEqual({ kind: 'bitmap-1' })
     expect(source.calls).toEqual(['6/9/9'])
     expect(created).toBe(1)
+  })
+
+  it('全域高程档缺瓦时裁出父瓦对应象限', async () => {
+    const bitmap = vi.fn(() => Promise.resolve({ kind: 'parent' }))
+    vi.stubGlobal('createImageBitmap', bitmap)
+    const read = vi.fn(async (level: number) => level === 5 ? { data: new ArrayBuffer(1) } : undefined)
+    const { cesium } = fakeCesium()
+    const instance = new PmtilesImageryProvider({
+      cesium,
+      reader: { getZxy: read },
+      verdict: describePmtilesHead(head()),
+      attribution: '全域地形',
+      fallbackToParent: true,
+    })
+
+    await expect(instance.requestImage(3, 2, 6)).resolves.toEqual({ kind: 'parent' })
+    expect(read.mock.calls).toEqual([[6, 3, 2], [5, 1, 1]])
+    expect(bitmap).toHaveBeenCalledWith(expect.any(Blob), 128, 0, 128, 128, {
+      imageOrientation: 'flipY', resizeWidth: 256, resizeHeight: 256,
+    })
   })
 
   it('零字节瓦片也走透明瓦', async () => {

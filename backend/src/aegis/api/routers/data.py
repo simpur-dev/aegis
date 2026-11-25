@@ -10,8 +10,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from aegis.api.deps import get_container
+from aegis.connectors.trace import RoundDetail, RoundList
 from aegis.container import PlatformContainer
 from aegis.persistence import geo
+from aegis.services.map_weather import CurrentMapWeather, MapWeather, RainArchive, RainCatalog, rain_catalog, rain_daily, rain_hourly
 from aegis.storage.store import geo_query_port
 
 # `since`/`until` 的先后关系表达不进 OpenAPI（两个独立参数），逆序窗是运行期才判的 422。
@@ -63,6 +65,52 @@ def _geo_unavailable() -> HTTPException:
 
 def build_router() -> APIRouter:
     router = APIRouter()
+    map_weather = MapWeather()
+
+    @router.get("/api/v1/map/weather/current", tags=["data"])
+    async def current_map_weather(ctn: PlatformContainer = Depends(get_container)) -> CurrentMapWeather:
+        """吉隆两处参考位置的最新模式天气。"""
+        return await map_weather.current(enabled=ctn.settings.weather_map_enabled)
+
+    @router.get("/api/v1/map/rain", tags=["data"])
+    def map_rain_catalog(ctn: PlatformContainer = Depends(get_container)) -> RainCatalog:
+        return rain_catalog(ctn.settings)
+
+    @router.get("/api/v1/map/rain/hourly", tags=["data"])
+    def map_rain_hourly(ctn: PlatformContainer = Depends(get_container)) -> RainArchive:
+        return read_archive(rain_hourly, ctn.settings)
+
+    @router.get("/api/v1/map/rain/daily/{year}", tags=["data"])
+    def map_rain_daily(year: int, ctn: PlatformContainer = Depends(get_container)) -> RainArchive:
+        return read_archive(rain_daily, ctn.settings, year)
+
+    # 地图回放独立读取历史数据，时间窗不经过实时摄取筛选。
+    def read_archive(read, *args) -> RainArchive:
+        try:
+            return read(*args)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="没有找到请求的降水回放数据") from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail="降水回放数据当前不可读取") from exc
+
+    @router.get("/api/v1/telemetry/processing", tags=["data"])
+    async def list_processing_rounds(
+        ctn: PlatformContainer = Depends(get_container),
+        limit: int = Query(default=24, ge=1, le=120),
+    ) -> RoundList:
+        """最近的实际遥测摄取轮次，按完成时间从新到旧。"""
+        return ctn.ingest.recent_rounds(limit)
+
+    @router.get("/api/v1/telemetry/processing/{round_id}", tags=["data"])
+    async def processing_round(
+        round_id: str,
+        ctn: PlatformContainer = Depends(get_container),
+    ) -> RoundDetail:
+        """指定摄取轮次的拉取、规范化、写入、投递及分析记录。"""
+        detail = ctn.ingest.round_detail(round_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="摄取批次已移出当前进程的记录窗口，或批次不存在")
+        return detail
 
     @router.get("/api/v1/stations", tags=["data"])
     async def list_stations(

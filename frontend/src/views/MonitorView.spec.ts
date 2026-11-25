@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
+import { routeLocationKey } from 'vue-router'
 
 import api, { type TelemetryQuery } from '@/api/client'
 import mapApi from '@/api/map'
@@ -22,6 +23,7 @@ const mockedTelemetry = vi.mocked(api.telemetry)
 const mockedAnchors = vi.mocked(mapApi.regionAnchors)
 
 const STUBS = {
+  RouterLink: { template: '<a><slot :href="\'\'" :navigate="() => {}" /></a>' },
   EChart: true,
   'a-card': { name: 'ACard', props: ['title', 'loading', 'size'], template: '<div class="card"><slot /><slot name="extra" /></div>' },
   'a-space': { name: 'ASpace', props: ['wrap'], template: '<div class="space"><slot /></div>' },
@@ -53,11 +55,12 @@ const READING: TelemetryReading = {
   quality_flag: 'ok',
 }
 
-function mountView() {
-  return mount(MonitorView, { global: { stubs: STUBS } })
+function mountView(hash = '') {
+  return mount(MonitorView, { global: { stubs: STUBS, provide: { [routeLocationKey]: { hash } } } })
 }
 
 beforeEach(() => {
+  vi.mocked(api.drill).mockReset()
   mockedTelemetry.mockReset().mockResolvedValue({ count: 1, items: [READING] })
   mockedAnchors.mockReset().mockResolvedValue({
     items: [
@@ -141,7 +144,7 @@ describe('演练按钮的重复点击防护', () => {
 
   it('一次演练没跑完之前，再点不会重复发请求', async () => {
     const release = hangingDrill()
-    const wrapper = mountView()
+    const wrapper = mountView('#drill')
     await flushPromises()
     const surge = wrapper.find('[data-testid="drill-surge"]')
     await surge.trigger('click')
@@ -154,7 +157,7 @@ describe('演练按钮的重复点击防护', () => {
 
   it('跑完之前按钮是禁用的（不是只转个圈：转圈不挡点击）', async () => {
     const release = hangingDrill()
-    const wrapper = mountView()
+    const wrapper = mountView('#drill')
     await flushPromises()
     await wrapper.find('[data-testid="drill-surge"]').trigger('click')
     expect(wrapper.find('[data-testid="drill-surge"]').attributes('disabled')).toBeDefined()
@@ -162,6 +165,23 @@ describe('演练按钮的重复点击防护', () => {
     release()
     await flushPromises()
     expect(wrapper.find('[data-testid="drill-surge"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('演练直达独立视图，回执分别统计研判与生成预警', async () => {
+    vi.mocked(api.drill).mockResolvedValue({
+      ingest: { readings: 14 },
+      regions: 2,
+      chains: [{ acted: true, warning_id: null }, { acted: true, warning_id: 'wrn_1' }],
+    } as never)
+    const wrapper = mountView('#drill')
+    expect(wrapper.find('.monitor-grid').exists()).toBe(false)
+    expect(mockedTelemetry).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="drill-surge"]').trigger('click')
+    await flushPromises()
+    const stats = wrapper.get('[data-testid="drill-result"]').findAll('dl > div')
+    expect(stats.map((stat) => [stat.get('dt').text(), stat.get('dd').text()])).toEqual([
+      ['模拟读数', '14 条'], ['覆盖区域', '2 个'], ['形成研判', '2 条'], ['生成预警', '1 条'],
+    ])
   })
 })
 
@@ -186,7 +206,7 @@ describe('监测页的人工上报入口（B5）', () => {
     expect(wrapper.findComponent({ name: 'ReportForm' }).props('initialRegionCode')).toBe('540121')
   })
 
-  it('打开上报弹窗不影响监测读数与演练入口（同页共存，不是替换）', async () => {
+  it('打开上报弹窗时保留当前遥测', async () => {
     const wrapper = mountView()
     await flushPromises()
     // 两条各管一件事：不筛的取样给下拉当底仓，带参数的那条才是页面在显示的内容
@@ -195,7 +215,7 @@ describe('监测页的人工上报入口（B5）', () => {
     await wrapper.find('[data-testid="open-report"]').trigger('click')
     await flushPromises()
     const labels = wrapper.findAll('.button').map((button) => button.text())
-    expect(labels).toEqual(expect.arrayContaining(['刷新', '人工上报', '发起演练：雨强激增', '发起演练：正常背景']))
+    expect(labels).toEqual(expect.arrayContaining(['刷新', '人工上报']))
   })
 })
 

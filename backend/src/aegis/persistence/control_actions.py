@@ -201,6 +201,20 @@ async def get_action(pool: Any, action_id: str) -> dict[str, Any] | None:
     return None if row is None else action_from_row(row)
 
 
+async def cancel_proposal(pool: Any, action_id: str) -> dict[str, Any] | None:
+    """取消仍可确认的提案。确认与取消争用同一行。"""
+    row = await pool.fetchrow(
+        f"""
+        UPDATE control_actions SET status = 'revoked', updated_at = now()
+        WHERE action_id = $1 AND status = 'proposed'
+          AND (expires_at IS NULL OR expires_at > now())
+        RETURNING {_COLUMNS}
+        """,
+        action_id,
+    )
+    return None if row is None else action_from_row(row)
+
+
 async def list_actions(pool: Any, *, operator_id: str | None = None, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
     capped = max(1, min(int(limit), 200))
     clauses: list[str] = []

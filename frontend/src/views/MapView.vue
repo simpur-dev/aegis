@@ -12,9 +12,10 @@
  */
 
 import { message } from 'ant-design-vue'
-import { AimOutlined, AppstoreOutlined, InfoCircleOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons-vue'
+import { AimOutlined, AppstoreOutlined, CloudOutlined, DownOutlined, InfoCircleOutlined, MinusOutlined, PlusOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons-vue'
 import { useElementSize } from '@vueuse/core'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import mapApi, { isMissingResource, MAP_ASSET_PATHS, normalizeAnchors } from '@/api/map'
 import type { RegionAnchorDto, StationDto } from '@/api/map'
@@ -47,11 +48,16 @@ import {
 import type { OfflineMachine } from '@/components/map/offline'
 import MapStatusPanel from '@/components/map/MapStatusPanel.vue'
 import MapLayersPanel from '@/components/map/MapLayersPanel.vue'
+import MapWeatherPanel from '@/components/map/MapWeatherPanel.vue'
 import AmapMap from '@/components/map/AmapMap.vue'
+import { GYIRONG_CASE, type HistoricalSite } from '@/components/map/gyirongCase'
+import gyirongRelief from '@/components/map/gyirong-relief.json'
+import gyirongGeography from '@/components/map/gyirong-geography.json'
 import { terrainProbeUrl } from '@/components/map/terrain'
-import type { LayerName, MapScene, MapSceneInfo } from '@/components/map/viewer'
+import type { HistoricalReliefStatus, LayerName, MapScale, MapScene, MapSceneInfo } from '@/components/map/viewer'
 import { useTheme } from '@/theme/useTheme'
 import { readBasemapMode, writeBasemapMode, type BasemapMode } from '@/components/map/external'
+import { EMPTY_WEATHER_LAYER, type WeatherMapLayer, type WeatherMode } from '@/components/map/weather'
 
 /** 数据轮询与源探针周期：野外弱网下"少而稳"胜过"快而抖"。 */
 const DATA_REFRESH_MS = 30_000
@@ -63,19 +69,27 @@ const scene = shallowRef<MapScene | null>(null)
 const sceneInfo = ref<MapSceneInfo | null>(null)
 const sceneError = ref<string | null>(null)
 const sceneLoading = ref(false)
+const scale = ref<MapScale | null>(null)
+const scaleText = computed(() => {
+  const meters = scale.value?.meters ?? 0
+  return meters >= 1000 ? `${meters / 1000} km` : `${meters} m`
+})
+const terrainRamp = `linear-gradient(90deg, ${gyirongRelief.stops.map(([, color]) => color).join(', ')})`
+const reliefStatus = ref<HistoricalReliefStatus | null>(null)
+const globalTerrainVisible = ref(false)
+const amapPanel = ref<InstanceType<typeof AmapMap> | null>(null)
 let sceneSeq = 0
 /** 画布内部读不到 CSS 变量，所以主题要显式喂给场景（见 `@/theme/map`）。 */
 const { resolved: themeMode } = useTheme()
+const route = useRoute()
+const storage = typeof localStorage === 'undefined' ? null : localStorage
 /**
  * 底图档。默认离线自托管（交付形态不依赖外部主机，见 external.ts）；'amap' 整块换成
  * 高德 JS API 渲染面（`AmapMap.vue`）。场景层（viewer.ts）永远是离线链、不感知这个档——
  * 换档是页面级"换组件"，不是换影像层。
  */
-const basemapMode = ref<BasemapMode>(readBasemapMode(typeof localStorage === 'undefined' ? null : localStorage))
-/** 画面上一行说实话：档名 + 纠偏口径。高德档是带 key 的官方 JS API（key 在 .env.local，不入库）。 */
-const basemapSummary = computed(() =>
-  basemapMode.value === 'amap' ? '高德 JS API · 图元按 GCJ02 纠偏' : '离线自托管（可切「高德在线」）',
-)
+const basemapMode = ref<BasemapMode>(readBasemapMode(storage))
+const basemapWarning = ref('')
 
 const readings = ref<TelemetryReading[]>([])
 const warnings = ref<WarningRecord[]>([])
@@ -86,16 +100,124 @@ const hazardDocument = ref<unknown>(null)
 
 const loading = ref(false)
 const autoRefresh = ref(true)
-const panelsCollapsed = ref(false)
+type MapPreset = 'gyirong' | 'tibet'
+const preset = ref<MapPreset>(route.query.view === 'tibet' ? 'tibet' : 'gyirong')
+const isCase = computed(() => preset.value === 'gyirong')
+const detailedTerrainVisible = computed(() => basemapMode.value === 'offline' && isCase.value && reliefStatus.value === 'visible')
+const closeupSource = computed(() => {
+  if (basemapMode.value !== 'offline' || !isCase.value) return null
+  if (reliefStatus.value === 'street') return gyirongRelief.street
+  return reliefStatus.value === 'closeup' ? gyirongRelief.closeup : null
+})
+const outsideDetailedTerrain = computed(() =>
+  basemapMode.value === 'offline' && isCase.value && (reliefStatus.value === 'outside' || reliefStatus.value === 'surroundings'),
+)
+const basemapSummary = computed(() => {
+  if (basemapMode.value === 'amap') return '高德卫星'
+  if (closeupSource.value) return reliefStatus.value === 'street' ? '口岸高清' : '口岸近景'
+  if (globalTerrainVisible.value) return '全球地形'
+  if (detailedTerrainVisible.value) return '精细地形'
+  if (isCase.value && reliefStatus.value === 'surroundings') return '周边地形'
+  return outsideDetailedTerrain.value || !isCase.value ? '全域地形' : '离线地形'
+})
+const panelsCollapsed = ref(isCase.value)
+const caseExpanded = ref<boolean | null>(null)
+const activeCaseSite = shallowRef<HistoricalSite | null>(null)
 const shellRef = ref<HTMLElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
-const { width: mapWidth } = useElementSize(shellRef)
-const { height: toolbarHeight } = useElementSize(toolbarRef)
+const { width: mapWidth, height: mapHeight } = useElementSize(shellRef)
+const { height: toolbarHeight } = useElementSize(toolbarRef, undefined, { box: 'border-box' })
 const compact = computed(() => mapWidth.value > 0 && mapWidth.value < 820)
 const settingsOpen = ref(false)
 const mobilePane = ref<'status' | 'layers' | null>(null)
+const weatherOpen = ref(false)
+const weatherMode = ref<WeatherMode>('current')
+const weatherSummary = ref('')
+const weatherPicked = ref<string | null>(null)
+const weatherLayer = shallowRef<WeatherMapLayer>(EMPTY_WEATHER_LAYER)
+const weatherViewport = shallowRef<BBox | null>(null)
+const subduedRain = computed(() => {
+  const bounds = weatherViewport.value
+  return weatherMode.value === 'daily' && !!bounds && Math.min(bounds.east - bounds.west, bounds.north - bounds.south) <= 0.10
+})
+const visibleWeather = computed(() => {
+  if (weatherMode.value === 'hourly' ? isCase.value : !isCase.value) return EMPTY_WEATHER_LAYER
+  return subduedRain.value ? { ...weatherLayer.value, subdued: true } : weatherLayer.value
+})
+const weatherButtonLabel = computed(() => weatherMode.value === 'daily' ? '日雨量回放' : weatherMode.value === 'hourly' ? '小时回放' : isCase.value && weatherSummary.value ? weatherSummary.value : '天气雨情')
+const showCaseCard = computed(() =>
+  isCase.value && weatherMode.value === 'current' && (compact.value ? mobilePane.value === null && !settingsOpen.value && !weatherOpen.value : panelsCollapsed.value),
+)
+const showCaseDetails = computed(() => caseExpanded.value ?? !compact.value)
+const cameraBounds = shallowRef<BBox>(isCase.value ? GYIRONG_CASE.bounds : TIBET_RECTANGLE)
+const cameraInMainland = ref(!isCase.value)
+const fitCurrentViewport = ref(false)
+const amapCamera = computed(() => {
+  const { west, east, south, north } = cameraBounds.value
+  // 高德相机按当前容器宽度取整档，窄屏仍要能同时容纳两个案例点。
+  let zoom = isCase.value ? (east - west < 0.1 ? 13.5 : compact.value ? 11 : 12.5) : 5
+  if (fitCurrentViewport.value && mapWidth.value && mapHeight.value) {
+    const mercatorY = (lat: number) => {
+      const radians = Math.max(-85, Math.min(85, lat)) * Math.PI / 180
+      return Math.asinh(Math.tan(radians)) / (2 * Math.PI)
+    }
+    const xZoom = Math.log2((360 * mapWidth.value) / (256 * (east - west)))
+    const yZoom = Math.log2(mapHeight.value / (256 * (mercatorY(north) - mercatorY(south))))
+    zoom = Math.max(3, Math.min(18, xZoom, yZoom))
+  }
+  return {
+    center: { lon: (west + east) / 2, lat: (south + north) / 2 },
+    zoom,
+    pitch: isCase.value && zoom < 13 ? 8 : 0,
+    mainlandChina: cameraInMainland.value,
+  }
+})
 function toggleMobilePane(pane: 'status' | 'layers'): void {
+  weatherOpen.value = false
   mobilePane.value = mobilePane.value === pane ? null : pane
+}
+
+function openWeather(): void {
+  weatherOpen.value = true
+  panelsCollapsed.value = true
+  mobilePane.value = null
+  settingsOpen.value = false
+}
+
+function toggleWeather(): void {
+  if (weatherOpen.value) {
+    weatherOpen.value = false
+    return
+  }
+  openWeather()
+  if (!isCase.value || weatherMode.value !== 'current' || activeCaseSite.value) return
+  const view = scene.value?.basemapSwitchBounds()
+  const area = GYIRONG_CASE.bounds
+  const nearDefaultView = view && view.east - view.west >= 0.2
+    && Math.abs((view.west + view.east) - (area.west + area.east)) < 0.05
+    && Math.abs((view.south + view.north) - (area.south + area.north)) < 0.05
+  if (nearDefaultView) fitWeather(area)
+}
+
+function changeWeatherMode(mode: WeatherMode): void {
+  if (mode === weatherMode.value) return
+  weatherPicked.value = null
+  weatherLayer.value = EMPTY_WEATHER_LAYER
+  weatherMode.value = mode
+  selectPreset(mode === 'hourly' ? 'tibet' : 'gyirong')
+  if (mode === 'current') fitWeather(GYIRONG_CASE.bounds)
+}
+
+function fitWeather(bounds: BBox): void {
+  if (!isCase.value) selectPreset('gyirong')
+  const box = expandBBox(bounds, compact.value ? 0.29 : 0.15)
+  if (compact.value && weatherOpen.value) {
+    // Leave the data in the exposed map area above the weather sheet.
+    const shift = (bounds.north - bounds.south) * (weatherMode.value === 'current' ? 0.64 : 0.41)
+    box.south -= shift
+    box.north -= shift
+  }
+  moveCamera(box, true, true)
 }
 const regionCode = ref<string>('')
 const observedRegionCodes = ref<string[]>([])
@@ -132,7 +254,19 @@ const riskFilter = ref<RiskLevel[]>([])
 const viewLayers = computed(() => filterLayersByRisk(layers.value, riskFilter.value))
 
 /** 面板里的图层计数是**筛后**的，全量另给一份用于"2 / 6"这种写法。 */
-const plan = computed(() => buildRenderPlan({ layers: viewLayers.value, bbox: bbox.value, zoom: zoom.value }))
+const plan = computed(() => {
+  const source = viewLayers.value
+  return buildRenderPlan({
+    layers: {
+      ...source,
+      stations: visibility.value.stations ? source.stations : [],
+      warnings: visibility.value.warnings ? source.warnings : [],
+    },
+    bbox: bbox.value,
+    zoom: zoom.value,
+    aggregate: visibility.value.clusters,
+  })
+})
 const counts = computed(() => layerCounts(viewLayers.value))
 const countsTotal = computed(() => layerCounts(layers.value))
 /** 芯片上的数字始终按未筛的全量数——筛选不该让图例自己变小。 */
@@ -214,16 +348,12 @@ async function load(): Promise<void> {
   hazardDocument.value = settled(zoneFile)
 
   const collected: string[] = []
-  if (isMissingResource(rejectedReason(stationList))) {
-    collected.push('后端尚未开放 GET /api/v1/stations：站点经纬度不可得，缺坐标的站点进「未定位清单」，不落 (0,0)。')
-  }
+  if (isMissingResource(rejectedReason(stationList))) collected.push('暂无站点坐标。缺少坐标的站点可在未定位清单查看。')
   if (isMissingResource(rejectedReason(anchorFile))) {
-    collected.push(
-      `未找到 ${MAP_ASSET_PATHS.regionAnchors}：区域锚点缺失，预警与站点无处落点（烘焙说明见 public/basemaps/README.md）。`,
-    )
+    collected.push('区域定位资料缺失。只有已知坐标的业务记录可以落点。')
   }
   if (isMissingResource(rejectedReason(zoneFile))) {
-    collected.push(`未找到 ${MAP_ASSET_PATHS.hazardZones}：灾害分区面为空图层。`)
+    collected.push('灾害分区边界资料缺失，当前无法显示分区面。')
   }
   for (const result of [telemetry, warningList, eventList]) {
     const reason = rejectedReason(result)
@@ -254,28 +384,44 @@ async function initScene(): Promise<void> {
   try {
     const { createMapScene } = await import('@/components/map/viewer')
     if (seq !== sceneSeq || target !== host.value) return
+    const initialRectangle = cameraBounds.value
     const created = await createMapScene(target, {
       terrainUrl: MAP_ASSET_PATHS.terrainReal,
-      // 优先用本地 OSM 瓦片，缺失时使用同源的真实高程阴影档案。
+      worldReliefUrl: MAP_ASSET_PATHS.worldRelief,
+      initialRectangle,
+      historicalSites: GYIRONG_CASE.sites,
+      historicalRelief: {
+        ...gyirongRelief,
+        closeups: [
+          { ...gyirongRelief.closeup, status: 'closeup', maxHeightM: 13_000 },
+          { ...gyirongRelief.street, status: 'street', maxHeightM: 4_200 },
+        ],
+      },
+      historicalGeography: gyirongGeography,
+      onHistoricalRelief: (status) => {
+        if (seq === sceneSeq) reliefStatus.value = status
+      },
+      onScaleChanged: (nextScale) => {
+        if (seq === sceneSeq) scale.value = nextScale
+      },
+      onGlobalViewChanged: (visible) => {
+        if (seq === sceneSeq) globalTerrainVisible.value = visible
+      },
+      // 离线档优先用真实高程阴影，缺失时仍可使用本地 OSM 道路瓦片。
       basemap: {
         template: MAP_ASSET_PATHS.basemapTemplate,
         pmtilesUrl: MAP_ASSET_PATHS.reliefPmtiles,
-        prefer: 'template',
+        prefer: 'pmtiles',
         maximumLevel: 10,
       },
       fetchLike: probeFetch,
       onViewChanged: (next, nextZoom) => {
-        if (seq !== sceneSeq) return
-        bbox.value = next ? expandBBox(next) : null
-        zoom.value = nextZoom
+        if (seq === sceneSeq) updateMapView(next, nextZoom)
       },
       onSelect: (featureId) => {
         if (seq === sceneSeq) showFeature(featureId)
       },
       themeMode: themeMode.value,
-      // 「深空皮肤」：只在拉远到能看见地球弧线时生效（高度门槛在 viewer.ts）。
-      // 只改画面观感，不动影像/地形/要素；其他页面不传这个开关，表现与之前一致。
-      spaceLook: true,
     })
     if (seq !== sceneSeq || target !== host.value) {
       created.destroy()
@@ -283,7 +429,11 @@ async function initScene(): Promise<void> {
     }
     scene.value = created
     sceneInfo.value = created.info
+    if (cameraBounds.value !== initialRectangle) created.fitBBox(cameraBounds.value)
+    created.setHistoryVisible(isCase.value)
+    for (const layer of Object.keys(visibility.value) as PlanLayer[]) created.setLayerVisible(layer, visibility.value[layer])
     created.render(plan.value)
+    created.setWeather(visibleWeather.value)
   } catch (error) {
     if (seq !== sceneSeq) return
     sceneError.value = error instanceof Error ? error.message : String(error)
@@ -291,6 +441,12 @@ async function initScene(): Promise<void> {
   } finally {
     if (seq === sceneSeq) sceneLoading.value = false
   }
+}
+
+function updateMapView(next: BBox | null, nextZoom: number): void {
+  weatherViewport.value = next
+  bbox.value = next ? expandBBox(next) : null
+  zoom.value = nextZoom
 }
 
 function onToggle(layer: PlanLayer, visible: boolean): void {
@@ -307,14 +463,85 @@ function onToggleRisk(level: RiskLevel): void {
 }
 
 function showFeature(id: string | null): void {
+  if (id?.startsWith('weather-')) {
+    weatherPicked.value = id
+    openWeather()
+    return
+  }
+  weatherPicked.value = null
+  const cluster = id && plan.value.clusters.find((item) => item.id === id)
+  if (cluster) {
+    selectedId.value = null
+    focusBusinessPoint(cluster.lonlat)
+    return
+  }
+  const site = isCase.value && GYIRONG_CASE.sites.find((item) => item.id === id)
+  if (site) {
+    selectedId.value = null
+    activeCaseSite.value = site
+    caseExpanded.value = true
+    panelsCollapsed.value = true
+    mobilePane.value = null
+    settingsOpen.value = false
+    return
+  }
   selectedId.value = id
-  if (id && compact.value) mobilePane.value = 'layers'
+  if (!id) return
+  weatherOpen.value = false
+  if (compact.value) mobilePane.value = 'layers'
+  else panelsCollapsed.value = false
 }
 
 function selectFeature(id: string): void {
   showFeature(id)
   const feature = detailOf(layers.value, id)
-  if (feature && 'lonlat' in feature && feature.lonlat) scene.value?.focusAt(feature.lonlat)
+  if (feature && 'lonlat' in feature && feature.lonlat) focusBusinessPoint(feature.lonlat)
+}
+
+function focusBusinessPoint(point: { lon: number; lat: number }): void {
+  if (scene.value) scene.value.focusAt(point)
+  else amapPanel.value?.focusAt(point)
+}
+
+function moveCamera(bounds: BBox, mainlandChina = !isCase.value, fit = false): void {
+  fitCurrentViewport.value = fit
+  cameraBounds.value = { ...bounds }
+  cameraInMainland.value = mainlandChina
+  scene.value?.fitBBox(bounds)
+}
+
+function selectPreset(next: MapPreset): void {
+  preset.value = next
+  selectedId.value = null
+  activeCaseSite.value = null
+  focusNote.value = ''
+  panelsCollapsed.value = isCase.value
+  mobilePane.value = null
+  settingsOpen.value = false
+  caseExpanded.value = null
+  scene.value?.setHistoryVisible(isCase.value)
+  moveCamera(isCase.value ? GYIRONG_CASE.bounds : TIBET_RECTANGLE)
+}
+
+function zoomMap(direction: 1 | -1): void {
+  if (scene.value) scene.value.zoomBy(direction)
+  else amapPanel.value?.zoomBy(direction)
+}
+
+function focusCaseSite(site: HistoricalSite): void {
+  showFeature(site.id)
+  const { lon, lat } = site.lonlat
+  moveCamera({ west: lon - 0.028, east: lon + 0.028, south: lat - 0.018, north: lat + 0.018 }, site.mainlandChina)
+  if (compact.value) caseExpanded.value = false
+}
+
+function focusPortCloseup(): void {
+  const port = GYIRONG_CASE.sites[0]
+  const { lon, lat } = port.lonlat
+  if (basemapMode.value === 'amap') chooseBasemap('offline')
+  showFeature(port.id)
+  moveCamera({ west: lon - 0.008, east: lon + 0.008, south: lat - 0.006, north: lat + 0.006 }, true, true)
+  if (compact.value) caseExpanded.value = false
 }
 
 function focusAll(): void {
@@ -327,7 +554,9 @@ function focusAll(): void {
   // "站点无经纬度 × 6"——两处隔着几十像素互相打脸。
   const missingStations = unlocated.value.filter((item) => item.kind === 'station').length
   const box = bboxOfPoints(points)
-  scene.value?.fitBBox(box ? expandBBox(box) : TIBET_RECTANGLE)
+  if (isCase.value) selectPreset('tibet')
+  if (box) moveCamera(expandBBox(box))
+  else moveCamera(TIBET_RECTANGLE)
   focusNote.value = focusAllNote(located, located + missingStations)
 }
 
@@ -369,12 +598,32 @@ onBeforeUnmount(() => {
 watch(themeMode, (mode) => {
   scene.value?.setTheme(mode)
 })
+watch(visibleWeather, (layer) => scene.value?.setWeather(layer))
+watch(() => route.query.view, (view) => selectPreset(view === 'tibet' ? 'tibet' : 'gyirong'))
 
-/** 底图档翻转：页面级换渲染面（v-if 切 AmapMap/Cesium host），把选择记下来（下次进页还是它）。 */
+/** 只记忆用户的选择；自动回退后，下次进页仍可重试在线地形。 */
+function chooseBasemap(mode: BasemapMode): void {
+  basemapWarning.value = ''
+  if (mode === 'amap' && basemapMode.value === 'offline') {
+    const view = scene.value?.basemapSwitchBounds()
+    if (view && view.east > view.west && view.east - view.west < 45 && view.north > view.south) {
+      cameraBounds.value = view
+      fitCurrentViewport.value = true
+    }
+    settingsOpen.value = false
+  }
+  basemapMode.value = mode
+  writeBasemapMode(storage, mode)
+}
+
+function onAmapFailure(): void {
+  basemapWarning.value = '高德卫星暂不可用，已切换到离线地形。'
+  basemapMode.value = 'offline'
+}
+
 watch(
   basemapMode,
   (mode) => {
-    writeBasemapMode(typeof localStorage === 'undefined' ? null : localStorage, mode)
     /**
      * 切到高德：`v-if` 会把 Cesium 的宿主 div 整个卸载掉，**连带把 canvas 一起带走**；
      * 而场景对象还活着（`scene.value !== null`），于是切回离线时既不重建、也没有画布可画——
@@ -383,6 +632,12 @@ watch(
      */
     if (mode === 'amap') {
       sceneSeq++
+      bbox.value = null
+      weatherViewport.value = null
+      zoom.value = 0
+      scale.value = null
+      reliefStatus.value = null
+      globalTerrainVisible.value = false
       sceneLoading.value = false
       scene.value?.destroy()
       scene.value = null
@@ -416,7 +671,7 @@ watch(visibility, (value) => {
   <div
     ref="shellRef"
     class="map-shell"
-    :class="{ 'is-panels-collapsed': panelsCollapsed, 'is-compact': compact }"
+    :class="{ 'is-panels-collapsed': panelsCollapsed, 'is-compact': compact, 'is-case': showCaseCard, 'is-weather-open': weatherOpen }"
     :style="{ '--map-bar-end': toolbarHeight > 0 ? `${toolbarHeight + 24}px` : '78px' }"
   >
     <!-- 顶部悬浮工具条：标题 + 底图/区域/刷新/定位/自动刷新，半透明压在图上 -->
@@ -424,12 +679,8 @@ watch(visibility, (value) => {
       <PageHero
         class="map-floatbar__hero"
         title="应急一张图"
-        :badge="basemapMode === 'amap' ? '在线底图' : '离线三维'"
-        :caption="
-          basemapMode === 'amap'
-            ? '在线底图使用高德服务，要素坐标已按 GCJ-02 纠偏。'
-            : '底图、地形与矢量瓦片由本进程自托管，弱网与断网下仍可用。'
-        "
+        :badge="basemapSummary"
+        caption="查看吉隆案例地形、卫星影像和全域监测图层。"
       />
       <a-button
         v-if="compact"
@@ -437,16 +688,29 @@ watch(visibility, (value) => {
         :aria-expanded="settingsOpen"
         aria-controls="map-tools"
         data-testid="map-settings"
-        @click="settingsOpen = !settingsOpen"
+        @click="weatherOpen = false; settingsOpen = !settingsOpen"
       >
         <template #icon><SettingOutlined aria-hidden="true" /></template>
         地图设置
       </a-button>
+      <button
+        type="button" class="map-weather-trigger"
+        :aria-expanded="weatherOpen" aria-controls="map-weather"
+        :aria-label="`天气与雨情 · ${weatherButtonLabel}`"
+        @click="toggleWeather"
+      >
+        <CloudOutlined aria-hidden="true" />
+        <span>{{ weatherButtonLabel }}</span>
+      </button>
+      <div class="map-preset" role="group" aria-label="地图视野">
+        <button type="button" :aria-pressed="isCase" @click="selectPreset('gyirong')">吉隆案例</button>
+        <button type="button" :aria-pressed="!isCase" @click="selectPreset('tibet')">西藏全域</button>
+      </div>
       <div v-show="!compact || settingsOpen" id="map-tools" class="map-floatbar__tools">
         <!-- 底图档：默认离线自托管（交付形态，见 external.ts 的默认档论证）；高德是带 key 的 JS API 档，加载失败会在图上说明 -->
-        <a-radio-group v-model:value="basemapMode" size="small" button-style="solid" data-testid="basemap-mode">
-          <a-radio-button value="offline">离线自托管</a-radio-button>
-          <a-radio-button value="amap">高德在线</a-radio-button>
+        <a-radio-group :value="basemapMode" size="small" button-style="solid" data-testid="basemap-mode" @update:value="chooseBasemap">
+          <a-radio-button value="offline">本地地形</a-radio-button>
+          <a-radio-button value="amap">高德卫星</a-radio-button>
         </a-radio-group>
         <a-select v-model:value="regionCode" class="map-region" show-search placeholder="全部区域" aria-label="区域" @change="changeRegion">
           <a-select-option value="">全部区域</a-select-option>
@@ -468,8 +732,8 @@ watch(visibility, (value) => {
     </div>
 
     <!-- 提示：加载告警与"定位退不回全局"的原因，压在工具条下方 -->
-    <div v-if="(!compact && notes.length) || focusNote" class="map-floatnotes">
-      <a-alert v-for="note in compact ? [] : notes" :key="note" type="warning" show-icon :message="note" />
+    <div v-if="focusNote || (basemapWarning && showCaseCard && !compact)" class="map-floatnotes">
+      <a-alert v-if="basemapWarning && showCaseCard && !compact" type="warning" show-icon :message="basemapWarning" />
       <!-- 定位这颗按钮先前点了没反应也不解释；现在把"退不回全局视野的原因"说一句 -->
       <p v-if="focusNote" class="muted" data-testid="focus-note">{{ focusNote }}</p>
     </div>
@@ -477,7 +741,18 @@ watch(visibility, (value) => {
     <!-- 地图铺满整块，左右列与顶部条都是悬浮层 -->
     <div class="map-frame">
       <!-- 高德 JS API 是另一套渲染引擎，与 Cesium 不叠在同一块画布上：整块换表面 -->
-      <AmapMap v-if="basemapMode === 'amap'" :plan="plan" @select="selectFeature" />
+      <AmapMap
+        v-if="basemapMode === 'amap'"
+        ref="amapPanel"
+        :plan="plan"
+        :visibility="visibility"
+        :camera="amapCamera"
+        :historical-sites="isCase ? GYIRONG_CASE.sites : undefined"
+        :weather="visibleWeather"
+        @view="updateMapView"
+        @select="selectFeature"
+        @failure="onAmapFailure"
+      />
       <template v-else>
         <div ref="host" class="map-host" />
         <div v-if="!sceneInfo && !sceneError" class="map-placeholder" role="status">
@@ -500,6 +775,92 @@ watch(visibility, (value) => {
       </template>
     </div>
 
+    <div v-if="isCase && (showCaseCard || weatherOpen || weatherMode === 'daily')" class="map-camera-controls" role="group" aria-label="地图视角">
+      <button type="button" aria-label="放大地图" title="放大地图" @click="zoomMap(1)"><PlusOutlined aria-hidden="true" /></button>
+      <button type="button" aria-label="缩小地图" title="缩小地图" @click="zoomMap(-1)"><MinusOutlined aria-hidden="true" /></button>
+      <button type="button" aria-label="重置吉隆视野" title="重置吉隆视野" @click="selectPreset('gyirong')"><AimOutlined aria-hidden="true" /></button>
+    </div>
+
+    <MapWeatherPanel
+      class="map-weather-position" :open="weatherOpen" :mode="weatherMode" :picked="weatherPicked" :subdued="subduedRain"
+      @close="weatherOpen = false" @mode="changeWeatherMode" @layer="weatherLayer = $event"
+      @summary="weatherSummary = $event" @fit="fitWeather"
+    />
+
+    <aside v-if="showCaseCard" class="map-case" aria-labelledby="map-case-title">
+      <button
+        type="button"
+        class="map-case__heading"
+        :aria-expanded="showCaseDetails"
+        aria-controls="map-case-details"
+        @click="caseExpanded = !showCaseDetails"
+      >
+        <span class="map-case__heading-text">
+          <span class="map-case__meta"><span class="map-case__dot" />历史案例 <time :datetime="GYIRONG_CASE.date">{{ GYIRONG_CASE.date }}</time></span>
+          <strong id="map-case-title">吉隆口岸冰岩崩—泥石流</strong>
+        </span>
+        <DownOutlined aria-hidden="true" class="map-case__chevron" />
+      </button>
+      <div v-show="showCaseDetails" id="map-case-details" class="map-case__details">
+        <p class="map-case__route">
+          尼泊尔蓝塘里壤峰北坡冰岩崩，碎屑沿沟道下泄，经普热普强藏布、东林藏布，冲击吉隆口岸。
+        </p>
+        <dl class="map-case__metrics">
+          <div><dt>沿沟道传播</dt><dd>约 22 <small>km</small></dd></div>
+          <div><dt>启动区海拔</dt><dd>约 5,200 <small>m</small></dd></div>
+        </dl>
+        <div class="map-case__actions">
+          <button
+            v-for="site in GYIRONG_CASE.sites"
+            :key="site.id"
+            type="button"
+            :aria-pressed="activeCaseSite?.id === site.id"
+            @click="focusCaseSite(site)"
+          >
+            <AimOutlined aria-hidden="true" />{{ site.action }}
+          </button>
+        </div>
+        <p class="map-case__note" aria-live="polite">
+          {{ activeCaseSite?.note ?? (closeupSource || detailedTerrainVisible ? '蓝线为常态水系，金线为 G216。灾害路径可查看遥感解译。' : '灾害路径可查看遥感解译。') }}
+        </p>
+        <div class="map-case__sources" aria-label="案例资料">
+          <a v-for="source in GYIRONG_CASE.sources" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">
+            {{ source.label }} ↗
+          </a>
+          <a v-if="detailedTerrainVisible || closeupSource" :href="gyirongGeography.source" target="_blank" rel="noopener noreferrer">路网和水系来源 ↗</a>
+        </div>
+      </div>
+    </aside>
+
+    <div v-if="isCase && (!compact || (!settingsOpen && mobilePane === null && !weatherOpen)) && (scale || outsideDetailedTerrain || basemapMode === 'amap')" class="map-reference">
+      <div v-if="scale" class="map-reference__scale" :aria-label="`地图比例尺 ${scaleText}`">
+        <span>{{ scaleText }}</span>
+        <i :style="{ width: `${scale.width}px` }" />
+      </div>
+      <div v-if="detailedTerrainVisible" class="map-reference__contours">
+        <span class="map-reference__ramp" :style="{ backgroundImage: terrainRamp }" role="img" aria-label="海拔低到高的颜色" />
+        <span>{{ gyirongRelief.contourIntervalM }} m 等高距</span>
+      </div>
+      <a v-if="closeupSource" class="map-reference__return" :href="closeupSource.catalog" target="_blank" rel="noopener noreferrer" :title="`成像 ${closeupSource.capturedAt}`">
+        {{ closeupSource.provider }} · {{ closeupSource.resolutionM }} m ↗
+      </a>
+      <button v-else-if="basemapMode === 'amap' && zoom >= 13" type="button" class="map-reference__return" @click="focusPortCloseup">
+        <AimOutlined aria-hidden="true" /> 口岸近景
+      </button>
+      <button
+        v-if="(detailedTerrainVisible || closeupSource) && (activeCaseSite || (scale && scale.meters <= 200))"
+        type="button"
+        class="map-reference__return"
+        @click="chooseBasemap('amap')"
+      >
+        看高德卫星
+      </button>
+      <button v-if="outsideDetailedTerrain" type="button" class="map-reference__return" @click="selectPreset('gyirong')">
+        <AimOutlined aria-hidden="true" />
+        返回吉隆地形
+      </button>
+    </div>
+
     <!-- 左列：离线状态 + 未定位清单 + 未渲染的几何 -->
     <div
       id="map-status"
@@ -507,14 +868,16 @@ watch(visibility, (value) => {
       class="map-float-col map-float-col--left"
       :inert="!compact && panelsCollapsed"
     >
-      <a-alert v-if="compact && notes.length" type="warning" show-icon message="部分地图数据不可用">
-        <template #description><ul class="map-diagnostic"><li v-for="note in notes" :key="note">{{ note }}</li></ul></template>
-      </a-alert>
+      <a-alert v-if="basemapWarning" type="warning" show-icon :message="basemapWarning" />
+      <details v-if="notes.length" class="map-data-issues">
+        <summary>地图数据缺少 {{ notes.length }} 项</summary>
+        <ul class="map-diagnostic"><li v-for="note in notes" :key="note">{{ note }}</li></ul>
+      </details>
       <MapStatusPanel
         :status="machine.status"
         :status-reason="machine.reason"
-        :basemap-message="sceneInfo?.basemapMessage ?? '尚未建场（状态见上方标签）'"
-        :terrain-message="sceneInfo?.terrainMessage ?? '尚未建场'"
+        :basemap-message="basemapMode === 'amap' ? '高德官方卫星底图' : sceneInfo?.basemapMessage ?? '尚未建场（状态见上方标签）'"
+        :terrain-message="basemapMode === 'amap' ? '高德在线 3D 地形' : sceneInfo?.terrainMessage ?? '尚未建场'"
         :unlocated="unlocated"
         :rejected="layers.rejected"
         :zoom="zoom"
@@ -561,7 +924,7 @@ watch(visibility, (value) => {
 
     <!-- 收起后右列滑出视口，留一枚悬浮按钮把它拉回来 -->
     <a-button
-      v-if="panelsCollapsed && !compact"
+      v-if="panelsCollapsed && !compact && !weatherOpen"
       class="map-expand-btn"
       size="small"
       title="展开两侧面板"
@@ -571,7 +934,7 @@ watch(visibility, (value) => {
       « 展开面板
     </a-button>
 
-    <div v-if="compact" class="map-pane-switch" role="group" aria-label="地图面板">
+    <div v-if="compact && !weatherOpen" class="map-pane-switch" role="group" aria-label="地图面板">
       <a-button :aria-pressed="mobilePane === 'layers'" aria-controls="map-layers" @click="toggleMobilePane('layers')">
         <template #icon><AppstoreOutlined aria-hidden="true" /></template>
         图层与详情
@@ -582,17 +945,17 @@ watch(visibility, (value) => {
       </a-button>
     </div>
 
-    <div class="scene-bar" :class="{ 'is-compact': compact }" v-show="!compact || mobilePane === null">
+    <div class="scene-bar" :class="{ 'is-compact': compact }" v-show="!compact || (mobilePane === null && !weatherOpen)">
       <!-- 视野与缩放是 Cesium 相机的量，高德档下没有这两个数，别摆一个假"未就绪" -->
-      <span v-if="!compact && basemapMode === 'offline'">
+      <span v-if="!compact && !isCase && basemapMode === 'offline'">
         视野：{{
           bbox
             ? `${bbox.west.toFixed(2)}, ${bbox.south.toFixed(2)} → ${bbox.east.toFixed(2)}, ${bbox.north.toFixed(2)}`
             : '未就绪'
         }}
       </span>
-      <span>上图 {{ plottedTotal }} · 未定位 {{ unlocated.length }}</span>
-      <span v-if="!compact && basemapMode === 'offline'">· 缩放 {{ zoom }}</span>
+      <span>业务上图 {{ plottedTotal }} · 未定位 {{ unlocated.length }}</span>
+      <span v-if="!compact && !isCase && basemapMode === 'offline'">· 缩放 {{ zoom }}</span>
       <span v-if="!compact && plan.clustered" class="hint">· 已按网格聚合（圆点上的数字=该格要素数）</span>
       <!-- 底图来源与坐标系要说在画面上：只写在代码注释里，看图的人无从知道落点被纠过偏 -->
       <span v-if="!compact" class="hint">· 底图：{{ basemapSummary }}</span>
@@ -652,6 +1015,79 @@ watch(visibility, (value) => {
   min-width: 0;
   max-width: 100%;
 }
+.map-weather-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding-inline: 10px;
+  border: 1px solid color-mix(in srgb, var(--aeg-color-overview-accent) 35%, var(--aeg-color-map-panel-border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--aeg-color-overview-accent) 9%, var(--aeg-color-map-floatbar-bg));
+  color: var(--aeg-color-overview-accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.map-weather-trigger:is(:hover, [aria-expanded='true']) {
+  border-color: var(--aeg-color-overview-accent);
+  background: color-mix(in srgb, var(--aeg-color-overview-accent) 17%, var(--aeg-color-map-floatbar-bg));
+}
+.map-weather-position {
+  position: absolute;
+  z-index: 7;
+  top: var(--map-bar-end);
+  right: var(--aeg-space-s3);
+  width: min(326px, calc(100% - 24px));
+  max-height: calc(100% - var(--map-bar-end) - 145px);
+}
+.is-compact .map-weather-position {
+  top: auto;
+  bottom: 29px;
+  inset-inline: var(--aeg-space-s3);
+  width: auto;
+  max-height: min(54%, calc(100% - var(--map-bar-end) - 75px));
+}
+.is-compact.is-weather-open .map-camera-controls {
+  top: var(--map-bar-end);
+  bottom: auto;
+}
+:global(.app-shell:has(.map-shell.is-compact.is-weather-open) .assistant-dock:not(.is-open)) {
+  visibility: hidden;
+}
+.is-compact .map-weather-trigger { min-height: 38px; }
+.map-preset {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-lg);
+  background: color-mix(in srgb, var(--aeg-color-sunken), transparent 22%);
+}
+.map-preset button {
+  min-height: 30px;
+  padding: 0 var(--aeg-space-s3);
+  border: 1px solid transparent;
+  border-radius: var(--aeg-radius-md);
+  background: transparent;
+  color: var(--aeg-color-map-floatbar-text-muted);
+  font: inherit;
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.map-preset button[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--aeg-color-overview-accent), transparent 68%);
+  background: color-mix(in srgb, var(--aeg-color-overview-accent), var(--aeg-color-map-floatbar-bg) 86%);
+  color: var(--aeg-color-overview-accent);
+}
+.map-preset button:hover {
+  color: var(--aeg-color-map-floatbar-text);
+}
 .map-region {
   width: 150px;
   max-width: 100%;
@@ -695,6 +1131,229 @@ watch(visibility, (value) => {
   border-radius: var(--aeg-radius-pill);
   background: var(--aeg-color-map-floatbar-bg);
 }
+.is-case:not(.is-compact) .map-floatnotes {
+  left: max(calc(var(--aeg-space-s3) + 320px), 25%);
+}
+
+.map-camera-controls,
+.map-reference {
+  position: absolute;
+  z-index: 5;
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-map-floatbar-bg);
+  color: var(--aeg-color-map-floatbar-text);
+  box-shadow: var(--aeg-shadow-md);
+}
+.map-camera-controls {
+  right: calc(var(--aeg-space-s3) + 64px);
+  bottom: 108px;
+  display: grid;
+  padding: 3px;
+}
+.map-camera-controls button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--aeg-radius-md);
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  cursor: pointer;
+}
+.map-camera-controls button:is(:hover, :focus-visible) {
+  color: var(--aeg-color-overview-accent);
+  background: var(--aeg-color-sunken);
+}
+.map-reference {
+  left: var(--aeg-space-s3);
+  bottom: 66px;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 7px 10px;
+  font-size: var(--aeg-font-xs);
+  font-variant-numeric: tabular-nums;
+}
+.map-reference__scale,
+.map-reference__contours {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 3px;
+  line-height: 1.2;
+}
+.map-reference__scale i {
+  display: block;
+  height: 5px;
+  border: solid currentColor;
+  border-width: 0 1px 1px;
+}
+.map-reference__contours {
+  padding-left: 10px;
+  border-left: 1px solid var(--aeg-color-map-panel-border);
+  color: var(--aeg-color-map-floatbar-text-muted);
+}
+.map-reference__ramp {
+  width: 100%;
+  height: 4px;
+  border-radius: var(--aeg-radius-pill);
+}
+.map-reference__return {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: var(--aeg-radius-md);
+  background: transparent;
+  color: var(--aeg-color-overview-accent);
+  font: inherit;
+  cursor: pointer;
+}
+.map-reference__return:hover {
+  background: var(--aeg-color-sunken);
+}
+
+.map-case {
+  position: absolute;
+  top: var(--map-bar-end);
+  left: var(--aeg-space-s3);
+  z-index: 5;
+  width: 306px;
+  max-height: calc(100% - var(--map-bar-end) - 58px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-xl);
+  background: var(--aeg-color-map-floatbar-bg);
+  box-shadow: var(--aeg-shadow-lg);
+  color: var(--aeg-color-map-floatbar-text);
+}
+.map-case__heading {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--aeg-space-s2);
+  padding: var(--aeg-space-s3) var(--aeg-space-s4);
+  border: none;
+  border-radius: var(--aeg-radius-xl);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.map-case__heading-text {
+  display: grid;
+  gap: var(--aeg-space-s1);
+}
+.map-case__heading strong {
+  font-size: var(--aeg-font-md);
+  line-height: 1.3;
+}
+.map-case__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--aeg-color-overview-accent);
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-semibold);
+}
+.map-case__meta time {
+  margin-inline-start: auto;
+  color: var(--aeg-color-map-floatbar-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.map-case__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.map-case__chevron {
+  color: var(--aeg-color-map-floatbar-text-muted);
+}
+.map-case__heading[aria-expanded='true'] .map-case__chevron {
+  transform: rotate(180deg);
+}
+.map-case__details {
+  display: grid;
+  gap: var(--aeg-space-s2);
+  padding: 0 var(--aeg-space-s4) var(--aeg-space-s3);
+  font-size: var(--aeg-font-sm);
+  color: var(--aeg-color-map-floatbar-text-muted);
+}
+.map-case__details p,
+.map-case__metrics,
+.map-case__metrics dd {
+  margin: 0;
+}
+.map-case__route {
+  line-height: 1.55;
+}
+.map-case__metrics,
+.map-case__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--aeg-space-s2);
+}
+.map-case__metrics > div {
+  padding: 6px 9px;
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-md);
+  background: color-mix(in srgb, var(--aeg-color-sunken), transparent 24%);
+}
+.map-case__metrics dt,
+.map-case__metrics small,
+.map-case__note {
+  font-size: var(--aeg-font-xs);
+}
+.map-case__metrics dd {
+  color: var(--aeg-color-map-floatbar-text);
+  font-size: var(--aeg-font-md);
+  font-weight: var(--aeg-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.map-case__actions button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-md);
+  background: transparent;
+  color: var(--aeg-color-overview-accent);
+  font: inherit;
+  cursor: pointer;
+}
+.map-case__actions button:is(:hover, [aria-pressed='true']) {
+  border-color: var(--aeg-color-overview-accent);
+  background: color-mix(in srgb, var(--aeg-color-overview-accent), transparent 90%);
+}
+.map-case__sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--aeg-space-s2);
+  padding-top: 4px;
+  border-top: 1px solid var(--aeg-color-map-panel-border);
+}
+.map-case__sources a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  color: var(--aeg-color-overview-accent);
+  font-size: var(--aeg-font-xs);
+}
+.map-case__sources a:hover {
+  text-decoration: underline;
+}
 
 /* 地图铺满整块 */
 .map-frame {
@@ -717,18 +1376,6 @@ watch(visibility, (value) => {
 .map-host :deep(.cesium-credit-expand-link) {
   display: inline-block;
   padding: 5px 0;
-}
-/*
- * 「深空皮肤」的暗角：只在看得见地球弧线时压一圈，让球体边缘"浮"在星空里。
- * 颜色本体由 viewer.ts 叠的程序化能量纹理负责——不对画布做整体调色，
- * 那会把星空和要素一起染蓝。类名由 viewer.ts 按相机高度切换。
- */
-.map-host.is-space-view::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(circle at 50% 46%, transparent 42%, var(--aeg-color-overlay-scrim) 100%);
 }
 .map-placeholder {
   position: absolute;
@@ -819,6 +1466,11 @@ watch(visibility, (value) => {
   left: var(--aeg-space-s3);
   right: var(--aeg-space-s3);
 }
+.map-shell.is-case .scene-bar {
+  right: auto;
+  width: max-content;
+  max-width: calc(100% - 24px);
+}
 /* 收起按钮：定位在「要素详情」卡的右下角（锚点由 MapLayersPanel 的 .detail-card 提供） */
 .map-panel-toggle {
   position: absolute;
@@ -829,7 +1481,7 @@ watch(visibility, (value) => {
 .map-expand-btn {
   position: absolute;
   top: var(--map-bar-end);
-  right: var(--aeg-space-s3);
+  right: calc(var(--aeg-space-s3) + 64px);
   z-index: 7;
   border-color: var(--aeg-color-map-panel-border);
   background: var(--aeg-color-map-floatbar-bg);
@@ -866,7 +1518,7 @@ watch(visibility, (value) => {
   position: absolute;
   left: 324px;
   right: 352px;
-  bottom: var(--aeg-space-s3);
+  bottom: 30px;
   z-index: 6;
   display: flex;
   flex-wrap: wrap;
@@ -890,15 +1542,57 @@ watch(visibility, (value) => {
   color: var(--aeg-color-map-floatbar-text-muted);
 }
 .map-diagnostic {
-  margin: 0;
+  margin: 4px 0 10px;
   padding-inline-start: var(--aeg-space-s3);
+}
+.map-data-issues {
+  padding: 0 var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-map-panel-bg);
+  color: var(--aeg-color-map-panel-text-muted);
+  font-size: var(--aeg-font-sm);
+  pointer-events: auto;
+}
+.map-data-issues summary {
+  padding: 9px 0;
+  color: var(--aeg-color-map-panel-text);
+  cursor: pointer;
 }
 .is-compact .map-floatbar {
   gap: var(--aeg-space-s2);
   padding-inline: var(--aeg-space-s3);
 }
+.is-compact .map-floatbar__hero {
+  flex: 1 1 0;
+}
 .is-compact .map-floatbar__tools {
   flex-basis: 100%;
+}
+.is-compact .map-preset {
+  flex-basis: 100%;
+}
+.is-compact .map-preset button {
+  flex: 1 1 0;
+  min-height: 36px;
+}
+.is-compact .map-case {
+  inset-inline: var(--aeg-space-s3);
+  width: auto;
+  max-height: calc(100% - var(--map-bar-end) - 130px);
+}
+.is-compact .map-camera-controls {
+  right: var(--aeg-space-s3);
+  bottom: 162px;
+}
+.is-compact .map-camera-controls button {
+  width: 40px;
+  height: 40px;
+}
+.is-compact .map-reference {
+  bottom: 143px;
+  max-width: calc(100% - 2 * var(--aeg-space-s3));
+  flex-wrap: wrap;
 }
 .is-compact .map-floatbar__tools :deep(.ant-radio-button-wrapper),
 .is-compact .map-floatbar__tools :deep(.ant-btn),
@@ -915,9 +1609,9 @@ watch(visibility, (value) => {
 .is-compact .map-float-col {
   inset-inline: var(--aeg-space-s3);
   top: auto;
-  bottom: 76px;
+  bottom: 102px;
   width: auto;
-  max-height: min(55%, calc(100% - var(--map-bar-end) - 84px));
+  max-height: min(55%, calc(100% - var(--map-bar-end) - 110px));
   padding: var(--aeg-space-s2);
   border: 1px solid var(--aeg-color-map-panel-border);
   border-radius: var(--aeg-radius-xl);
@@ -927,7 +1621,7 @@ watch(visibility, (value) => {
 }
 .map-pane-switch {
   position: absolute;
-  bottom: 30px;
+  bottom: 40px;
   inset-inline: var(--aeg-space-s3);
   z-index: 7;
   display: grid;
@@ -946,9 +1640,16 @@ watch(visibility, (value) => {
 }
 .scene-bar.is-compact {
   inset-inline: var(--aeg-space-s3);
-  bottom: 86px;
+  bottom: 103px;
   width: max-content;
   max-width: calc(100% - 24px);
+}
+
+@media (max-width: 370px) {
+  .is-compact .map-settings-toggle {
+    padding-inline: 8px;
+  }
+  .is-compact .map-weather-trigger { padding-inline: 8px; }
 }
 
 /* 1024 档：两列收窄，把中间的地图让出来 */

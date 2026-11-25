@@ -27,6 +27,7 @@ from aegis.connectors.mqtt import MqttSource
 from aegis.connectors.precip_daily import PrecipDailySource
 from aegis.connectors.precip_hourly import PrecipHourlySource
 from aegis.connectors.simulator import HazardScenarioSimulator
+from aegis.connectors.trace import AnalyticsReceipt
 from aegis.connectors.weather_api import WeatherApiSource
 from aegis.contracts import ContractRegistry
 from aegis.domain.chain import ChainResult
@@ -914,9 +915,10 @@ def create_container(
     use_simulator = cfg.simulator_enabled if with_simulator is None else with_simulator
     simulator, simulator_state = build_simulator(cfg, enabled=use_simulator)
 
-    async def on_readings(readings: Sequence[TelemetryReading]) -> None:
+    async def on_readings(readings: Sequence[TelemetryReading]) -> AnalyticsReceipt | None:
         if analytics is not None:
-            await analytics.record_readings(readings)
+            return await analytics.record_readings(readings)
+        return None
 
     ingest = IngestService(
         gateway=gateway,

@@ -32,7 +32,7 @@ const ARTIFACT_PATH = join('test-results', 'e2e', 'map-canvas.png')
 const PLATEAU = { lon: 85.0, lat: 31.0 }
 const LOW_INTERIOR = { lon: 60.0, lat: -20.0 }
 
-const MAP_ROUTE = '/map?mapDebug=1'
+const MAP_ROUTE = '/map?view=tibet&mapDebug=1'
 const CESIUM_ERROR_PANEL = '.cesium-widget-errorPanel'
 const MAP_CANVAS = '.cesium-widget canvas'
 /** 真正被当作数据消费的资产：地形瓦与 PMTiles 归档。它们被兜底页顶掉就是故障。 */
@@ -217,6 +217,71 @@ test('整条链路没有把渲染相关异常吞进 console', async ({ page }) =
   expect(renderRelated, `渲染相关报错：${renderRelated.slice(0, 3).join(' | ')}`).toEqual([])
 })
 
+test('吉隆案例连续缩小时保留局部视野，切换全域后收起等高线图例', async ({ page }) => {
+  const legend = page.getByText('500 m 等高距', { exact: true })
+  const readHeight = async () => (await readSceneFacts(page)).cameraHeightMeters ?? Number.POSITIVE_INFINITY
+
+  await page.getByRole('button', { name: '吉隆案例', exact: true }).click()
+  await expect(legend).toBeVisible({ timeout: 25_000 })
+  await expect.poll(readHeight).toBeLessThan(50_000)
+
+  const zoomOut = page.getByRole('button', { name: '缩小地图', exact: true })
+  for (let clicks = 0; clicks < 12; clicks += 1) await zoomOut.click()
+  await expect.poll(readHeight).toBeGreaterThan(60_000)
+  await expect.poll(readHeight).toBeLessThan(90_000)
+  await expect(legend).toBeVisible()
+  await expect(page.locator('.map-floatbar__hero')).not.toContainText('全球地形')
+
+  const returnToCase = page.getByRole('button', { name: '返回吉隆地形' })
+  for (let drags = 0; drags < 4 && !(await returnToCase.isVisible()); drags += 1) {
+    await page.mouse.move(435, 530)
+    await page.mouse.down()
+    await page.mouse.move(1100, 530, { steps: 14 })
+    await page.mouse.up()
+  }
+  await expect(returnToCase).toBeVisible()
+  await expect(legend).toBeHidden()
+  await returnToCase.click()
+  await expect(legend).toBeVisible()
+
+  await page.getByRole('button', { name: '西藏全域', exact: true }).click()
+  await expect(legend).toBeHidden()
+  await expect.poll(readHeight).toBeGreaterThan(600_000)
+})
+
+test('定位口岸后立即切到高德，加载失败仍保留口岸近景', async ({ page }) => {
+  await page.route('https://webapi.amap.com/**', (route) => route.abort())
+  await page.getByRole('button', { name: '吉隆案例', exact: true }).click()
+  const legend = page.getByText('500 m 等高距', { exact: true })
+  await expect(legend).toBeVisible({ timeout: 25_000 })
+  await page.getByRole('button', { name: '定位口岸', exact: true }).click()
+  await page.getByRole('button', { name: '看高德卫星', exact: true }).click({ timeout: 15_000 })
+  await expect(page.locator('.map-floatnotes')).toContainText('已切换到离线地形')
+  await expect(page.locator('.map-floatbar__hero')).toContainText(/精细地形|口岸近景|口岸高清/, { timeout: 25_000 })
+  await expect.poll(async () => (await readSceneFacts(page)).cameraHeightMeters ?? Infinity).toBeLessThan(16_000)
+  await expect(page.getByRole('button', { name: '吉隆案例', exact: true })).toHaveAttribute('aria-pressed', 'true')
+})
+
+test('吉隆口岸放大后加载真实近景，保留道路与建筑轮廓', async ({ page }) => {
+  const response = page.waitForResponse((item) => item.url().endsWith('/basemaps/gyirong-closeup.webp') && item.ok())
+  await page.getByRole('button', { name: '吉隆案例', exact: true }).click()
+  await page.getByRole('button', { name: '定位口岸', exact: true }).click()
+  await response
+  await expect(page.getByRole('link', { name: /Sentinel.*10 m/ })).toBeVisible()
+  const zoom = page.getByRole('button', { name: '放大地图', exact: true })
+  const detailedResponse = page.waitForResponse((item) => item.url().endsWith('/basemaps/gyirong-street.webp') && item.ok())
+  for (let step = 0; step < 6; step += 1) await zoom.click()
+  await detailedResponse
+  await expect(page.getByRole('link', { name: /Vantor.*0\.8 m/ })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => {
+    const debug = (window as unknown as { __aegisMap?: { viewer: import('cesium').Viewer } }).__aegisMap
+    const details = debug?.viewer.dataSources.getByName('gyirong-closeup')[0]
+    return details?.show && details.entities.values.some((item) => item.id.startsWith('building-'))
+      && details.entities.values.some((item) => item.id.startsWith('local-road-'))
+  })).toBe(true)
+  await expect(page.locator('.map-reference__scale')).toContainText(/^(5|10|20|50) m$/)
+})
+
 /**
  * 等场景稳定：`requestRenderMode: true` 下 Cesium 只在"有变化"时重绘，
  * 不主动 requestRender 的话瓦会一直停在已请求未加载的状态（与静置轻薄本的现场行为一致）。
@@ -333,8 +398,6 @@ test('画布内部随主题翻面：底色对得上页面令牌，图元在翻�
         skyShown: viewer?.scene?.skyAtmosphere ? Boolean(viewer.scene.skyAtmosphere.show) : null,
         wantSunken: rgbOf(css.getPropertyValue('--aeg-color-sunken')),
         wantPage: rgbOf(css.getPropertyValue('--aeg-color-page')),
-        wantSpaceGlobe: rgbOf(css.getPropertyValue('--aeg-color-space-globe')),
-        wantDeepSpace: rgbOf(css.getPropertyValue('--aeg-color-deep-space')),
         points,
       }
     })
@@ -389,14 +452,16 @@ test('画布内部随主题翻面：底色对得上页面令牌，图元在翻�
   }, meters)
 
   await zoomBy(6_000_000)
-  await expect(page.locator('.map-host')).toHaveClass(/is-space-view/)
-  const space = await read()
-  expect(space.globe).toBe(space.wantSpaceGlobe)
-  expect(space.backdrop).toBe(space.wantDeepSpace)
-  expect(space.skyShown).toBe(true)
+  await expect(page.locator('.map-floatbar__hero')).toContainText('全球地形')
+  await expect.poll(() => requestUrls.some((url) => /NaturalEarthII\/.+\.jpg/.test(url))).toBe(true)
+  await settle(page)
+  const world = await read()
+  expect(world.globe).toBe(world.wantSunken)
+  expect(world.backdrop).toBe(world.wantPage)
+  expect(world.skyShown).toBe(false)
 
   await zoomBy(-6_000_000)
-  await expect(page.locator('.map-host')).not.toHaveClass(/is-space-view/)
+  await expect(page.locator('.map-floatbar__hero')).toContainText('全域地形')
   const regional = await read()
   expect(regional.globe).toBe(regional.wantSunken)
   expect(regional.backdrop).toBe(regional.wantPage)

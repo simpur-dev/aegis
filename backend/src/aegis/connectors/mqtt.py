@@ -35,6 +35,7 @@ from typing import Any, Protocol
 
 from aegis.connectors.base import DataSource
 from aegis.connectors.metrics import unit_for
+from aegis.connectors.trace import SourceProbe, raw_number, source_probe, valid_region
 from aegis.domain.messages import TelemetryReading, now_iso, parse_iso, utc_now
 
 log = logging.getLogger("aegis.connectors.mqtt")
@@ -108,7 +109,8 @@ def _pairs_from(body: dict[str, Any]) -> list[tuple[str, Any]]:
 
 
 def readings_from_mqtt(
-    topic: str, payload: bytes | str, *, prefix: str = DEFAULT_TOPIC_PREFIX, source: str = "mqtt"
+    topic: str, payload: bytes | str, *, prefix: str = DEFAULT_TOPIC_PREFIX, source: str = "mqtt",
+    probe: SourceProbe | None = None,
 ) -> list[TelemetryReading]:
     """把一条 MQTT 消息解析成读数列表。不合约定的地方一律抛 `MqttPayloadError(原因)`。"""
     station_id = station_from_topic(topic, prefix)
@@ -123,20 +125,24 @@ def readings_from_mqtt(
     if not isinstance(body, dict):
         raise MqttPayloadError("载荷顶层必须是对象")
 
-    region_code = str(body.get("region_code") or "").strip().upper()
-    if len(region_code) < 6:
-        raise MqttPayloadError("region_code 缺失或短于 6 位行政区划码")
+    region_code = str(body.get("region_code") or "").strip().upper()[:24]
+    if not valid_region(region_code):
+        raise MqttPayloadError("region_code 缺失或不是有效行政区划码")
     observed = _observed_at(body)
 
     readings: list[TelemetryReading] = []
     for metric, raw_value in _pairs_from(body):
-        if raw_value is None or isinstance(raw_value, bool):
-            continue
+        if probe is not None:
+            probe.capture(
+                0, station_id=station_id, region_code=region_code, metric=metric, value=raw_number(raw_value), observed_at=observed,
+            )
         try:
-            value = float(raw_value)
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(value):
+            value = None if isinstance(raw_value, bool) else float(raw_value)
+        except (TypeError, ValueError, OverflowError):
+            value = None
+        if value is None or not math.isfinite(value):
+            if probe is not None:
+                probe.note("invalid_value", "MQTT 观测量不是有限数值", station_id=station_id, metric=metric, value=raw_number(raw_value))
             continue
         readings.append(
             TelemetryReading(
@@ -144,7 +150,7 @@ def readings_from_mqtt(
                 metric=metric,
                 value=value,
                 unit=unit_for(metric),
-                region_code=region_code[:24],
+                region_code=region_code,
                 observed_at=observed,
                 ingested_at=now_iso(),
                 source=source,
@@ -186,6 +192,7 @@ class MqttSource(DataSource):
         self._limit = buffer_limit
         self._queue: deque[TelemetryReading] = deque()
         self._counters = MqttCounters()
+        self._pending_probe = SourceProbe(received=0)
         self._started = False
 
     async def start(self) -> None:
@@ -202,6 +209,15 @@ class MqttSource(DataSource):
 
     async def collect(self) -> list[TelemetryReading]:
         """取空当前缓冲：一次取完，同一轮内不会重复上报。"""
+        probe = source_probe.get()
+        pending, self._pending_probe = self._pending_probe, SourceProbe(received=0)
+        if probe is not None:
+            probe.inputs.update(kind="mqtt", raw_unit="messages", connected=self._client.connected, buffered=len(self._queue))
+            probe.received = pending.received
+            probe.input_samples = pending.input_samples
+            probe.issues = pending.issues
+            if not self._client.connected:
+                probe.note("broker_disconnected", "MQTT 当前未连接，仍可处理已缓冲的读数")
         drained: list[TelemetryReading] = []
         while self._queue:
             drained.append(self._queue.popleft())
@@ -209,16 +225,20 @@ class MqttSource(DataSource):
 
     async def _on_message(self, topic: str, payload: bytes) -> None:
         self._counters.received += 1
+        probe = self._pending_probe
+        probe.capture()
         try:
-            readings = readings_from_mqtt(topic, payload, prefix=self._prefix)
+            readings = readings_from_mqtt(topic, payload, prefix=self._prefix, probe=probe)
         except MqttPayloadError as exc:
             self._counters.note_reject(str(exc))
+            probe.note("payload_rejected", "MQTT 消息未通过解析", reason=str(exc))
             log.debug("MQTT 载荷被拒", extra={"topic": topic[:120], "reason": str(exc)})
             return
         for reading in readings:
             if len(self._queue) >= self._limit:
                 # 丢最旧保最新：预警判的是"现在有没有超阈值"，旧读数已被上一轮用过或已过期
-                self._queue.popleft()
+                dropped = self._queue.popleft()
+                probe.note("buffer_overflow", "MQTT 缓冲已满，已丢弃最旧读数", station_id=dropped.station_id, metric=dropped.metric)
                 self._counters.dropped_overflow += 1
             self._queue.append(reading)
             self._counters.parsed_readings += 1

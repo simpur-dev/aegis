@@ -23,6 +23,27 @@ Viewer 收到 `baseLayer: false`，地球用深色底色）。任何指向非同
 目录用四段式 varint、tile_id 走 Hilbert 序号、偏移段里 `0` 表示"接在前一条之后"。
 `region-anchors.json` / `hazard-zones.geojson` 仍然刻意不预置——未核对的位置不能当成真值。
 
+### 全球视野
+
+地球视角使用 Cesium 随包提供的 [Natural Earth II](https://www.naturalearthdata.com/downloads/50m-raster-data/50m-natural-earth-2/) 地形影像。该地理坐标瓦片覆盖经度 ±180°、纬度 ±90°。开发和构建时自动拷贝到 `public/cesium`，运行时与区域底图一起从本地服务读取。
+
+### 吉隆案例地形
+
+`gyirong-relief.png` 由 [Mapzen Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) 的 z12 高程生成，包含 500 米等高线。`gyirong-surroundings.png` 用 z10 高程覆盖口岸周边。全域 `relief.pmtiles` 在西藏区域加密到 z8，高层缺瓦时使用父瓦对应区域。三层使用同一套海拔色阶和光向。范围、分辨率和色阶由 `src/components/map/gyirong-relief.json` 定义。高德卫星影像由网页按需加载。
+
+`src/components/map/gyirong-geography.json` 取自 [OpenStreetMap](https://www.openstreetmap.org/copyright)，包含吉隆藏布、东林藏布、波达柯西河及吉隆口岸附近 G216 的 WGS84 线位和原始要素编号。该数据以 [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/) 发布。
+
+`gyirong-closeup.webp` 是 [2026-11-20 Sentinel‑2 L2A 真彩景](https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/S2C_45RUM_20261120_0_L2A) 的 10 米口岸裁切，署名 `Contains modified Copernicus Sentinel data [2026]`。再放大时显示 `gyirong-street.webp`，它来自 [2026-09-07 Vantor 灾后影像](https://s3.amazonaws.com/vantor-opendata/events/Nepal-Flooding-Aug-2026/B1300011011E5610.json)，局部裁切的交付分辨率约 0.8 米，按 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) 用于非商业用途。两张影像均重投影为 WGS84，并做亮度和边缘渐变处理。口岸近景另绘现有 OSM 道路、建筑和河面，几何保留原始要素编号。
+
+在 `frontend/` 下用 `uv run --with rasterio --with pillow python scripts/bake-gyirong-closeup.py --osm <extract.osm>` 重建。可用 `--product closeup` 或 `--product street` 选择影像，也可用 `--raster` 指定对应 GeoTIFF 的本地副本。
+
+在 `frontend` 运行下面的命令即可重新生成。源瓦片已缓存时可以追加 `--offline`。
+
+```bash
+node scripts/bake-real-relief.mjs --gyirong
+node scripts/bake-real-relief.mjs --basemap-only
+```
+
 ## 1) 底图：两种可烘焙形态
 
 ### 形态 A（推荐）：栅格 PMTiles 单文件

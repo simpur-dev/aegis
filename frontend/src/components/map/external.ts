@@ -12,20 +12,19 @@
  * - 'amap'：整块换成高德 JS API 渲染面（`AmapMap.vue`），要素坐标按 WGS84→GCJ-02 纠偏。
  *   场景层（viewer.ts）不感知这个档——它永远是离线链，换档是页面级"换组件"，不是换影像层。
  *
- * 默认档必须是 'offline'：交付形态不依赖任何外部主机；'amap' 依赖官方服务与配额，
- * 必须显式选过才生效并记忆。这条由 `external.spec.ts` 与 guard 判据一起钉住。
+ * 通用默认档为 'offline'。吉隆案例在配置了高德 Key 的部署中可以选用高德作为默认档。
  */
 
 export type BasemapMode = 'amap' | 'offline'
 
 export const BASEMAP_MODE_KEY = 'aegis.basemap'
 
-export function readBasemapMode(storage: Pick<Storage, 'getItem'> | null): BasemapMode {
+export function readBasemapMode(storage: Pick<Storage, 'getItem'> | null, fallback: BasemapMode = 'offline'): BasemapMode {
   try {
     const raw = storage?.getItem(BASEMAP_MODE_KEY)
-    return raw === 'amap' ? 'amap' : 'offline'
+    return raw === 'amap' || raw === 'offline' ? raw : fallback
   } catch {
-    return 'offline'
+    return fallback
   }
 }
 

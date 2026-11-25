@@ -10,13 +10,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
+from aegis.api.app import create_app
 from aegis.bus.gateway import AgentGateway
 from aegis.config import Settings
 from aegis.connectors.base import DataSource, IngestService
-from aegis.domain.messages import TelemetryReading
+from aegis.container import create_container
+from aegis.domain.messages import AgentMessage, TelemetryReading, now_iso
 from aegis.observability.tracer import Tracer
 from aegis.storage.store import PlatformStore
 from conftest import readings_rain_burst
@@ -81,6 +85,36 @@ def mixed_sources() -> list[DataSource]:
 
 
 class TestPerSourceIsolation:
+    async def test_processing_endpoint_keeps_failed_source_and_invalid_reading_separate(self, settings: Settings) -> None:
+        container = create_container(settings)
+        valid = readings_rain_burst()[0]
+        invalid = valid.model_copy(update={"value": float("nan")})
+        for source in (_Source("mixed", [valid, invalid]), _BoomSource()):
+            container.ingest.add_source(source)
+        await container.start()
+        app = create_app(settings, container=container)
+        try:
+            result = await container.ingest.ingest_once()
+            assert (result.readings, result.published) == (1, 1)
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.get("/api/v1/telemetry/processing")
+                assert response.status_code == 200
+                summary = response.json()["items"][0]
+                assert summary["status"] == "partial"
+                response = await client.get(f"/api/v1/telemetry/processing/{summary['id']}")
+                assert response.status_code == 200
+                detail = response.json()
+                assert detail["source_details"][1]["issues"][0]["code"] == "RuntimeError"
+                stages = {stage["key"]: stage for stage in detail["stages"]}
+                assert stages["normalize"]["issues"][0]["samples"][0]["value"] == "nan"
+                assert stages["normalize"]["results"]["rejected_values"] == 1
+                assert stages["store"]["results"]["queryable"] == 1
+                assert stages["durability"]["status"] == "skipped"
+                assert stages["publish"]["result_samples"][0]["message_id"].startswith("msg_")
+                assert (await client.get("/api/v1/telemetry/processing/unknown")).status_code == 404
+        finally:
+            await container.shutdown()
+
     async def test_one_broken_source_does_not_kill_the_round(
         self, started_gateway: AgentGateway, tracer: Tracer, settings: Settings, store: PlatformStore
     ) -> None:
@@ -107,6 +141,38 @@ class TestPerSourceIsolation:
         ingest = build_ingest(started_gateway, tracer, settings, store, mixed_sources())
         await ingest.ingest_once()
         assert [r.station_id for r in store.telemetry.query(limit=10)] == ["RG-01"]
+
+    async def test_ingest_latency_stops_at_readable_storage(
+        self,
+        started_gateway: AgentGateway,
+        tracer: Tracer,
+        settings: Settings,
+        store: PlatformStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        available_at = datetime(2026, 11, 24, 3, tzinfo=UTC)
+        clock = available_at
+        reading = readings_rain_burst()[0].model_copy(
+            update={
+                "observed_at": now_iso(available_at - timedelta(seconds=20)),
+                "ingested_at": now_iso(available_at - timedelta(seconds=2)),
+            },
+        )
+
+        async def publish(item: TelemetryReading, _message: AgentMessage) -> None:
+            nonlocal clock
+            assert store.telemetry.query(station_id=item.station_id) == [item]
+            clock += timedelta(seconds=45)
+
+        monkeypatch.setattr("aegis.connectors.base.utc_now", lambda: clock)
+        monkeypatch.setattr(started_gateway, "publish_telemetry", publish)
+        ingest = build_ingest(started_gateway, tracer, settings, store, [_Source("weather", [reading])])
+
+        report = await ingest.ingest_once()
+
+        assert report.published == 1
+        assert report.max_ingest_latency_seconds == pytest.approx(20.0)
+        assert tracer.ledger.stats("ingest_store_to_query_ms").max == pytest.approx(2000.0)
 
     async def test_round_fully_recovers_once_the_broken_sources_are_gone(
         self, started_gateway: AgentGateway, tracer: Tracer, settings: Settings, store: PlatformStore

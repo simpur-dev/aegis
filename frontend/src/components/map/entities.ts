@@ -1030,6 +1030,7 @@ export interface RenderPlanInput {
   bbox: BBox | null
   /** 由 viewer 回吐的相机高度换算出的缩放级（`zoomForCameraHeight`）。 */
   zoom: number
+  aggregate?: boolean
 }
 
 /**
@@ -1040,7 +1041,7 @@ export function buildRenderPlan(input: RenderPlanInput): RenderPlan {
   const visible = filterLayersByViewport({ bbox: input.bbox, layers: input.layers })
   const points: (StationFeature | WarningFeature)[] = [...visible.stations, ...visible.warnings]
   const cellDeg = clusterCellDegrees(input.zoom)
-  const clustered = shouldCluster(points.length, input.zoom)
+  const clustered = input.aggregate !== false && shouldCluster(points.length, input.zoom)
   if (!clustered) {
     return {
       stations: visible.stations,

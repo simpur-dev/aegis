@@ -28,12 +28,14 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from aegis.connectors.base import DataSource
 from aegis.connectors.metrics import unit_for
+from aegis.connectors.trace import raw_number, source_probe, valid_region
 from aegis.domain.messages import TelemetryReading, now_iso
 from aegis.errors import SchemaInvalidError
 
@@ -97,7 +99,12 @@ class PrecipHourlySource(DataSource):
         return self._path
 
     async def collect(self) -> list[TelemetryReading]:
+        probe = source_probe.get()
+        if probe is not None:
+            probe.inputs.update(kind="csv", file=self._path.name, metric=self._metric, raw_unit="rows", max_lag_hours=MAX_LAG_HOURS)
         if not self.enabled:
+            if probe is not None:
+                probe.note("file_missing", "小时降水 CSV 不可读或已移除")
             return []
         try:
             readings = self._read()
@@ -124,6 +131,9 @@ class PrecipHourlySource(DataSource):
         }
 
     def _read(self) -> list[TelemetryReading]:
+        probe = source_probe.get()
+        if probe is not None:
+            probe.capture(0)
         rows: list[tuple[datetime, dict[str, str]]] = []
         with self._path.open(encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
@@ -135,28 +145,48 @@ class PrecipHourlySource(DataSource):
                     detail={"missing": missing, "columns": list(reader.fieldnames or [])},
                 )
             for row in reader:
+                if probe is not None:
+                    probe.capture(
+                        observed_at=row.get("datetime_utc"), station_id=row.get("station_id"),
+                        region_code=row.get("region_code"), value=raw_number(row.get("precip_mm_h")),
+                    )
                 moment = _parse_utc(row.get("datetime_utc") or "")
                 if moment is None:
                     self.skipped += 1
+                    if probe is not None:
+                        probe.note("invalid_time", "小时降水行的观测时间无效", observed_at=row.get("datetime_utc"))
                     continue
                 rows.append((moment, row))
         if not rows:
             return []
         latest = max(moment for moment, _row in rows)
+        if probe is not None:
+            probe.inputs["latest_observed_at"] = latest.isoformat()
         if datetime.now(UTC) - latest > timedelta(hours=MAX_LAG_HOURS):
             # 源停更：如实整轮不产（计数），绝不把上周的雨当现在的。
             self.stale_rounds += 1
+            if probe is not None:
+                probe.note("stale_source", "最新整点超出允许滞后时间，本轮停止出数", observed_at=latest.isoformat())
             log.warning("小时降水源停更：最新整点 %s 超过 %dh，本轮不产读数", latest.isoformat(), MAX_LAG_HOURS)
             return []
         readings: list[TelemetryReading] = []
+        history = 0
         for moment, row in rows:
             if moment != latest:
                 # 只取最新整点：遥测库是运行态事实，倒灌历史小时会污染触发判据。
                 self.skipped += 1
+                history += 1
                 continue
             reading = self._to_reading(moment, row)
             if reading is not None:
                 readings.append(reading)
+            elif probe is not None:
+                probe.note(
+                    "invalid_row", "小时降水行缺测或字段格式有误",
+                    station_id=row.get("station_id"), region_code=row.get("region_code"), value=raw_number(row.get("precip_mm_h")),
+                )
+        if probe is not None:
+            probe.inputs["filtered_history"] = history
         return readings
 
     def _to_reading(self, moment: datetime, row: dict[str, str]) -> TelemetryReading | None:
@@ -176,7 +206,7 @@ class PrecipHourlySource(DataSource):
             self.skipped += 1
             return None
         quality = "ok" if 0.0 <= value <= MAX_HOURLY_MM else "suspect"
-        if not region_code or len(region_code) < 6:
+        if not valid_region(region_code[:24]) or not math.isfinite(value):
             # 区划码不合约定（`^[0-9A-Z]{6,24}$`）的读数进不去——如实跳过并计数。
             self.skipped += 1
             return None

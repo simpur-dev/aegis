@@ -35,14 +35,14 @@ export interface MapPalette {
   readonly labelBackground: string
   /** 图元描边（点与聚合环）：与字色同档，负责把风险色块从底图里"抠"出来。 */
   readonly markerOutline: string
-  /** 深空皮肤：拉远到看得见地球弧线时用的球面底色与太空底（两主题同值）。 */
-  readonly spaceGlobe: string
-  readonly deepSpace: string
+  readonly historicalMarker: string
+  readonly historicalRoad: string
+  readonly closeupRoad: string
+  readonly closeupBuilding: string
   readonly labelBackgroundAlpha: number
   /** 风险填充档：把上游给的任一档 hex 归一到当前主题的对应档；认不出的原样返回。 */
   readonly fillFor: (cssColor: string) => string
 }
-
 /**
  * 风险档的色值对照表：只在深色档做替换，浅色档一律原样透出。
  *
@@ -70,20 +70,11 @@ export function mapPalette(mode: ThemeMode): MapPalette {
     labelHalo: c.card,
     labelBackground: c.elevated,
     markerOutline: c.text,
-    spaceGlobe: c['space-globe'],
-    deepSpace: c['deep-space'],
+    historicalMarker: c['overview-accent'],
+    historicalRoad: c['editor-accent-amber'],
+    closeupRoad: c['terrain-ink'],
+    closeupBuilding: c['terrain-building'],
     labelBackgroundAlpha: 0.82,
     fillFor: (cssColor) => mapping[cssColor.toUpperCase()] ?? cssColor,
   }
-}
-
-/**
- * 高德 JS API 的底图样式名（`AmapMap.vue` 用）。
- *
- * 高德把样式做成它自家渲染器里的**字符串档位**，CSS 变量到达不了画布——
- * 与 Cesium/ECharts 同一条纪律：档位映射住在本派生层，组件不许自己挑样式名。
- * 浅色用官方默认 normal；深色用灰度档 grey（比纯黑档 dark 更贴本平台深蓝黑的卡面色）。
- */
-export function amapStyleName(mode: ThemeMode): string {
-  return mode === 'dark' ? 'amap://styles/grey' : 'amap://styles/normal'
 }

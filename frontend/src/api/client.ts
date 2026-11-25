@@ -4,6 +4,8 @@ import type {
   AgentInfo,
   DrillResponse,
   LatencyReport,
+  ProcessingDetail,
+  ProcessingList,
   TaskUnit,
   TelemetryReading,
   WarningRecord,
@@ -106,6 +108,12 @@ export function createApiClient(instance: AxiosInstance) {
 
     telemetry: (query: TelemetryQuery = {}) =>
       request<{ count: number; items: TelemetryReading[] }>({ url: '/api/v1/telemetry', params: query }),
+
+    processingRounds: (signal?: AbortSignal) =>
+      request<ProcessingList>({ url: '/api/v1/telemetry/processing', params: { limit: 120 }, signal }),
+
+    processingRound: (id: string, signal?: AbortSignal) =>
+      request<ProcessingDetail>({ url: `/api/v1/telemetry/processing/${encodeURIComponent(id)}`, signal }),
 
     warnings: (params: { limit?: number; region_code?: string } = {}) =>
       request<{ count: number; items: WarningRecord[] }>({ url: '/api/v1/warnings', params }),

@@ -9,7 +9,8 @@
  * terrain-parse.spec.ts 与 backend/tests/unit/test_offline_tile_format.py 逐字节钉住，
  * 它的职责是"离线链路可验"，不是作战底图；真实高程走新路径，两条腿互不污染。
  *
- * 用法：node scripts/bake-real-relief.mjs [--offline]（--offline 只读缓存，缺瓦即报错）
+ * 用法：node scripts/bake-real-relief.mjs [--offline] [--gyirong | --basemap-only]
+ * --gyirong 生成口岸和周边影像，--basemap-only 只生成全域影像，--offline 只读缓存。
  */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -25,6 +26,7 @@ mkdirSync(cache, { recursive: true })
 const SRC = 'https://s3.amazonaws.com/elevation-tiles-prod/v2/terrarium'
 const MAX_SHORT = 32767
 const PNG = 256
+const gyirong = JSON.parse(readFileSync(join(here, '../src/components/map/gyirong-relief.json'), 'utf8'))
 
 // ---------- Web Mercator 源瓦片清单：全球 z0–2 + 西藏辖区 z3–6 ----------
 const MERC_TILES = []
@@ -124,11 +126,20 @@ function decodePng(buf) {
   return { width, height, pixels: out }
 }
 
-function encodePng(width, height, rgb) {
-  const rows = Buffer.alloc(height * (width * 3 + 1))
+function encodePng(width, height, pixels, channels = 3) {
+  const stride = width * channels
+  const rows = Buffer.alloc(height * (stride + 1))
+  const withAlpha = channels === 4
   for (let y = 0; y < height; y += 1) {
-    rows[y * (width * 3 + 1)] = 0
-    rgb.copy(rows, y * (width * 3 + 1) + 1, y * width * 3, (y + 1) * width * 3)
+    const row = y * (stride + 1)
+    const from = y * stride
+    rows[row] = withAlpha ? 1 : 0
+    pixels.copy(rows, row + 1, from, from + stride)
+    if (withAlpha) {
+      for (let x = channels; x < stride; x += 1) {
+        rows[row + 1 + x] = pixels[from + x] - pixels[from + x - channels]
+      }
+    }
   }
   const chunk = (tag, data) => {
     const head = Buffer.alloc(8)
@@ -142,7 +153,7 @@ function encodePng(width, height, rgb) {
   ihdr.writeUInt32BE(width, 0)
   ihdr.writeUInt32BE(height, 4)
   ihdr[8] = 8
-  ihdr[9] = 2
+  ihdr[9] = withAlpha ? 6 : 2
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk('IHDR', ihdr),
@@ -153,6 +164,24 @@ function encodePng(width, height, rgb) {
 
 // ---------- 源瓦片加载 + 双线性高程采样 ----------
 const tiles = new Map()
+async function fetchMercTile(key) {
+  const url = `${SRC}/${key}.png`
+  let failure
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { connection: 'close' },
+        signal: AbortSignal.timeout(12_000),
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return Buffer.from(await response.arrayBuffer())
+    } catch (error) {
+      failure = error
+    }
+  }
+  throw new Error(`源瓦片 ${key} 下载失败`, { cause: failure })
+}
+
 async function loadMerc(z, x, y) {
   const key = `${z}/${x}/${y}`
   if (tiles.has(key)) return tiles.get(key)
@@ -161,9 +190,7 @@ async function loadMerc(z, x, y) {
   if (existsSync(file)) buf = readFileSync(file)
   else {
     if (offline) throw new Error(`--offline 缺缓存瓦片 ${key}`)
-    const res = await fetch(`${SRC}/${z}/${x}/${y}.png`)
-    if (!res.ok) throw new Error(`源瓦片 ${key} HTTP ${res.status}`)
-    buf = Buffer.from(await res.arrayBuffer())
+    buf = await fetchMercTile(key)
     writeFileSync(file, buf)
   }
   const { pixels } = decodePng(buf)
@@ -179,6 +206,23 @@ const mercY = (lat, z) => {
   return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * (1 << z)
 }
 const mercLat = (row, z) => (Math.atan(Math.sinh(Math.PI * (1 - (2 * row) / (1 << z)))) * 180) / Math.PI
+const BASEMAP_MAX_ZOOM = 8
+
+function mercTilesForBounds({ west, south, east, north }, z, margin = 0) {
+  const result = []
+  for (let x = Math.floor(mercX(west, z)) - margin; x <= Math.floor(mercX(east, z)) + margin; x += 1) {
+    for (let y = Math.floor(mercY(north, z)) - margin; y <= Math.floor(mercY(south, z)) + margin; y += 1) {
+      result.push([z, x, y])
+    }
+  }
+  return result
+}
+
+async function loadMercTiles(requests) {
+  for (let start = 0; start < requests.length; start += 6) {
+    await Promise.all(requests.slice(start, start + 6).map(([z, x, y]) => loadMerc(z, x, y)))
+  }
+}
 
 function sampleAt(lon, lat, z) {
   const clamped = Math.max(-85, Math.min(85, lat))
@@ -188,13 +232,20 @@ function sampleAt(lon, lat, z) {
   const y = Math.floor(fy)
   const h = tiles.get(`${z}/${x}/${y}`)
   if (!h) return null
-  const gx = Math.min(PNG - 1.001, Math.max(0, (fx - x) * PNG - 0.5))
-  const gy = Math.min(PNG - 1.001, Math.max(0, (fy - y) * PNG - 0.5))
+  const gx = (fx - x) * PNG - 0.5
+  const gy = (fy - y) * PNG - 0.5
   const x0 = Math.floor(gx)
   const y0 = Math.floor(gy)
   const tx = gx - x0
   const ty = gy - y0
-  const at = (xx, yy) => h[Math.min(PNG - 1, yy) * PNG + Math.min(PNG - 1, xx)]
+  const at = (xx, yy) => {
+    if (xx >= 0 && xx < PNG && yy >= 0 && yy < PNG) return h[yy * PNG + xx]
+    const dx = Math.floor(xx / PNG)
+    const dy = Math.floor(yy / PNG)
+    const neighbor = tiles.get(`${z}/${x + dx}/${y + dy}`)
+    if (neighbor) return neighbor[(yy - dy * PNG) * PNG + xx - dx * PNG]
+    return h[Math.max(0, Math.min(PNG - 1, yy)) * PNG + Math.max(0, Math.min(PNG - 1, xx))]
+  }
   return (
     at(x0, y0) * (1 - tx) * (1 - ty) +
     at(x0 + 1, y0) * tx * (1 - ty) +
@@ -211,11 +262,11 @@ function sample(lon, lat) {
 }
 /** 影像设色/求导一律优先取加密层：粗层瓦片也画出加密层的坡面细节，层与层之间才不会出现亮暗缝。 */
 function sampleDeep(lon, lat) {
-  for (let z = 7; z >= 5; z -= 1) {
+  for (let z = BASEMAP_MAX_ZOOM; z >= 0; z -= 1) {
     const v = sampleAt(lon, lat, z)
     if (v !== null) return v
   }
-  return sample(lon, lat)
+  return 0
 }
 
 // ---------- quantized-mesh 编码 ----------
@@ -404,30 +455,82 @@ function bakeGeoTile(z, x, y) {
 }
 
 // ---------- 影像：分层设色 × 山体阴影 ----------
+const localStops = gyirong.stops.map(([elevation, hex]) => [elevation, Buffer.from(hex.slice(1), 'hex')])
 const STOPS = [
-  [-6000, [2, 10, 24]],
-  [-200, [4, 21, 43]],
-  [0, [6, 28, 52]],
-  [1200, [9, 40, 70]],
-  [2500, [13, 58, 96]],
-  [3800, [18, 80, 124]],
-  [4800, [24, 104, 150]],
-  [5600, [38, 140, 186]],
-  [6500, [96, 190, 224]],
-  [7500, [190, 230, 246]],
-  [8848, [255, 255, 255]],
+  [-6000, [25, 43, 57]],
+  [-1, [46, 65, 75]],
+  [0, [47, 79, 69]],
+  ...localStops,
 ]
-function hypsometric(h) {
-  if (h <= STOPS[0][0]) return STOPS[0][1]
-  for (let i = 1; i < STOPS.length; i += 1) {
-    if (h <= STOPS[i][0]) {
-      const [h0, c0] = STOPS[i - 1]
-      const [h1, c1] = STOPS[i]
+function hypsometric(h, stops = STOPS) {
+  if (h <= stops[0][0]) return stops[0][1]
+  for (let i = 1; i < stops.length; i += 1) {
+    if (h <= stops[i][0]) {
+      const [h0, c0] = stops[i - 1]
+      const [h1, c1] = stops[i]
       const t = (h - h0) / (h1 - h0)
       return [0, 1, 2].map((k) => Math.round(c0[k] + (c1[k] - c0[k]) * t))
     }
   }
-  return STOPS[STOPS.length - 1][1]
+  return stops[stops.length - 1][1]
+}
+
+function terrainShade(slopeX, slopeY) {
+  const length = Math.hypot(slopeX, slopeY, 1)
+  const primary = Math.max(0, (0.55 * slopeX - 0.48 * slopeY + 0.68) / length)
+  const fill = Math.max(0, (-0.46 * slopeX - 0.30 * slopeY + 0.84) / length)
+  return 0.54 + 0.52 * primary + 0.12 * fill
+}
+
+async function bakeGyirongRelief(config, label) {
+  const { bounds: { west, south, east, north }, width, height, sourceZoom: z, contourIntervalM } = config
+  const downloads = mercTilesForBounds(config.bounds, z, 1)
+  await loadMercTiles(downloads)
+
+  // 图像按等间距经纬度采样，与 Cesium GeographicTilingScheme 对齐。
+  const dLon = (east - west) / width
+  const dLat = (north - south) / height
+  const rows = height + 2
+  const columns = width + 2
+  const dem = new Float32Array(rows * columns)
+  for (let y = 0; y < rows; y += 1) {
+    const lat = north - (y - 0.5) * dLat
+    for (let x = 0; x < columns; x += 1) {
+      const elevation = sampleAt(west + (x - 0.5) * dLon, lat, z)
+      if (elevation === null) throw new Error('吉隆高程源瓦片覆盖不完整')
+      dem[y * columns + x] = elevation
+    }
+  }
+
+  const pixels = Buffer.alloc(width * height * 4)
+  for (let y = 1; y <= height; y += 1) {
+    const lat = north - (y - 0.5) * dLat
+    const dx = 2 * dLon * 111_320 * Math.cos(rad(lat))
+    const dy = 2 * dLat * 110_574
+    for (let x = 1; x <= width; x += 1) {
+      const i = y * columns + x
+      const elevation = dem[i]
+      const dxH = dem[i + 1] - dem[i - 1]
+      const dyH = dem[i - columns] - dem[i + columns]
+      let shaded = terrainShade(dxH / dx, dyH / dy)
+      if (contourIntervalM) {
+        const index = Math.round(elevation / contourIntervalM)
+        const distance = Math.abs(elevation - index * contourIntervalM)
+        const thickness = Math.max(1, Math.hypot(dxH, dyH) * (index % 2 === 0 ? 0.45 : 0.28))
+        const contour = Math.max(0, 1 - distance / thickness)
+        shaded *= 1 - contour * (index % 2 === 0 ? 0.26 : 0.13)
+      }
+      const base = hypsometric(elevation)
+      const pixel = ((y - 1) * width + x - 1) * 4
+      for (let c = 0; c < 3; c += 1) pixels[pixel + c] = Math.min(255, Math.round(base[c] * shaded))
+      // 离开局部覆盖区时与全域底图平滑衔接。
+      const edge = Math.min(1, Math.min(x - 1, width - x, y - 1, height - y) / 92)
+      pixels[pixel + 3] = Math.round(255 * edge * edge * (3 - 2 * edge))
+    }
+  }
+  const png = encodePng(width, height, pixels, 4)
+  writeFileSync(join(pub, config.url), png)
+  console.log(`${label}：${width}×${height}，${downloads.length} 张高程源瓦片，${png.length} 字节`)
 }
 
 function renderMercTile(z, x, y) {
@@ -436,13 +539,9 @@ function renderMercTile(z, x, y) {
   const span = 360 / n
   const rgb = Buffer.alloc(PNG * PNG * 3)
   const dLon = span / PNG
-  // 山体阴影用固定 ~9km 的大尺度坡面场：各_zoom_ 瓦片采样同一张平滑阴影场，均值亮度一致，
-  // 粗层与加密层之间不会拼出"亮暗矩形"。山脊/河谷的细部交给分层设色（按像素中心高程取色，跨层连续）。
-  const sLon = 0.08
+  // 各层使用同一坡面采样距离，切换层级时保持光向和平均亮度一致。
+  const sLon = 0.018
   const sLat = sLon
-  const light = [-0.42, 0.42, 0.8]
-  const ll = Math.hypot(...light)
-  const L = light.map((v) => v / ll)
   for (let py = 0; py < PNG; py += 1) {
     const lat = mercLat(y + (py + 0.5) / PNG, z)
     for (let px = 0; px < PNG; px += 1) {
@@ -450,10 +549,8 @@ function renderMercTile(z, x, y) {
       const h = sampleDeep(lon, lat)
       const dhdx = (sampleDeep(lon + sLon, lat) - sampleDeep(lon - sLon, lat)) / (2 * sLon * 111320 * Math.cos(rad(lat)))
       const dhdy = (sampleDeep(lon, lat + sLat) - sampleDeep(lon, lat - sLat)) / (2 * sLat * 110574)
-      const len = Math.sqrt(dhdx * dhdx + dhdy * dhdy + 1)
-      const shade = Math.max(0, (-dhdx * L[0] - dhdy * L[1] + L[2]) / len)
       const base = hypsometric(h)
-      const k = h <= 0 ? 0.9 + 0.1 * shade : 0.55 + 0.45 * shade
+      const k = h <= 0 ? 0.92 : terrainShade(dhdx, dhdy)
       const i = (py * PNG + px) * 3
       rgb[i] = Math.min(255, Math.round(base[0] * k))
       rgb[i + 1] = Math.min(255, Math.round(base[1] * k))
@@ -542,65 +639,78 @@ function pmtilesHeader(o) {
 }
 
 // ---------- 主流程 ----------
+if (process.argv.includes('--gyirong')) {
+  await bakeGyirongRelief(gyirong, '吉隆案例地形')
+  await bakeGyirongRelief(gyirong.surroundings, '吉隆周边地形')
+  process.exit(0)
+}
+
+MERC_TILES.push(...mercTilesForBounds({ west: 76, south: 24, east: 101, north: 39 }, BASEMAP_MAX_ZOOM))
 console.log(`源瓦片 ${MERC_TILES.length} 张（缓存 ${cache}）`)
-for (const [z, x, y] of MERC_TILES) await loadMerc(z, x, y)
+await loadMercTiles(MERC_TILES)
 console.log('源瓦片就绪')
 
-const terrainDir = join(pub, 'terrain-real')
-let terrainBytes = 0
-let terrainCount = 0
-let lo = Infinity
-let hi = -Infinity
-for (const [z, x0, x1, y0, y1] of GEO_RANGES) {
-  for (let x = x0; x <= x1; x += 1) {
-    for (let y = y0; y <= y1; y += 1) {
-      const { bytes, minH, maxH } = bakeGeoTile(z, x, y)
-      mkdirSync(join(terrainDir, String(z), String(x)), { recursive: true })
-      writeFileSync(join(terrainDir, String(z), String(x), `${y}.terrain`), bytes)
-      terrainBytes += bytes.length
-      terrainCount += 1
-      if (z >= 5) {
-        lo = Math.min(lo, minH)
-        hi = Math.max(hi, maxH)
+if (!process.argv.includes('--basemap-only')) bakeTerrain()
+bakeBasemap()
+
+function bakeTerrain() {
+  const terrainDir = join(pub, 'terrain-real')
+  let terrainBytes = 0
+  let terrainCount = 0
+  let lo = Infinity
+  let hi = -Infinity
+  for (const [z, x0, x1, y0, y1] of GEO_RANGES) {
+    for (let x = x0; x <= x1; x += 1) {
+      for (let y = y0; y <= y1; y += 1) {
+        const { bytes, minH, maxH } = bakeGeoTile(z, x, y)
+        mkdirSync(join(terrainDir, String(z), String(x)), { recursive: true })
+        writeFileSync(join(terrainDir, String(z), String(x), `${y}.terrain`), bytes)
+        terrainBytes += bytes.length
+        terrainCount += 1
+        if (z >= 5) {
+          lo = Math.min(lo, minH)
+          hi = Math.max(hi, maxH)
+        }
       }
     }
   }
+  const available = GEO_RANGES.map(([z, x0, x1, y0, y1]) => {
+    const per = 1 << z
+    return [{ startX: x0, endX: x1, startY: per - 1 - y1, endY: per - 1 - y0 }]
+  })
+  writeFileSync(
+    join(terrainDir, 'layer.json'),
+    `${JSON.stringify(
+      {
+        format: 'quantized-mesh-1.0',
+        version: '1.0',
+        scheme: 'slippyMap',
+        projection: 'EPSG:4326',
+        tiles: ['{z}/{x}/{y}.terrain'],
+        extensions: ['octvertexnormals'],
+        minzoom: 0,
+        maxzoom: 7,
+        bounds: [-180, -90, 180, 90],
+        attribution: '高程 © Mapzen / AWS Terrain Tiles（SRTM、GEBCO、GMTED 等）· 离线烘焙 quantized-mesh',
+        available,
+        generator: 'frontend/scripts/bake-real-relief.mjs',
+      },
+      null,
+      2,
+    )}\n`,
+  )
+  console.log(`terrain-real: ${terrainCount} 瓦 ${terrainBytes} 字节，加密区高程 ${lo.toFixed(0)}..${hi.toFixed(0)} m`)
 }
-const available = GEO_RANGES.map(([z, x0, x1, y0, y1]) => {
-  const per = 1 << z
-  return [{ startX: x0, endX: x1, startY: per - 1 - y1, endY: per - 1 - y0 }]
-})
-writeFileSync(
-  join(terrainDir, 'layer.json'),
-  `${JSON.stringify(
-    {
-      format: 'quantized-mesh-1.0',
-      version: '1.0',
-      scheme: 'slippyMap',
-      projection: 'EPSG:4326',
-      tiles: ['{z}/{x}/{y}.terrain'],
-      extensions: ['octvertexnormals'],
-      minzoom: 0,
-      maxzoom: 7,
-      bounds: [-180, -90, 180, 90],
-      attribution: '高程 © Mapzen / AWS Terrain Tiles（SRTM、GEBCO、GMTED 等）· 离线烘焙 quantized-mesh',
-      available,
-      generator: 'frontend/scripts/bake-real-relief.mjs',
-    },
-    null,
-    2,
-  )}\n`,
-)
-console.log(`terrain-real: ${terrainCount} 瓦 ${terrainBytes} 字节，加密区高程 ${lo.toFixed(0)}..${hi.toFixed(0)} m`)
 
-const entries = []
-const blobs = []
-let offset = 0
-for (const [z, x, y] of [...MERC_TILES].sort((a, b) => tileId(...a) - tileId(...b))) {
-  const png = renderMercTile(z, x, y)
-  entries.push({ id: tileId(z, x, y), offset, length: png.length, run: 1 })
-  blobs.push(png)
-  offset += png.length
+function bakeBasemap() {
+  const entries = []
+  const blobs = []
+  let offset = 0
+  for (const [z, x, y] of [...MERC_TILES].sort((a, b) => tileId(...a) - tileId(...b))) {
+    const png = renderMercTile(z, x, y)
+    entries.push({ id: tileId(z, x, y), offset, length: png.length, run: 1 })
+    blobs.push(png)
+    offset += png.length
 }
 const dir = encodeDirectory(entries)
 const metadata = Buffer.from(
@@ -623,10 +733,11 @@ const header = pmtilesHeader({
   numEntries: entries.length,
   numContents: entries.length,
   minZoom: 0,
-  maxZoom: 7,
+  maxZoom: BASEMAP_MAX_ZOOM,
   centerZoom: 4,
   centerLon: 88.5,
   centerLat: 31,
 })
 writeFileSync(join(pub, 'basemaps', 'relief.pmtiles'), Buffer.concat([header, dir, metadata, ...blobs]))
 console.log(`relief.pmtiles: ${entries.length} 瓦 ${127 + dir.length + metadata.length + offset} 字节`)
+}

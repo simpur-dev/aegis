@@ -435,8 +435,7 @@ for (const width of WIDTHS) {
            重试到 12 秒还起不来，那就当真有问题处理。 */
         await settle(page)
         await page.waitForTimeout(name === 'map' ? 12_000 : 2_500)
-        /* 沉浸式页整块没有应用外壳，文本叶子本来就少（56px 头部 + 工具条 + 空态 ≈ 17），
-           地板按实量定 12；仍高于"选择器全错就 0"的空跑线。 */
+        /* 编辑器正文主要是工具条与画布，空态可见文本较少。 */
         const floor = immersivePath(path) ? 12 : 30
         let r = await page.evaluate(inspect, { contrastAllow: CONTRAST_ALLOW })
         for (let attempt = 0; attempt < 6 && r.leafCount <= floor; attempt++) {
@@ -467,8 +466,7 @@ ${r.navTruncated.join('\n')}`,
         ).toHaveLength(0)
         expect(r.englishEmptyCount, `${name}@${width} 出现纯英文空态文案：\n${r.englishEmpty.join('\n')}`).toBe(0)
         if (immersivePath(path)) {
-          /* 沉浸式页没有应用侧栏：等价的不变量是"编辑器占满头部以下"，而且外壳真的没渲染。
-             这条同时给上面那批外壳判据兜底——它们对空集合永远为 0，不额外钉一条就等于空跑。 */
+          /* 工作区顶栏保留切换入口，编辑器画布从自身工具头部下沿开始。 */
           const frame = await page.evaluate(() => {
             const head = document.querySelector('[data-testid="editor-header"]')?.getBoundingClientRect()
             const canvas = document.querySelector('[data-testid="workflow-canvas"]')?.getBoundingClientRect()
@@ -477,9 +475,7 @@ ${r.navTruncated.join('\n')}`,
               heads: document.querySelectorAll('[data-testid="editor-header"]').length,
               sidebars: document.querySelectorAll('[data-testid="sidebar"]').length,
               topbars: document.querySelectorAll('.topbar').length,
-              footers: document.querySelectorAll(
-                '.footer, [data-testid="assistant-entry"], [data-testid="service-token-bar"]',
-              ).length,
+              footers: document.querySelectorAll('.footer, [data-testid="service-token-bar"]').length,
               canvas: canvas ? { top: canvas.top, bottom: canvas.bottom, width: canvas.width } : null,
               headH: head ? head.height : 0,
               headBottom: head?.bottom ?? 0,
@@ -490,8 +486,8 @@ ${r.navTruncated.join('\n')}`,
           console.log(`IMMERSIVE ${name}@${width} ${JSON.stringify(frame)}`)
           expect(frame.heads, '沉浸式页的编辑器头部不在——判据在空跑').toBe(1)
           expect(frame.sidebars, '沉浸式页还渲染着应用侧栏').toBe(0)
-          expect(frame.topbars, '沉浸式页还渲染着应用顶栏').toBe(0)
-          expect(frame.footers, '沉浸式页还挂着页脚/令牌条/助手浮标').toBe(0)
+          expect(frame.topbars, '研究工作区缺少全局导航').toBe(1)
+          expect(frame.footers, '编辑器还挂着页脚或令牌条').toBe(0)
           expect(frame.headH, '编辑器头部高度不是 56px（Dify top-14 那档）').toBeCloseTo(56, 0)
           expect(frame.canvas, '编辑器画布没渲染').not.toBeNull()
           if (frame.canvas) {
@@ -1426,12 +1422,12 @@ test.describe('画布节点不变量 @1440', () => {
 /**
  * 沉浸式外壳与 Dify 式编辑交互（2026-10-23 深度改造后）。
  *
- * 应用侧栏/顶栏/页脚在这一路由上**整块不渲染**（`App.vue` 的 `v-if="!immersive"`），
- * 画布从 56px 头部下沿铺到视口底；右栏与块选择器都是覆盖式浮层，打开不许挤压画布宽度。
+ * 工作区导航下方是 56px 编辑器头部，画布从该头部下沿铺到视口底。
+ * 右栏与块选择器都是覆盖式浮层，打开时画布宽度保持不变。
  * 这几条都是"改回去也照样能跑"的布局事实，必须由机器钉住。
  */
 test.describe('沉浸式编辑器外壳 @1440', () => {
-  test('无侧栏顶栏、56px 头部、画布满宽、400px 覆盖面板不挤压画布', async ({ page }) => {
+  test('工作区导航、56px 编辑器头部、画布满宽、400px 面板覆盖画布', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/workflow')
     await page.waitForSelector(READY, { timeout: 45_000 })
@@ -1447,9 +1443,9 @@ test.describe('沉浸式编辑器外壳 @1440', () => {
       return {
         sidebar: document.querySelectorAll('[data-testid="sidebar"]').length,
         topbar: document.querySelectorAll('.topbar').length,
-        footer: document.querySelectorAll('.footer, [data-testid="assistant-entry"], [data-testid="service-token-bar"]')
-          .length,
+        footer: document.querySelectorAll('.footer, [data-testid="service-token-bar"]').length,
         headH: head?.height ?? 0,
+        headBottom: head?.bottom ?? 0,
         canvas: canvas ? { top: canvas.top, bottom: canvas.bottom, width: canvas.width } : null,
         /* 点阵的"14px"是**一个 flow 单位**上的间距：库把 pattern 绑在变换层上（跟着画布一起缩），
            默认档 zoom=0.9 时屏量 12.6px 是对的。所以这里按 zoom 还原回 flow 单位再判。 */
@@ -1468,12 +1464,12 @@ test.describe('沉浸式编辑器外壳 @1440', () => {
     })
     console.log(`IMMERSIVE-SHELL ${JSON.stringify(shell)}`)
     expect(shell.sidebar, '沉浸式页还渲染着应用侧栏').toBe(0)
-    expect(shell.topbar, '沉浸式页还渲染着应用顶栏').toBe(0)
-    expect(shell.footer, '沉浸式页还挂着页脚/令牌条/助手浮标').toBe(0)
+    expect(shell.topbar, '研究工作区缺少全局导航').toBe(1)
+    expect(shell.footer, '编辑器还挂着页脚或令牌条').toBe(0)
     expect(shell.headH, '编辑器头部不是 56px（Dify top-14）').toBeCloseTo(56, 0)
     expect(shell.canvas, '画布没渲染').not.toBeNull()
     if (shell.canvas) {
-      expect(shell.canvas.top).toBeCloseTo(shell.headH, 0)
+      expect(shell.canvas.top).toBeCloseTo(shell.headBottom, 0)
       expect(shell.canvas.bottom).toBeCloseTo(900, 0)
       expect(shell.canvas.width).toBeCloseTo(1440, 0)
     }
@@ -2290,7 +2286,7 @@ test.describe('定义行网格与入场动效 @1440', () => {
 test.describe('风险芯片兼图例 @1440', () => {
   test('五枚芯片取自 RISK_COLORS，点下去按下态与"筛后 / 全量"都跟着变', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
-    await page.goto('/map')
+    await page.goto('/map?view=tibet')
     await page.waitForSelector(READY, { timeout: 45_000 })
     await settle(page)
     await page.waitForTimeout(12_000)

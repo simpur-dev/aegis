@@ -6,11 +6,12 @@
  * 时间仍走 `formatOperatingTime`（UTC+8，跨日进位），不给裸 ISO。
  */
 import { computed, ref } from 'vue'
+import { ThunderboltOutlined } from '@ant-design/icons-vue'
 
 import type { StreamEvent } from '@/composables/useEventStream'
 import { formatOperatingTime } from '@/utils/clock'
 
-const props = defineProps<{ events: StreamEvent[] }>()
+const props = defineProps<{ events: StreamEvent[]; connected: boolean }>()
 
 const VISIBLE_ROWS = 3
 const expanded = ref(false)
@@ -44,7 +45,7 @@ function toneOf(event: StreamEvent): 'bad' | 'warn' | 'muted' {
     <div class="evt-feed__rows" :class="{ 'is-expanded': expanded }">
       <div
         v-for="event in events"
-        :key="event.trace_id + event.ts"
+        :key="`${event.trace_id}/${event.subject}/${event.ts}`"
         class="evt"
         :class="`is-${toneOf(event)}`"
         data-testid="evt-row"
@@ -75,11 +76,11 @@ function toneOf(event: StreamEvent): 'bad' | 'warn' | 'muted' {
     </button>
 
     <div v-if="!events.length" class="empty-hero empty-hero--compact" data-testid="events-empty">
-      <span class="empty-hero__icon" aria-hidden="true">◇</span>
+      <span class="empty-hero__icon" aria-hidden="true"><ThunderboltOutlined /></span>
       <div>
-        <div class="empty-hero__title">还没有新动态</div>
-        <div class="empty-hero__desc">处置链每走一步都会落在这里；一直空白就先跑一次演练看链路是否启动。</div>
-        <router-link class="empty-hero__action empty-hero__cta" to="/workflow">去流程编排跑一次链路 →</router-link>
+        <div class="empty-hero__title">{{ connected ? '还没有新动态' : '正在连接事件流' }}</div>
+        <div class="empty-hero__desc">历史预警和投递回执可在台账查看。</div>
+        <router-link class="empty-hero__action" to="/warnings">查看预警台账 →</router-link>
       </div>
     </div>
   </div>

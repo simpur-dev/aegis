@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import secrets
 import time
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from aegis.domain.messages import parse_iso, utc_now
 from aegis.domain.operator import role_at_least
 from aegis.services.assistant.audit import AuditTrail
 from aegis.services.assistant.base import (
@@ -361,13 +363,14 @@ class Executor:
         if operator is None:
             raise ActionError("E_OPERATOR_REQUIRED", f"「{action.spec.title}」需要有效席位（X-Aegis-Operator）")
         action_id = f"act_{secrets.token_hex(8)}"
+        arguments = params.model_dump(mode="json")
         record, replayed = await repo.create_action(
             action_id=action_id,
             operator_id=operator.operator_id,
             action=action.spec.name,
             space_id=ctx.space_id,
             utterance=ctx.utterance,
-            resolved_args=params.model_dump(mode="json"),
+            resolved_args=arguments,
             impact_scope=preview.as_dict(),
             expires_in_seconds=self._ttl,
             idempotency_key=ctx.idempotency_key,
@@ -381,6 +384,18 @@ class Executor:
                 ctx=ctx,
             ),
         )
+        expires_in = self._ttl
+        if replayed:
+            if (record["operator_id"], record["action"], record.get("space_id"), record["resolved_args"]) != (
+                operator.operator_id, action.spec.name, ctx.space_id, arguments,
+            ):
+                raise ActionError("E_ACTION_CONFLICT", "请求标识已用于另一项提案")
+            if record["status"] != "proposed":
+                raise ActionError("E_ACTION_CONFLICT", "这项提案已经处理，请在动作台账查看结果")
+            if (expires_at := record.get("expires_at")) is not None:
+                expires_in = math.ceil((parse_iso(expires_at) - utc_now()).total_seconds())
+                if expires_in <= 0:
+                    raise ActionError("E_ACTION_EXPIRED", "这项提案已过期，请重新提交")
         return ExecutionOutcome(
             action=action.spec.name,
             status="needs_confirm",
@@ -388,7 +403,7 @@ class Executor:
             preview=preview,
             latency_ms=(time.perf_counter() - started) * 1000.0,
             action_id=str(record["action_id"]),
-            expires_in_seconds=self._ttl,
+            expires_in_seconds=expires_in,
             replayed=replayed,
             review_required=int(record.get("review_required") or 0),
             reviews=tuple(record.get("reviewers") or ()),

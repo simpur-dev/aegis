@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from aegis.config import Settings, get_settings
+from aegis.connectors.trace import AnalyticsReceipt
 from aegis.domain.chain import ChainResult
 from aegis.domain.messages import TelemetryReading, utc_now
 from aegis.integrations.shared import log
@@ -115,21 +116,22 @@ class AnalyticsRecorder:
     async def record_chain(self, result: ChainResult) -> None:
         await self._submit(chain_facts(result))
 
-    async def record_readings(self, readings: Sequence[TelemetryReading]) -> None:
-        await self._submit(reading_facts(readings))
+    async def record_readings(self, readings: Sequence[TelemetryReading]) -> AnalyticsReceipt:
+        return await self._submit(reading_facts(readings))
 
-    async def _submit(self, rows: list[Any]) -> None:
+    async def _submit(self, rows: list[Any]) -> AnalyticsReceipt:
         if not rows:
-            return
+            return AnalyticsReceipt(accepted=0)
         try:
             accepted = int(await self._sink.ingest(rows))
         except Exception as exc:  # 分析是消费者：坏了就计数，绝不让链路崩溃
             self.errors += 1
             self.last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
             log.warning("分析事实入队失败，已丢弃本批", extra={"rows": len(rows), "err": self.last_error})
-            return
+            return AnalyticsReceipt(accepted=0, error_type=type(exc).__name__)
         self.accepted += accepted
         self.short_accepted += max(len(rows) - accepted, 0)
+        return AnalyticsReceipt(accepted=accepted)
 
     def state(self) -> IntegrationState:
         detail: dict[str, object] = {"accepted": self.accepted, "not_accepted": self.short_accepted, "errors": self.errors}

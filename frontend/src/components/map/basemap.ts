@@ -25,7 +25,7 @@ import { isLocalAssetUrl, tileUrlForTemplate } from './offline'
 
 export const DEFAULT_BASEMAP_TEMPLATE = '/basemaps/{z}/{x}/{y}.png'
 export const DEFAULT_PMTILES_URL = '/basemaps/aegis.pmtiles'
-export const BASEMAP_ATTRIBUTION = 'AEGIS 离线底图（自托管烘焙，无第三方瓦片服务）'
+export const BASEMAP_ATTRIBUTION = 'AEGIS 自托管底图'
 /** 真实高程派生影像的署名：自托管烘焙 + 上游 DEM 出处（Mapzen/AWS Terrain Tiles 的署名要求）。 */
 export const RELIEF_ATTRIBUTION = 'AEGIS 离线底图（自托管烘焙）· 高程 © Mapzen / AWS Terrain Tiles（SRTM、GEBCO、GMTED 等）'
 /**
@@ -259,6 +259,7 @@ export class PmtilesImageryProvider {
 
   private readonly reader: TileReader
   private readonly contentType: string
+  private readonly fallbackToParent: boolean
   private blankPromise: Promise<ImageBitmap> | null = null
 
   constructor(options: {
@@ -266,10 +267,12 @@ export class PmtilesImageryProvider {
     reader: TileReader
     verdict: PmtilesVerdict
     attribution: string
+    fallbackToParent?: boolean
   }) {
     const { cesium, verdict } = options
     this.reader = options.reader
     this.contentType = verdict.contentType
+    this.fallbackToParent = options.fallbackToParent ?? false
     this.minimumLevel = verdict.minimumLevel
     this.maximumLevel = Math.max(verdict.maximumLevel, verdict.minimumLevel)
     this.tilingScheme = new cesium.WebMercatorTilingScheme()
@@ -313,14 +316,29 @@ export class PmtilesImageryProvider {
   async requestImage(x: number, y: number, level: number): Promise<ImageBitmap> {
     if (!this.hasTile(x, y, level)) return this.blank()
     try {
-      const tile = await this.reader.getZxy(level, x, y)
-      if (!tile || tile.data.byteLength === 0) return this.blank()
-      return await createImageBitmap(new Blob([tile.data], { type: this.contentType }))
+      const lowestLevel = this.fallbackToParent ? this.minimumLevel : level
+      for (let sourceLevel = level; sourceLevel >= lowestLevel; sourceLevel -= 1) {
+        const scale = 2 ** (level - sourceLevel)
+        const tile = await this.reader.getZxy(sourceLevel, Math.floor(x / scale), Math.floor(y / scale))
+        if (!tile?.data.byteLength) continue
+        const blob = new Blob([tile.data], { type: this.contentType })
+        // WebGL 的上传翻转不作用于 ImageBitmap，需与 Cesium 官方影像加载器一致，在解码时翻转。
+        const orientation: ImageBitmapOptions = { imageOrientation: 'flipY' }
+        if (scale === 1) return await createImageBitmap(blob, orientation)
+        // 用父瓦的对应象限补齐稀疏覆盖，避免高层缺瓦露出整块地球底色。
+        const size = Math.max(1, this.tileWidth / scale)
+        const sx = Math.floor((x % scale) * this.tileWidth / scale)
+        const sy = Math.floor((y % scale) * this.tileHeight / scale)
+        return await createImageBitmap(blob, sx, sy, size, size, {
+          ...orientation,
+          resizeWidth: this.tileWidth, resizeHeight: this.tileHeight,
+        })
+      }
     } catch {
       // 单块瓦片坏掉（截断、非图片字节）只该让这一块空着——与"缺瓦"同一语义（野外弱网是常态），
       // 绝不许把 rejection 冒进 Cesium 的渲染循环把整张图打死。
-      return this.blank()
     }
+    return this.blank()
   }
 
   /** 1×1 全透明位图：懒建一次并复用（Cesium 会并发问很多缺口的瓦片）。 */
@@ -364,7 +382,8 @@ async function buildPmtilesProvider(cesium: BasemapCesium, url: string, attribut
   const { reader, head } = await openPmtiles(url)
   const verdict = describePmtilesHead(head)
   if (!verdict.raster) throw new Error(verdict.reason)
-  const provider = new PmtilesImageryProvider({ cesium, reader, verdict, attribution })
+  const fallbackToParent = new URL(url, 'http://localhost').pathname === MAP_ASSET_PATHS.reliefPmtiles
+  const provider = new PmtilesImageryProvider({ cesium, reader, verdict, attribution, fallbackToParent })
   return provider as unknown as ImageryProvider
 }
 

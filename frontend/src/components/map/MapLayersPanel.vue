@@ -73,7 +73,7 @@ const detailHazard = computed(() => (props.detail ? hazardLabel(props.detail.haz
             @update:checked="(value: boolean) => onToggle('clusters', value)"
           />
           <span class="label">{{ LAYER_LABELS.clusters }}</span>
-          <span class="count">{{ props.clustered ? '生效' : '未达阈值' }}</span>
+          <span class="count">{{ !props.visibility.clusters ? '已关闭' : props.clustered ? '生效' : '未达阈值' }}</span>
         </div>
       </a-space>
       <a-divider style="margin: 8px 0" />

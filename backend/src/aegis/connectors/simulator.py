@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from aegis.connectors.base import DataSource
 from aegis.connectors.metrics import unit_for
+from aegis.connectors.trace import source_probe
 from aegis.domain.messages import TelemetryReading, now_iso, utc_now
 
 # (station_id, region_code, 指标集)
@@ -84,6 +85,9 @@ class HazardScenarioSimulator(DataSource):
         observed = moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         band = _SURGE if self.scenario == "surge" else _BASELINE
         readings: list[TelemetryReading] = []
+        probe = source_probe.get()
+        if probe is not None:
+            probe.inputs.update(kind="simulator", scenario=self.scenario, tick=self.tick, seed=self.seed, raw_unit="readings")
         for station_id, region_code, metrics in STATIONS:
             for metric in metrics:
                 low, high = band[metric]
@@ -93,6 +97,8 @@ class HazardScenarioSimulator(DataSource):
                 quality = "ok"
                 if self._rng.random() < self.suspect_rate:
                     quality, value = "suspect", value * 10  # 劣化读数明显离群
+                if probe is not None:
+                    probe.capture(station_id=station_id, region_code=region_code, metric=metric, value=value, observed_at=observed)
                 readings.append(
                     TelemetryReading(
                         station_id=station_id,

@@ -10,10 +10,13 @@
 from __future__ import annotations
 
 import logging
+import math
+from datetime import UTC
 from typing import Any
 
 from aegis.connectors.base import DataSource
 from aegis.connectors.metrics import unit_for
+from aegis.connectors.trace import raw_number, source_probe, valid_region
 from aegis.domain.messages import TelemetryReading, now_iso, parse_iso, utc_now
 from aegis.errors import SchemaInvalidError
 
@@ -61,6 +64,7 @@ class WeatherApiSource(DataSource):
         self._timeout_s = timeout_ms / 1000
         self.rounds = 0
         self.readings = 0
+        self.rejected_values = 0
         self.failures = 0
         self.last_error: str | None = None
 
@@ -74,12 +78,17 @@ class WeatherApiSource(DataSource):
         return self._path
 
     async def collect(self) -> list[TelemetryReading]:
+        probe = source_probe.get()
+        if probe is not None:
+            probe.inputs.update(kind="http", method="GET", timeout_ms=int(self._timeout_s * 1000))
         if not self.enabled:
             return []
         client = self._client if self._client is not None else self._new_client()
         url = f"{self._base_url}{self._path}"
         try:
             response = await client.get(url, timeout=self._timeout_s)
+            if probe is not None:
+                probe.inputs["http_status"] = response.status_code
             response.raise_for_status()
             readings = self._parse(response.json())
         except Exception as exc:
@@ -96,6 +105,7 @@ class WeatherApiSource(DataSource):
         return {
             "rounds": self.rounds,
             "readings": self.readings,
+            "rejected_values": self.rejected_values,
             "failures": self.failures,
             "last_error": self.last_error,
             "timeout_ms": int(self._timeout_s * 1_000),
@@ -128,22 +138,39 @@ class WeatherApiSource(DataSource):
                 detail={"keys": sorted(str(key) for key in body)[:8]},
             )
         observed = _extract_observed(body)
+        probe = source_probe.get()
+        if probe is not None:
+            probe.inputs.update(raw_unit="stations", observed_at=observed)
+            probe.capture(len(stations))
         readings: list[TelemetryReading] = []
         for station in stations:
             if not isinstance(station, dict):
+                if probe is not None:
+                    probe.note("station_shape", "站点记录不是对象")
                 continue
-            station_id = str(station.get("id", "")).strip()
-            region_code = str(station.get("region_code", "")).strip().upper()
-            if not station_id or len(region_code) < 6:
+            station_id = str(station.get("id") or "").strip()
+            region_code = str(station.get("region_code") or "").strip().upper()[:24]
+            if not station_id or not valid_region(region_code):
+                if probe is not None:
+                    probe.note("station_incomplete", "站点标识缺失或区划码格式不合法", station_id=station_id, region_code=region_code)
                 log.debug("跳过不完整站点记录", extra={"station": station_id or "<missing>"})
                 continue
             for metric in _METRIC_FIELDS:
                 value = station.get(metric)
                 if value is None:
+                    if probe is not None and metric in station:
+                        probe.note("missing_value", "气象接口明确返回缺测值", station_id=station_id, metric=metric, value=None)
                     continue
+                if probe is not None:
+                    probe.capture(0, station_id=station_id, region_code=region_code, metric=metric, value=raw_number(value))
                 try:
-                    numeric = float(value)
-                except (TypeError, ValueError):
+                    numeric = None if isinstance(value, bool) else float(value)
+                except (TypeError, ValueError, OverflowError):
+                    numeric = None
+                if numeric is None or not math.isfinite(numeric):
+                    self.rejected_values += 1
+                    if probe is not None:
+                        probe.note("invalid_value", "观测值不是有限数值", station_id=station_id, metric=metric, value=raw_number(value))
                     continue
                 readings.append(
                     TelemetryReading(
@@ -151,7 +178,7 @@ class WeatherApiSource(DataSource):
                         metric=metric,
                         value=numeric,
                         unit=unit_for(metric),
-                        region_code=region_code[:24],
+                        region_code=region_code,
                         observed_at=observed,
                         ingested_at=now_iso(),
                         source=self.name,
@@ -165,9 +192,15 @@ def _extract_observed(body: dict[str, Any]) -> str:
     raw = body.get("observed_at")
     if isinstance(raw, str):
         try:
-            return parse_iso(raw).isoformat().replace("+00:00", "Z")
+            moment = parse_iso(raw)
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=UTC)
+            return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
         except ValueError:
             pass
+    probe = source_probe.get()
+    if probe is not None:
+        probe.note("fallback_observed_at", "响应未提供有效观测时间，使用平台接收时刻")
     return utc_now().isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 

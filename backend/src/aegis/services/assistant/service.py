@@ -36,7 +36,7 @@ from aegis.services.assistant.registry import ActionRegistry
 from aegis.services.assistant.review import DualReview, ReviewPolicy
 from aegis.services.interpret.text_guard import invented_numbers
 from aegis.services.operator_auth import OperatorKeyError
-from aegis.storage.store import SupportsControlActions
+from aegis.storage.store import AuditRecord, SupportsControlActions
 
 _MAX_SESSIONS = 200
 _MAX_TURNS = 20
@@ -71,6 +71,7 @@ class AssistantSession:
     session_id: str
     trace_id: str
     updated_at: float
+    owner: tuple[str | None, str]
     history: deque[dict[str, str]] = field(default_factory=lambda: deque(maxlen=_MAX_TURNS * 2))
     #: 最近一轮实际涉及的灾种（平台口径 hazard value）。多轮承接用：
     #: "那今年该重点防什么"里的"那"指的是上一轮的历史画像——不承接就会退化成
@@ -79,6 +80,7 @@ class AssistantSession:
     #: 该灾种来自哪个区域。承接必须区域一致：540121 的"以泥石流为主"不能变成
     #: 540221 那次省略式追问的灾种（跨区串味，复检实测过）。
     last_region: str = ""
+    active: bool = False
 
 
 class AssistantService:
@@ -161,16 +163,57 @@ class AssistantService:
     ) -> AsyncGenerator[AssistantEvent, None]:
         started = time.perf_counter()
         body = str(text or "").strip()[:2_000]
-        session = self._touch(session_id)
-        yield AssistantEvent(
+        previous = self._sessions.get(session_id) if session_id else None
+        owner = (operator.operator_id if operator else None, identity_kind)
+        session = self._touch(session_id, owner)
+        meta = AssistantEvent(
             "meta",
             {
                 "session_id": session.session_id,
                 "llm_configured": self.llm_available,
                 "operator_id": None if operator is None else operator.operator_id,
                 "actions": list(self._registry.names),
+                "stream_version": 1,
+                "context_reset": session_id is not None and session is not previous,
             },
         )
+        if session.active:
+            yield meta
+            yield AssistantEvent("error", {"code": "E_ASSISTANT_BUSY", "message": "这个会话还有一条回复在处理，请稍后重试。"})
+            yield self._done(session, started)
+            return
+
+        session.active = True
+        try:
+            yield meta
+            async with contextlib.aclosing(self._respond_turn(
+                session, body, operator=operator, reporter=reporter, region_code=region_code,
+                idempotency_key=idempotency_key, identity_kind=identity_kind,
+            )) as events:
+                async for event in events:
+                    yield event
+        finally:
+            session.active = False
+            session.updated_at = time.monotonic()
+        elapsed = (time.perf_counter() - started) * 1000.0
+        self.replies += 1
+        self._tracer.record("assistant_reply_ms", max(elapsed, 0.0), trace_id=session.trace_id)
+        yield self._done(session, started)
+
+    def _done(self, session: AssistantSession, started: float) -> AssistantEvent:
+        return AssistantEvent(
+            "done",
+            {
+                "session_id": session.session_id,
+                "latency_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                "rejected_count": len(self.rejections),
+            },
+        )
+
+    async def _respond_turn(
+        self, session: AssistantSession, body: str, *, operator: Operator | None, reporter: str | None,
+        region_code: str | None, idempotency_key: str | None, identity_kind: str,
+    ) -> AsyncGenerator[AssistantEvent, None]:
         if not body:
             yield AssistantEvent("error", {"message": "消息为空"})
             return
@@ -233,8 +276,6 @@ class AssistantService:
         # （此前先发帧后承接，客户端看到 hazard_type=None、实际却用了上文灾种）。
         intent = self._carry_hazard(session, intent, region_code=region_code)
         yield AssistantEvent("intent", intent.as_dict())
-        session.history.append({"role": "user", "text": body[:500]})
-
         answer_parts: list[str] = []
         async for event in self._run_intent(
             session,
@@ -250,17 +291,10 @@ class AssistantService:
                 answer_parts.append(str(event.data.get("text", "")))
             yield event
 
-        session.history.append({"role": "assistant", "text": " ".join(answer_parts)[:500]})
-        self.replies += 1
-        self._tracer.record("assistant_reply_ms", max((time.perf_counter() - started) * 1000.0, 0.0), trace_id=session.trace_id)
-        yield AssistantEvent(
-            "done",
-            {
-                "session_id": session.session_id,
-                "latency_ms": round((time.perf_counter() - started) * 1000.0, 3),
-                "rejected_count": len(self.rejections),
-            },
-        )
+        session.history.extend((
+            {"role": "user", "text": body[:500]},
+            {"role": "assistant", "text": " ".join(answer_parts)[:500]},
+        ))
 
     async def confirm(
         self,
@@ -571,6 +605,29 @@ class AssistantService:
             result["compensation"] = compensation
         return result
 
+    async def cancel_proposal(self, *, action_id: str, operator: Operator | None, identity_kind: str = "declared") -> dict[str, str]:
+        """提案阶段取消授权，状态与审计同事务提交。"""
+        if self._repo is None:
+            raise ActionError("E_ACTION_UNAVAILABLE", "当前形态没有动作台账")
+        if operator is None:
+            raise ActionError("E_OPERATOR_REQUIRED", "取消提案需要有效席位")
+        record = await self._repo.get_action(action_id)
+        if record is None:
+            raise ActionError("E_ACTION_NOT_FOUND", "提案不存在")
+        if operator.operator_id != record["operator_id"] and not role_at_least(operator.role, OperatorRole.LEAD):
+            raise ActionError("E_ACTION_NOT_ALLOWED", "取消其他席位的提案需要值班长权限")
+        if record["status"] != "revoked":
+            audit = AuditRecord(
+                phase="result", action_id=action_id, operator_id=operator.operator_id, role=operator.role.value,
+                action=record["action"], space_id=record.get("space_id"),
+                resolved_args=record.get("resolved_args") or {}, after={"cancelled": True, "was": "proposed"}, identity_kind=identity_kind,
+            )
+            if await self._repo.cancel_proposal(action_id, audit=audit) is None:
+                current = await self._repo.get_action(action_id)
+                if current is None or current["status"] != "revoked":
+                    raise ActionError("E_ACTION_CONFLICT", "提案已过期或已进入处置，无法取消")
+        return {"action_id": action_id, "status": "revoked"}
+
     # ---------- 编排 ----------
 
     @staticmethod
@@ -666,7 +723,8 @@ class AssistantService:
             approved=False,
             idempotency_key=idempotency_key,
         )
-        yield AssistantEvent("status", {"text": f"执行 {action_name}"})
+        verb = "准备" if action.spec.writes else "正在处理"
+        yield AssistantEvent("status", {"text": f"{verb}「{action.spec.title}」"})
         try:
             outcome = await self._executor.run(action, dict(intent.args), ctx)
         except ActionError as exc:
@@ -787,27 +845,35 @@ class AssistantService:
 
     # ---------- 会话与留痕 ----------
 
-    def _touch(self, session_id: str | None) -> AssistantSession:
+    def _touch(self, session_id: str | None, owner: tuple[str | None, str]) -> AssistantSession:
         now = time.monotonic()
-        if session_id and (existing := self._sessions.get(session_id)):
-            existing.updated_at = now
-            return existing
         self._evict_expired(now)
+        if session_id and (existing := self._sessions.get(session_id)):
+            if existing.owner == owner:
+                existing.updated_at = now
+                return existing
+            session_id = None
         sid = session_id or f"as_{secrets.token_hex(6)}"
-        session = AssistantSession(session_id=sid, trace_id=f"trc_{secrets.token_hex(8)}", updated_at=now)
+        session = AssistantSession(session_id=sid, trace_id=f"trc_{secrets.token_hex(8)}", updated_at=now, owner=owner)
         self._sessions[sid] = session
         self._order.append(sid)
         while len(self._sessions) > _MAX_SESSIONS:
             # 淘汰判据 = updated_at 最旧（与 TTL 同源）：此前按 _order 创建序 FIFO，
             # "最早创建"可能正是聊得最久的活跃会话（history 静默清零失忆）。
-            oldest = min(self._sessions, key=lambda key: self._sessions[key].updated_at)
+            candidates = [key for key, row in self._sessions.items() if not row.active and key != sid]
+            if not candidates:
+                # 过载时本轮仍可结束，但不给未登记的会话冒充可延续的上下文。
+                self._sessions.pop(sid)
+                self._order.remove(sid)
+                break
+            oldest = min(candidates, key=lambda key: self._sessions[key].updated_at)
             self._sessions.pop(oldest, None)
             with contextlib.suppress(ValueError):
                 self._order.remove(oldest)
         return session
 
     def _evict_expired(self, now: float) -> None:
-        stale = [sid for sid, session in self._sessions.items() if now - session.updated_at > self._ttl]
+        stale = [sid for sid, session in self._sessions.items() if not session.active and now - session.updated_at > self._ttl]
         for sid in stale:
             self._sessions.pop(sid, None)
         if stale:

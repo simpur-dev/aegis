@@ -220,18 +220,17 @@ function onDrawerVisible(visible: boolean): void {
 
 <template>
   <div class="warnings-page">
-    <PageHero surface :status="heroStatus" title="预警台账" caption="查阅已生成的预警、投递回执与关联处置任务。">
+    <PageHero surface :status="heroStatus" title="告警与任务" caption="查阅已生成的预警、投递回执与关联处置任务。">
       <template #actions>
+        <router-link to="/monitor#drill" custom v-slot="{ href, navigate }">
+          <a-button :href="href" @click="navigate">处置演练</a-button>
+        </router-link>
         <a-button :loading="loading" @click="load">
           <template #icon><ReloadOutlined aria-hidden="true" /></template>
           刷新
         </a-button>
       </template>
     </PageHero>
-    <nav class="ops-nav" aria-label="监测与预警">
-      <router-link to="/monitor">监测数据</router-link>
-      <router-link to="/warnings">预警台账</router-link>
-    </nav>
 
     <a-card class="ops-surface" size="small" title="预警记录">
       <div class="ops-filters warning-filters">

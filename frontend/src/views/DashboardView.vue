@@ -45,7 +45,7 @@ let eventTimer: ReturnType<typeof setTimeout> | null = null
  * 若轮询那份更早发出的快照迟到落地又把表整个换回去，刚补上的那条就再次消失。
  */
 let chainsSeq = 0
-const { events } = useEventStream()
+const { events, connected } = useEventStream()
 const { urgentCards } = useAlerts()
 
 /**
@@ -483,7 +483,7 @@ watch(
 
       <section ref="riskList" class="glass-panel dash-risks">
         <a-card :title="gridTitle" size="small" :loading="loading">
-          <RiskWall :cells="regionGrid" :window-size="CHAIN_WINDOW" :selected-id="selectedRiskId" @select="selectedRiskId = $event" />
+          <RiskWall :cells="regionGrid" :selected-id="selectedRiskId" @select="selectedRiskId = $event" />
         </a-card>
       </section>
       <section class="glass-panel dash-history">
@@ -495,7 +495,7 @@ watch(
       <!-- 第二行右：实时事件流（与上方智能体卡同宽） -->
       <section class="glass-panel dash-events">
         <a-card title="实时动态" size="small">
-          <EventFeed :events="events.slice(0, 20)" />
+          <EventFeed :events="events.slice(0, 20)" :connected="connected" />
         </a-card>
       </section>
 

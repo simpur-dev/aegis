@@ -19,6 +19,7 @@ from aegis.persistence.write_buffer import (
     DEFAULT_BATCH_ROWS,
     DEFAULT_CAPACITY_ROWS,
     WriteBuffer,
+    WriteReceipt,
     WriteRequest,
     backoff_delay_ms,
 )
@@ -94,6 +95,22 @@ class TestHotPath:
         assert buf.submit("telemetry", []) == 0
         assert buf.depth == 0
         assert buf.counters.buffered == 0
+
+    async def test_telemetry_receipts_follow_retries_commits_and_eviction_independently(self) -> None:
+        buf = WriteBuffer(make_sink(fail_times=1), capacity_rows=4, batch_rows=4)
+        evicted, kept, latest = WriteReceipt(), WriteReceipt(), WriteReceipt()
+        buf.submit("telemetry", [1, 2], receipt=evicted)
+        buf.submit("telemetry", [3], receipt=kept)
+        buf.submit("telemetry", [4, 5], receipt=latest)
+        assert (evicted.queued, evicted.dropped, evicted.flushed) == (2, 2, 0)
+
+        with pytest.raises(WriteFailedError):
+            await buf.flush()
+        assert kept.retries == latest.retries == 1
+        assert kept.last_error == "RuntimeError"
+        assert evicted.retries == 0
+        assert await buf.flush() == 3
+        assert (kept.flushed, latest.flushed) == (1, 2)
 
     def test_submit_never_raises_when_sink_is_broken(self) -> None:
         """sink 立刻失败也不能影响热路径：提交只入队。"""

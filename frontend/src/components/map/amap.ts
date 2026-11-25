@@ -11,12 +11,13 @@
  * 不属于"已获授权接入高德"，实测接过一次，已撤。
  */
 
-/** JS API 2.0 的最小面：只声明本项目真正碰到的那几样，不给整个 AMap 命名空间造轮子。 */
+/** JS API 2.1Beta：只声明地形图和本项目图层需要的接口。 */
 export interface AMapNamespace {
   Map: new (container: HTMLElement, options: Record<string, unknown>) => AMapMapInstance
   Marker: new (options: Record<string, unknown>) => AMapOverlay
   CircleMarker: new (options: Record<string, unknown>) => AMapOverlay
   Polygon: new (options: Record<string, unknown>) => AMapOverlay
+  TileLayer?: { Satellite?: new () => unknown; RoadNet?: new () => unknown }
   LabelMarker?: new (options: Record<string, unknown>) => AMapOverlay
   event: { on: (target: unknown, name: string, handler: (event?: unknown) => void) => void }
 }
@@ -25,9 +26,19 @@ export interface AMapMapInstance {
   add(overlays: AMapOverlay | AMapOverlay[]): void
   remove(overlays: AMapOverlay | AMapOverlay[]): void
   setZoomAndCenter(zoom: number, center: [number, number], immediately?: boolean): void
-  /** 换官方样式档（amap://styles/*）：主题翻转时由组件推进，档位来自 `@/theme/map` 的派生层。 */
-  setMapStyle(name: string): void
+  zoomIn(): void
+  zoomOut(): void
+  getZoom(): number
+  getBounds(): { getSouthWest?(): AMapLngLat; getNorthEast?(): AMapLngLat } | null
+  on(name: 'complete' | 'moveend' | 'zoomend', listener: () => void): void
+  setPitch(pitch: number, immediately?: boolean): void
+  setRotation(rotation: number, immediately?: boolean): void
   destroy(): void
+}
+
+interface AMapLngLat {
+  getLng(): number
+  getLat(): number
 }
 
 export interface AMapOverlay {
@@ -70,10 +81,11 @@ export function loadAmap(timeoutMs = 15_000): Promise<AMapNamespace> {
     if (security) window._AMapSecurityConfig = { securityJsCode: security }
     const script = document.createElement('script')
     script.id = AMAP_SCRIPT_ID
-    script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(key)}`
+    script.src = `https://webapi.amap.com/maps?v=2.1Beta&key=${encodeURIComponent(key)}`
     script.async = true
     const timer = setTimeout(() => {
       cleanup()
+      script.remove()
       reject(new Error(`高德 JS API 加载超时（${timeoutMs / 1000}s）：检查网络与 key 的域名白名单`))
     }, timeoutMs)
     function cleanup(): void {

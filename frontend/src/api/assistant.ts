@@ -56,6 +56,7 @@ export const ASSISTANT_ENDPOINTS = {
   actions: '/api/v1/assistant/actions',
   action: (actionId: string) => `/api/v1/assistant/actions/${actionId}`,
   confirm: (actionId: string) => `/api/v1/assistant/actions/${actionId}/confirm`,
+  cancel: (actionId: string) => `/api/v1/assistant/actions/${actionId}/cancel`,
   revoke: (actionId: string) => `/api/v1/assistant/actions/${actionId}/revoke`,
 } as const
 
@@ -343,6 +344,8 @@ export interface MetaFrame {
   actions: string[]
   /** 当前席位（没带 `X-Aegis-Operator` 时为 null）：读动作允许匿名，写动作会被后端拒绝。 */
   operator_id?: string | null
+  stream_version?: number
+  context_reset?: boolean
 }
 
 export interface IntentFrame {
@@ -380,6 +383,13 @@ export interface ProposalFrame {
   status: string
   expires_in_seconds: number
   session_id: string
+  preview?: {
+    targets?: { kind: string; id: string; label: string }[]
+    audience_count?: number
+    channels?: string[]
+    irreversible?: string[]
+    warnings?: string[]
+  }
   /** 双人复核档：需几票、已收哪几票。缺省 0 = 本人一次确认（默认配置）。 */
   review_required?: number
   reviews?: ReviewVoteDto[]
@@ -400,6 +410,7 @@ export interface AnswerFrame {
 export interface ErrorFrame {
   type: 'error'
   message: string
+  code?: string
 }
 
 export interface DoneFrame {
@@ -575,6 +586,9 @@ export function createAssistantApiClient(instance: AxiosInstance) {
     /** 人工确认执行：台账里 `proposed → executing`，并发下只能成功一次。 */
     confirm: (actionId: string, body: ConfirmActionRequestDto = {}) =>
       request<ConfirmResultDto>({ url: ASSISTANT_ENDPOINTS.confirm(actionId), method: 'post', data: body }),
+
+    cancelProposal: (actionId: string) =>
+      request<{ action_id: string; status: 'revoked' }>({ url: ASSISTANT_ENDPOINTS.cancel(actionId), method: 'post' }),
 
     /** 撤销：只有 60 秒窗口内的 proposed/executed 能撤，超出如实返回 rejected。 */
     revoke: (actionId: string) => request<{ status: string; reason?: string }>({ url: ASSISTANT_ENDPOINTS.revoke(actionId), method: 'post' }),

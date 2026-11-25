@@ -12,6 +12,7 @@
  * ③ 置信没量到写 `—`，不写 0%。
  */
 import { computed } from 'vue'
+import { AimOutlined } from '@ant-design/icons-vue'
 
 import type { RiskLevel } from '@/api/types'
 import { RISK_COLORS, RISK_LABELS } from '@/api/types'
@@ -29,7 +30,7 @@ export interface RiskCell {
   updatedAt?: string | null
 }
 
-const props = defineProps<{ cells: RiskCell[]; windowSize: number; selectedId?: string | null }>()
+const props = defineProps<{ cells: RiskCell[]; selectedId?: string | null }>()
 const emit = defineEmits<{ (event: 'select', id: string): void }>()
 
 /**
@@ -51,7 +52,7 @@ const mockNotice = computed<string>(() => {
     </div>
     <button
       v-for="cell in cells"
-      :key="cell.region"
+      :key="cell.id ?? cell.region"
       type="button"
       class="cell"
       :class="{ 'is-selected': selectedId === (cell.id ?? cell.region) }"
@@ -76,13 +77,12 @@ const mockNotice = computed<string>(() => {
         </div>
       </div>
     </button>
-    <!-- 卡片级空态一律用带出口的芯片块：同一屏不许并排两种空态习语（antd 居中大插图没有出口）。 -->
     <div v-if="!cells.length" class="empty-hero empty-hero--compact" data-testid="region-empty">
-      <span class="empty-hero__icon" aria-hidden="true">◇</span>
+      <span class="empty-hero__icon" aria-hidden="true"><AimOutlined /></span>
       <div>
         <div class="empty-hero__title">还没有研判结论</div>
-        <div class="empty-hero__desc">按最近 {{ windowSize }} 条处置归集，跑一次演练就会落点。</div>
-        <router-link class="empty-hero__action empty-hero__cta" to="/monitor">发起演练看风险落点 →</router-link>
+        <div class="empty-hero__desc">可在地图上查看监测站点和地形。</div>
+        <router-link class="empty-hero__action" to="/map">查看一张图 →</router-link>
       </div>
     </div>
   </div>

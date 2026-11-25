@@ -7,8 +7,7 @@
  * 1. **帧序列是过程事实**。后端刻意不做 token 级伪流式，给出的每一帧都是"哪一步在等什么"：
  *    meta/intent/status/result/done 一帧不少，但收进「过程 ｜ N 帧」一个折行（原生 details）；
  *    流式进行中在输入区上方报最新帧名，过程仍然可见。
- * 2. **执行类动作只能经 `/confirm` 落地**。「放弃」只把卡片收起来——后端没有取消接口，
- *    页面就照实说"仅在本地隐藏"，不许把"我没点"显示成"已经撤销"。
+ * 2. **执行类动作经确认落地**。取消提案与确认共用后端动作台账。
  * 3. **能力面读不到 ≠ 一切正常**。503（腿没装配）与 404（出口未启用）是两句话；
  *    `llm_configured=false` 的口径由页头 caps-state 标签承担（黄色横幅已按要求移除）。
  * 4. **角色不够的动作照样列出来**，置灰并说明缺什么——把动作藏起来，用户只会以为助手不会这个。
@@ -21,11 +20,12 @@ import {
   SearchOutlined, SendOutlined, ToolOutlined, UploadOutlined,
 } from '@ant-design/icons-vue'
 import { useMediaQuery } from '@vueuse/core'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
 import type { Component, ComponentPublicInstance } from 'vue'
 
 import type { ActionSpecDto, ConfirmResultDto, ProposalFrame } from '@/api/assistant'
-import { assistantApi, CHAT_LIMITS, isAbortError, isAssistantDisabled, isAssistantUnavailable, preflightChat } from '@/api/assistant'
+import { assistantApi, CHAT_LIMITS } from '@/api/assistant'
+import { operatorSeat } from '@/api/operatorSeat'
 import ReportForm from '@/components/reports/ReportForm.vue'
 import AlertStack from '@/components/assistant/AlertStack.vue'
 import HandlingBar from '@/components/assistant/HandlingBar.vue'
@@ -49,14 +49,11 @@ const {
 } = useAssistantCapabilities()
 
 // 时间线与会话号在组件外面：换菜单、换容器（页面 ↔ 抽屉）都还得接得上
-const { frames, sentTexts, sessionId, decisions, clearTimeline, recordSent } = useAssistantSession()
-const { turns, lastFrame, mainFrames, quietFrames, collapseQuiet } = useConversationModel(frames, sentTexts)
+const {
+  frames, sentTexts, sessionId, decisions, draft, reporter, regionCode, streaming, streamError, clearTimeline, send, stopStream,
+} = useAssistantSession()
+const { turns, mainFrames, quietFrames, collapseQuiet } = useConversationModel(frames, sentTexts)
 
-const reporter = ref('值班员')
-const regionCode = ref('')
-const draft = ref('')
-const streaming = ref(false)
-const streamError = ref('')
 const reportOpen = ref(false)
 const composerBox = ref<HTMLElement | null>(null)
 
@@ -85,12 +82,31 @@ onMounted(() => {
 })
 onBeforeUnmount(() => window.removeEventListener('keydown', onDockEscape, true))
 
-/** 聊天面滚到队尾：值班员永远看最新一帧（测试环境宿主可能没挂，守一下）。 */
 const scrollHost = ref<HTMLElement | null>(null)
-watch([() => frames.value.length, streaming], async () => {
-  await nextTick()
+const followsLatest = ref(true)
+function updateScrollPosition(): void {
   const el = scrollHost.value
+  if (el) followsLatest.value = el.scrollHeight - el.scrollTop - el.clientHeight < 56
+}
+function jumpToLatest(): void {
+  const el = scrollHost.value
+  followsLatest.value = true
   if (el) el.scrollTop = el.scrollHeight
+}
+onMounted(jumpToLatest)
+watch([() => frames.value.length, streaming], () => {
+  if (followsLatest.value) jumpToLatest()
+}, { flush: 'post' })
+
+const frameLabels = {
+  meta: '会话', intent: '意图识别', status: '处理阶段', result: '数据结果',
+  rejected: '未执行', error: '发生错误', done: '完成', proposal: '等待确认', answer: '回复',
+}
+const progressText = computed(() => {
+  const frame = turns.value.at(-1)?.frames.at(-1)
+  if (frame === undefined || frame.type === 'done' || frame.type === 'meta') return '正在理解问题'
+  if (frame.type === 'status') return frame.text
+  return frameLabels[frame.type]
 })
 
 /** 点建议条只填句子、不代发：发不发仍是值班员的决定，这里任何时候都不替人按下发送。 */
@@ -144,78 +160,6 @@ function actionTitle(spec: ActionSpecDto): string {
 }
 
 /**
- * 幂等键跟着"这一句草稿"走，不是每次发送新造：
- * 断线重发或双击时同一句会命中同一行动作台账，不会多出一张待确认卡片。
- * 成功收尾才清掉；失败保留，让重试仍然是"同一次意图"。
- */
-let pendingSend: { text: string; key: string } | null = null
-
-function newIdempotencyKey(): string {
-  const uuid = globalThis.crypto?.randomUUID?.()
-  if (uuid) return `chat_${uuid.replace(/-/g, '').slice(0, 24)}`
-  return `chat_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
-}
-
-function idempotencyKeyFor(text: string): string {
-  if (pendingSend === null || pendingSend.text !== text) pendingSend = { text, key: newIdempotencyKey() }
-  return pendingSend.key
-}
-
-/** 当前这一轮的可中断句柄：停止按钮只掐读取端，已经发生的动作不由它决定。 */
-let inflight: AbortController | null = null
-
-function stopStream(): void {
-  if (!streaming.value) return
-  inflight?.abort()
-}
-
-async function send(): Promise<void> {
-  const text = draft.value.trim()
-  const request = {
-    message: text,
-    session_id: sessionId.value ?? undefined,
-    reporter: reporter.value.trim() || undefined,
-    region_code: regionCode.value.trim() || undefined,
-    idempotency_key: idempotencyKeyFor(text),
-  }
-  // 发出前按后端口径挡一次（数值与本文件的正则由跨端门禁对着 assistant_api.py 校验）
-  const blocked = preflightChat(request)
-  if (blocked !== '') {
-    streamError.value = blocked
-    return
-  }
-  streaming.value = true
-  streamError.value = ''
-  const controller = new AbortController()
-  inflight = controller
-  try {
-    // 用户那句话要跟这一轮绑在一起记：等到第一帧落地才记——
-    // 一发出去就记的话，零帧的失败请求会让这句话冒充一轮，把尾对齐全盘错位。
-    let recorded = false
-    for await (const frame of assistantApi.chat(request, { signal: controller.signal })) {
-      if (frame.type === 'meta') sessionId.value = frame.session_id
-      frames.value.push(frame)
-      if (!recorded) {
-        recordSent(text)
-        recorded = true
-      }
-    }
-    // 流式期间输入框可能已经换上新草稿：只在还是这一句时清空，别吞掉刚打的字
-    if (draft.value.trim() === text) draft.value = ''
-    pendingSend = null
-  } catch (error) {
-    if (isAbortError(error)) {
-      streamError.value = '已停止接收这一轮：已经发生的动作仍以对话记录与动作台账为准，不会因为停止而撤回。'
-    } else if (isAssistantUnavailable(error)) streamError.value = `语义交互服务未装配：${error instanceof Error ? error.message : String(error)}`
-    else if (isAssistantDisabled(error)) streamError.value = '助手出口未启用（路由整段没挂载）：这一轮请求没有发出，页面上没有新事实。'
-    else streamError.value = error instanceof Error ? `对话中断：${error.message}` : '对话中断'
-  } finally {
-    streaming.value = false
-    if (inflight === controller) inflight = null
-  }
-}
-
-/**
  * Enter 发送、Shift+Enter 换行——多行输入框的通用约定。
  * 流式期间按钮点不动（antd 的 loading 让它接不到点击），键盘这条路必须自己守住：
  * 否则两轮回答会织进同一条时间线，会话号也说不清是哪一轮的。
@@ -235,7 +179,8 @@ function onMessageKeydown(event: KeyboardEvent): void {
 }
 
 async function confirmProposal(proposal: ProposalFrame): Promise<void> {
-  decisions[proposal.action_id] = { kind: 'busy' }
+  if (decisionFinal(proposal.action_id)) return
+  decisions[proposal.action_id] = { kind: 'busy', operation: 'confirm' }
   try {
     const result = await assistantApi.confirm(proposal.action_id, { actor: reporter.value.trim() || undefined })
     if (result.status === 'awaiting_review') {
@@ -251,14 +196,26 @@ async function confirmProposal(proposal: ProposalFrame): Promise<void> {
   } catch (error) {
     decisions[proposal.action_id] = {
       kind: 'error',
-      message: error instanceof Error ? error.message : String(error),
+      message: `确认请求失败：${error instanceof Error ? error.message : String(error)}`,
     }
   }
 }
 
-/** 只在本地收起卡片：后端没有取消接口，说清这一点比"看起来撤销了"重要。 */
-function dismissProposal(proposal: ProposalFrame): void {
-  decisions[proposal.action_id] = { kind: 'dismissed' }
+async function dismissProposal(proposal: ProposalFrame): Promise<void> {
+  if (decisionFinal(proposal.action_id)) return
+  decisions[proposal.action_id] = { kind: 'busy', operation: 'cancel' }
+  try {
+    const receipt = await assistantApi.cancelProposal(proposal.action_id)
+    if (receipt.status !== 'revoked' || receipt.action_id !== proposal.action_id) {
+      throw new Error('后台未返回对应提案的取消回执')
+    }
+    decisions[proposal.action_id] = { kind: 'cancelled' }
+  } catch (error) {
+    decisions[proposal.action_id] = {
+      kind: 'error',
+      message: `取消请求失败：${error instanceof Error ? error.message : String(error)}`,
+    }
+  }
 }
 
 /** 后端 confirm() 的四条返回分支：一分支一句话，不许合并。 */
@@ -273,7 +230,26 @@ const CONFIRM_STATUS_LABELS: Record<ConfirmResultDto['status'], string> = {
 /** 复核第一票不是终态：确认/放弃两个按钮还要留着给另一名席位。 */
 function decisionFinal(actionId: string): boolean {
   const decision = decisions[actionId]
-  return !!decision && decision.kind !== 'review'
+  return !!decision && decision.kind !== 'review' && decision.kind !== 'error'
+}
+
+function proposalState(actionId: string): string {
+  const decision = decisions[actionId]
+  if (decision?.kind === 'result') return CONFIRM_STATUS_LABELS[decision.result.status]
+  if (decision?.kind === 'cancelled') return '已取消'
+  if (decision?.kind === 'dismissed') return '已收起'
+  if (decision?.kind === 'review') return '待第二人复核'
+  return '待确认'
+}
+
+function decisionBusy(actionId: string, operation: 'confirm' | 'cancel'): boolean {
+  const decision = decisions[actionId]
+  return decision?.kind === 'busy' && decision.operation === operation
+}
+
+function proposalVotes(proposal: ProposalFrame): number {
+  const decision = decisions[proposal.action_id]
+  return (decision?.kind === 'review' ? decision.result.reviews?.length : proposal.reviews?.length) ?? 0
 }
 
 /** 执行类动作的闭环：把能跟进的号带回来，别让值班员手里一个号都没有。 */
@@ -295,9 +271,10 @@ function executionHandles(result: ConfirmResultDto): string {
 function decisionText(actionId: string): string {
   const decision = decisions[actionId]
   if (!decision) return ''
-  if (decision.kind === 'busy') return '确认请求进行中…'
-  if (decision.kind === 'dismissed') return '仅本地放弃：后端没有取消接口，该动作仍在会话内，确认或过期才会失效。'
-  if (decision.kind === 'error') return `确认请求失败：${decision.message}`
+  if (decision.kind === 'busy') return decision.operation === 'cancel' ? '正在取消提案…' : '正在提交确认…'
+  if (decision.kind === 'dismissed') return '旧会话仅收起了这张卡片。实际状态以动作台账为准。'
+  if (decision.kind === 'cancelled') return '后端已取消提案并记录审计。'
+  if (decision.kind === 'error') return decision.message
   if (decision.kind === 'review') return `复核 ${decision.result.reviews?.length ?? 1}/${decision.result.review_required ?? 2}：还需另一名席位确认（不能是同一人）`
   const result = decision.result
   const label = CONFIRM_STATUS_LABELS[result.status] ?? result.status
@@ -682,13 +659,13 @@ onBeforeUnmount(() => {
             </div>
           </Transition>
         </template>
-        <div ref="scrollHost" class="chat__scroll" data-testid="timeline">
+        <div ref="scrollHost" class="chat__scroll" data-testid="timeline" role="region" aria-label="会话记录" @scroll="updateScrollPosition">
         <div v-if="!frames.length && !streaming" class="welcome" data-testid="timeline-empty">
           <section class="welcome__intro">
             <span class="welcome__mark" aria-hidden="true">✦</span>
             <div class="welcome__copy">
               <h2>有什么可以帮你？</h2>
-              <p>查询预警与态势、发起演练或上报险情。</p>
+              <p>查预警、回看处置，或把现场情况整理成一份上报提案。</p>
             </div>
           </section>
 
@@ -729,6 +706,7 @@ onBeforeUnmount(() => {
                     <span v-if="task.spec.needs_confirm">需确认</span>
                   </span>
                 </span>
+                <RightOutlined class="quick-task__arrow" aria-hidden="true" />
               </button>
             </div>
 
@@ -776,39 +754,60 @@ onBeforeUnmount(() => {
         <!-- 会话流：按轮分组，用户在右、助手在左；答案先给，过程帧折一行 -->
         <template v-for="turn in turns" :key="turn.frames[0]">
           <div class="turn">
+            <p v-if="turn.frames[0]?.type === 'meta' && turn.frames[0].context_reset" class="session-reset">
+              已开启新上下文。上方对话可回看。
+            </p>
             <div v-if="turn.userText !== null" class="bubble-user">{{ turn.userText }}</div>
             <div class="turn__assistant">
+              <span v-if="mainFrames(turn).length" class="reply-author"><span aria-hidden="true">✦</span> AEGIS 助手</span>
               <template v-for="(frame, frameIndex) in mainFrames(turn)" :key="frameIndex">
                 <!-- 提案帧渲染成待确认卡：确认/放弃在卡上，处置结果也落回这张卡 -->
-                <div v-if="frame.type === 'proposal'" class="proposal" :data-testid="`proposal-${frame.action_id}`">
+                <div v-if="frame.type === 'proposal'" class="proposal" :data-state="decisions[frame.action_id]?.kind" :data-testid="`proposal-${frame.action_id}`">
                   <div class="proposal__head">
-                    <span class="proposal__badge">待确认</span>
-                    <span class="proposal__text">{{ frame.action }} ｜ {{ proposalText(frame) }}</span>
+                    <span class="proposal__badge" :data-state="decisions[frame.action_id]?.kind">{{ proposalState(frame.action_id) }}</span>
+                    <span class="proposal__text">{{ capabilities?.actions.find(spec => spec.action === frame.action)?.title ?? frame.action }}</span>
                     <span v-if="(frame.review_required ?? 0) >= 2" class="proposal__review" data-testid="review-progress">
-                      双人复核 {{ frame.reviews?.length ?? 0 }}/{{ frame.review_required }}
+                      双人复核 {{ proposalVotes(frame) }}/{{ frame.review_required }}
                     </span>
                   </div>
+                  <strong class="proposal__summary">{{ frame.summary || frame.action }}</strong>
+                  <ul v-if="frame.preview?.targets?.length" class="proposal__targets" aria-label="影响对象">
+                    <li v-for="target in frame.preview.targets" :key="`${target.kind}:${target.id}`">{{ target.label || target.id }}</li>
+                  </ul>
+                  <p v-if="frame.preview?.audience_count || frame.preview?.channels?.length" class="proposal__impact">
+                    <span v-if="frame.preview.audience_count">影响 {{ frame.preview.audience_count }} 人</span>
+                    <span v-if="frame.preview.channels?.length">通道 {{ frame.preview.channels.join('、') }}</span>
+                  </p>
+                  <ul v-if="frame.preview?.irreversible?.length || frame.preview?.warnings?.length" class="proposal__warnings">
+                    <li v-for="(note, i) in [...(frame.preview.irreversible ?? []), ...(frame.preview.warnings ?? [])]" :key="i">{{ note }}</li>
+                  </ul>
+                  <details class="process proposal__details">
+                    <summary><RightOutlined aria-hidden="true" /> 提案详情</summary>
+                    <p>{{ frame.action }} · {{ proposalText(frame) }}</p>
+                    <pre v-if="Object.keys(frame.args ?? {}).length">{{ JSON.stringify(frame.args, null, 2) }}</pre>
+                  </details>
                   <a-space size="small">
                     <a-button
                       type="primary"
                       size="small"
                       :disabled="decisionFinal(frame.action_id)"
-                      :loading="decisions[frame.action_id]?.kind === 'busy'"
+                      :loading="decisionBusy(frame.action_id, 'confirm')"
                       :data-testid="`confirm-${frame.action_id}`"
                       @click="confirmProposal(frame)"
                     >
-                      确认
+                      确认执行
                     </a-button>
                     <a-button
                       size="small"
-                      :disabled="!!decisions[frame.action_id]"
+                      :disabled="decisionFinal(frame.action_id)"
+                      :loading="decisionBusy(frame.action_id, 'cancel')"
                       :data-testid="`dismiss-${frame.action_id}`"
                       @click="dismissProposal(frame)"
                     >
-                      放弃
+                      取消提案
                     </a-button>
                   </a-space>
-                  <div v-if="decisionText(frame.action_id)" class="decision" data-testid="decision">{{ decisionText(frame.action_id) }}</div>
+                  <div v-if="decisionText(frame.action_id)" class="decision" data-testid="decision" role="status">{{ decisionText(frame.action_id) }}</div>
                 </div>
 
                 <!-- 回答是主回复 -->
@@ -818,22 +817,22 @@ onBeforeUnmount(() => {
 
                 <!-- 拒绝与错误是必须看见的事实，不折叠 -->
                 <div v-else class="frame refusal" :data-testid="`frame-${frame.type}`">
-                  <span class="kind">{{ frame.type }}</span>
+                  <span class="kind">{{ frameLabels[frame.type] }}</span>
                   <span class="body">{{ frameText(frame) }}</span>
                 </div>
               </template>
 
               <!-- 过程帧：有回答就折一行（原生 details，要核对时点开）；没有回答就原样摆出 -->
               <details v-if="collapseQuiet(turn)" class="process">
-                <summary>过程 ｜ {{ quietFrames(turn).length }} 帧</summary>
+                <summary><RightOutlined aria-hidden="true" /> 查看处理过程 <span>{{ quietFrames(turn).length }} 步</span></summary>
                 <div v-for="(frame, frameIndex) in quietFrames(turn)" :key="frameIndex" class="frame" :data-testid="`frame-${frame.type}`">
-                  <span class="kind">{{ frame.type }}</span>
+                  <span class="kind">{{ frameLabels[frame.type] }}</span>
                   <span class="body">{{ frameText(frame) }}</span>
                 </div>
               </details>
               <template v-else>
                 <div v-for="(frame, frameIndex) in quietFrames(turn)" :key="frameIndex" class="frame" :data-testid="`frame-${frame.type}`">
-                  <span class="kind">{{ frame.type }}</span>
+                  <span class="kind">{{ frameLabels[frame.type] }}</span>
                   <span class="body">{{ frameText(frame) }}</span>
                 </div>
               </template>
@@ -842,13 +841,17 @@ onBeforeUnmount(() => {
         </template>
 
         <!-- 流式进行中：报最新帧名，过程折叠了但"此刻在等什么"仍一眼可见 -->
-        <div v-if="streaming" class="typing">
-          正在处理…<span v-if="lastFrame" class="typing__frame">{{ lastFrame.type }}</span>
+        <div v-if="streaming" class="typing" role="status">
+          <span class="typing__dot" aria-hidden="true" />
+          <span>{{ progressText }}</span>
         </div>
       </div>
 
       <div class="composer">
-        <p v-if="streamError" class="error" data-testid="stream-error">{{ streamError }}</p>
+        <button v-if="frames.length && !followsLatest" class="jump-latest" type="button" @click="jumpToLatest">
+          <DownOutlined aria-hidden="true" /> 回到最新回复
+        </button>
+        <p v-if="streamError" role="status" class="error" data-testid="stream-error">{{ streamError }}</p>
         <div class="composer__context">
           <div class="composer__field">
             <label :for="`${fieldId}-reporter`">上报人</label>
@@ -879,7 +882,7 @@ onBeforeUnmount(() => {
             :auto-size="{ minRows: 2, maxRows: compact ? 3 : 6 }"
             :maxlength="CHAT_LIMITS.message.max"
             aria-label="输入你的问题或指令"
-            placeholder="输入你的问题或指令…"
+            placeholder="例如：最近有哪些预警？"
             data-testid="field-message"
             @keydown="onMessageKeydown"
           />
@@ -887,15 +890,20 @@ onBeforeUnmount(() => {
         <!-- 计数自己渲染而不是用 antd 的 show-count：那一个的文本挂在 data-count 上，界面上看得见却测不着 -->
         <div class="composer__meta">
           <div class="composer__info">
+            <div class="composer__identity">
+              <span class="composer__seat" :title="operatorSeat ? `当前声明席位 ${operatorSeat}` : '访客可以查询。处置前请在告警面板选择值班席位。'">
+                {{ operatorSeat ? `席位 ${operatorSeat}` : '访客查询' }}
+              </span>
+              <span v-if="sessionId" class="composer__session" data-testid="session-id" :title="sessionId">会话 {{ sessionId }}</span>
+            </div>
             <span class="composer__count" data-testid="char-count">
               <span>{{ draft.length }} / {{ CHAT_LIMITS.message.max }} 字</span>
               <span class="composer__keys">Enter 发送，Shift+Enter 换行</span>
             </span>
-            <span v-if="sessionId" class="composer__session" data-testid="session-id" :title="sessionId">会话 {{ sessionId }}</span>
           </div>
           <div class="composer__actions">
             <a-button v-if="streaming" danger size="small" data-testid="stop" @click="stopStream">停止</a-button>
-            <a-button size="small" type="text" data-testid="clear" @click="clearTimeline">清空</a-button>
+            <a-button size="small" type="text" data-testid="clear" :disabled="streaming || !frames.length" @click="clearTimeline">清空记录</a-button>
             <a-button type="primary" :loading="streaming" data-testid="send" @click="send">
               <template #icon><SendOutlined aria-hidden="true" /></template>
               发送
@@ -1094,7 +1102,14 @@ onBeforeUnmount(() => {
 }
 .panel--page.panel--compact {
   flex: none;
-  height: clamp(400px, calc(100dvh - 228px), 780px);
+  height: clamp(400px, calc(100dvh - 228px - var(--aeg-bottom-nav-height, 0px)), 780px);
+}
+@media (max-width: 640px) {
+  .panel--page.panel--compact {
+    flex: 1 0 360px;
+    height: auto;
+    min-height: 0;
+  }
 }
 .chat {
   min-width: 0;
@@ -1240,10 +1255,10 @@ onBeforeUnmount(() => {
   position: relative;
   isolation: isolate;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--aeg-space-s3);
   overflow: hidden;
-  padding: var(--aeg-space-s4);
+  padding: clamp(16px, 3cqi, 28px);
   border: 1px solid var(--aeg-color-brand-line);
   border-radius: var(--aeg-radius-xl);
   background:
@@ -1254,9 +1269,9 @@ onBeforeUnmount(() => {
 .welcome__intro::before {
   position: absolute;
   z-index: -1;
-  inset: 0 0 0 38%;
+  inset: 0 0 0 29%;
   background: url('/backgrounds/tibet-relief.webp') 66% 46% / cover;
-  opacity: 0.15;
+  opacity: 0.28;
   mask-image: linear-gradient(90deg, transparent, black);
   content: '';
 }
@@ -1286,7 +1301,7 @@ onBeforeUnmount(() => {
   font-weight: var(--aeg-weight-bold);
 }
 .welcome__copy h2 {
-  font-size: var(--aeg-font-xl);
+  font-size: clamp(22px, 4cqi, 32px);
   line-height: var(--aeg-lh-tight);
 }
 .welcome__copy p {
@@ -1324,10 +1339,10 @@ onBeforeUnmount(() => {
 }
 .quick-task {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--aeg-space-s2);
   min-width: 0;
-  min-height: 96px;
+  min-height: 82px;
   padding: var(--aeg-space-s3);
   border: 1px solid var(--aeg-color-border);
   border-radius: var(--aeg-radius-lg);
@@ -1336,11 +1351,21 @@ onBeforeUnmount(() => {
   color: var(--aeg-color-text);
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--aeg-motion-base), background-color var(--aeg-motion-base);
+  transition: border-color var(--aeg-motion-base), background-color var(--aeg-motion-base), transform var(--aeg-motion-base);
 }
+.quick-task__arrow {
+  margin-left: auto;
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-xs);
+}
+.quick-task:focus-visible { outline-offset: -2px; }
 .quick-task:hover:not(:disabled) {
   border-color: var(--aeg-color-overview-accent);
   background: var(--aeg-color-overview-panel);
+}
+@media (prefers-reduced-motion: no-preference) and (hover: hover) {
+  .quick-task:hover:not(:disabled) { transform: translateY(-2px); }
+  .quick-task:active:not(:disabled) { transform: scale(.98); }
 }
 .quick-task:disabled,
 .caps__chip:disabled {
@@ -1437,6 +1462,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: var(--aeg-space-s3);
 }
+.session-reset {
+  align-self: center;
+  margin: 0;
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-xs);
+}
 .bubble-user {
   align-self: flex-end;
   max-width: 78%;
@@ -1456,6 +1487,12 @@ onBeforeUnmount(() => {
   gap: var(--aeg-space-s2);
   max-width: 94%;
 }
+.reply-author {
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-xs);
+  font-weight: var(--aeg-weight-semibold);
+}
+.reply-author span { color: var(--aeg-color-overview-accent); }
 .frame {
   display: flex;
   gap: var(--aeg-space-s2);
@@ -1508,32 +1545,58 @@ onBeforeUnmount(() => {
 .process summary::-webkit-details-marker {
   display: none;
 }
+.process summary { gap: var(--aeg-space-s1); min-height: 26px; }
+.process summary .anticon { font-size: 9px; }
+.process[open] summary .anticon { transform: rotate(90deg); }
+.process summary span:last-child { font-variant-numeric: tabular-nums; }
 .process[open] summary {
   margin-bottom: var(--aeg-space-s1);
 }
 .typing {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  padding: var(--aeg-space-s1) var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-sunken);
   color: var(--aeg-color-text-secondary);
   font-size: var(--aeg-font-sm);
 }
-.typing__frame {
-  margin-left: var(--aeg-space-s2);
-  font-family: var(--aeg-font-mono);
-  font-size: var(--aeg-font-xs);
-  color: var(--aeg-color-text-secondary);
-  background: var(--aeg-color-sunken);
-  border: 1px solid var(--aeg-color-border-subtle);
+.typing__dot {
+  flex: 0 0 6px;
+  height: 6px;
+  background: var(--aeg-color-overview-accent);
+  border-radius: 50%;
+}
+.jump-latest {
+  display: block;
+  margin: 0 auto var(--aeg-space-s2);
+  min-height: 32px;
+  padding: 0 var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-brand-line);
   border-radius: var(--aeg-radius-pill);
-  padding: 0 var(--aeg-space-s2);
-  line-height: 16px;
+  background: var(--aeg-color-sunken);
+  color: var(--aeg-color-brand-hover);
+  font: inherit;
+  font-size: var(--aeg-font-xs);
+  cursor: pointer;
 }
 .proposal {
-  border: 1px solid var(--aeg-tag-orange-line);
-  background: var(--aeg-tag-orange-bg);
-  border-radius: var(--aeg-radius-md);
+  border: 1px solid color-mix(in srgb, var(--aeg-tag-orange-line) 62%, var(--aeg-color-border));
+  border-inline-start: 3px solid var(--aeg-tag-orange-text);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--aeg-tag-orange-bg) 32%, var(--aeg-color-overview-panel)),
+    var(--aeg-color-overview-panel));
+  border-radius: var(--aeg-radius-lg);
   padding: var(--aeg-space-s3) var(--aeg-space-s4);
   display: flex;
   flex-direction: column;
   gap: var(--aeg-space-s2);
+}
+.proposal[data-state='cancelled'], .proposal[data-state='result'] {
+  border-color: var(--aeg-color-border);
+  background: var(--aeg-color-overview-panel);
 }
 .proposal__head {
   display: flex;
@@ -1556,6 +1619,48 @@ onBeforeUnmount(() => {
 .proposal__text {
   word-break: break-word;
 }
+.proposal__summary {
+  color: var(--aeg-color-text);
+  overflow-wrap: anywhere;
+}
+.proposal__targets, .proposal__impact, .proposal__warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--aeg-space-s2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--aeg-font-xs);
+}
+.proposal__targets li {
+  padding: 2px var(--aeg-space-s2);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-sunken);
+  overflow-wrap: anywhere;
+}
+.proposal__impact { color: var(--aeg-color-text-secondary); }
+.proposal__warnings { color: var(--aeg-tag-orange-text); }
+.proposal__badge[data-state='cancelled'] {
+  color: var(--aeg-color-text-secondary);
+  border-color: var(--aeg-color-border);
+}
+.proposal__details p {
+  margin: 0 0 var(--aeg-space-s1);
+  overflow-wrap: anywhere;
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-xs);
+}
+.proposal__details pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: var(--aeg-space-s2);
+  border-radius: var(--aeg-radius-sm);
+  background: var(--aeg-color-sunken);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .decision {
   font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-secondary);
@@ -1568,12 +1673,16 @@ onBeforeUnmount(() => {
 }
 .composer {
   flex: none;
-  border-top: 1px solid var(--aeg-color-border);
-  padding: var(--aeg-space-s3) var(--aeg-space-s4);
-  background: var(--aeg-color-overview-panel);
+  margin: 0 var(--aeg-space-s3) var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-xl);
+  padding: var(--aeg-space-s3);
+  background: linear-gradient(150deg, var(--aeg-color-overview-panel), var(--aeg-color-overview-tile));
+  box-shadow: inset 0 1px 0 var(--aeg-color-glass-border), var(--aeg-shadow-sm);
 }
 .panel--compact .composer {
-  padding-inline: var(--aeg-space-s3);
+  margin: 0 var(--aeg-space-s2) var(--aeg-space-s2);
+  padding: var(--aeg-space-s2);
 }
 .composer__context {
   display: grid;
@@ -1664,6 +1773,22 @@ onBeforeUnmount(() => {
   color: var(--aeg-color-text-secondary);
   font-size: var(--aeg-font-sm);
 }
+.composer__seat {
+  display: block;
+  color: var(--aeg-color-brand-hover);
+  font-size: var(--aeg-font-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer__identity {
+  display: flex;
+  align-items: baseline;
+  gap: var(--aeg-space-s2);
+  min-width: 0;
+  margin-bottom: 2px;
+}
+.composer__identity .composer__seat { flex: none; max-width: 48%; }
 .composer__count {
   display: flex;
   flex-wrap: wrap;
@@ -1676,11 +1801,18 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+@container assistant-chat (max-width: 320px) {
+  .composer__keys {
+    display: none;
+  }
+}
 @container assistant-chat (max-width: 410px) {
   .quick-task {
-    flex-direction: column;
-    min-height: 0;
+    align-items: flex-start;
+    min-height: 60px;
+    padding: var(--aeg-space-s2);
   }
+  .quick-task__arrow, .quick-task__detail { display: none; }
   .quick-task__icon {
     width: 28px;
     height: 28px;
@@ -1707,7 +1839,7 @@ onBeforeUnmount(() => {
   .panel--page.panel--compact .quick-task {
     flex-direction: row;
     gap: var(--aeg-space-s1);
-    min-height: 92px;
+    min-height: 60px;
     padding: var(--aeg-space-s2);
   }
 }

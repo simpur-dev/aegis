@@ -24,6 +24,20 @@ const terrainColors = {
   'terrain-ink': '#EDF5FF',
   'terrain-line': '#3B5877',
   'terrain-accent': '#7DE4F4',
+  'terrain-building': '#F2BE94',
+} as const
+
+/** 数据图例与两个地图引擎共用固定的天气色阶。 */
+export const weatherColors = {
+  'rain-low': '#50cce7',
+  'rain-mid': '#498dff',
+  'rain-high': '#a27ff6',
+  'rain-extreme': '#e16bb5',
+  'weather-sun-core': '#fff4bd',
+  'weather-sun-edge': '#efb95b',
+  'weather-moon': '#c9d3ff',
+  'weather-reference': '#f7ebce',
+  'weather-missing': '#9aa9b8',
 } as const
 
 /** 品牌色阶（浅色主题用偏深的蓝，深色主题用偏亮的蓝——同一族，两个方向） */
@@ -125,6 +139,7 @@ export const colorSlots = {
     'overview-accent': '#087994',
     'brand-alt': '#1E40AF',
     ...terrainColors,
+    ...weatherColors,
     // 地图面板需要在最亮和最暗的瓦片上都保持文字可读。
     'map-panel-bg': 'rgba(248, 251, 255, 0.95)',
     'map-panel-border': '#C6D8EB',
@@ -219,6 +234,7 @@ export const colorSlots = {
     'overview-accent': '#43C6E8',
     'brand-alt': '#2678E8',
     ...terrainColors,
+    ...weatherColors,
     'map-panel-bg': 'rgba(12, 28, 50, 0.94)',
     'map-panel-border': '#2B4564',
     'map-panel-text': '#EAF2FF',

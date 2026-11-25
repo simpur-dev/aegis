@@ -177,7 +177,7 @@ def build_router() -> APIRouter:
                     yield f"data: {json.dumps(event.as_dict(), ensure_ascii=False)}\n\n"
             except Exception as exc:  # pragma: no cover - 由 respond 内部降级兜住大多数路径
                 log.warning("助手流式响应异常", extra={"err": f"{type(exc).__name__}: {exc}"[:200]})
-                frame = {"type": "error", "message": f"{type(exc).__name__}"}
+                frame = {"type": "error", "code": "E_ASSISTANT_STREAM", "message": "助手未能完成本轮，请保留原消息重试。"}
                 yield f"data: {json.dumps(frame, ensure_ascii=False)}\n\n"
             finally:
                 await stream.aclose()
@@ -185,6 +185,7 @@ def build_router() -> APIRouter:
         return StreamingResponse(
             _keepalive(_gen(), stopping=lambda: ctn.stopping, request=request),
             media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
         )
 
     # ---------- 动作资源（`/confirm` 已退役：动作有自己的号，不再靠 session 定位） ----------
@@ -247,6 +248,21 @@ def build_router() -> APIRouter:
             )
         except ActionError as exc:
             # 双人复核的资格/重复票是 HTTP 事实（401/403/409），不是"确认没成功"的回执。
+            raise _http_error(exc) from exc
+
+    @router.post("/actions/{action_id}/cancel")
+    async def cancel_proposal(
+        action_id: Annotated[str, Path(pattern=_ACTION_ID_PATTERN)],
+        ctn: PlatformContainer = Depends(get_container),
+        x_operator: OperatorHeader = None,
+        x_operator_key: OperatorKeyHeader = None,
+    ) -> dict[str, str]:
+        service = _assistant(ctn)
+        operator, identity_kind = await _identity(ctn, x_operator, x_operator_key)
+        _require_strong_identity(ctn, operator, identity_kind)
+        try:
+            return await service.cancel_proposal(action_id=action_id, operator=operator, identity_kind=identity_kind)
+        except ActionError as exc:
             raise _http_error(exc) from exc
 
     @router.post("/actions/{action_id}/revoke")

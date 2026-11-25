@@ -1,0 +1,44 @@
+{
+  "bounds": { "west": 85.14, "south": 27.89, "east": 85.76, "north": 28.68 },
+  "width": 1740,
+  "height": 2048,
+  "sourceZoom": 12,
+  "url": "/basemaps/gyirong-relief.png",
+  "contourIntervalM": 500,
+  "closeup": {
+    "bounds": { "west": 85.348, "south": 28.243, "east": 85.451, "north": 28.318 },
+    "url": "/basemaps/gyirong-closeup.webp",
+    "provider": "Sentinel‑2",
+    "resolutionM": 10,
+    "capturedAt": "2026-11-20",
+    "catalog": "https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/S2C_45RUM_20261120_0_L2A",
+    "attribution": "Contains modified Copernicus Sentinel data [2026]"
+  },
+  "street": {
+    "bounds": { "west": 85.367, "south": 28.272, "east": 85.389, "north": 28.289 },
+    "url": "/basemaps/gyirong-street.webp",
+    "provider": "Vantor",
+    "resolutionM": 0.8,
+    "capturedAt": "2026-09-07",
+    "catalog": "https://s3.amazonaws.com/vantor-opendata/events/Nepal-Flooding-Aug-2026/B1300011011E5610.json",
+    "asset": "https://s3.amazonaws.com/vantor-opendata/events/Nepal-Flooding-Aug-2026/B1300011011E5610.tif",
+    "overviewLevel": 0,
+    "attribution": "© Vantor Open Data, CC BY-NC 4.0 · 2026-09-07 (cropped and adjusted)"
+  },
+  "surroundings": {
+    "bounds": { "west": 84.25, "south": 27.28, "east": 86.66, "north": 29.24 },
+    "width": 1560,
+    "height": 1450,
+    "sourceZoom": 10,
+    "url": "/basemaps/gyirong-surroundings.png"
+  },
+  "stops": [
+    [1400, "#2b5954"],
+    [2500, "#436f63"],
+    [3500, "#6b856e"],
+    [4500, "#908b70"],
+    [5500, "#af9d7e"],
+    [6500, "#d3d3c5"],
+    [7400, "#ebeee7"]
+  ]
+}

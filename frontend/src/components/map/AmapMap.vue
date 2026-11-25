@@ -6,50 +6,106 @@
  * 挂上它就没有 Cesium 的地形与图元；所以这里按"档"整块换表面，而不是在一个 canvas 上混着画。
  * 离线自托管那档（Cesium + 自烘瓦 + quantized-mesh）保持原样，一键切回。
  *
- * 坐标：高德是 GCJ-02，数据里的经纬度是 WGS84，落图前一律过 `wgs84ToGcj02`——
- * 不纠偏就整体偏几百米，而画面看着完全正常（这是应急产品里最不该有的那种错）。
+ * 平台的国内业务点使用 GCJ-02；案例中的境外点沿用 WGS84。
  */
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import type { RenderPlan } from './entities'
+import type { BBox, LayerVisibility, LngLat, RenderPlan } from './entities'
+import type { HistoricalSite } from './gyirongCase'
 import { loadAmap, type AMapMapInstance, type AMapNamespace, type AMapOverlay } from './amap'
 import { wgs84ToGcj02 } from './gcj02'
-import { amapStyleName } from '@/theme/map'
+import { mapPalette } from '@/theme/map'
 import { useTheme } from '@/theme/useTheme'
+import { rainCellOpacity, type WeatherMapLayer } from './weather'
 
-const props = defineProps<{ plan: RenderPlan; center?: [number, number] }>()
-const emit = defineEmits<{ (event: 'select', featureId: string): void }>()
+const props = defineProps<{
+  plan: RenderPlan
+  visibility: LayerVisibility
+  camera: { center: LngLat; zoom: number; pitch: number; mainlandChina: boolean }
+  historicalSites?: readonly HistoricalSite[]
+  weather?: WeatherMapLayer
+}>()
+const emit = defineEmits<{
+  (event: 'select', featureId: string): void
+  (event: 'failure'): void
+  (event: 'view', bounds: BBox | null, zoom: number): void
+}>()
 
 const { resolved } = useTheme()
 const host = ref<HTMLElement | null>(null)
-const error = ref<string | null>(null)
-const status = ref<'idle' | 'loading' | 'ready' | 'failed'>('idle')
+const loading = ref(false)
 
 let amap: AMapNamespace | null = null
 let map: AMapMapInstance | null = null
 let overlays: AMapOverlay[] = []
+let weatherOverlays: AMapOverlay[] = []
+let unmounted = false
+
+function zoomBy(direction: 1 | -1): void {
+  if (direction === 1) map?.zoomIn()
+  else map?.zoomOut()
+}
+
+function focusAt(point: LngLat): void {
+  const { lon, lat } = wgs84ToGcj02(point)
+  map?.setZoomAndCenter(Math.max(13, map.getZoom()), [lon, lat])
+}
+
+defineExpose({ zoomBy, focusAt })
+
+function reportView(): void {
+  if (!map || unmounted) return
+  const bounds = map.getBounds()
+  const sw = bounds?.getSouthWest?.()
+  const ne = bounds?.getNorthEast?.()
+  // 业务坐标为 WGS84。视野裁剪留出 GCJ-02 偏移余量，具体落点照常转换。
+  const margin = 0.01
+  const box = sw && ne ? {
+    west: sw.getLng() - margin, south: sw.getLat() - margin,
+    east: ne.getLng() + margin, north: ne.getLat() + margin,
+  } : null
+  emit('view', box, Math.round(map.getZoom()))
+}
+
+function cameraCenter(): [number, number] {
+  const { center, mainlandChina } = props.camera
+  const { lon, lat } = mainlandChina ? wgs84ToGcj02(center) : center
+  return [lon, lat]
+}
 
 async function ensureMap(): Promise<boolean> {
   if (map) return true
-  if (!host.value) return false
-  status.value = 'loading'
-  error.value = null
+  const target = host.value
+  if (!target || loading.value) return false
+  loading.value = true
   try {
     amap = await loadAmap()
-    map = new amap.Map(host.value, {
-      zoom: props.center ? 7 : 5,
-      center: props.center ?? [91.13, 29.66],
-      viewMode: '2D',
-      // 高德的默认控件里那几样（比例尺外的搜索、路名切换等）在值班台上都是噪声
-      mapStyle: amapStyleName(resolved.value),
+    if (unmounted) return false
+    const { Satellite, RoadNet } = amap.TileLayer ?? {}
+    if (!Satellite) throw new Error('高德卫星图层不可用')
+    const basemapLayers = [new Satellite()]
+    if (RoadNet) basemapLayers.push(new RoadNet())
+    map = new amap.Map(target, {
+      zoom: props.camera.zoom,
+      center: cameraCenter(),
+      pitch: props.camera.pitch,
+      viewMode: '3D',
+      terrain: true,
+      rotateEnable: true,
+      pitchEnable: true,
+      layers: basemapLayers,
       resizeEnable: true,
     })
-    status.value = 'ready'
+    map.on('complete', reportView)
+    map.on('moveend', reportView)
+    map.on('zoomend', reportView)
+    map.on('zoomend', () => { draw(); drawWeather() })
     return true
-  } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : String(reason)
-    status.value = 'failed'
+  } catch {
+    if (!unmounted) emit('failure')
     return false
+  } finally {
+    loading.value = false
   }
 }
 
@@ -58,7 +114,8 @@ function draw(): void {
   if (overlays.length) map.remove(overlays)
   overlays = []
   const plan = props.plan
-  for (const zone of plan.hazards) {
+  const historyColor = mapPalette(resolved.value).historicalMarker
+  for (const zone of props.visibility.hazards ? plan.hazards : []) {
     overlays.push(
       new amap.Polygon({
         path: zone.outer.map((point) => {
@@ -73,18 +130,18 @@ function draw(): void {
     )
   }
   const points = [
-    ...plan.stations.map((item) => ({ id: item.id, title: item.title, color: item.colorCss, lonlat: item.lonlat })),
-    ...plan.warnings.map((item) => ({ id: item.id, title: item.title, color: item.colorCss, lonlat: item.lonlat })),
-    ...plan.reach.map((item) => ({ id: item.id, title: item.title, color: item.colorCss, lonlat: item.lonlat })),
+    ...(props.visibility.stations ? plan.stations : []),
+    ...(props.visibility.warnings ? plan.warnings : []),
+    ...(props.visibility.reach ? plan.reach : []),
   ]
   for (const point of points) {
     const shifted = wgs84ToGcj02(point.lonlat)
     const marker = new amap.CircleMarker({
       center: [shifted.lon, shifted.lat],
       radius: 6,
-      strokeColor: point.color,
+      strokeColor: point.colorCss,
       strokeWeight: 2,
-      fillColor: point.color,
+      fillColor: point.colorCss,
       fillOpacity: 0.55,
       cursor: 'pointer',
       // 标题挂在 label 上：高德没有 Cesium 那套 disableDepthTest，靠 label 保证"点是谁"可读
@@ -93,47 +150,107 @@ function draw(): void {
     marker.on('click', () => emit('select', point.id))
     overlays.push(marker)
   }
+  for (const cluster of props.visibility.clusters ? plan.clusters : []) {
+    const { lon, lat } = wgs84ToGcj02(cluster.lonlat)
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'amap-cluster-marker'
+    button.textContent = String(cluster.count)
+    button.setAttribute('aria-label', `放大查看 ${cluster.count} 个地图点`)
+    button.style.setProperty('--cluster-fill', mapPalette(resolved.value).fillFor(cluster.colorCss))
+    button.addEventListener('click', () => emit('select', cluster.id))
+    overlays.push(new amap.Marker({ position: [lon, lat], content: button, anchor: 'center' }))
+  }
+  for (const site of map.getZoom() >= 10 ? props.historicalSites ?? [] : []) {
+    if (props.weather?.points.some((point) => point.id === `weather-${site.id}` || (site.id === 'history-gyirong-port' && point.id === 'weather-gyirong-grid-reference'))) continue
+    const { lon, lat } = site.mainlandChina ? wgs84ToGcj02(site.lonlat) : site.lonlat
+    const label = document.createElement('button')
+    label.type = 'button'
+    label.className = 'amap-history-marker'
+    label.textContent = site.label
+    label.style.setProperty('--marker-accent', historyColor)
+    label.addEventListener('click', () => emit('select', site.id))
+    const marker = new amap.Marker({ position: [lon, lat], content: label, anchor: 'bottom-center' })
+    overlays.push(marker)
+  }
   if (overlays.length) map.add(overlays)
 }
 
-async function render(): Promise<void> {
-  if (await ensureMap()) draw()
+function drawWeather(): void {
+  if (!amap || !map) return
+  if (weatherOverlays.length) map.remove(weatherOverlays)
+  weatherOverlays = []
+  for (const cell of props.weather?.cells ?? []) {
+    const { west, east, south, north } = cell.bounds
+    const path = [[west, south], [east, south], [east, north], [west, north]].map(([lon, lat]) => {
+      const point = wgs84ToGcj02({ lon, lat })
+      return [point.lon, point.lat]
+    })
+    const overlay = new amap.Polygon({ path, fillColor: cell.color, strokeColor: cell.color,
+      fillOpacity: rainCellOpacity(cell.value, props.weather?.subdued), strokeOpacity: 0.46, strokeWeight: 1, zIndex: 11 })
+    overlay.on('click', () => emit('select', cell.id))
+    weatherOverlays.push(overlay)
+  }
+  for (const point of props.weather?.points ?? []) {
+    if (point.id.startsWith('weather-history-') && map.getZoom() < 10) continue
+    const { lon, lat } = point.mainlandChina ? wgs84ToGcj02(point.lonlat) : point.lonlat
+    const label = document.createElement('button')
+    label.type = 'button'
+    label.className = 'amap-weather-marker'
+    label.style.setProperty('--weather-color', point.color)
+    label.textContent = point.label ? `${point.title} · ${point.label}` : point.title
+    label.addEventListener('click', () => emit('select', point.id))
+    weatherOverlays.push(new amap.Marker({ position: [lon, lat], content: label, anchor: point.mainlandChina ? 'bottom-center' : 'bottom-right', zIndex: 25 }))
+  }
+  if (weatherOverlays.length) map.add(weatherOverlays)
 }
 
-watch(() => props.plan, () => {
-  void render()
+async function render(): Promise<void> {
+  if (await ensureMap()) { draw(); drawWeather() }
+}
+
+watch([() => props.plan, () => props.historicalSites, () => props.visibility], () => {
+  if (map) draw()
+})
+watch(() => props.weather, () => { draw(); drawWeather() })
+watch(() => props.camera, ({ zoom, pitch }) => {
+  map?.setZoomAndCenter(zoom, cameraCenter())
+  map?.setPitch(pitch)
+  map?.setRotation(0)
 })
 
-/** 主题翻转 → 换官方样式档。样式名是画布内部的档位，与 Cesium/ECharts 同一条纪律：派生层给档，组件不自己挑。 */
-watch(resolved, (mode) => {
-  map?.setMapStyle(amapStyleName(mode))
-})
+watch(resolved, draw)
 
 onBeforeUnmount(() => {
+  unmounted = true
   map?.destroy()
   map = null
   overlays = []
+  weatherOverlays = []
 })
 
-void render()
+onMounted(() => { void render() })
 </script>
 
 <template>
   <div class="amap-frame">
     <div ref="host" class="amap-host" data-testid="amap-host" />
-    <div v-if="status === 'loading'" class="amap-note">正在加载高德 JS API…</div>
-    <!-- 加载失败不静默退回空白：值班台看到空白会以为"这一片没有站点"，而真相是地图引擎没起来 -->
-    <div v-if="status === 'failed'" class="amap-note is-error" data-testid="amap-error">
-      <div>高德地图不可用：{{ error }}</div>
-      <div class="amap-hint">
-        检查 <code>.env.local</code> 里的 <code>VITE_AMAP_KEY</code>（以及账号要求的安全密钥
-        <code>VITE_AMAP_SECURITY_CODE</code>）与域名白名单；或切回「离线自托管」档。
-      </div>
-    </div>
+    <div v-if="loading" class="amap-note" role="status">正在加载高德地形…</div>
   </div>
 </template>
 
 <style scoped>
+:global(.amap-weather-marker) {
+  padding: 5px 9px;
+  color: var(--aeg-color-map-panel-text);
+  background: var(--aeg-color-map-panel-bg);
+  border: 1px solid var(--weather-color);
+  border-radius: 999px;
+  box-shadow: var(--aeg-shadow-sm);
+  font: 600 12px system-ui, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
 /* 高度跟父级走：MapView 的 .map-frame 现在是绝对定位铺满（inset: 0），有确定高度，
    所以这里用 100% 不会塌缩——原来那档 68vh 会把高德地图只画到上半屏，下面露出页面底色。
    JS API 在建图那一刻量容器高，容器必须是满的（真机曾量到 amap-layer 1714×0）。 */
@@ -146,6 +263,43 @@ void render()
 .amap-host {
   width: 100%;
   height: 100%;
+}
+.amap-host :deep(.amap-cluster-marker) {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  border: 2px solid var(--cluster-fill);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-map-floatbar-bg);
+  color: var(--aeg-color-map-floatbar-text);
+  font-weight: var(--aeg-weight-semibold);
+  cursor: pointer;
+}
+.amap-host :deep(.amap-history-marker) {
+  position: relative;
+  display: block;
+  margin-bottom: 9px;
+  padding: 5px 9px;
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-map-floatbar-bg);
+  color: var(--aeg-color-map-floatbar-text);
+  box-shadow: var(--aeg-shadow-md);
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.amap-host :deep(.amap-history-marker::after) {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: calc(50% - 5px);
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--aeg-color-map-floatbar-bg);
+  border-radius: 50%;
+  background: var(--marker-accent);
+  content: '';
 }
 .amap-note {
   position: absolute;
@@ -160,13 +314,5 @@ void render()
   font-size: var(--aeg-font-sm);
   color: var(--aeg-color-text-secondary);
   background: var(--aeg-color-sunken);
-}
-.amap-note.is-error {
-  color: var(--aeg-color-status-danger);
-}
-.amap-hint {
-  max-width: 62ch;
-  font-size: var(--aeg-font-xs);
-  color: var(--aeg-color-text-muted);
 }
 </style>

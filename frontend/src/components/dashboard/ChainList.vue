@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { HistoryOutlined } from '@ant-design/icons-vue'
 /**
  * 链路执行记录：一行一条链，先给结论（成功/失败 + 走到哪一段），再给细节（trace、任务数、降级）。
  *
@@ -76,7 +77,7 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
 
 <template>
   <div class="chain-list">
-    <div class="chain-list__filters" role="tablist" aria-label="按执行方式筛选链路">
+    <div v-if="chains.length" class="chain-list__filters" role="tablist" aria-label="按执行方式筛选链路">
       <button
         v-for="entry in FILTERS"
         :key="entry.key"
@@ -142,11 +143,10 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
     </button>
 
     <div v-if="!chains.length" class="empty-hero empty-hero--compact" data-testid="chains-empty">
-      <span class="empty-hero__icon" aria-hidden="true">◇</span>
+      <span class="empty-hero__icon" aria-hidden="true"><HistoryOutlined /></span>
       <div>
         <div class="empty-hero__title">还没有处置记录</div>
-        <div class="empty-hero__desc">在监测页发起一次演练（激增/背景任一），整条处置链就会跑起来并出现在这里。</div>
-        <router-link class="empty-hero__action empty-hero__cta" to="/monitor">去监测页发起演练 →</router-link>
+        <div class="empty-hero__desc">监测触发、上报或演练完成后，可在这里查看处置记录。</div>
       </div>
     </div>
   </div>

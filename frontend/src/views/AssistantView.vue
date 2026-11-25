@@ -19,11 +19,11 @@ onMounted(() => void load())
 
 <template>
   <div class="assistant">
-    <PageHero title="智能助手" caption="查询和处置在同一个值班台。执行类操作由你确认后生效。">
+    <PageHero title="智能助手" caption="查询预警与处置记录。需要确认的操作会先显示提案和影响范围。">
       <template #actions>
         <a-tag v-if="capabilitiesError" color="red" data-testid="caps-state">读不到能力面</a-tag>
-        <a-tag v-else-if="capabilities && !llmConfigured" color="orange" data-testid="caps-state">语义服务未配置</a-tag>
-        <a-tag v-else-if="capabilities" color="green" data-testid="caps-state">能力面已读取</a-tag>
+        <a-tag v-else-if="capabilities && !llmConfigured" color="blue" data-testid="caps-state" title="语义模型未配置，可用内置规则查询">规则问答</a-tag>
+        <a-tag v-else-if="capabilities" color="green" data-testid="caps-state">会话服务就绪</a-tag>
         <a-button size="small" :loading="capabilitiesLoading" data-testid="caps-refresh" @click="load">
           <template #icon><ReloadOutlined aria-hidden="true" /></template>
           刷新能力
@@ -74,8 +74,12 @@ onMounted(() => void load())
 }
 @media (max-width: 720px) {
   .assistant :deep(.page-head__actions) {
-    flex-wrap: wrap;
-    margin-left: 0;
+    gap: var(--aeg-space-s1);
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+  .assistant :deep(.page-head__title) {
+    font-size: var(--aeg-font-lg);
   }
   .assistant :deep(.page-head__caption) {
     margin-top: var(--aeg-space-s1);

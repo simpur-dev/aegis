@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { message } from 'ant-design-vue'
-import { ReloadOutlined } from '@ant-design/icons-vue'
+import { ExperimentOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { useMediaQuery } from '@vueuse/core'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import api, { ApiError, type TelemetryQuery } from '@/api/client'
 import type { TelemetryReading } from '@/api/types'
@@ -22,6 +22,8 @@ const REFRESH_MS = 15_000
 const WINDOW_LIMIT = 2_000
 const PAGE_SIZE = 10
 const compact = useMediaQuery('(max-width: 720px)')
+const route = useRoute()
+const drillView = computed(() => route?.hash === '#drill')
 
 const readings = ref<TelemetryReading[]>([])
 const region = ref<string>('')
@@ -31,6 +33,9 @@ const loadError = ref('')
 /** 最近一次**成功**取遥测的时刻（UTC ISO）；null = 还没取到过。 */
 const fetchedAt = ref<string | null>(null)
 const drilling = ref(false)
+const drillResult = ref<{ name: string; readings: number; regions: number; assessed: number; warnings: number } | null>(null)
+const drillError = ref('')
+const drillReceipt = ref<HTMLElement | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 /**
  * 下拉可选项的底仓：区域来自烘焙好的区域锚点清单（那是全量区域），指标来自一次不带筛选的取样。
@@ -217,17 +222,24 @@ async function drill(scenario: 'surge' | 'normal'): Promise<void> {
   // 连点就是把接入量测的样本成倍灌进账本——值班员看到的"激增"就变成了自己手抖的结果。
   if (drilling.value) return
   drilling.value = true
+  drillResult.value = null
+  drillError.value = ''
   try {
     const result = await api.drill({ scenario, ticks: 1 })
-    const acted = result.chains.filter((chain) => chain.acted)
-    message.success(
-      `演练完成：${result.ingest.readings} 条读数，${result.regions} 个区域，${acted.length} 条链路触发预警`,
-    )
-    await load()
+    drillResult.value = {
+      name: scenario === 'surge' ? '雨强激增' : '正常背景',
+      readings: result.ingest.readings,
+      regions: result.regions ?? 0,
+      assessed: result.chains.filter((chain) => chain.acted).length,
+      warnings: result.chains.filter((chain) => Boolean(chain.warning_id)).length,
+    }
+    if (!drillView.value) void load()
   } catch (error) {
-    message.error(error instanceof ApiError ? `演练失败：${error.message}` : '演练失败')
+    drillError.value = error instanceof ApiError ? `演练失败：${error.message}` : '演练失败，请重试。'
   } finally {
     drilling.value = false
+    await nextTick()
+    drillReceipt.value?.scrollIntoView?.({ block: 'nearest' })
   }
 }
 
@@ -265,17 +277,21 @@ watch(ledgerReadings, (rows) => {
   tablePage.value = Math.min(tablePage.value, Math.max(1, Math.ceil(rows.length / PAGE_SIZE)))
 })
 
-onMounted(() => {
-  if (window.location.hash === '#drill') {
-    document.getElementById('drill')?.scrollIntoView({ block: 'start' })
-  }
+function loadTelemetry(): void {
   void loadCatalog()
   void load()
+}
+watch(drillView, (active) => {
+  if (!active) loadTelemetry()
+})
+
+onMounted(() => {
+  if (!drillView.value) loadTelemetry()
   // 这是盯实时遥测的页面，只取一次数就等于把"最新读数"冻在打开那一刻：
   // 演练发完，表里还是旧数据，而页面标题写着"最新"。与态势总览同一口径——
   // 15 秒一轮，页签切到后台就不打接口，卸载停表。
   timer = setInterval(() => {
-    if (document.visibilityState !== 'visible' || loading.value) return
+    if (document.visibilityState !== 'visible' || loading.value || drillView.value) return
     void load()
   }, REFRESH_MS)
 })
@@ -289,17 +305,18 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="monitor-page">
-    <PageHero surface title="监测预警" badge="实时监测" caption="查看站点读数与接入质量，或提交现场险情。">
+    <PageHero
+      surface
+      :title="drillView ? '处置演练' : '监测数据'"
+      :badge="drillView ? '模拟场景' : '实时监测'"
+      :caption="drillView ? '选择雨情场景，查看模拟数据触发的研判与预警。' : '查看站点读数与接入质量，或提交现场险情。'"
+    >
       <template #actions>
-        <a-button type="primary" data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
+        <a-button v-if="!drillView" type="primary" data-testid="open-report" @click="reportOpen = true">人工上报</a-button>
       </template>
     </PageHero>
-    <nav class="ops-nav" aria-label="监测与预警">
-      <router-link to="/monitor">监测数据</router-link>
-      <router-link to="/warnings">预警台账</router-link>
-    </nav>
 
-    <a-card class="monitor-card ops-surface" size="small" title="数据筛选">
+    <a-card v-if="!drillView" class="monitor-card ops-surface" size="small" title="数据筛选">
       <div class="ops-filters">
         <div class="ops-filters__field">
           <span>监测区域</span>
@@ -335,7 +352,7 @@ onBeforeUnmount(() => {
       />
     </a-card>
 
-    <div class="monitor-grid">
+    <div v-if="!drillView" class="monitor-grid">
         <a-card
           class="monitor-card"
           :class="{ 'monitor-chart-hero': readings.length > 0 }"
@@ -436,10 +453,32 @@ onBeforeUnmount(() => {
         </a-card>
     </div>
 
-    <a-card id="drill" class="monitor-card monitor-drills ops-surface" size="small" title="处置链演练">
-      <div class="monitor-drills__actions">
-        <a-button :loading="drilling" :disabled="drilling" data-testid="drill-surge" @click="drill('surge')">发起演练：雨强激增</a-button>
-        <a-button :loading="drilling" :disabled="drilling" data-testid="drill-normal" @click="drill('normal')">发起演练：正常背景</a-button>
+    <a-card v-else class="monitor-card monitor-drills ops-surface" size="small" title="处置链演练">
+      <p class="monitor-drills__notice">演练会写入模拟监测数据，并按平台当前配置运行处置链。</p>
+      <div v-if="drillResult" ref="drillReceipt" class="monitor-drills__receipt" role="status" data-testid="drill-result">
+        <strong>{{ drillResult.name }}演练完成</strong>
+        <dl class="monitor-drills__stats">
+          <div><dt>模拟读数</dt><dd>{{ drillResult.readings }} 条</dd></div>
+          <div><dt>覆盖区域</dt><dd>{{ drillResult.regions }} 个</dd></div>
+          <div><dt>形成研判</dt><dd>{{ drillResult.assessed }} 条</dd></div>
+          <div><dt>生成预警</dt><dd>{{ drillResult.warnings }} 条</dd></div>
+        </dl>
+      </div>
+      <p v-else-if="drillError" ref="drillReceipt" class="monitor-drills__receipt is-error" role="alert">{{ drillError }}</p>
+      <div class="monitor-drills__scenarios">
+        <section class="monitor-drills__scenario" aria-labelledby="drill-surge-title">
+          <h2 id="drill-surge-title">雨强激增</h2>
+          <p>输入快速增强的降雨情景，观察处置链的响应。</p>
+          <a-button type="primary" :loading="drilling" :disabled="drilling" data-testid="drill-surge" @click="drill('surge')">
+            <template #icon><ExperimentOutlined aria-hidden="true" /></template>
+            发起演练：雨强激增
+          </a-button>
+        </section>
+        <section class="monitor-drills__scenario" aria-labelledby="drill-normal-title">
+          <h2 id="drill-normal-title">正常背景</h2>
+          <p>以常规雨情作对照，查看各区域的研判结果。</p>
+          <a-button :loading="drilling" :disabled="drilling" data-testid="drill-normal" @click="drill('normal')">发起演练：正常背景</a-button>
+        </section>
       </div>
     </a-card>
 
@@ -468,10 +507,61 @@ onBeforeUnmount(() => {
   max-width: 900px;
   grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
 }
-.monitor-drills__actions {
-  display: flex;
-  flex-wrap: wrap;
+.monitor-drills__notice {
+  margin: 0 0 var(--aeg-space-s4);
+  color: var(--aeg-color-text-secondary);
+}
+.monitor-drills__scenarios {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr));
+  gap: var(--aeg-space-s3);
+}
+.monitor-drills__scenario {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  justify-items: start;
   gap: var(--aeg-space-s2);
+  padding: var(--aeg-space-s4);
+  border: 1px solid var(--aeg-color-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-overview-tile);
+}
+.monitor-drills__scenario h2 {
+  margin: 0;
+  font-size: var(--aeg-font-md);
+}
+.monitor-drills__scenario p {
+  margin: 0 0 var(--aeg-space-s2);
+  color: var(--aeg-color-text-secondary);
+}
+.monitor-drills__scenario button {
+  min-height: 40px;
+}
+.monitor-drills__receipt {
+  margin: 0 0 var(--aeg-space-s4);
+  padding: var(--aeg-space-s3);
+  border: 1px solid var(--aeg-color-brand-line);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-brand-soft);
+}
+.monitor-drills__stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--aeg-space-s2);
+  margin: var(--aeg-space-s2) 0 0;
+}
+.monitor-drills__stats dt {
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
+.monitor-drills__stats dd {
+  margin: 2px 0 0;
+  font-size: var(--aeg-font-md);
+  font-weight: var(--aeg-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.monitor-drills__receipt.is-error {
+  color: var(--aeg-color-status-danger);
 }
 .chart-source {
   display: grid;
@@ -504,8 +594,8 @@ onBeforeUnmount(() => {
   .monitor-card :deep(.ant-card-body) {
     padding-inline: var(--aeg-space-s3);
   }
-  .monitor-drills__actions :is(button, a) {
-    min-height: 40px;
+  .monitor-drills__stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 .monitor-card {

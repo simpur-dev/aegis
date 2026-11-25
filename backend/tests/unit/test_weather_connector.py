@@ -100,6 +100,27 @@ class TestShapeParsing:
         readings = await WeatherApiSource(BASE, client).collect()
         assert [(r.metric, r.value) for r in readings] == [("displacement_mm", 7.5)]
 
+    async def test_invalid_numbers_do_not_enter_telemetry_or_block_valid_metrics(self) -> None:
+        client = mock_client(
+            observation_body(
+                stations=[
+                    {
+                        "id": "RG-540121-01",
+                        "region_code": "540121",
+                        "rain_10min": "Infinity",
+                        "displacement_mm": "NaN",
+                        "debris_level": True,
+                        "rain_cumulative_24h": 10**400,
+                        "air_temperature_c": -7.0,
+                    },
+                ],
+            ),
+        )
+        source = WeatherApiSource(BASE, client)
+        readings = await source.collect()
+        assert [(reading.metric, reading.value) for reading in readings] == [("air_temperature_c", -7.0)]
+        assert source.status()["rejected_values"] == 4
+
     async def test_station_without_id_or_short_region_is_dropped(self) -> None:
         client = mock_client(
             {

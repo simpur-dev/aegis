@@ -40,6 +40,8 @@ const top = ref(0)
 const width = ref(0)
 const maxWidth = ref(DRAWER_MAX)
 const headerH = ref(68)
+let bottomNavHeight = 0
+let mastheadResize: ResizeObserver | undefined
 
 const headerVar = computed(() => (props.immersive ? '--aeg-editor-header-height' : '--aeg-header-height'))
 
@@ -59,9 +61,14 @@ watch(
 )
 
 function readHeaderHeight(): number {
-  const header = document.querySelector(props.immersive ? '[data-testid="editor-header"]' : '.topbar')
+  const header = document.querySelector('.topbar')
+  const editorHeader = props.immersive ? document.querySelector('[data-testid="editor-header"]') : null
   const banner = document.querySelector('.alert-banner')
-  const bottom = Math.max(header?.getBoundingClientRect().bottom ?? 0, banner?.getBoundingClientRect().bottom ?? 0)
+  const bottom = Math.max(
+    header?.getBoundingClientRect().bottom ?? 0,
+    editorHeader?.getBoundingClientRect().bottom ?? 0,
+    banner?.getBoundingClientRect().bottom ?? 0,
+  )
   if (bottom > 0) return Math.round(bottom)
   const raw = getComputedStyle(document.documentElement).getPropertyValue(headerVar.value).trim()
   const px = Number.parseFloat(raw)
@@ -96,11 +103,12 @@ function saveState(): void {
 
 function measure(): void {
   headerH.value = readHeaderHeight()
+  bottomNavHeight = document.querySelector<HTMLElement>('.mobile-nav')?.offsetHeight ?? 0
   maxWidth.value = Math.max(DRAWER_MIN, Math.min(DRAWER_MAX, Math.round(window.innerWidth * 0.6)))
 }
 function boundDockTop(value: number): number {
   const mapClearance = props.avoidMapBar && window.innerWidth <= 820 ? 82 : 0
-  return clampTop(value, window.innerHeight, headerH.value, DOCK_SIZE + mapClearance)
+  return clampTop(value, window.innerHeight - bottomNavHeight, headerH.value, DOCK_SIZE + mapClearance)
 }
 
 /**
@@ -228,7 +236,11 @@ function onResize(): void {
   width.value = clampDrawerWidth(width.value, window.innerWidth)
   applyWidth()
 }
-watch([() => props.immersive, () => props.avoidMapBar, () => urgentCards.value.length], onResize, { flush: 'post' })
+watch(
+  [() => props.immersive, () => props.avoidMapBar, () => props.keepOverviewVisible, () => urgentCards.value.length],
+  onResize,
+  { flush: 'post' },
+)
 
 function onEscape(event: KeyboardEvent): void {
   if (event.key === 'Escape') close()
@@ -236,11 +248,16 @@ function onEscape(event: KeyboardEvent): void {
 
 onMounted(() => {
   measure()
+  const masthead = document.querySelector('.topbar')
+  if (masthead) {
+    mastheadResize = new ResizeObserver(onResize)
+    mastheadResize.observe(masthead)
+  }
   const saved = loadState()
   width.value = clampDrawerWidth(saved.width ?? defaultDrawerWidth(window.innerWidth), window.innerWidth)
   applyWidth()
   top.value = boundDockTop(saved.top ?? window.innerHeight - DOCK_SIZE - 24)
-  open.value = saved.open === true
+  open.value = saved.open ?? (urgentCards.value.length > 0 && !props.keepOverviewVisible)
   window.addEventListener('resize', onResize)
   window.addEventListener('keydown', onEscape)
 })
@@ -260,6 +277,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  mastheadResize?.disconnect()
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', onEscape)
   document.documentElement.classList.remove('assistant-drawer-open', 'assistant-resizing')
@@ -273,7 +291,7 @@ onBeforeUnmount(() => {
     ref="dockEl"
     type="button"
     class="assistant-dock"
-    :class="{ 'is-open': open, 'is-dragging': dragging, 'is-resizing': resizing }"
+    :class="{ 'is-open': open, 'is-dragging': dragging, 'is-resizing': resizing, 'is-overview': keepOverviewVisible }"
     :style="{ top: `${top}px` }"
     :aria-expanded="open"
     aria-controls="assistant-panel"
@@ -372,7 +390,7 @@ onBeforeUnmount(() => {
 .assistant-drawer {
   position: fixed;
   right: 0;
-  bottom: 0;
+  bottom: var(--aeg-bottom-nav-height, 0px);
   z-index: 39;
   display: flex;
   flex-direction: column;
@@ -497,6 +515,11 @@ onBeforeUnmount(() => {
   }
   .assistant-dock.is-open {
     visibility: hidden;
+  }
+}
+@media (max-width: 640px) {
+  .assistant-dock.is-overview {
+    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

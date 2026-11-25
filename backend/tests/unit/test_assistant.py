@@ -1046,6 +1046,27 @@ async def test_会话数量有上界且空消息不出答案() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parallel_chat_releases_slot_and_expired_context_is_reset() -> None:
+    service = build_service()
+    initial = await collect(service, "在线智能体有几个")
+    session_id = initial[0].data["session_id"]
+    service._sessions[session_id].updated_at -= service._ttl + 1
+    active = service.respond("在线智能体有几个", session_id=session_id)
+    meta = await anext(active)
+    assert meta.data["context_reset"] is True
+    simultaneous = await collect(service, "在线智能体有几个", session_id=session_id)
+    assert [event.type for event in simultaneous] == ["meta", "error", "done"]
+    assert simultaneous[1].data["code"] == "E_ASSISTANT_BUSY"
+    await active.aclose()
+    next_round = await collect(service, "在线智能体有几个", session_id=session_id)
+    assert next_round[0].data["context_reset"] is False
+    assert next_round[-1].type == "done"
+    other_seat = await collect(service, "在线智能体有几个", session_id=session_id, operator=DUTY)
+    assert other_seat[0].data["context_reset"] is True
+    assert other_seat[0].data["session_id"] != session_id
+
+
+@pytest.mark.asyncio
 async def test_缺参数的示例句要说清这个ID在哪个页面读得到() -> None:
     """能力面把每条动作的 example 交给前端当"点这里试一条"的预填文本。
     带标识符的示例句若原样发出去，回答必须指出这个 ID 在哪个页面能读到，而不是只回一句 422。

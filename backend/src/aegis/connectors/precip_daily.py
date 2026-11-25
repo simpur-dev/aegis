@@ -28,12 +28,14 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from aegis.connectors.base import DataSource
 from aegis.connectors.metrics import unit_for
+from aegis.connectors.trace import raw_number, source_probe, valid_region
 from aegis.domain.messages import TelemetryReading, now_iso
 from aegis.errors import SchemaInvalidError
 
@@ -77,7 +79,12 @@ class PrecipDailySource(DataSource):
         return self._path
 
     async def collect(self) -> list[TelemetryReading]:
+        probe = source_probe.get()
+        if probe is not None:
+            probe.inputs.update(kind="csv", file=self._path.name, metric=self._metric, raw_unit="rows")
         if not self.enabled:
+            if probe is not None:
+                probe.note("file_missing", "降水 CSV 不可读或已移除")
             return []
         try:
             readings = self._read()
@@ -106,6 +113,11 @@ class PrecipDailySource(DataSource):
         # "当天"按 UTC：派生表的日期列按 UTC epoch 解码（derive 脚本同口径），本地时区
         # 的 date.today() 在 UTC+8 的 00:00–08:00 会超前一天，把 UTC 当日行整批判"非当天"。
         today = datetime.now(UTC).date()
+        probe = source_probe.get()
+        history = 0
+        if probe is not None:
+            probe.inputs["filter_date"] = today.isoformat()
+            probe.capture(0)
         readings: list[TelemetryReading] = []
         with self._path.open(encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
@@ -117,10 +129,26 @@ class PrecipDailySource(DataSource):
                     detail={"missing": missing, "columns": list(reader.fieldnames or [])},
                 )
             for row in reader:
+                sample = {
+                    "date": row.get("date"), "station_id": row.get("station_id"),
+                    "region_code": row.get("region_code"), "value": raw_number(row.get("precip_mm")),
+                }
+                if probe is not None:
+                    probe.capture(**sample)
                 reading = self._to_reading(row, today)
                 if reading is None:
+                    try:
+                        other_day = date.fromisoformat((row.get("date") or "").strip()) != today
+                    except ValueError:
+                        other_day = False
+                    if other_day:
+                        history += 1
+                    elif probe is not None:
+                        probe.note("invalid_row", "逐日降水行缺测或字段格式有误", **sample)
                     continue
                 readings.append(reading)
+        if probe is not None:
+            probe.inputs["filtered_history"] = history
         return readings
 
     def _to_reading(self, row: dict[str, str], today: date) -> TelemetryReading | None:
@@ -146,7 +174,7 @@ class PrecipDailySource(DataSource):
             self.skipped += 1
             return None
         quality = "ok" if 0.0 <= value <= MAX_DAILY_MM else "suspect"
-        if not region_code or len(region_code) < 6:
+        if not valid_region(region_code[:24]) or not math.isfinite(value):
             # 区划码不合约定（`^[0-9A-Z]{6,24}$`）的读数进不去——如实跳过并计数。
             self.skipped += 1
             return None

@@ -8,7 +8,7 @@
  * ③ 只在挂载时取一次数，刚发布的预警不会自己出现。
  */
 
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import api from '@/api/client'
@@ -57,6 +57,7 @@ function warning(overrides: Partial<WarningRecord> = {}): WarningRecord {
 }
 
 const STUBS = {
+  RouterLink: RouterLinkStub,
   'a-card': { name: 'ACard', props: ['title', 'loading', 'size'], template: '<div class="card"><slot /></div>' },
   // 替身必须把列头与 bodyCell 真渲染出来：这一页要验的正是"列头写的什么口径、
   // 单元格里算出的成功数对不对"，替身若是空壳就等于什么都没测。

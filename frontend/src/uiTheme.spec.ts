@@ -16,6 +16,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
+import { router, WORKSPACES, workspaceFor } from '@/router'
 import { readRepoFile, repoRoot } from '@/testing/repoSource'
 
 /** 棘轮基线：2026-10-07 阶段 1 由探针（E:\tmp\color-count.mjs，与本条同一套走目录/剥注释/正则）量得。
@@ -99,51 +100,22 @@ describe('UI 基座', () => {
     expect(tokens).toMatch(/'?brand'?: brand\.light\.base/)
   })
 
-  /**
-   * 主导航覆盖口径（2026-10-17 信息架构收并后重写，原来是"顶栏平铺全部路由"）。
-   *
-   * 旧口径要求每一页都在顶栏平级点得到——八页平铺正是"杂糅、不知道怎么用"的根源，
-   * 用户拍板收并后改成：**进主导航的页面一一对应，退出导航的旧入口显式标注去向**。
-   * 导航真源只在 router.ts 的 `NAV_GROUPS`，App.vue 只许 import 不许抄——
-   * "路由加了页、导航忘了挂"与"导航挂了页、路由没有"两类漂移都在这儿红。
-   */
-  it('主导航与路由一一对应：进侧栏的每一页都有路由，退出导航的旧入口显式标注', () => {
-    /* 剥注释再对账：router.ts 的说明文字里也写着 `nav: false` 这类字面，
-       不剥就会把注释当成标注数进去（第一版就栽在这）。 */
-    const routerText = readRepoFile('frontend', 'src', 'router.ts').replace(/\/\*[\s\S]*?\*\//g, '')
-    /* 只数带 component 的真路由：`{ path: '/', redirect: ... }` 与将来的重定向不算页面 */
-    const routePaths = [...routerText.matchAll(/path:\s*'(\/[a-z]+)',\s*\n\s*name:/g)].map(
-      (match) => match[1] as string,
-    )
-    expect(routePaths.length, '路由表页码不对（收并后应是 8 页：主线 4 + 系统 1 + 旧入口 3）').toBe(8)
-    const navTargets = [...routerText.matchAll(/to:\s*'(\/[a-z]+)'/g)].map((match) => match[1] as string)
-    const navSet = new Set(navTargets)
-    // ① 侧栏每一项都指向真实路由（且不重复）
-    expect(navTargets.length, 'NAV_GROUPS 里有重复入口').toBe(navSet.size)
-    for (const target of navSet) {
-      expect(routePaths, `侧栏指向 ${target}，但路由表里没有这一页`).toContain(target)
+  it('工作区入口、子页面与深链接归属一致', () => {
+    expect(WORKSPACES.map(({ key }) => key)).toEqual(['duty', 'research', 'data', 'assistant'])
+    for (const workspace of WORKSPACES) {
+      const pages = 'pages' in workspace ? workspace.pages : []
+      for (const { to } of [workspace, ...pages]) {
+        const route = router.resolve(to)
+        expect(route.matched, `${to} 缺少路由`).toHaveLength(1)
+        expect(workspaceFor(route).key, `${to} 归错工作区`).toBe(workspace.key)
+      }
     }
-    // ② 标了 nav 的路由必须进侧栏：meta.nav 的条数与侧栏入口数对账
-    const navMetaCount = (routerText.match(/nav:\s*'(?:main|system)'/g) ?? []).length
-    expect(navMetaCount, 'meta.nav 标注的数量与侧栏入口数不一致——有一页加了路由忘了挂导航').toBe(navTargets.length)
-    // ③ 退出主导航的旧入口必须显式写 nav:false，不许"默默还在路由表里"
-    const legacy = routePaths.filter((p) => !navSet.has(p))
-    expect(legacy.length, '旧入口数量变了（合并/抽屉化完成后这条要跟着改）').toBe(3)
-    const legacyMarked = (routerText.match(/nav:\s*false/g) ?? []).length
-    expect(
-      legacyMarked,
-      `旧入口 ${legacy.join(' / ')} 没有显式标注 nav:false——它为什么不在侧栏，读代码的人无从得知`,
-    ).toBe(legacy.length)
-    // ④ App.vue 的导航必须从 router.ts 取，不许自己再抄一份；
-    //    唯一的例外是助手常驻入口（贴在侧栏导航下面，不属于导航分组），它指向 /assistant 且只能有这一个
-    const appText = appVue()
-    expect(appText, 'App.vue 没有从 router.ts 取导航').toMatch(/import \{ NAV_GROUPS \} from '@\/router'/)
-    const appToTargets = [...appText.matchAll(/(?:to:|to=)\s*['"`]?(\/[a-z]+)['"`]/g)].map(
-      (match) => match[1] as string,
-    )
-    expect(appToTargets, 'App.vue 自己抄了导航清单，或助手入口不见了——跳转目标只许是 /assistant').toEqual([
-      '/assistant',
-    ])
+    for (const route of router.getRoutes().filter((route) => route.name)) {
+      expect(WORKSPACES.some(({ key }) => key === route.meta.workspace), `${route.path} 缺少工作区`).toBe(true)
+    }
+    expect(workspaceFor(router.resolve('/map')).key).toBe('duty')
+    expect(workspaceFor(router.resolve('/simulation')).key).toBe('research')
+    expect(workspaceFor(router.resolve('/monitor#drill')).key).toBe('duty')
   })
 
   /**
@@ -156,8 +128,8 @@ describe('UI 基座', () => {
    */
   it('常规页面挂统一页头，沉浸式编辑器用自带头部（两者都不许半套）', () => {
     const routerText = readRepoFile('frontend', 'src', 'router.ts')
-    const routes = [...routerText.matchAll(/path:\s*'\/([a-z]+)'[^}]*?meta:\s*\{([^}]*)\}/g)].map((match) => ({
-      name: `${(match[1] as string)[0]!.toUpperCase()}${(match[1] as string).slice(1)}View.vue`,
+    const routes = [...routerText.matchAll(/path:\s*'\/([a-z-]+)'[^}]*?meta:\s*\{([^}]*)\}/g)].map((match) => ({
+      name: `${match[1]!.split('-').map((part) => part[0]!.toUpperCase() + part.slice(1)).join('')}View.vue`,
       immersive: /immersive:\s*true/.test(match[2] as string),
     }))
     expect(routes.length).toBeGreaterThanOrEqual(7)
@@ -263,6 +235,7 @@ describe('UI 基座', () => {
       .sort()
     const decorativeHosts = ['FreshnessBar.vue', 'RunTimeline.vue']
     const glassSurfaces = new Set([
+      'App.vue',
       'components/PageHero.vue',
       'components/assistant/AssistantDock.vue',
       'components/assistant/AssistantPanel.vue',

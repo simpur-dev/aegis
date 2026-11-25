@@ -61,6 +61,7 @@ from aegis.persistence.write_buffer import (
     DEFAULT_FLUSH_INTERVAL_MS,
     DEFAULT_JITTER_RATIO,
     WriteBuffer,
+    WriteReceipt,
     WriteRequest,
 )
 from aegis.storage.store import (
@@ -201,6 +202,10 @@ class _TelemetryFacade:
         items = list(readings)
         self._store.enqueue_mapped(KIND_TELEMETRY, items, rows.telemetry_params)
         return await self._inner.add(items)
+
+    async def add_with_receipt(self, readings: list[TelemetryReading], receipt: WriteReceipt) -> int:
+        self._store.enqueue_mapped(KIND_TELEMETRY, readings, rows.telemetry_params, receipt=receipt)
+        return await self._inner.add(readings)
 
     def query(
         self,
@@ -544,6 +549,9 @@ class PostgresStore:
     async def get_action(self, action_id: str) -> dict[str, Any] | None:
         return await control_actions.get_action(await self.connect(), action_id)
 
+    async def cancel_proposal(self, action_id: str, *, audit: AuditRecord) -> dict[str, Any] | None:
+        return await self._mark_with_audit(control_actions.cancel_proposal, action_id, audit=audit)
+
     async def list_actions(self, *, operator_id: str | None = None, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         return await control_actions.list_actions(await self.connect(), operator_id=operator_id, status=status, limit=limit)
 
@@ -723,7 +731,9 @@ class PostgresStore:
 
     # ---------- 写面 ----------
 
-    def enqueue_mapped(self, kind: str, items: Sequence[Any], mapper: Callable[[Any], Any]) -> int:
+    def enqueue_mapped(
+        self, kind: str, items: Sequence[Any], mapper: Callable[[Any], Any], *, receipt: WriteReceipt | None = None,
+    ) -> int:
         """映射 + 入队。映射失败按丢弃计数而不抛出：一条脏数据不得打断预警链路。"""
         params: list[Any] = []
         for item in items:
@@ -732,7 +742,7 @@ class PostgresStore:
             except MappingError as exc:
                 self._mapping_rejected += 1
                 log.warning("映射被拒，按丢弃计数", extra={"kind": kind, "error": exc.message, "detail": exc.detail})
-        return self._buffer.submit(kind, params)
+        return self._buffer.submit(kind, params, receipt=receipt)
 
     async def record_chain(self, result: ChainResult) -> None:
         """与内存实现同序：任务 -> 预警 -> 链路，读模型即时可见，落库交后台。"""

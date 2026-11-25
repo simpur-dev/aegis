@@ -23,6 +23,7 @@ import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from '
 import type { ChainSummary, TelemetryReading, WarningRecord } from './types'
 import { describeValidationDetail, type FieldLabels } from '@/utils/validationDetail'
 import { installServiceToken } from '@/api/serviceToken'
+import type { CurrentMapWeather, RainArchive, RainCatalog } from '@/components/map/weather'
 
 /** 一张图只发查询参数，这一层的字段叫法与通用客户端一致。 */
 const MAP_QUERY_LABELS: FieldLabels = {
@@ -180,8 +181,9 @@ export const MAP_ASSET_PATHS = {
   terrainReal: '/terrain-real',
   basemapTemplate: '/basemaps/{z}/{x}/{y}.png',
   pmtiles: '/basemaps/aegis.pmtiles',
-  /** 真实 DEM 派生的山体阴影设色影像（PMTiles v3 栅格，z0–6）。 */
+  /** 真实高程派生的地形影像（PMTiles v3，西藏覆盖到 z8）。 */
   reliefPmtiles: '/basemaps/relief.pmtiles',
+  worldRelief: '/cesium/Assets/Textures/NaturalEarthII/',
 } as const
 
 /**
@@ -191,6 +193,11 @@ export function createMapApiClient(instance: AxiosInstance) {
   const request = <T>(config: AxiosRequestConfig) => dispatch<T>(instance, config)
 
   return {
+    currentWeather: () => request<CurrentMapWeather>({ url: '/api/v1/map/weather/current' }),
+    rainCatalog: () => request<RainCatalog>({ url: '/api/v1/map/rain' }),
+    rainDaily: (year: number) => request<RainArchive>({ url: `/api/v1/map/rain/daily/${year}` }),
+    rainHourly: () => request<RainArchive>({ url: '/api/v1/map/rain/hourly' }),
+
     /** 遥测读数（后端有路由）：站点唯一可靠的现存来源。 */
     telemetry: (query: TelemetryQuery = {}) =>
       request<TelemetryResponse>({ url: '/api/v1/telemetry', params: query }),

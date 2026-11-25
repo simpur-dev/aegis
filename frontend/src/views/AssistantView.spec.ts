@@ -14,13 +14,14 @@ vi.mock('@/api/assistant', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/assistant')>()
   return {
     ...actual,
-    assistantApi: { capabilities: vi.fn(), chat: vi.fn(), confirm: vi.fn() },
+    assistantApi: { capabilities: vi.fn(), chat: vi.fn(), confirm: vi.fn(), cancelProposal: vi.fn() },
   }
 })
 
 const mockedCapabilities = vi.mocked(assistantApi.capabilities)
 const mockedChat = vi.mocked(assistantApi.chat)
 const mockedConfirm = vi.mocked(assistantApi.confirm)
+const mockedCancel = vi.mocked(assistantApi.cancelProposal)
 
 vi.mock('@/api/alerts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/alerts')>()
@@ -208,9 +209,9 @@ describe('建议条：点一下填进输入框，不代发', () => {
 })
 
 describe('能力面：读不到与没配置都不许显示成正常', () => {
-  it('llm_configured=false 时页头明说"语义服务未配置"，黄色横幅已移除', async () => {
+  it('模型未配置时以规则问答状态呈现', async () => {
     const wrapper = await renderView(capabilities({ llm_configured: false }))
-    expect(byTestid(wrapper, 'caps-state').text()).toBe('语义服务未配置')
+    expect(byTestid(wrapper, 'caps-state').text()).toBe('规则问答')
     expect(wrapper.find('[data-testid="banner-no-llm"]').exists()).toBe(false)
   })
 
@@ -414,13 +415,14 @@ describe('对话：每一帧都留在时间线上', () => {
   })
 })
 
-describe('待确认动作：确认走后端，放弃只在这页', () => {
+describe('待确认动作：确认与取消均以后台回执为准', () => {
   const proposal: AssistantFrame = {
     type: 'proposal',
     action_id: 'act_abc123',
     action: 'report.submit',
     summary: '上报：540121 沟道泥位抬升',
     args: { note: '沟道泥位抬升' },
+    preview: { targets: [{ kind: 'region', id: '540121', label: '达孜区' }], warnings: ['提交后进入人工复核'] },
     status: 'pending',
     expires_in_seconds: 899.6,
     session_id: 'sess_0001',
@@ -439,6 +441,8 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
     expect(card.exists()).toBe(true)
     expect(card.text()).toContain('report.submit')
     expect(card.text()).toContain('上报：540121')
+    expect(card.text()).toContain('达孜区')
+    expect(card.text()).toContain('提交后进入人工复核')
     expect(byTestid(wrapper, 'confirm-act_abc123').exists()).toBe(true)
     expect(byTestid(wrapper, 'dismiss-act_abc123').exists()).toBe(true)
   })
@@ -505,14 +509,16 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
     expect(decision).toContain(reason)
   })
 
-  it('放弃不调后端，并明说后端没有取消接口', async () => {
+  it('取消提案以后台回执为准，成功后停止确认', async () => {
     const wrapper = await renderWithProposal()
+    mockedCancel.mockResolvedValue({ action_id: 'act_abc123', status: 'revoked' })
     await wrapper.find('[data-testid="dismiss-act_abc123"]').trigger('click')
     await flushPromises()
     expect(mockedConfirm).not.toHaveBeenCalled()
+    expect(mockedCancel).toHaveBeenCalledWith('act_abc123')
     const decision = byTestid(wrapper, 'decision').text()
-    expect(decision).toContain('后端没有取消接口')
-    expect(decision).not.toContain('已取消')
+    expect(decision).toContain('后端已取消提案')
+    expect(byTestid(wrapper, 'confirm-act_abc123').attributes('disabled')).toBeDefined()
   })
 
   /**
@@ -521,13 +527,14 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
    */
   it('放弃之后刷新，这张卡不会被重新递一遍', async () => {
     const wrapper = await renderWithProposal()
+    mockedCancel.mockResolvedValue({ action_id: 'act_abc123', status: 'revoked' })
     await wrapper.find('[data-testid="dismiss-act_abc123"]').trigger('click')
     await flushPromises()
     wrapper.unmount()
 
     reloadAssistantSession()
     const again = await renderView()
-    expect(byTestid(again, 'decision').text()).toContain('后端没有取消接口')
+    expect(byTestid(again, 'decision').text()).toContain('后端已取消提案')
     expect(byTestid(again, 'confirm-act_abc123').attributes('disabled'), '拒绝过的动作不能刷新后又变成可确认').toBeDefined()
   })
 
@@ -546,6 +553,7 @@ describe('待确认动作：确认走后端，放弃只在这页', () => {
     await wrapper.find('[data-testid="confirm-act_abc123"]').trigger('click')
     await flushPromises()
     expect(byTestid(wrapper, 'decision').text()).toContain('确认请求失败')
+    expect(byTestid(wrapper, 'confirm-act_abc123').attributes('disabled')).toBeUndefined()
   })
 })
 
@@ -667,6 +675,20 @@ async function dispatchKeydown(
  * 而刷新会把还没渲染完的时间线与会话号一起丢掉。
  */
 describe('流式进行中的停止与草稿保护', () => {
+  it('有版本声明的流提前结束时保留草稿和原幂等键', async () => {
+    const meta = { type: 'meta', session_id: 'sess_0001', llm_configured: true, actions: [], stream_version: 1 } as const
+    mockedChat.mockReturnValueOnce(framesOf([{ ...meta, actions: [] }]))
+    mockedChat.mockReturnValueOnce(framesOf([
+      { ...meta, actions: [] }, { type: 'done', session_id: 'sess_0001', latency_ms: 4, rejected_count: 0 },
+    ]))
+    const wrapper = await renderView()
+    await sendMessage(wrapper, '查询最新预警')
+    expect(byTestid(wrapper, 'stream-error').text()).toContain('回复中断')
+    expect((byTestid(wrapper, 'field-message').element as HTMLTextAreaElement).value).toBe('查询最新预警')
+    await byTestid(wrapper, 'send').trigger('click')
+    await flushPromises()
+    expect(mockedChat.mock.calls[1]?.[0].idempotency_key).toBe(mockedChat.mock.calls[0]?.[0].idempotency_key)
+  })
   it('点「停止」真的掐断这一轮，并说清它不是网络故障', async () => {
     mockedChat.mockImplementation((_body, options = {}) => (async function* () {
       await new Promise<void>((_resolve, reject) => {

@@ -43,7 +43,7 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
       <div>
         <div class="empty-hero__title">还没有智能体注册上来</div>
         <div class="empty-hero__desc">后端起来后它们会逐个上线；跑一次演练即可看到它们接活。</div>
-        <router-link class="empty-hero__action" to="/monitor">跑一次演练看谁接活 →</router-link>
+        <router-link class="empty-hero__action" to="/monitor#drill">跑一次演练看谁接活 →</router-link>
       </div>
     </div>
   </div>

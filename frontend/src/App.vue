@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
+import {
+  ApartmentOutlined,
+  BarChartOutlined,
+  DashboardOutlined,
+  RobotOutlined,
+} from '@ant-design/icons-vue'
 
 import api from '@/api/client'
 import ServiceTokenBar from '@/components/ServiceTokenBar.vue'
@@ -11,19 +17,76 @@ import { useAlerts } from '@/composables/useAlerts'
 import { useEventStream } from '@/composables/useEventStream'
 import { useHandlingSpace } from '@/composables/useHandlingSpace'
 import { antdTheme } from '@/theme/antd'
-import { NAV_GROUPS } from '@/router'
+import { WORKSPACES, workspaceFor } from '@/router'
 import { useTheme } from '@/theme/useTheme'
 import { installSelectA11y } from '@/utils/selectA11y'
 
 const route = useRoute()
 const contentRegion = ref<HTMLElement | null>(null)
+const navTrack = ref<HTMLElement | null>(null)
+const navHighlight = ref<HTMLElement | null>(null)
+const navShine = ref<HTMLElement | null>(null)
 const immersive = computed(() => route.meta?.immersive === true)
-const currentKey = computed(() => (route.name as string) ?? 'dashboard')
-const navSection = computed(() => {
-  if (currentKey.value === 'warnings') return 'monitor'
-  if (currentKey.value === 'simulation') return 'workflow'
-  return currentKey.value
-})
+const workspace = computed(() => workspaceFor(route))
+const mobileItems = WORKSPACES.filter((item) => item.key !== 'assistant')
+const mobileIcons = { duty: DashboardOutlined, research: ApartmentOutlined, data: BarChartOutlined }
+const assistantNav = WORKSPACES[3]
+
+function workspaceCurrent(key: string, path: string): 'page' | 'location' | undefined {
+  if (workspace.value.key !== key) return undefined
+  return route.path === path ? 'page' : 'location'
+}
+
+let glideMotion: Animation | undefined
+let shineMotion: Animation | undefined
+let navResize: ResizeObserver | undefined
+let reduceMotion: MediaQueryList | undefined
+
+function placeNavHighlight(animate = false): void {
+  const track = navTrack.value
+  const highlight = navHighlight.value
+  const shine = navShine.value
+  const selected = track?.querySelector<HTMLElement>('.topnav__item[aria-current]')
+  if (!track || !highlight || !shine || !selected?.offsetWidth) return
+
+  // 连点时从高亮的当前画面位置接续，避免跳回上一次的目标位置。
+  const frame = animate && reduceMotion?.matches === false && highlight.offsetWidth
+    ? highlight.getBoundingClientRect()
+    : undefined
+  const target = selected.offsetLeft
+  const width = selected.offsetWidth
+  const from = frame ? frame.left - track.getBoundingClientRect().left - track.clientLeft : target
+  const travel = target - from
+  glideMotion?.cancel()
+  shineMotion?.cancel()
+  highlight.style.setProperty('--nav-highlight-x', `${target}px`)
+  highlight.style.width = `${width}px`
+  if (!frame || Math.abs(travel) < 1) return
+
+  const direction = Math.sign(travel)
+  const stretch = Math.min(0.13, Math.abs(travel) / width * 0.075)
+  const transformAt = (x: number, scaleX = 1, scaleY = 1) => `translateX(${x}px) scale(${scaleX}, ${scaleY})`
+  glideMotion = highlight.animate([
+    { transform: transformAt(from, frame.width / width, frame.height / highlight.offsetHeight) },
+    { transform: transformAt(from + travel * 0.66 - width * stretch * 0.4, 1 + stretch, 0.95), offset: 0.38 },
+    { transform: transformAt(target + direction * 2.5, 0.993), offset: 0.82 },
+    { transform: transformAt(target) },
+  ], { duration: 380, easing: 'cubic-bezier(.2,.66,.34,1)' })
+  const shineStops = ['translateX(-108%)', 'translateX(169%)']
+  if (direction < 0) shineStops.reverse()
+  shineMotion = shine.animate([
+    { opacity: 0, transform: shineStops[0] },
+    { opacity: 0.42, offset: 0.46 },
+    { opacity: 0, transform: shineStops[1] },
+  ], { duration: 360, easing: 'ease-out' })
+}
+
+const resetNavHighlight = () => placeNavHighlight()
+watch(() => workspace.value.key, () => placeNavHighlight(true), { flush: 'post' })
+
+watch([() => route.path, () => route.hash], () => {
+  if (contentRegion.value) contentRegion.value.scrollTop = 0
+}, { flush: 'post' })
 
 const health = ref<{ status: string; version: string } | null>(null)
 const { events, connected, stalled } = useEventStream()
@@ -50,6 +113,13 @@ async function probe(): Promise<void> {
 onMounted(() => {
   void probe()
   uninstallSelectA11y = installSelectA11y()
+  reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+  reduceMotion.addEventListener('change', resetNavHighlight)
+  if (navTrack.value) {
+    navResize = new ResizeObserver(resetNavHighlight)
+    navResize.observe(navTrack.value)
+  }
+  resetNavHighlight()
   timer = window.setInterval(() => {
     if (document.visibilityState !== 'visible') return
     void probe()
@@ -59,6 +129,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
   uninstallSelectA11y?.()
+  reduceMotion?.removeEventListener('change', resetNavHighlight)
+  navResize?.disconnect()
+  glideMotion?.cancel()
+  shineMotion?.cancel()
 })
 
 /**
@@ -112,80 +186,90 @@ const statusTitle = computed<string>(() =>
        antd 默认英文空态 "No data"（此前是一张张截图发现再逐页补 emptyText）。
        逐页补只能盖住写过的表，语言包一次盖住整类。 -->
   <a-config-provider :theme="theme" :locale="zhCN">
-    <div class="app-shell" :class="{ 'is-immersive': immersive }">
+    <div class="app-shell" :class="{ 'is-immersive': immersive, 'is-processing': route.name === 'data-processing' }">
       <!-- 全局雾底：所有页面共用（含一张图与流程编排）——浅色/深色各一档，地图画布自己仍是深空底 -->
       <div class="app-backdrop" aria-hidden="true" />
       <div class="main-col">
-        <a v-if="!immersive" href="#aegis-main" class="skip-content" @click.prevent="contentRegion?.focus()">跳到主要内容</a>
-        <header v-if="!immersive" class="topbar">
-          <div class="topbrand" data-testid="brand">
-            <span class="brand-logo" aria-hidden="true"></span>
-            <span class="topbrand__text">
-              <span class="brand-name">AEGIS 山地灾害协同调控平台</span>
-              <span class="brand-sub">西藏山地灾害多智能体协同调控</span>
-            </span>
-          </div>
-          <nav class="topnav" aria-label="主导航">
-            <template v-for="group in NAV_GROUPS" :key="group.key">
-              <router-link
-                v-for="item in group.items"
-                :key="item.key"
-                class="topnav__item"
-                :class="{ 'is-on': navSection === item.key }"
-                :to="item.to"
-                :title="item.label"
-                :aria-current="currentKey === item.key ? 'page' : undefined"
-                :data-testid="`nav-${item.key}`"
-              >
-                <span class="topnav__full">{{ item.label }}</span>
-                <span class="topnav__short">{{ item.short }}</span>
-              </router-link>
-            </template>
-            <!-- 智能助手是常驻工具，不占一级导航分组；仍是 App.vue 里唯一的字面跳转目标 -->
-            <router-link
-              class="topnav__item"
-              :class="{ 'is-on': currentKey === 'assistant' }"
-              to="/assistant"
-              title="智能助手"
-              aria-label="智能助手"
-              data-testid="assistant-entry"
-            >
-              <span class="topnav__full">智能助手</span>
-              <span class="topnav__short">助手</span>
-            </router-link>
-          </nav>
+        <a href="#aegis-main" class="skip-content" @click.prevent="contentRegion?.focus()">跳到主要内容</a>
+        <header class="topbar">
+          <div class="topbar-main">
+            <div class="topbrand" data-testid="brand">
+              <span class="brand-logo" aria-hidden="true"></span>
+              <span class="topbrand__text">
+                <span class="brand-name">AEGIS 山地灾害协同调控平台</span>
+                <span class="brand-sub">西藏山地灾害多智能体协同调控</span>
+                <span class="brand-compact" aria-hidden="true"><strong>AEGIS</strong><span>山地灾害调控</span></span>
+              </span>
+            </div>
+            <nav ref="navTrack" class="topnav" aria-label="主导航">
+              <span ref="navHighlight" class="topnav__highlight" aria-hidden="true">
+                <span class="topnav__lens"><span ref="navShine" class="topnav__shine" /></span>
+              </span>
+              <RouterLink v-for="(item, index) in WORKSPACES" :key="item.key" :to="item.to" custom v-slot="{ href, navigate }">
+                <a
+                  :href="href"
+                  class="topnav__item"
+                  :aria-current="workspaceCurrent(item.key, item.to)"
+                  :data-testid="item.key === 'assistant' ? 'assistant-entry' : `nav-${item.key}`"
+                  @click="navigate"
+                >
+                  <span class="topnav__number" aria-hidden="true">0{{ index + 1 }}</span>
+                  <span>{{ item.label }}</span>
+                </a>
+              </RouterLink>
+            </nav>
 
-          <div class="topbar-right">
-            <div class="nav-status" :title="statusTitle" data-testid="nav-status">
-              <span class="status-fact">
-                <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
-                <span class="status-pill__text">{{ health ? '后端在线' : '后端不可达' }}</span>
-              </span>
-              <span class="status-fact" data-testid="stream-badge">
-                <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
-                <span class="status-pill__text">{{ streamLabel }}</span>
-              </span>
-              <span class="status-fact" data-testid="events-badge" title="最近事件条数">
-                <span class="events-count">{{ events.length }}</span>
-                <span class="status-pill__text">事件</span>
-              </span>
-            </div>
-            <div class="theme-switch" role="group" aria-label="主题">
-              <button
-                v-for="opt in themeOptions"
-                :key="opt.value"
-                type="button"
-                class="theme-switch__btn"
-                :class="{ 'is-on': resolved === opt.value }"
-                :aria-pressed="resolved === opt.value"
-                :title="`${opt.label}主题`"
-                :data-testid="`theme-${opt.value}`"
-                @click="setMode(opt.value)"
+            <div class="topbar-right">
+              <div class="nav-status" :title="statusTitle" data-testid="nav-status">
+                <span class="status-fact">
+                  <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
+                  <span class="status-pill__text">{{ health ? '后端在线' : '后端不可达' }}</span>
+                </span>
+                <span class="status-fact" data-testid="stream-badge">
+                  <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
+                  <span class="status-pill__text">{{ streamLabel }}</span>
+                </span>
+                <span class="status-fact" data-testid="events-badge" title="最近事件条数">
+                  <span class="events-count">{{ events.length }}</span>
+                  <span class="status-pill__text">事件</span>
+                </span>
+              </div>
+              <div class="theme-switch" role="group" aria-label="主题">
+                <button
+                  v-for="opt in themeOptions"
+                  :key="opt.value"
+                  type="button"
+                  class="theme-switch__btn"
+                  :class="{ 'is-on': resolved === opt.value }"
+                  :aria-pressed="resolved === opt.value"
+                  :title="`${opt.label}主题`"
+                  :data-testid="`theme-${opt.value}`"
+                  @click="setMode(opt.value)"
+                >
+                  {{ opt.short }}
+                </button>
+              </div>
+              <RouterLink
+                :to="assistantNav.to"
+                class="mobile-assistant"
+                :aria-label="urgentCards.length ? `智能助手，${urgentCards.length} 条紧急告警` : '智能助手'"
+                data-testid="mobile-assistant"
               >
-                {{ opt.short }}
-              </button>
+                <RobotOutlined aria-hidden="true" />
+                <span v-if="urgentCards.length" class="mobile-assistant__dot" aria-hidden="true" />
+              </RouterLink>
             </div>
           </div>
+          <nav v-if="workspace.pages && route.name !== 'map'" class="workspace-nav" :aria-label="workspace.label">
+            <RouterLink
+              v-for="page in workspace.pages"
+              :key="page.to"
+              :to="page.to"
+              class="workspace-nav__item"
+            >
+              {{ page.label }}
+            </RouterLink>
+          </nav>
         </header>
 
         <!-- Ⅰ/Ⅱ 级告警的顶部常驻条：抽屉会被自动展开，这条是"关了抽屉也看得见"的兜底 -->
@@ -220,11 +304,29 @@ const statusTitle = computed<string>(() =>
             AEGIS · 山地灾害协同调控平台 ｜ 值班 · 监测 · 处置 · 复盘
           </footer>
         </main>
+
+        <nav class="mobile-nav" aria-label="主导航" data-testid="mobile-nav">
+          <RouterLink v-for="item in mobileItems" :key="item.key" :to="item.to" custom v-slot="{ href, navigate }">
+            <a
+              :href="href"
+              class="mobile-nav__item"
+              :aria-current="workspaceCurrent(item.key, item.to)"
+              :aria-label="item.label"
+              :data-testid="`mobile-nav-${item.key}`"
+              @click="navigate"
+            >
+              <span class="mobile-nav__icon" aria-hidden="true">
+                <component :is="mobileIcons[item.key]" />
+              </span>
+              <span>{{ item.short }}</span>
+            </a>
+          </RouterLink>
+        </nav>
       </div>
       <!-- 全站悬浮的智能助手：所有页面都有（含沉浸式编排页），位置/开合自己持久化 -->
       <!-- 助手页本身就是全屏会话：再叠一份抽屉会出现两份共享同一会话的时间线 -->
       <AssistantDock
-        v-if="route.name !== 'assistant'"
+        v-if="route.name && route.name !== 'assistant'"
         :immersive="immersive"
         :avoid-map-bar="route.name === 'map'"
         :keep-overview-visible="route.name === 'dashboard'"
@@ -238,6 +340,7 @@ const statusTitle = computed<string>(() =>
   display: flex;
   /* 外壳定高：顶栏固定，正文区自己滚（侧栏已退役，不再有第二列） */
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--aeg-color-page);
   color: var(--aeg-color-text);
@@ -245,45 +348,150 @@ const statusTitle = computed<string>(() =>
 
 .topnav {
   grid-area: nav;
-  display: flex;
-  align-items: center;
-  gap: var(--aeg-space-s1);
+  position: relative;
+  isolation: isolate;
+  justify-self: center;
+  align-self: center;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: min(100%, 560px);
   min-width: 0;
-  border-top: 1px solid var(--aeg-color-border);
-  overflow-x: auto;
-  scrollbar-width: none;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--aeg-color-border-strong);
+  border-radius: var(--aeg-radius-pill);
+  background: linear-gradient(180deg, var(--aeg-color-overview-panel), var(--aeg-color-sunken));
+  box-shadow: inset 0 1px 0 var(--aeg-color-glass-border), var(--aeg-shadow-sm);
 }
-.topnav::-webkit-scrollbar {
-  display: none;
+html[data-theme='dark'] .topnav {
+  border-color: color-mix(in srgb, var(--aeg-color-overview-accent) 26%, var(--aeg-color-border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--aeg-color-overview-accent) 13%, var(--aeg-color-masthead-bg)),
+    color-mix(in srgb, var(--aeg-color-brand) 8%, var(--aeg-color-sunken))
+  );
+}
+@media (prefers-reduced-transparency: no-preference) {
+  .topnav {
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+  html[data-theme='dark'] .topnav {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--aeg-color-overview-accent) 13%, var(--aeg-color-masthead-bg)) 0%,
+      color-mix(in srgb, var(--aeg-color-sunken) 86%, transparent) 100%
+    );
+  }
+}
+.topnav__highlight {
+  position: absolute;
+  z-index: -1;
+  inset: 4px auto 4px 0;
+  pointer-events: none;
+  transform-origin: left center;
+  transform: translateX(var(--nav-highlight-x, 4px));
+}
+.topnav__lens {
+  position: relative;
+  display: block;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--aeg-color-brand) 43%, var(--aeg-color-border));
+  border-radius: var(--aeg-radius-pill);
+  background: linear-gradient(115deg, var(--aeg-color-overview-panel), var(--aeg-color-brand-soft)),
+    var(--aeg-color-overview-panel);
+  box-shadow: inset 0 1px 0 var(--aeg-color-glass-border), 0 2px 10px var(--aeg-color-brand-soft);
+}
+html[data-theme='dark'] .topnav__lens {
+  border-color: color-mix(in srgb, var(--aeg-color-overview-accent) 75%, var(--aeg-color-border));
+  background: linear-gradient(
+    115deg,
+    color-mix(in srgb, var(--aeg-color-overview-accent) 29%, var(--aeg-color-sunken)),
+    color-mix(in srgb, var(--aeg-color-brand) 32%, var(--aeg-color-sunken))
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--aeg-color-text) 32%, transparent),
+    0 2px 12px var(--aeg-color-brand-soft);
+}
+.topnav__shine {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 62%;
+  opacity: 0;
+  background: linear-gradient(105deg, transparent, var(--aeg-color-glass-border) 51%, transparent);
 }
 .topnav__item {
   display: inline-flex;
-  flex: 0 0 auto;
   align-items: center;
-  height: 36px;
-  padding: 0 var(--aeg-space-s4);
-  border-radius: var(--aeg-radius-md);
+  justify-content: center;
+  gap: var(--aeg-space-s2);
+  min-width: 0;
+  min-height: 40px;
+  padding-inline: var(--aeg-space-s2);
+  border-radius: var(--aeg-radius-pill);
   color: var(--aeg-color-text-secondary);
   font-size: var(--aeg-font-base);
   font-weight: var(--aeg-weight-semibold);
   text-decoration: none;
   white-space: nowrap;
   transition:
-    background-color var(--aeg-motion-base) ease,
-    color var(--aeg-motion-base) ease;
+    background-color var(--aeg-motion-fast) ease,
+    color var(--aeg-motion-base) ease,
+    transform var(--aeg-motion-base) cubic-bezier(.22,.74,.34,1);
 }
-.topnav__item:hover {
-  background: var(--aeg-color-brand-soft);
+.topnav__item:hover,
+.topnav__item[aria-current] {
   color: var(--aeg-color-text);
 }
-.topnav__item.is-on {
+.topnav__item:not([aria-current]):hover {
+  background: var(--aeg-color-brand-soft);
+  transform: translateY(-1px);
+}
+.topnav__item:active,
+.topnav__item:not([aria-current]):hover:active {
+  transform: translateY(1px) scale(.97);
+}
+.topnav__number {
+  display: grid;
+  flex: 0 0 23px;
+  place-items: center;
+  height: 23px;
+  border: 1px solid var(--aeg-color-border-strong);
+  border-radius: 50%;
+  background: var(--aeg-color-brand-soft);
+  color: var(--aeg-color-text-secondary);
+  font: var(--aeg-weight-semibold) 11px/1 var(--aeg-font-mono);
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--aeg-motion-base) ease, color var(--aeg-motion-base) ease;
+}
+.topnav__item[aria-current] .topnav__number {
+  border-color: var(--aeg-color-masthead-tab);
   background: var(--aeg-color-masthead-tab);
-  box-shadow: 0 3px 12px var(--aeg-color-brand-soft);
   color: var(--aeg-color-masthead-tab-ink);
 }
-
-html[data-theme='dark'] .topnav__item.is-on {
-  background: linear-gradient(120deg, var(--aeg-color-masthead-tab), var(--aeg-color-brand));
+.topnav__item:focus-visible,
+.workspace-nav__item:focus-visible,
+.mobile-assistant:focus-visible {
+  outline: 2px solid var(--aeg-color-brand);
+  outline-offset: -2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .topnav__item,
+  .topnav__number {
+    transition: none;
+  }
+  .topnav__item:active,
+  .topnav__item:not([aria-current]):hover,
+  .topnav__item:not([aria-current]):hover:active {
+    transform: none;
+  }
+}
+@media (forced-colors: active) {
+  .topnav__item[aria-current] {
+    outline: 1px solid Highlight;
+    outline-offset: -2px;
+  }
 }
 
 .topbrand {
@@ -331,25 +539,56 @@ html[data-theme='dark'] .topnav__item.is-on {
   color: var(--aeg-color-text-secondary);
   white-space: nowrap;
 }
+.brand-compact {
+  display: none;
+}
 
 .main-col {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  height: 100vh;
+  height: 100%;
 }
 .topbar {
   position: relative;
   z-index: 1;
   isolation: isolate;
-  display: grid;
-  flex: 0 0 var(--aeg-header-height);
-  grid-template: 'brand facts' 1fr 'nav nav' 1fr / minmax(0, 1fr) auto;
-  column-gap: var(--aeg-space-s3);
-  padding-inline: var(--aeg-space-s6);
+  flex: none;
   border-bottom: 1px solid var(--aeg-color-border);
   background: var(--aeg-color-masthead-bg);
+}
+.topbar-main {
+  display: grid;
+  grid-template: 'brand nav facts' 68px / minmax(240px, 1fr) minmax(435px, 560px) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--aeg-space-s4);
+  padding-inline: var(--aeg-space-s6);
+}
+.workspace-nav {
+  display: flex;
+  gap: var(--aeg-space-s5);
+  padding-inline: var(--aeg-space-s6);
+  border-top: 1px solid var(--aeg-color-border);
+}
+.workspace-nav__item {
+  display: grid;
+  place-items: center;
+  min-height: 40px;
+  padding: 0 var(--aeg-space-s2);
+  border-bottom: 2px solid transparent;
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.workspace-nav__item:hover,
+.workspace-nav__item[aria-current] {
+  color: var(--aeg-color-text);
+}
+.workspace-nav__item[aria-current] {
+  border-color: var(--aeg-color-masthead-tab);
 }
 html[data-theme='dark'] .topbar::before {
   content: '';
@@ -589,10 +828,6 @@ html.assistant-resizing .main-content {
     display: none;
   }
 }
-.main-col:has(.main-content.is-immersive),
-.app-shell.is-immersive {
-  height: 100vh;
-}
 .app-shell.is-immersive {
   /* 编辑器外壳也让雾底透上来：画布与面板自己带底色，这里不再铺一整块深色板 */
   background: transparent;
@@ -605,14 +840,17 @@ html.assistant-resizing .main-content {
   color: var(--aeg-color-text-secondary);
 }
 
-/* 助手入口现在是顶栏导航里的一项（.topnav__item），不再有单独的悬浮/侧栏按钮。 */
-
-/* 窄档只收状态文字：少显示一点，不是互相压上去。
-   侧栏是定宽的，顶栏右列在 ≤1290 把胶囊文字收成圆点即可，页名不受影响。
-   收文字用读屏可见的裁剪而不是 display:none——状态是信息，视觉收了读屏不该跟着丢。 */
-.topnav__short {
+.mobile-nav,
+.mobile-assistant {
   display: none;
 }
+@media (max-width: 1219px) {
+  .topbar-main {
+    grid-template: 'brand facts' 50px 'nav nav' 54px / minmax(0, 1fr) auto;
+    gap: 0 var(--aeg-space-s3);
+  }
+}
+/* 窄屏状态用圆点展示，保留读屏文案。 */
 @media (max-width: 780px) {
   .status-pill__text {
     position: absolute;
@@ -635,29 +873,139 @@ html.assistant-resizing .main-content {
     padding: 8px 10px;
   }
 }
-/* 手机档：导航用短名、品牌副标题让位，顶栏才装得下（真机 390px 量到互相挤压截断） */
 @media (max-width: 640px) {
-  .topnav__full {
+  .is-processing .assistant-dock:not(.is-open) {
     display: none;
   }
-  .topnav__short {
-    display: inline;
+  .app-shell {
+    --aeg-bottom-nav-height: calc(60px + env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
   }
-  .topnav__item {
-    padding-inline: var(--aeg-space-s2);
+  .topbar-main {
+    grid-template: 'brand facts' 54px / minmax(0, 1fr) auto;
+  }
+  .topnav {
+    display: none;
+  }
+  .mobile-nav {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    flex: 0 0 var(--aeg-bottom-nav-height);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: stretch;
+    padding: 3px var(--aeg-space-s1) calc(3px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--aeg-color-border-strong);
+    background: var(--aeg-color-masthead-bg);
+    box-shadow: 0 -4px 16px var(--aeg-color-glass-border);
+  }
+  .mobile-nav__item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
+    min-height: 48px;
+    border-radius: var(--aeg-radius-md);
+    color: var(--aeg-color-text-secondary);
+    font-size: var(--aeg-font-xs);
+    font-weight: var(--aeg-weight-semibold);
+    line-height: var(--aeg-lh-tight);
+    text-decoration: none;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-nav__icon {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: min(42px, 100%);
+    height: 27px;
+    border-radius: var(--aeg-radius-pill);
+    font-size: 19px;
+    line-height: 1;
+    transition:
+      transform var(--aeg-motion-base) cubic-bezier(.22,.74,.34,1),
+      background-color var(--aeg-motion-base) ease;
+  }
+  .mobile-nav__item[aria-current],
+  .mobile-nav__item:hover {
+    color: var(--aeg-color-brand-hover);
+  }
+  .mobile-nav__item[aria-current] .mobile-nav__icon {
+    background: var(--aeg-color-brand-soft);
+    box-shadow: inset 0 0 0 1px var(--aeg-color-glass-border);
+  }
+  .mobile-nav__item:focus-visible {
+    outline: 2px solid var(--aeg-color-brand);
+    outline-offset: -2px;
+  }
+  .mobile-assistant {
+    position: relative;
+    display: grid;
+    flex: 0 0 44px;
+    place-items: center;
+    height: 44px;
+    border: 1px solid var(--aeg-color-border);
+    border-radius: var(--aeg-radius-md);
+    background: var(--aeg-color-sunken);
+    color: var(--aeg-color-text-secondary);
+    font-size: 20px;
+  }
+  .mobile-assistant:hover,
+  .mobile-assistant[aria-current] {
+    border-color: var(--aeg-color-masthead-tab);
+    background: var(--aeg-color-brand-soft);
+    color: var(--aeg-color-text);
+  }
+  .mobile-assistant__dot {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 8px;
+    height: 8px;
+    border: 1px solid var(--aeg-color-masthead-bg);
+    border-radius: var(--aeg-radius-pill);
+    background: var(--aeg-color-status-danger);
   }
   .brand-sub {
     display: none;
   }
   .brand-name {
-    font-size: var(--aeg-font-sm);
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
-  .topbar,
+  .brand-compact {
+    display: grid;
+    gap: 2px;
+    font-size: 11px;
+    white-space: nowrap;
+    color: var(--aeg-color-text-secondary);
+  }
+  .brand-compact strong {
+    color: var(--aeg-color-text);
+    font-family: var(--aeg-font-display);
+    font-size: var(--aeg-font-base);
+    letter-spacing: .035em;
+  }
+  .topbar-main,
+  .workspace-nav,
   .main-content,
   .main-content.is-desk {
     padding-inline: var(--aeg-space-s3);
   }
-  .topbar,
+  .main-content.is-desk > :first-child {
+    min-height: 100%;
+    margin-bottom: var(--aeg-space-s5);
+  }
+  .topbar-main,
   .topbar-right,
   .topbrand {
     gap: var(--aeg-space-s2);
@@ -669,6 +1017,11 @@ html.assistant-resizing .main-content {
   .brand-logo::before,
   .brand-logo::after {
     inset: 5px 4px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .mobile-nav__item:active .mobile-nav__icon {
+      transform: scale(.9);
+    }
   }
 }
 

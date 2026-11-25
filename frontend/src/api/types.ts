@@ -50,6 +50,63 @@ export interface TelemetryReading {
   quality_flag: 'ok' | 'suspect' | 'missing' | 'drift'
 }
 
+export type ProcessingStatus = 'ok' | 'partial' | 'failed' | 'empty' | 'skipped' | 'pending'
+export type ProcessingValues = Record<string, string | number | boolean | null>
+
+export interface ProcessingIssue {
+  code: string
+  message: string
+  count: number
+  samples: ProcessingValues[]
+}
+
+export type ProcessingStageKey = 'collect' | 'normalize' | 'store' | 'durability' | 'publish' | 'analytics'
+
+export interface ProcessingStage {
+  key: ProcessingStageKey
+  status: ProcessingStatus
+  duration_ms: number | null
+  inputs: ProcessingValues
+  results: ProcessingValues
+  input_samples: ProcessingValues[]
+  result_samples: ProcessingValues[]
+  issues: ProcessingIssue[]
+}
+
+export interface ProcessingSource {
+  name: string
+  status: ProcessingStatus
+  duration_ms: number
+  received: number | null
+  normalized: number
+  inputs: ProcessingValues
+  input_samples: ProcessingValues[]
+  result_samples: ProcessingValues[]
+  issues: ProcessingIssue[]
+}
+
+export interface ProcessingRound {
+  id: string
+  trace_id: string
+  started_at: string
+  duration_ms: number
+  status: ProcessingStatus
+  sources: number
+  readings: number
+  published: number
+}
+
+export interface ProcessingDetail extends ProcessingRound {
+  stages: ProcessingStage[]
+  source_details: ProcessingSource[]
+}
+
+export interface ProcessingList {
+  capacity: number
+  sources: string[]
+  items: ProcessingRound[]
+}
+
 export interface DeliveryAttempt {
   channel: string
   audience_count: number
