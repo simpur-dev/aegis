@@ -79,6 +79,10 @@ export function legStateLabel(state: ReturnType<typeof legState>): string {
   return { disabled: '未启用', enabled: '运行中', degraded: '降级运行' }[state]
 }
 
+export function visibleDegradation(row: IntegrationRow): ReturnType<typeof visibleDetail> {
+  return visibleDetail(row).filter(({ key }) => isDegradationMark(key, row.detail[key]))
+}
+
 /** 详情里可展示的键值：凭据类键一律不给看。 */
 export function visibleDetail(row: IntegrationRow): Array<{ key: string; value: string; hint: string }> {
   return Object.entries(row.detail ?? {})

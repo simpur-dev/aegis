@@ -18,6 +18,7 @@
 import 'cesium/Source/Widgets/widgets.css'
 
 import type {
+  Cartesian2,
   ClassificationType,
   CustomDataSource,
   Entity,
@@ -49,7 +50,7 @@ import type { HistoricalSite } from './gyirongCase'
 import type { ProbeFetch } from './offline'
 import { collectFacts, tileUrlForTemplate } from './offline'
 import { chooseTerrainMode, createTerrainSetup, DEFAULT_TERRAIN_URL, terrainProbeUrl } from './terrain'
-import { EMPTY_WEATHER_LAYER, rainCellOpacity, type WeatherMapLayer } from './weather'
+import { EMPTY_WEATHER_LAYER, rainCellAt, rainSelectionPoint, type WeatherMapLayer } from './weather'
 
 /** Cesium 命名空间的类型别名（type-only，不产生运行时导入）。 */
 type CesiumModule = typeof import('cesium')
@@ -471,6 +472,7 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
    */
   let viewApplied = el.clientWidth > 0
   let destroyed = false
+  let rainImagery: ImageryLayer | null = null
   /**
    * 容器尺寸变化 → 让 Cesium 跟着重排。
    *
@@ -595,6 +597,9 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
 
   function updateHistoricalView(): void {
     if (!history) return
+    if (rainImagery && viewer.imageryLayers.indexOf(rainImagery) < viewer.imageryLayers.length - 1) {
+      viewer.imageryLayers.raiseToTop(rainImagery)
+    }
     const height = viewer.camera.positionCartographic.height
     const inCaseScale = historicalView && height < CASE_RELIEF_FADE_END_M
     const bounds = options.historicalRelief?.bounds
@@ -715,38 +720,62 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
   const weather = new cesium.CustomDataSource('map-weather')
   void viewer.dataSources.add(weather)
   let weatherLayer = EMPTY_WEATHER_LAYER
+  let rainRequest = 0
+
+  function updateRainOpacity(): void {
+    if (rainImagery) rainImagery.alpha = weatherLayer.subdued ? 0.32 : 1
+  }
+
+  function removeRainImagery(): void {
+    if (rainImagery) {
+      viewer.imageryLayers.remove(rainImagery)
+      rainImagery = null
+    }
+  }
+
+  async function drawRain(rain: WeatherMapLayer['rain']): Promise<void> {
+    const request = ++rainRequest
+    if (!rain) {
+      removeRainImagery()
+      return
+    }
+    try {
+      const provider = await cesium.SingleTileImageryProvider.fromUrl(rain.url, {
+        rectangle: cesium.Rectangle.fromDegrees(...rectArray(rain.bounds)),
+      })
+      if (destroyed || request !== rainRequest) return
+      removeRainImagery()
+      rainImagery = viewer.imageryLayers.addImageryProvider(provider)
+      updateRainOpacity()
+      viewer.scene.requestRender()
+    } catch {
+      if (!destroyed && request === rainRequest) {
+        // 失败时清掉过期色面，当前帧仍可查格点读数。
+        removeRainImagery()
+        viewer.scene.requestRender()
+      }
+    }
+  }
 
   function drawWeather(): void {
-    const { points, cells } = weatherLayer
+    const { points, selected } = weatherLayer
+    const markers = selected ? [...points, rainSelectionPoint(selected)] : points
     const ground = cesium.HeightReference.CLAMP_TO_GROUND
-    const known = new Set([...points, ...cells].map((item) => item.id))
+    const known = new Set(markers.map((item) => item.id))
     weather.entities.suspendEvents()
     try {
-      for (const entity of [...weather.entities.values]) {
-        if (!known.has(entity.id)) weather.entities.remove(entity)
+      weather.entities.removeAll()
+      if (selected) {
+        const { west, south, east, north } = selected.bounds
+        weather.entities.add({ id: `outline-${selected.id}`, polyline: {
+          positions: cesium.Cartesian3.fromDegreesArray([west, south, east, south, east, north, west, north, west, south]),
+          material: new cesium.PolylineDashMaterialProperty({ color: cesium.Color.fromCssColorString(palette.labelText), dashLength: 10 }),
+          clampToGround: true,
+          width: 1.5,
+        } })
       }
-      for (const cell of cells) {
-        const color = cesium.Color.fromCssColorString(cell.color).withAlpha(rainCellOpacity(cell.value, weatherLayer.subdued))
-        const existing = weather.entities.getById(cell.id)
-        if (existing?.rectangle?.material instanceof cesium.ColorMaterialProperty) {
-          existing.rectangle.material.color = new cesium.ConstantProperty(color)
-        } else {
-          const { west, south, east, north } = cell.bounds
-          const gap = 0.0008
-          weather.entities.add({
-            id: cell.id,
-            rectangle: {
-              coordinates: cesium.Rectangle.fromDegrees(west + gap, south + gap, east - gap, north - gap),
-              material: color,
-              classificationType: cesium.ClassificationType.TERRAIN,
-              zIndex: 4,
-            },
-          })
-        }
-      }
-      for (const point of points) {
+      for (const point of markers) {
         const color = cesium.Color.fromCssColorString(point.color)
-        weather.entities.removeById(point.id)
         weather.entities.add({
           id: point.id,
           position: cesium.Cartesian3.fromDegrees(point.lonlat.lon, point.lonlat.lat),
@@ -934,7 +963,16 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     const picked = viewer.scene.pick(event.position) as { id?: unknown } | undefined
     const feature = picked?.id
     const id = typeof feature === 'object' && feature !== null && 'id' in feature ? feature.id : feature
-    options.onSelect?.(typeof id === 'string' ? id : null)
+    if (typeof id === 'string' && !id.startsWith('outline-weather-cell-')) {
+      options.onSelect?.(id)
+      return
+    }
+    const point = weatherLayer.cells.length ? pickGround(event.position) : undefined
+    if (point) {
+      const { latitude, longitude } = viewer.scene.globe.ellipsoid.cartesianToCartographic(point)
+      const cell = rainCellAt(weatherLayer.cells, { lon: cesium.Math.toDegrees(longitude), lat: cesium.Math.toDegrees(latitude) })
+      options.onSelect?.(cell?.id ?? null)
+    } else options.onSelect?.(null)
   }, cesium.ScreenSpaceEventType.LEFT_CLICK)
 
   const onCameraChanged = (): void => {
@@ -966,17 +1004,17 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     return zoomForCameraHeight(position ? position.height : Number.POSITIVE_INFINITY)
   }
 
+  function pickGround(pixel: Cartesian2) {
+    const ray = viewer.camera.getPickRay(pixel)
+    return (ray && viewer.scene.globe.pick(ray, viewer.scene)) ?? viewer.camera.pickEllipsoid(pixel, viewer.scene.globe.ellipsoid)
+  }
+
   function mapScale(): MapScale | null {
     const canvas = viewer.scene.canvas
     const x = canvas.clientWidth / 2
     const y = canvas.clientHeight / 2
     const ellipsoid = viewer.scene.globe.ellipsoid
-    const groundAt = (screenX: number) => {
-      const pixel = new cesium.Cartesian2(screenX, y)
-      const ray = viewer.camera.getPickRay(pixel)
-      const ground = ray && viewer.scene.globe.pick(ray, viewer.scene)
-      return ground ?? viewer.camera.pickEllipsoid(pixel, ellipsoid)
-    }
+    const groundAt = (screenX: number) => pickGround(new cesium.Cartesian2(screenX, y))
     const left = groundAt(x - 50)
     const right = groundAt(x + 50)
     if (!left || !right) return null
@@ -999,7 +1037,10 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
     render,
     setWeather: (layer) => {
       if (weatherLayer === layer) return
+      const rainChanged = weatherLayer.rain !== layer.rain
       weatherLayer = layer
+      if (rainChanged) void drawRain(layer.rain)
+      else updateRainOpacity()
       drawWeather()
     },
     setTheme,

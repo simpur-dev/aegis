@@ -11,14 +11,7 @@ import { HistoryOutlined } from '@ant-design/icons-vue'
 import { computed, ref } from 'vue'
 
 import type { ChainSummary } from '@/api/types'
-
-const STAGE_LABELS: Record<string, string> = {
-  perceive: '感知',
-  assess: '研判',
-  plan: '决策',
-  execute: '执行',
-  feedback: '反馈',
-}
+import { stageLabel, stageTitle } from './chainStages'
 
 const props = defineProps<{ chains: ChainSummary[] }>()
 
@@ -57,15 +50,6 @@ function countOf(key: FilterKey): number {
 function stageClass(stage: ChainSummary['stages'][number]): string {
   if (!stage.ok) return 'is-fail'
   return `is-${stage.mode}`
-}
-
-function stageLabel(stage: ChainSummary['stages'][number]): string {
-  return STAGE_LABELS[stage.name] ?? stage.name
-}
-
-function stageTitle(stage: ChainSummary['stages'][number]): string {
-  const who = stage.mode === 'agent' ? '智能体' : stage.mode === 'local' ? '平台兜底' : stage.mode === 'hybrid' ? '混合' : '跳过'
-  return `${stageLabel(stage)} · ${who} · ${stage.latency_ms}ms${stage.note ? ` · ${stage.note}` : ''}`
 }
 
 function resultOf(chain: ChainSummary): { label: string; cls: string } {
@@ -147,6 +131,7 @@ function resultOf(chain: ChainSummary): { label: string; cls: string } {
       <div>
         <div class="empty-hero__title">还没有处置记录</div>
         <div class="empty-hero__desc">监测触发、上报或演练完成后，可在这里查看处置记录。</div>
+        <router-link class="empty-hero__action" to="/monitor#drill">去监测页发起演练 →</router-link>
       </div>
     </div>
   </div>

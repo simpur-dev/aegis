@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { AimOutlined, AppstoreOutlined, BellOutlined, ClusterOutlined } from '@ant-design/icons-vue'
+import { AppstoreOutlined, BellOutlined, PartitionOutlined, RobotOutlined } from '@ant-design/icons-vue'
 
 const icons = {
-  agents: ClusterOutlined,
+  agents: RobotOutlined,
   warnings: BellOutlined,
   tasks: AppstoreOutlined,
-  collaboration: AimOutlined,
+  collaboration: PartitionOutlined,
 }
 
 export interface KpiItem {
@@ -54,17 +54,30 @@ defineProps<{ items: KpiItem[] }>()
   list-style: none;
 }
 .kpi {
+  --kpi-accent: var(--aeg-color-overview-accent);
   display: flex;
   align-items: center;
   gap: var(--aeg-space-s2);
   min-height: 76px;
   padding: var(--aeg-space-s2);
   border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-lg);
+  border-radius: var(--aeg-radius-md);
   background: var(--aeg-color-overview-tile);
   box-shadow: var(--aeg-shadow-sm);
 }
-.kpi.is-accent {
+.kpi--warnings { --kpi-accent: var(--aeg-tag-orange-text); }
+.kpi--tasks { --kpi-accent: var(--aeg-color-status-info); }
+.kpi--collaboration { --kpi-accent: var(--aeg-color-editor-accent-teal); }
+html[data-theme='dark'] .kpi {
+  border-color: transparent;
+  background:
+    radial-gradient(ellipse at 1% 3%, color-mix(in srgb, var(--kpi-accent) 29%, transparent), transparent 68%) padding-box,
+    radial-gradient(ellipse 70% 50% at 90% 105%, color-mix(in srgb, var(--kpi-accent) 14%, transparent), transparent) padding-box,
+    var(--dash-detail-face) padding-box,
+    radial-gradient(ellipse 88% 74% at 2% 0%, color-mix(in srgb, var(--kpi-accent) 59%, var(--aeg-color-command-line)),
+      var(--aeg-color-command-line)) border-box;
+}
+html[data-theme='light'] .kpi.is-accent {
   border-color: color-mix(in srgb, var(--aeg-color-overview-accent), var(--aeg-color-border) 68%);
 }
 .kpi__icon {
@@ -77,6 +90,13 @@ defineProps<{ items: KpiItem[] }>()
   background: var(--aeg-color-sunken);
   color: var(--aeg-color-overview-accent);
   font-size: var(--aeg-font-lg);
+}
+html[data-theme='dark'] .kpi .kpi__icon {
+  border-color: color-mix(in srgb, var(--kpi-accent) 44%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--kpi-accent) 24%, var(--aeg-color-command-deep));
+  color: var(--kpi-accent);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--kpi-accent) 20%, transparent);
 }
 .kpi.is-accent .kpi__icon {
   background: var(--aeg-color-brand-soft);

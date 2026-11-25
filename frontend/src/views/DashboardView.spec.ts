@@ -80,7 +80,7 @@ function chainOf(traceId: string) {
 }
 
 const STUBS = {
-  'a-card': { name: 'ACard', props: ['title', 'loading', 'size'], template: '<div class="card"><div class="card-title">{{ title }}<slot name="extra" /></div><slot /></div>' },
+  'a-card': { name: 'ACard', props: ['title', 'loading', 'size'], template: '<div class="card"><div class="card-title"><slot name="title">{{ title }}</slot><slot name="extra" /></div><slot /></div>' },
   'a-row': { name: 'ARow', props: ['gutter'], template: '<div class="row"><slot /></div>' },
   'a-col': { name: 'ACol', props: ['span'], template: '<div class="col"><slot /></div>' },
   'a-statistic': { name: 'AStatistic', props: ['title', 'value', 'suffix'], template: '<div class="stat" :data-testid="`stat-${title}`">{{ value }}{{ suffix }}</div>' },
@@ -373,11 +373,7 @@ describe('链路表的窗口口径', () => {
     mocked.events.mockResolvedValue({ items: Array.from({ length: 20 }, (_, i) => chainOf(`trc_${String(i).padStart(2, '0')}`)) } as never)
     const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
     await flushPromises()
-    const title =
-      wrapper
-        .findAllComponents({ name: 'ACard' })
-        .map((card) => String(card.props('title')))
-        .find((t) => t.startsWith('事件处置记录')) ?? ''
+    const title = wrapper.get('.dash-history h2').text()
     expect(title).toContain('最近 20 条')
     expect(title).toContain('共 108 条')
     wrapper.unmount()
@@ -392,11 +388,7 @@ describe('链路表的窗口口径', () => {
     mocked.events.mockResolvedValue({ items: [chainOf('trc_a'), chainOf('trc_b')] } as never)
     const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
     await flushPromises()
-    const title =
-      wrapper
-        .findAllComponents({ name: 'ACard' })
-        .map((card) => String(card.props('title')))
-        .find((t) => t.startsWith('事件处置记录')) ?? ''
+    const title = wrapper.get('.dash-history h2').text()
     expect(title).toContain('最近 20 条')
     expect(title).not.toContain('共')
     wrapper.unmount()
@@ -436,11 +428,7 @@ describe('风险区域一览不许拼出假的区划代码', () => {
     mocked.events.mockResolvedValue({ items: [chainOf('trc_a')] } as never)
     const wrapper = mount(DashboardView, { global: { stubs: STUBS } })
     await flushPromises()
-    const title =
-      wrapper
-        .findAllComponents({ name: 'ACard' })
-        .map((card) => String(card.props('title')))
-        .find((t) => t.startsWith('风险区域一览')) ?? ''
+    const title = wrapper.get('.dash-risks h2').text()
     expect(title, '链路表已经写"最近 20 条"，紧挨着的网格不能什么都别说').toContain('最近 20 条')
     expect(title).toContain('共 108 条')
     wrapper.unmount()

@@ -47,6 +47,16 @@ export function wgs84ToGcj02(point: LngLat): LngLat {
   return { ...point, lon: point.lon + dLng, lat: point.lat + dLat }
 }
 
+/** 对地图点击应用与覆盖物相同的坐标换算，避免格点边界两边错选。 */
+export function gcj02ToWgs84(point: LngLat): LngLat {
+  let estimate = point
+  for (let i = 0; i < 3; i++) {
+    const shifted = wgs84ToGcj02(estimate)
+    estimate = { lon: estimate.lon + point.lon - shifted.lon, lat: estimate.lat + point.lat - shifted.lat }
+  }
+  return estimate
+}
+
 /**
  * 两点间的近似地面距离（米），只用于断言"偏移在百米量级"，不是测绘精度。
  * 用等角圆柱近似即可：这个量级上椭球修正不影响判据。

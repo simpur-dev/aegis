@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { AimOutlined, ApartmentOutlined, BarsOutlined, DeploymentUnitOutlined, PlayCircleOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
@@ -13,6 +14,7 @@ import ChainList from '@/components/dashboard/ChainList.vue'
 import EventFeed from '@/components/dashboard/EventFeed.vue'
 import RiskWall from '@/components/dashboard/RiskWall.vue'
 import TerrainOverview from '@/components/dashboard/TerrainOverview.vue'
+import { stageLabels, stageTitle } from '@/components/dashboard/chainStages'
 import LegStatusPanel from '@/components/system/LegStatusPanel.vue'
 import { useAlerts } from '@/composables/useAlerts'
 import { useEventStream } from '@/composables/useEventStream'
@@ -86,6 +88,16 @@ const kpis = computed<KpiItem[]>(() => [
  * 刚发生的那条排在第 2 页，等于"最近做了什么"要翻到最后一页才看得见。
  */
 const recentChains = computed<ChainSummary[]>(() => [...chains.value].reverse())
+const latestStages = computed(() => new Map(recentChains.value[0]?.stages.map((stage) => [stage.name, stage])))
+const collaborationStages = computed(() => Object.entries(stageLabels).map(([name, label]) => {
+  const stage = latestStages.value.get(name)
+  return {
+    name,
+    label,
+    state: !stage ? 'pending' : !stage.ok ? 'fail' : stage.mode,
+    title: stage ? stageTitle(stage) : `${label} · 暂无执行状态`,
+  }
+}))
 
 /**
  * 这张表取的是最近 N 条链路，标题里就得写 N：真机把这台进程演练到 108 条之后，
@@ -410,11 +422,15 @@ watch(
             caption="值班第一屏：等人处理的待办、现场读数、风险区域与最新处置。"
           >
             <template #actions>
-              <a-button class="dash-drill" type="primary" data-testid="dashboard-drill" @click="$router.push('/monitor#drill')">发起演练</a-button>
+              <a-button class="dash-drill" type="primary" data-testid="dashboard-drill" @click="$router.push('/monitor#drill')">
+                <PlayCircleOutlined aria-hidden="true" /> 发起演练
+              </a-button>
               <span class="dash-updated" data-testid="dashboard-updated">
                 {{ updatedAt ? `更新于 ${formatOperatingTime(updatedAt)}（UTC+8）` : '尚未取到数据' }}
               </span>
-              <a-button size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">刷新</a-button>
+              <a-button class="dash-refresh" size="small" :loading="loading" data-testid="dashboard-refresh" @click="refresh">
+                <ReloadOutlined v-if="!loading" aria-hidden="true" /> 刷新
+              </a-button>
               <router-link v-if="urgentCards.length" class="dash-urgent" to="/assistant" data-testid="alert-banner">
                 <span aria-hidden="true"></span>
                 <span data-testid="alert-banner-text">
@@ -442,7 +458,10 @@ watch(
         :style="panelStyle"
         data-testid="agent-panel"
       >
-        <a-card title="智能体在线状态" size="small">
+        <a-card size="small">
+          <template #title>
+            <h2 class="dash-card-title"><DeploymentUnitOutlined aria-hidden="true" /> 智能体在线状态</h2>
+          </template>
           <template #extra>
             <span class="dash-agent__summary" data-testid="agent-panel-summary">{{ agentSummary }}</span>
             <button
@@ -457,6 +476,17 @@ watch(
               {{ panelCollapsed ? '展开' : '收起' }}
             </button>
           </template>
+          <div v-if="!panelCollapsed" class="dash-collaboration">
+            <router-link class="dash-collaboration__link" to="/workflow">
+              <ApartmentOutlined aria-hidden="true" /> {{ latestStages.size ? '最新协同链路' : '协同流程示意' }}
+            </router-link>
+            <ol aria-label="感知到反馈的协同阶段">
+              <li v-for="stage in collaborationStages" :key="stage.name" :class="`is-${stage.state}`" :title="stage.title">
+                <i aria-hidden="true"></i>{{ stage.label }}
+                <span class="dash-visually-hidden">{{ stage.title.slice(stage.label.length) }}</span>
+              </li>
+            </ol>
+          </div>
           <div id="agent-panel-body" class="dash-agent__body" :aria-hidden="panelCollapsed" :tabindex="panelCollapsed ? -1 : 0">
             <AgentBoard :agents="agents" @select="openAgent" />
           </div>
@@ -484,19 +514,28 @@ watch(
       </section>
 
       <section ref="riskList" class="glass-panel dash-risks">
-        <a-card :title="gridTitle" size="small" :loading="loading">
+        <a-card size="small" :loading="loading">
+          <template #title>
+            <h2 class="dash-card-title"><AimOutlined aria-hidden="true" /> {{ gridTitle }}</h2>
+          </template>
           <RiskWall :cells="regionGrid" :selected-id="selectedRiskId" @select="selectedRiskId = $event" />
         </a-card>
       </section>
       <section class="glass-panel dash-history">
-        <a-card :title="chainsTitle" size="small" :loading="loading">
+        <a-card size="small" :loading="loading">
+          <template #title>
+            <h2 class="dash-card-title"><BarsOutlined aria-hidden="true" /> {{ chainsTitle }}</h2>
+          </template>
           <ChainList :chains="recentChains" />
         </a-card>
       </section>
 
       <!-- 第二行右：实时事件流（与上方智能体卡同宽） -->
       <section class="glass-panel dash-events">
-        <a-card title="实时动态" size="small">
+        <a-card size="small">
+          <template #title>
+            <h2 class="dash-card-title"><ThunderboltOutlined aria-hidden="true" /> 实时动态</h2>
+          </template>
           <EventFeed :events="events.slice(0, 20)" :connected="connected" />
         </a-card>
       </section>
@@ -536,6 +575,17 @@ watch(
 .dashboard {
   container: dashboard / inline-size;
 }
+html[data-theme='dark'] .dashboard {
+  --dash-panel-face: linear-gradient(155deg,
+    color-mix(in srgb, var(--aeg-color-command-panel) 89%, transparent),
+    color-mix(in srgb, var(--aeg-color-command-deep) 94%, transparent) 62%);
+  --dash-detail-rim: radial-gradient(ellipse 82% 78% at 0% 0%,
+    color-mix(in srgb, var(--aeg-color-overview-accent) 42%, var(--aeg-color-command-line)),
+    var(--aeg-color-command-line));
+  --dash-detail-face: linear-gradient(145deg,
+    color-mix(in srgb, var(--aeg-color-command-raised) 65%, var(--aeg-color-command-panel)),
+    var(--aeg-color-command-panel) 82%);
+}
 .agent-detail {
   display: grid;
   grid-template-columns: 88px minmax(0, 1fr);
@@ -571,7 +621,7 @@ watch(
   overflow: hidden;
 }
 .dash-overview__summary {
-  padding: var(--aeg-space-s3);
+  padding: var(--aeg-space-s3) var(--aeg-space-s4) var(--aeg-space-s2);
 }
 .dash-overview :deep(.page-head) {
   margin-bottom: var(--aeg-space-s3);
@@ -582,19 +632,44 @@ watch(
   gap: var(--aeg-space-s2);
 }
 .dash-overview :deep(.page-head__title) {
-  font-size: var(--aeg-font-xl);
+  font-size: var(--aeg-font-2xl);
   font-weight: var(--aeg-weight-bold);
+  display: flex;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+}
+.dash-overview :deep(.page-head__title::before) {
+  content: '';
+  width: 4px;
+  height: 0.92em;
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-color-overview-accent);
+}
+.dash-overview :deep(.page-head__caption) {
+  margin-top: var(--aeg-space-s1);
+  font-size: var(--aeg-font-sm);
 }
 .dash-overview :deep(.page-head__actions) {
   flex: 1 1 auto;
   margin-left: 0;
 }
 .dash-overview :deep(.page-head__actions .dash-drill) {
-  background: var(--aeg-color-masthead-tab);
-  color: var(--aeg-color-masthead-tab-ink);
+  background: var(--aeg-color-brand);
+  color: var(--aeg-color-terrain-ink);
+  font-weight: var(--aeg-weight-semibold);
 }
 .dash-overview :deep(.page-head__actions .dash-drill:hover) {
   filter: brightness(1.09);
+}
+html[data-theme='dark'] .dash-overview :deep(.page-head__actions .dash-drill) {
+  border-color: var(--aeg-color-overview-accent);
+  background: linear-gradient(135deg, var(--aeg-color-terrain-accent), var(--aeg-color-status-info));
+  color: var(--aeg-color-text-inverse);
+  box-shadow: 0 4px 12px var(--aeg-color-command-glow);
+}
+.dash-overview :deep(.page-head__actions .dash-refresh) {
+  background: var(--aeg-color-command-panel);
+  border-color: var(--aeg-color-command-line);
 }
 .dash-updated {
   color: var(--aeg-color-text-secondary);
@@ -652,14 +727,86 @@ watch(
   display: flex;
   flex-direction: column;
 }
-/* 列表在卡内滚动：底部渐隐 + 细滚动条，与链路/事件流同一套习语 */
+.dash-collaboration {
+  flex: none;
+  display: grid;
+  gap: var(--aeg-space-s1);
+  padding: var(--aeg-space-s1) var(--aeg-space-s2) var(--aeg-space-s2);
+  border: 1px solid var(--aeg-color-command-line);
+  border-radius: var(--aeg-radius-md);
+  background: color-mix(in srgb, var(--aeg-color-command-raised) 46%, transparent);
+}
+html[data-theme='dark'] .dash-collaboration {
+  border-color: transparent;
+  background: var(--dash-detail-face) padding-box, var(--dash-detail-rim) border-box;
+}
+.dash-collaboration__link {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--aeg-space-s1);
+  color: var(--aeg-color-overview-accent);
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+}
+.dash-collaboration__link:hover {
+  color: var(--aeg-color-overview-accent);
+  text-decoration: underline;
+}
+.dash-collaboration ol {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.dash-collaboration li {
+  --stage-ink: var(--aeg-color-text-secondary);
+  --stage-node: var(--aeg-color-command-line);
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  color: var(--stage-ink);
+  font-size: var(--aeg-font-sm);
+  white-space: nowrap;
+}
+.dash-collaboration li + li::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: calc(50% + 7px);
+  width: calc(100% - 14px);
+  border-top: 1px solid var(--aeg-color-command-line);
+}
+.dash-collaboration li i {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--stage-node);
+  border-radius: 50%;
+}
+.dash-collaboration li:not(.is-pending, .is-skipped) i {
+  background: var(--stage-node);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--stage-node) 25%, transparent);
+}
+.dash-collaboration .is-agent { --stage-node: var(--aeg-color-overview-accent); }
+.dash-collaboration .is-local { --stage-node: var(--aeg-color-text-muted); }
+.dash-collaboration .is-hybrid { --stage-node: var(--aeg-color-status-warning); }
+.dash-collaboration .is-fail { --stage-node: var(--aeg-color-status-danger); }
+.dash-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
 .dash-agent__body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding-top: var(--aeg-space-s2);
-  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
-  mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent);
+  padding-right: var(--aeg-space-s1);
+  scrollbar-color: var(--aeg-color-command-line) transparent;
 }
 .dash-agent__body::-webkit-scrollbar {
   width: 6px;
@@ -678,6 +825,9 @@ watch(
   font-variant-numeric: tabular-nums;
   color: var(--aeg-color-text-secondary);
 }
+html[data-theme='dark'] .dash-agent__summary {
+  color: var(--aeg-color-status-success);
+}
 .dash-agent__toggle {
   display: inline-flex;
   align-items: center;
@@ -685,7 +835,7 @@ watch(
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--aeg-color-brand);
+  color: var(--aeg-color-overview-accent);
   font-size: var(--aeg-font-sm);
   min-height: 24px;
   cursor: pointer;
@@ -741,7 +891,7 @@ watch(
   min-width: 0;
 }
 .dash-layout > :is(.dash-risks, .dash-history, .dash-events) {
-  min-height: 224px;
+  min-height: 212px;
 }
 .dash-layout > .dash-legs {
   grid-area: legs;
@@ -755,24 +905,6 @@ watch(
 .dash-agent :deep(.agent__id) {
   flex: 1 1 auto;
   max-width: none;
-}
-.dash-agent :deep(.agent__caps) {
-  display: none;
-}
-.dash-agent :deep(.agent__loadbar) {
-  display: none;
-}
-.dash-agent :deep(.agent) {
-  min-height: 42px;
-  border-color: transparent;
-  border-bottom-color: var(--aeg-color-border-subtle);
-  background: transparent;
-}
-.dash-agent :deep(.agent__served) {
-  min-width: 0;
-  padding-inline: 0;
-  border: none;
-  background: transparent;
 }
 @container dashboard (max-width: 1020px) {
   .dash-layout {
@@ -807,11 +939,43 @@ watch(
   min-width: 0;
   padding: var(--aeg-space-s4);
   border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-xl);
+  border-radius: var(--aeg-radius-lg);
   background: var(--aeg-color-overview-panel);
   box-shadow: var(--aeg-shadow-md);
   /* 独立合成层：滚动时整块搬已栅格化的纹理，不重 raster 整页内容层。 */
   transform: translateZ(0);
+}
+html[data-theme='dark'] .glass-panel {
+  position: relative;
+  border-color: transparent;
+  background:
+    radial-gradient(ellipse 58% 20px at 4% 0%, color-mix(in srgb, var(--aeg-color-terrain-accent) 35%, transparent), transparent),
+    radial-gradient(ellipse 70% 112px at 0% -12px, color-mix(in srgb, var(--aeg-color-command-selected) 49%, transparent), transparent),
+    radial-gradient(ellipse 64% 50px at 100% 103%, color-mix(in srgb, var(--aeg-color-brand-alt) 37%, transparent), transparent),
+    var(--dash-panel-face);
+  background-clip: padding-box;
+  box-shadow: 0 7px 19px var(--aeg-color-overlay-scrim), 0 3px 19px color-mix(in srgb, var(--aeg-color-command-glow) 42%, transparent);
+}
+/* 单独绘制一像素的渐隐边光，避免描边的色带透过半透明卡面。 */
+html[data-theme='dark'] .glass-panel::before {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 66% 53% at 4% 0%, var(--aeg-color-terrain-accent), transparent 82%),
+    radial-gradient(ellipse 60% 35% at 100% 100%, color-mix(in srgb, var(--aeg-color-brand-alt) 57%, transparent), transparent 86%);
+  background-color: color-mix(in srgb, var(--aeg-color-command-line) 65%, transparent);
+  mask: linear-gradient(black, black) content-box, linear-gradient(black, black);
+  mask-composite: exclude;
+}
+@media (prefers-reduced-transparency: reduce) {
+  html[data-theme='dark'] .dashboard {
+    --dash-panel-face: linear-gradient(155deg, var(--aeg-color-command-panel), var(--aeg-color-command-deep) 62%);
+  }
 }
 .glass-panel :deep(.ant-card) {
   background: transparent;
@@ -819,13 +983,26 @@ watch(
   box-shadow: none;
 }
 .glass-panel :deep(.ant-card-head) {
-  min-height: 54px;
+  min-height: 43px;
   padding: var(--aeg-space-s1) 0 var(--aeg-space-s2);
   border-bottom: 1px solid var(--aeg-color-border);
   background: transparent;
   align-items: flex-start;
   /* antd 的卡头是 flex-column + 垂直居中；改成靠上，标题才和 KPI 卡页头同一水平 */
   justify-content: flex-start;
+}
+.dash-card-title {
+  display: flex;
+  gap: var(--aeg-space-s2);
+  align-items: baseline;
+  margin: 0;
+  font: inherit;
+  letter-spacing: 0;
+}
+.dash-card-title > :first-child {
+  flex: none;
+  color: var(--aeg-color-overview-accent);
+  font-size: var(--aeg-font-lg);
 }
 .glass-panel :deep(.ant-card-head-wrapper) {
   align-items: flex-start;
@@ -846,6 +1023,54 @@ watch(
 .glass-panel :deep(.ant-card-body) {
   padding: var(--aeg-space-s2) 0 0;
   background: transparent;
+}
+html[data-theme='dark'] .glass-panel :deep(.ant-card-head) {
+  border-color: transparent;
+  background: linear-gradient(90deg, var(--aeg-color-command-line), color-mix(in srgb, var(--aeg-color-command-line) 32%, transparent)) bottom / 100% 1px no-repeat;
+}
+html[data-theme='dark'] .glass-panel :deep(.empty-hero--compact) {
+  min-height: 124px;
+  border-color: transparent;
+  background:
+    radial-gradient(ellipse 34% 56% at 9% 112%, var(--aeg-color-command-glow), transparent) padding-box,
+    var(--dash-detail-face) padding-box,
+    var(--dash-detail-rim) border-box;
+}
+html[data-theme='dark'] .dash-layout :deep(:is(.dash-risks, .dash-history, .dash-events) .empty-hero--compact) {
+  position: relative;
+  isolation: isolate;
+}
+html[data-theme='dark'] .dash-layout :deep(:is(.dash-risks, .dash-history, .dash-events) .empty-hero--compact::before) {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: url('/backgrounds/aegis-glacier-ridge.png') right 0 bottom -8px / min(43%, 234px) auto no-repeat;
+  opacity: 0.72;
+}
+html[data-theme='dark'] .glass-panel :deep(.empty-hero--compact .empty-hero__icon) {
+  background: var(--aeg-color-command-nav);
+  color: var(--aeg-color-terrain-accent);
+}
+html[data-theme='dark'] .glass-panel :deep(.empty-hero--compact .empty-hero__action) {
+  min-height: 28px;
+  padding-inline: var(--aeg-space-s2);
+  border: 1px solid transparent;
+  border-radius: var(--aeg-radius-pill);
+  background: var(--dash-detail-face) padding-box, var(--dash-detail-rim) border-box;
+  color: var(--aeg-color-terrain-accent);
+}
+@media (forced-colors: active) {
+  html[data-theme='dark'] .dashboard :is(.glass-panel, .dash-collaboration),
+  html[data-theme='dark'] .dashboard :deep(:is(.kpi, .agent, .terrain-preview__key, .empty-hero--compact, .empty-hero__action)) {
+    border-color: CanvasText;
+  }
+  html[data-theme='dark'] .glass-panel::before,
+  html[data-theme='dark'] .dash-layout :deep(:is(.dash-risks, .dash-history, .dash-events) .empty-hero--compact::before) {
+    display: none;
+  }
 }
 
 .dash-error {

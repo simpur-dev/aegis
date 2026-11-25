@@ -7,6 +7,8 @@
  * 点一行看详情（右栏装不下 capabilities/hazard_types/版本）。
  * 状态口径不动：在线/失联取注册表的 `healthy`。
  */
+import { CheckCircleFilled, CloseCircleFilled, RightOutlined, RobotOutlined } from '@ant-design/icons-vue'
+
 import type { AgentInfo } from '@/api/types'
 
 defineProps<{ agents: AgentInfo[] }>()
@@ -22,7 +24,7 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
       type="button"
       class="agent"
       :data-testid="`agent-row-${agent.agent_id}`"
-      :aria-label="`查看智能体 ${agent.agent_id} 详情`"
+      :aria-label="`查看智能体 ${agent.agent_id} 详情，${agent.healthy ? '在线' : '离线'}`"
       @click="emit('select', agent)"
     >
       <span class="agent__dot" :class="agent.healthy ? 'is-live' : 'is-dead'" aria-hidden="true"></span>
@@ -33,13 +35,13 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
         :title="`当前任务 ${agent.inflight} / 上限 ${agent.max_concurrency}`"
       >{{ agent.inflight }}/{{ agent.max_concurrency }}</span>
       <span class="agent__served" :title="`已服务 ${agent.served} 次，失败 ${agent.failed} 次`">
-        <span>成 {{ agent.served }}</span>
-        <span :class="{ 'agent__failed': agent.failed > 0 }">败 {{ agent.failed }}</span>
+        <span><CheckCircleFilled class="agent__success" aria-hidden="true" /> {{ agent.served }}</span>
+        <span><CloseCircleFilled class="agent__failed" aria-hidden="true" /> {{ agent.failed }}</span>
       </span>
-      <span class="agent__chevron" aria-hidden="true">›</span>
+      <RightOutlined class="agent__chevron" aria-hidden="true" />
     </button>
     <div v-if="!agents.length" class="empty-hero" data-testid="agents-empty">
-      <span class="empty-hero__icon" aria-hidden="true">◇</span>
+      <span class="empty-hero__icon" aria-hidden="true"><RobotOutlined /></span>
       <div>
         <div class="empty-hero__title">还没有智能体注册上来</div>
         <div class="empty-hero__desc">后端起来后它们会逐个上线；跑一次演练即可看到它们接活。</div>
@@ -54,30 +56,33 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
   container-type: inline-size;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--aeg-space-s1);
 }
 /* 一行一颗：CSS Grid 固定列，扫一列就能对齐读 */
 .agent {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) 64px 48px 92px 14px;
+  grid-template-columns: 9px minmax(0, 1fr) 64px 40px 77px 12px;
   align-items: center;
   column-gap: var(--aeg-space-s3);
-  height: 46px;
+  min-height: 39px;
   padding: 0 var(--aeg-space-s2);
-  border: 0;
-  border-bottom: 1px solid var(--aeg-color-border-subtle);
-  border-radius: var(--aeg-radius-sm);
-  background: transparent;
+  border: 1px solid var(--aeg-color-border-subtle);
+  border-radius: var(--aeg-radius-md);
+  background: var(--aeg-color-overview-tile);
   font: inherit;
   text-align: start;
   cursor: pointer;
   transition: background-color var(--aeg-motion-base) ease;
 }
-.agent:last-child {
-  border-bottom: none;
-}
 .agent:hover {
   background: var(--aeg-color-sunken);
+}
+html[data-theme='dark'] .agent {
+  border-color: transparent;
+  background: var(--dash-detail-face) padding-box, var(--dash-detail-rim) border-box;
+}
+html[data-theme='dark'] .agent:hover {
+  border-color: var(--aeg-color-overview-accent);
 }
 .agent:focus-visible {
   outline: 2px solid var(--aeg-color-brand);
@@ -111,9 +116,9 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
   text-align: center;
   padding: 1px 0;
   border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-sm);
+  border-radius: var(--aeg-radius-pill);
   font-size: 11px;
-  color: var(--aeg-color-text-muted);
+  color: var(--aeg-color-text-secondary);
 }
 .agent__load {
   text-align: right;
@@ -132,11 +137,14 @@ const emit = defineEmits<{ select: [agent: AgentInfo] }>()
 .agent__failed {
   color: var(--aeg-color-status-danger);
 }
+.agent__success {
+  color: var(--aeg-color-status-success);
+}
 .agent__chevron {
   justify-self: end;
   flex: 0 0 auto;
-  color: var(--aeg-color-text-muted);
-  font-size: var(--aeg-font-base);
+  color: var(--aeg-color-overview-accent);
+  font-size: var(--aeg-font-xs);
   line-height: 1;
 }
 @container (max-width: 370px) {

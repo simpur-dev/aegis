@@ -17,6 +17,8 @@ export interface AMapNamespace {
   Marker: new (options: Record<string, unknown>) => AMapOverlay
   CircleMarker: new (options: Record<string, unknown>) => AMapOverlay
   Polygon: new (options: Record<string, unknown>) => AMapOverlay
+  Bounds?: new (southwest: [number, number], northeast: [number, number]) => object
+  ImageLayer?: new (options: Record<string, unknown>) => AMapImageLayer
   TileLayer?: { Satellite?: new () => unknown; RoadNet?: new () => unknown }
   LabelMarker?: new (options: Record<string, unknown>) => AMapOverlay
   event: { on: (target: unknown, name: string, handler: (event?: unknown) => void) => void }
@@ -31,6 +33,7 @@ export interface AMapMapInstance {
   getZoom(): number
   getBounds(): { getSouthWest?(): AMapLngLat; getNorthEast?(): AMapLngLat } | null
   on(name: 'complete' | 'moveend' | 'zoomend', listener: () => void): void
+  on(name: 'click', listener: (event: { lnglat?: AMapLngLat }) => void): void
   setPitch(pitch: number, immediately?: boolean): void
   setRotation(rotation: number, immediately?: boolean): void
   destroy(): void
@@ -43,6 +46,10 @@ interface AMapLngLat {
 
 export interface AMapOverlay {
   on(event: string, handler: (e?: unknown) => void): void
+}
+
+export interface AMapImageLayer extends AMapOverlay {
+  setOpacity(value: number): void
 }
 
 export const AMAP_SCRIPT_ID = 'aegis-amap-jsapi'

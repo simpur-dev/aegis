@@ -191,6 +191,7 @@ let startTop = 0
 let moved = false
 
 function onPointerDown(event: PointerEvent): void {
+  if (props.keepOverviewVisible) return
   if (event.button !== 0 && event.pointerType === 'mouse') return
   const el = dockEl.value
   if (!el) return
@@ -224,6 +225,7 @@ function onPointerUp(event: PointerEvent): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (props.keepOverviewVisible) return
   if (event.key !== 'Enter' && event.key !== ' ') return
   event.preventDefault()
   toggle()
@@ -292,7 +294,7 @@ onBeforeUnmount(() => {
     type="button"
     class="assistant-dock"
     :class="{ 'is-open': open, 'is-dragging': dragging, 'is-resizing': resizing, 'is-overview': keepOverviewVisible }"
-    :style="{ top: `${top}px` }"
+    :style="keepOverviewVisible ? undefined : { top: `${top}px` }"
     :aria-expanded="open"
     aria-controls="assistant-panel"
     aria-label="智能助手"
@@ -302,6 +304,7 @@ onBeforeUnmount(() => {
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerUp"
+    @click="keepOverviewVisible && toggle()"
     @keydown="onKeydown"
   >
     <img src="/mascot/assistant-avatar-navy.png" alt="" draggable="false" />
@@ -370,6 +373,12 @@ onBeforeUnmount(() => {
 }
 .assistant-dock.is-open {
   right: calc(var(--assistant-drawer-w, clamp(320px, 25vw, 520px)) + 12px);
+}
+.assistant-dock.is-overview {
+  bottom: 20px;
+  cursor: pointer;
+  border: 2px solid var(--aeg-color-overview-accent);
+  box-shadow: 0 3px 14px var(--aeg-color-command-glow);
 }
 .assistant-dock.is-dragging,
 .assistant-dock.is-resizing {

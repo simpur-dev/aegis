@@ -12,11 +12,11 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { BBox, LayerVisibility, LngLat, RenderPlan } from './entities'
 import type { HistoricalSite } from './gyirongCase'
-import { loadAmap, type AMapMapInstance, type AMapNamespace, type AMapOverlay } from './amap'
-import { wgs84ToGcj02 } from './gcj02'
+import { loadAmap, type AMapImageLayer, type AMapMapInstance, type AMapNamespace, type AMapOverlay } from './amap'
+import { gcj02ToWgs84, wgs84ToGcj02 } from './gcj02'
 import { mapPalette } from '@/theme/map'
 import { useTheme } from '@/theme/useTheme'
-import { rainCellOpacity, type WeatherMapLayer } from './weather'
+import { rainCellAt, rainSelectionPoint, type WeatherMapLayer } from './weather'
 
 const props = defineProps<{
   plan: RenderPlan
@@ -26,7 +26,7 @@ const props = defineProps<{
   weather?: WeatherMapLayer
 }>()
 const emit = defineEmits<{
-  (event: 'select', featureId: string): void
+  (event: 'select', featureId: string | null): void
   (event: 'failure'): void
   (event: 'view', bounds: BBox | null, zoom: number): void
 }>()
@@ -39,6 +39,8 @@ let amap: AMapNamespace | null = null
 let map: AMapMapInstance | null = null
 let overlays: AMapOverlay[] = []
 let weatherOverlays: AMapOverlay[] = []
+let rainLayer: AMapImageLayer | null = null
+let renderedRain: WeatherMapLayer['rain']
 let unmounted = false
 
 function zoomBy(direction: 1 | -1): void {
@@ -100,6 +102,12 @@ async function ensureMap(): Promise<boolean> {
     map.on('moveend', reportView)
     map.on('zoomend', reportView)
     map.on('zoomend', () => { draw(); drawWeather() })
+    map.on('click', ({ lnglat }) => {
+      const cells = props.weather?.cells
+      if (!lnglat || !cells?.length) return
+      const location = gcj02ToWgs84({ lon: lnglat.getLng(), lat: lnglat.getLat() })
+      emit('select', rainCellAt(cells, location)?.id ?? null)
+    })
     return true
   } catch {
     if (!unmounted) emit('failure')
@@ -144,8 +152,9 @@ function draw(): void {
       fillColor: point.colorCss,
       fillOpacity: 0.55,
       cursor: 'pointer',
+      zIndex: 30,
       // 标题挂在 label 上：高德没有 Cesium 那套 disableDepthTest，靠 label 保证"点是谁"可读
-      bubble: true,
+      bubble: false,
     })
     marker.on('click', () => emit('select', point.id))
     overlays.push(marker)
@@ -178,20 +187,34 @@ function draw(): void {
 
 function drawWeather(): void {
   if (!amap || !map) return
+  const { rain, selected, points = [], subdued } = props.weather ?? {}
+  if (renderedRain !== rain) {
+    if (rainLayer) map.remove(rainLayer)
+    rainLayer = null
+    renderedRain = rain
+    if (rain && amap.ImageLayer && amap.Bounds) {
+      const { west, south, east, north } = rain.bounds
+      const sw = wgs84ToGcj02({ lon: west, lat: south })
+      const ne = wgs84ToGcj02({ lon: east, lat: north })
+      rainLayer = new amap.ImageLayer({ url: rain.url, bounds: new amap.Bounds([sw.lon, sw.lat], [ne.lon, ne.lat]), zIndex: 11 })
+      map.add(rainLayer)
+    }
+  }
+  rainLayer?.setOpacity(subdued ? 0.32 : 1)
   if (weatherOverlays.length) map.remove(weatherOverlays)
   weatherOverlays = []
-  for (const cell of props.weather?.cells ?? []) {
-    const { west, east, south, north } = cell.bounds
+  if (selected) {
+    const { west, east, south, north } = selected.bounds
     const path = [[west, south], [east, south], [east, north], [west, north]].map(([lon, lat]) => {
       const point = wgs84ToGcj02({ lon, lat })
       return [point.lon, point.lat]
     })
-    const overlay = new amap.Polygon({ path, fillColor: cell.color, strokeColor: cell.color,
-      fillOpacity: rainCellOpacity(cell.value, props.weather?.subdued), strokeOpacity: 0.46, strokeWeight: 1, zIndex: 11 })
-    overlay.on('click', () => emit('select', cell.id))
+    const overlay = new amap.Polygon({ path, strokeColor: mapPalette(resolved.value).labelText,
+      fillOpacity: 0, strokeStyle: 'dashed', strokeWeight: 1.5, zIndex: 22, bubble: false })
+    overlay.on('click', () => emit('select', selected.id))
     weatherOverlays.push(overlay)
   }
-  for (const point of props.weather?.points ?? []) {
+  for (const point of selected ? [...points, rainSelectionPoint(selected)] : points) {
     if (point.id.startsWith('weather-history-') && map.getZoom() < 10) continue
     const { lon, lat } = point.mainlandChina ? wgs84ToGcj02(point.lonlat) : point.lonlat
     const label = document.createElement('button')
@@ -199,8 +222,8 @@ function drawWeather(): void {
     label.className = 'amap-weather-marker'
     label.style.setProperty('--weather-color', point.color)
     label.textContent = point.label ? `${point.title} · ${point.label}` : point.title
-    label.addEventListener('click', () => emit('select', point.id))
-    weatherOverlays.push(new amap.Marker({ position: [lon, lat], content: label, anchor: point.mainlandChina ? 'bottom-center' : 'bottom-right', zIndex: 25 }))
+    label.addEventListener('click', (event) => { event.stopPropagation(); emit('select', point.id) })
+    weatherOverlays.push(new amap.Marker({ position: [lon, lat], content: label, anchor: point.mainlandChina ? 'bottom-center' : 'bottom-right', zIndex: 25, bubble: false }))
   }
   if (weatherOverlays.length) map.add(weatherOverlays)
 }
@@ -212,7 +235,8 @@ async function render(): Promise<void> {
 watch([() => props.plan, () => props.historicalSites, () => props.visibility], () => {
   if (map) draw()
 })
-watch(() => props.weather, () => { draw(); drawWeather() })
+watch(() => props.weather?.points.map(({ id }) => id).join(), draw)
+watch(() => props.weather, drawWeather)
 watch(() => props.camera, ({ zoom, pitch }) => {
   map?.setZoomAndCenter(zoom, cameraCenter())
   map?.setPitch(pitch)
@@ -227,6 +251,7 @@ onBeforeUnmount(() => {
   map = null
   overlays = []
   weatherOverlays = []
+  rainLayer = null
 })
 
 onMounted(() => { void render() })

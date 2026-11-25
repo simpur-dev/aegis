@@ -20,7 +20,7 @@ const STUBS = {
   'a-card': {
     name: 'ACard',
     props: ['title', 'loading', 'size'],
-    template: '<div class="card" :data-loading="String(loading)"><div class="extra"><slot name="extra" /></div><slot /></div>',
+    template: '<div class="card" :data-loading="String(loading)"><slot name="title" /><div class="extra"><slot name="extra" /></div><slot /></div>',
   },
   'a-space': { name: 'ASpace', props: ['size'], template: '<div class="space"><slot /></div>' },
   'a-tag': { name: 'ATag', props: ['color'], template: '<span class="tag" :data-color="color"><slot /></span>' },
@@ -100,7 +100,7 @@ describe('腿面板：行由后端决定，不由前端清单决定', () => {
 
   it('driver 缺失显示为 —，不显示空串', async () => {
     const wrapper = await renderPanel([{ name: 'mqtt', enabled: false, driver: '' }])
-    expect(byTestid(wrapper, 'leg-mqtt').text()).toContain('driver=—')
+    expect(byTestid(wrapper, 'leg-driver').text()).toBe('—')
   })
 
   it('触达通道那种对象数组要摊平显示，不能剩 [object Object]', async () => {
@@ -122,7 +122,7 @@ describe('腿面板：行由后端决定，不由前端清单决定', () => {
     const fact = byTestid(wrapper, 'detail-delivery-channels')
     expect(leg.text()).not.toContain('[object Object]')
     expect(fact.text()).toContain('channel=sms')
-    // 截断是既有设计，全文挂 title：这里验的是"截了但没丢"
+    expect(fact.text()).toContain('channel=broadcast')
     expect(fact.attributes('title')).toContain('channel=broadcast')
     expect(fact.attributes('title')).toContain('failed=1')
   })
@@ -132,16 +132,62 @@ describe('腿面板：行由后端决定，不由前端清单决定', () => {
     expect(byTestid(wrapper, 'detail-tracing-endpoint').text()).toBe('endpoint=—')
   })
 
-  it('超长详情截断进 DOM，全文挂到 title 上：一行放不下不等于可以丢', async () => {
+  it('超长详情在原始参数里可读全文，默认收起', async () => {
     const long = '内'.repeat(120)
     const wrapper = await renderPanel([{ name: 'knowledge', detail: { dataset: long } }])
     const fact = byTestid(wrapper, 'detail-knowledge-dataset')
-    expect(fact.text()).toContain('…')
+    expect(byTestid(wrapper, 'leg-raw').attributes('open')).toBeUndefined()
+    expect(fact.text()).toBe(`dataset=${long}`)
     expect(fact.attributes('title')).toBe(long)
   })
 })
 
 describe('腿面板：三态要一眼分开', () => {
+  it('按状态计数，默认选中第一条降级行，未启用清单可按需展开', async () => {
+    const wrapper = await renderPanel([
+      { name: 'store' },
+      { name: 'mqtt', enabled: false, driver: 'off' },
+      { name: 'knowledge', driver: 'graphiti', detail: {
+        schema_error: 'GraphitiUnavailableError: 案例入库需要 LLM 凭据（图谱抽取由模型完成），llm_api_key 为空',
+        fallback_cases: 16,
+        recall_budget_ms: 400,
+      } },
+    ])
+    expect(wrapper.findAll('.leg-row')[0]?.attributes('data-testid')).toBe('leg-knowledge')
+    for (const state of ['degraded', 'enabled', 'disabled']) {
+      expect(byTestid(wrapper, `leg-count-${state}`).text()).toBe('1')
+    }
+    expect(byTestid(wrapper, 'leg-knowledge').attributes('aria-pressed')).toBe('true')
+    expect(byTestid(wrapper, 'leg-reason').text()).toContain('缺少 LLM 凭据，案例入库暂不可用')
+    expect(byTestid(wrapper, 'leg-fallback').text()).toContain('内置预案 · 16 条')
+    const group = byTestid(wrapper, 'leg-group-disabled')
+    const disabledRows = wrapper.get<HTMLUListElement>(`#${group.attributes('aria-controls')}`)
+    expect(group.attributes('aria-expanded')).toBe('false')
+    expect(disabledRows.element.style.display).toBe('none')
+    await group.trigger('click')
+    expect(group.attributes('aria-expanded')).toBe('true')
+    expect(disabledRows.element.style.display).not.toBe('none')
+    await byTestid(wrapper, 'leg-mqtt').trigger('click')
+    expect(byTestid(wrapper, 'leg-inspector').text()).toContain('MQTT 推送腿')
+    expect(byTestid(wrapper, 'leg-fallback').exists()).toBe(false)
+  })
+
+  it('刷新保留用户选择，原行消失后选中当前需要关注的一项', async () => {
+    const wrapper = await renderPanel([{ name: 'store' }, { name: 'memory' }])
+    await byTestid(wrapper, 'leg-memory').trigger('click')
+    mockedFetch.mockResolvedValue(snapshot([{ name: 'store' }, { name: 'memory', driver: 'postgres' }]))
+    await wrapper.find('.button').trigger('click')
+    await flushPromises()
+    expect(byTestid(wrapper, 'leg-memory').attributes('aria-pressed')).toBe('true')
+    expect(byTestid(wrapper, 'leg-driver').text()).toBe('postgres')
+    mockedFetch.mockResolvedValue(snapshot([{ name: 'store' }, { name: 'knowledge', detail: { schema_error: 'timeout' } }]))
+    await wrapper.find('.button').trigger('click')
+    await flushPromises()
+    expect(byTestid(wrapper, 'leg-knowledge').attributes('aria-pressed')).toBe('true')
+    expect(byTestid(wrapper, 'leg-reason').text()).toContain('timeout')
+    expect(byTestid(wrapper, 'leg-fallback').exists()).toBe(false)
+  })
+
   it.each([
     [{ enabled: false, driver: 'off' }, '未启用', 'default'],
     [{ detail: { target: 'x' } }, '运行中', 'green'],
@@ -183,7 +229,7 @@ describe('腿面板：读不到 ≠ 没问题', () => {
     expect(byTestid(wrapper, 'legs-empty').text()).toBe('装配事实不可读')
   })
 
-  it('恢复后错误痕迹清干净，角标回到按真实状态给的文案', async () => {
+  it('恢复后清除错误提示并显示实际运行数量', async () => {
     mockedFetch.mockRejectedValueOnce(new Error('502')).mockResolvedValue(
       snapshot([{ name: 'store' }], { all_enabled: true }),
     )
@@ -192,12 +238,24 @@ describe('腿面板：读不到 ≠ 没问题', () => {
     await wrapper.find('.button').trigger('click')
     await flushPromises()
     expect(byTestid(wrapper, 'panel-error').exists()).toBe(false)
-    expect(byTestid(wrapper, 'panel-state').text()).toBe('全部启用')
+    expect(byTestid(wrapper, 'panel-state').exists()).toBe(false)
+    expect(byTestid(wrapper, 'leg-count-enabled').text()).toBe('1')
   })
 
-  it('读到了但全部腿未启用时，角标是"有腿未启用"而不是"读不到"', async () => {
+  it('全部腿未启用时显示真实数量并展开清单，不报读取错误', async () => {
     const wrapper = await renderPanel([{ name: 'weather', enabled: false, driver: 'off' }])
-    expect(byTestid(wrapper, 'panel-state').text()).toBe('有腿未启用')
+    expect(byTestid(wrapper, 'panel-state').exists()).toBe(false)
+    expect(byTestid(wrapper, 'leg-count-disabled').text()).toBe('1')
+    expect(byTestid(wrapper, 'leg-group-disabled').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('刷新失败时明确标记先前数据，首次失败时不绘制状态比例', async () => {
+    const wrapper = await renderPanel([{ name: 'store' }])
+    mockedFetch.mockRejectedValue(new Error('502'))
+    await wrapper.find('.button').trigger('click')
+    await flushPromises()
+    expect(byTestid(wrapper, 'panel-error').text()).toContain('上次成功读取的数据')
+    expect(byTestid(wrapper, 'leg-count-enabled').text()).toBe('1')
   })
 })
 

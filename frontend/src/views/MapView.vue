@@ -57,7 +57,7 @@ import { terrainProbeUrl } from '@/components/map/terrain'
 import type { HistoricalReliefStatus, LayerName, MapScale, MapScene, MapSceneInfo } from '@/components/map/viewer'
 import { useTheme } from '@/theme/useTheme'
 import { readBasemapMode, writeBasemapMode, type BasemapMode } from '@/components/map/external'
-import { EMPTY_WEATHER_LAYER, type WeatherMapLayer, type WeatherMode } from '@/components/map/weather'
+import { EMPTY_WEATHER_LAYER, WEATHER_MODES, type WeatherMapLayer, type WeatherMode } from '@/components/map/weather'
 
 /** 数据轮询与源探针周期：野外弱网下"少而稳"胜过"快而抖"。 */
 const DATA_REFRESH_MS = 30_000
@@ -142,8 +142,11 @@ const subduedRain = computed(() => {
 })
 const visibleWeather = computed(() => {
   if (weatherMode.value === 'hourly' ? isCase.value : !isCase.value) return EMPTY_WEATHER_LAYER
-  return subduedRain.value ? { ...weatherLayer.value, subdued: true } : weatherLayer.value
+  const layer = weatherLayer.value
+  const selected = layer.cells.find((cell) => cell.id === weatherPicked.value)
+  return selected || subduedRain.value ? { ...layer, selected, subdued: subduedRain.value } : layer
 })
+const rainReplay = computed(() => weatherMode.value !== 'current' && (weatherMode.value === 'daily' ? isCase.value : !isCase.value))
 const weatherButtonLabel = computed(() => weatherMode.value === 'daily' ? '日雨量回放' : weatherMode.value === 'hourly' ? '小时回放' : isCase.value && weatherSummary.value ? weatherSummary.value : '天气雨情')
 const showCaseCard = computed(() =>
   isCase.value && weatherMode.value === 'current' && (compact.value ? mobilePane.value === null && !settingsOpen.value && !weatherOpen.value : panelsCollapsed.value),
@@ -200,7 +203,14 @@ function toggleWeather(): void {
 }
 
 function changeWeatherMode(mode: WeatherMode): void {
-  if (mode === weatherMode.value) return
+  openWeather()
+  if (mode === weatherMode.value) {
+    if (mode === 'hourly' ? isCase.value : !isCase.value) {
+      selectPreset(mode === 'hourly' ? 'tibet' : 'gyirong')
+      if (mode === 'daily' && weatherLayer.value.rain) fitWeather(weatherLayer.value.rain.bounds)
+    }
+    return
+  }
   weatherPicked.value = null
   weatherLayer.value = EMPTY_WEATHER_LAYER
   weatherMode.value = mode
@@ -492,7 +502,7 @@ function showFeature(id: string | null): void {
   else panelsCollapsed.value = false
 }
 
-function selectFeature(id: string): void {
+function selectFeature(id: string | null): void {
   showFeature(id)
   const feature = detailOf(layers.value, id)
   if (feature && 'lonlat' in feature && feature.lonlat) focusBusinessPoint(feature.lonlat)
@@ -513,6 +523,7 @@ function moveCamera(bounds: BBox, mainlandChina = !isCase.value, fit = false): v
 function selectPreset(next: MapPreset): void {
   preset.value = next
   selectedId.value = null
+  weatherPicked.value = null
   activeCaseSite.value = null
   focusNote.value = ''
   panelsCollapsed.value = isCase.value
@@ -671,7 +682,7 @@ watch(visibility, (value) => {
   <div
     ref="shellRef"
     class="map-shell"
-    :class="{ 'is-panels-collapsed': panelsCollapsed, 'is-compact': compact, 'is-case': showCaseCard, 'is-weather-open': weatherOpen }"
+    :class="{ 'is-panels-collapsed': panelsCollapsed, 'is-compact': compact, 'is-case': showCaseCard, 'is-weather-open': weatherOpen, 'is-rain-replay': rainReplay }"
     :style="{ '--map-bar-end': toolbarHeight > 0 ? `${toolbarHeight + 24}px` : '78px' }"
   >
     <!-- 顶部悬浮工具条：标题 + 底图/区域/刷新/定位/自动刷新，半透明压在图上 -->
@@ -702,6 +713,10 @@ watch(visibility, (value) => {
         <CloudOutlined aria-hidden="true" />
         <span>{{ weatherButtonLabel }}</span>
       </button>
+      <div v-if="weatherOpen || weatherMode !== 'current'" class="map-weather-modes" role="group" aria-label="天气数据模式">
+        <button v-for="item in WEATHER_MODES" :key="item.id" type="button" :aria-pressed="weatherMode === item.id" @click="changeWeatherMode(item.id)">{{ item.label }}</button>
+        <button v-if="rainReplay" type="button" :aria-pressed="visibility.warnings" @click="onToggle('warnings', !visibility.warnings)">风险点</button>
+      </div>
       <div class="map-preset" role="group" aria-label="地图视野">
         <button type="button" :aria-pressed="isCase" @click="selectPreset('gyirong')">吉隆案例</button>
         <button type="button" :aria-pressed="!isCase" @click="selectPreset('tibet')">西藏全域</button>
@@ -781,9 +796,10 @@ watch(visibility, (value) => {
       <button type="button" aria-label="重置吉隆视野" title="重置吉隆视野" @click="selectPreset('gyirong')"><AimOutlined aria-hidden="true" /></button>
     </div>
 
+    <div v-show="rainReplay && !compact" id="map-rain-replay" class="map-rain-dock" />
     <MapWeatherPanel
-      class="map-weather-position" :open="weatherOpen" :mode="weatherMode" :picked="weatherPicked" :subdued="subduedRain"
-      @close="weatherOpen = false" @mode="changeWeatherMode" @layer="weatherLayer = $event"
+      class="map-weather-position" :open="weatherOpen" :mode="weatherMode" :picked="weatherPicked" :subdued="subduedRain" :compact="compact"
+      @close="weatherOpen = false" @layer="weatherLayer = $event"
       @summary="weatherSummary = $event" @fit="fitWeather"
     />
 
@@ -1036,6 +1052,42 @@ watch(visibility, (value) => {
   border-color: var(--aeg-color-overview-accent);
   background: color-mix(in srgb, var(--aeg-color-overview-accent) 17%, var(--aeg-color-map-floatbar-bg));
 }
+.map-weather-modes {
+  display: flex;
+  min-width: 0;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--aeg-color-map-floatbar-bg);
+}
+.map-weather-modes button {
+  min-height: 28px;
+  padding: 0 var(--aeg-space-s2);
+  border: 1px solid transparent;
+  border-radius: var(--aeg-radius-md);
+  background: transparent;
+  color: var(--aeg-color-map-panel-text);
+  font: inherit;
+  font-size: var(--aeg-font-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.map-weather-modes button[aria-pressed='true'] {
+  border-color: var(--aeg-color-map-panel-border);
+  background: color-mix(in srgb, var(--aeg-color-status-info) 22%, var(--aeg-color-map-panel-bg));
+}
+.map-weather-modes button:focus-visible { outline: 2px solid var(--aeg-color-overview-accent); }
+.is-compact .map-weather-modes { order: 6; max-width: 100%; overflow-x: auto; }
+.map-rain-dock {
+  position: absolute;
+  z-index: 6;
+  inset-inline: var(--aeg-space-s3) calc(var(--aeg-space-s3) + 68px);
+  bottom: 64px;
+  pointer-events: none;
+}
+.map-rain-dock > :deep(*) { pointer-events: auto; }
+.is-rain-replay:not(.is-compact) :is(.map-reference, .map-camera-controls) { bottom: 208px; }
 .map-weather-position {
   position: absolute;
   z-index: 7;
@@ -1043,6 +1095,9 @@ watch(visibility, (value) => {
   right: var(--aeg-space-s3);
   width: min(326px, calc(100% - 24px));
   max-height: calc(100% - var(--map-bar-end) - 145px);
+}
+.is-rain-replay:not(.is-compact) .map-weather-position {
+  max-height: calc(100% - var(--map-bar-end) - 208px);
 }
 .is-compact .map-weather-position {
   top: auto;

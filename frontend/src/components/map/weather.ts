@@ -3,6 +3,12 @@ import { weatherColors } from '@/theme/tokens'
 
 export type WeatherMode = 'current' | 'daily' | 'hourly'
 
+export const WEATHER_MODES = [
+  { id: 'current', label: '当前天气' },
+  { id: 'daily', label: '吉隆日雨量' },
+  { id: 'hourly', label: '县域小时' },
+] as const
+
 export interface ForecastHour {
   end: string
   rain_mm: number | null
@@ -64,18 +70,37 @@ export interface WeatherMapPoint {
 export interface WeatherMapCell {
   id: string
   bounds: BBox
-  value: number
+  value: number | null
   color: string
 }
 
 export interface WeatherMapLayer {
   points: WeatherMapPoint[]
   cells: WeatherMapCell[]
+  rain?: RainTexture | null
+  selected?: WeatherMapCell
   subdued?: boolean
 }
 
-export function rainCellOpacity(value: number, subdued = false): number {
-  return subdued ? (value === 0 ? 0.03 : 0.14) : (value === 0 ? 0.10 : 0.53)
+export interface RainTexture {
+  bounds: BBox
+  url: string
+  width: number
+  height: number
+}
+
+export function rainCellAt(cells: WeatherMapCell[], point: LngLat): WeatherMapCell | undefined {
+  return cells.find(({ bounds }) => point.lon >= bounds.west && point.lon < bounds.east
+    && point.lat >= bounds.south && point.lat < bounds.north)
+}
+
+export function rainCellCenter({ bounds }: WeatherMapCell): LngLat {
+  return { lon: (bounds.west + bounds.east) / 2, lat: (bounds.south + bounds.north) / 2 }
+}
+
+export function rainSelectionPoint(cell: WeatherMapCell): WeatherMapPoint {
+  return { id: cell.id, lonlat: rainCellCenter(cell), title: '选中格点', label: cell.value === null ? '缺测' : `${rainText(cell.value)} mm`,
+    mainlandChina: true, color: cell.color }
 }
 
 export const EMPTY_WEATHER_LAYER: WeatherMapLayer = { points: [], cells: [] }
@@ -103,13 +128,13 @@ export function plotRainCells(grid: RainGrid, frame: RainFrame): WeatherMapCell[
   const dx = grid.step_lon / 2
   const dy = grid.step_lat / 2
   grid.lats.forEach((lat, row) => grid.lons.forEach((lon, col) => {
-    const value = frame.values[row * grid.lons.length + col]
-    if (value === null || value === undefined) return
+    const raw = frame.values[row * grid.lons.length + col]
+    const value = raw != null && Number.isFinite(raw) && raw >= 0 ? raw : null
     cells.push({
       id: `weather-cell-${row}-${col}`,
       bounds: { west: lon - dx, east: lon + dx, south: lat - dy, north: lat + dy },
       value,
-      color: rainColor(value, 'daily'),
+      color: value === null ? weatherColors['weather-missing'] : rainColor(value, 'daily'),
     })
   }))
   return cells
