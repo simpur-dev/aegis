@@ -454,3 +454,38 @@ describe('列表是窗口就得说窗口', () => {
     expect(wrapper.find('[data-testid="window-note"]').exists()).toBe(false)
   })
 })
+
+describe('告警概览与查询', () => {
+  it('台账总数、窗口内等级数和成功回执分开统计', async () => {
+    mockedReady.mockResolvedValue({ store: { warning_count: 147, task_count: 490, chain_count: 120 } } as never)
+    mockedWarnings.mockResolvedValue({ items: [
+      warning(),
+      warning({ warning_id: 'wrn_2', risk_level: 2, deliveries: [] }),
+      warning({ warning_id: 'wrn_3', risk_level: 3, deliveries: [] }),
+    ] } as never)
+    const wrapper = mountView()
+    await flushPromises()
+    const metrics = wrapper.findAll('.warnings-metric')
+    expect(metrics.map((metric) => metric.find('dd strong').text())).toEqual(['147', '1', '1', '—', '1'])
+    expect(metrics[4].text()).toContain('已触达（演练）')
+    expect(wrapper.find('.warnings-tasks').text()).toContain('490')
+    expect(wrapper.find('.warnings-hazards').text()).toContain('泥石流3')
+  })
+
+  it('灾种图联动查询，并可叠加区域与通道筛选', async () => {
+    mockedWarnings.mockResolvedValue({ items: [
+      warning({ hazard_type: 'landslide', title_zh: '甲区滑坡预警', channels: ['sms'] }),
+      warning({ warning_id: 'wrn_2', hazard_type: 'landslide', title_zh: '乙区滑坡预警', region_codes: ['540221'], channels: ['beidou'] }),
+      warning({ warning_id: 'wrn_3', title_zh: '乙区泥石流预警', region_codes: ['540221'], channels: ['sms'] }),
+    ] } as never)
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('.warning-hazard-list button').find((button) => button.text().includes('滑坡'))!.trigger('click')
+    await wrapper.get('[data-testid="warning-region"]').setValue('540221')
+    expect(wrapper.findAll('.warning-title-link').map((link) => link.text())).toEqual(['乙区滑坡预警'])
+    await wrapper.get('[data-testid="warning-channel"]').setValue('sms')
+    expect(wrapper.get('[data-testid="warnings-empty"]').text()).toContain('未找到符合条件的预警')
+    await wrapper.get('.warning-reset').trigger('click')
+    expect(wrapper.findAll('.warning-title-link')).toHaveLength(3)
+  })
+})

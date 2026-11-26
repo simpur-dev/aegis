@@ -186,7 +186,7 @@ const statusTitle = computed<string>(() =>
        antd 默认英文空态 "No data"（此前是一张张截图发现再逐页补 emptyText）。
        逐页补只能盖住写过的表，语言包一次盖住整类。 -->
   <a-config-provider :theme="theme" :locale="zhCN">
-    <div class="app-shell" :class="{ 'is-immersive': immersive, 'is-processing': route.name === 'data-processing', 'is-overview': route.name === 'dashboard' }">
+    <div class="app-shell" :class="{ 'is-immersive': immersive, 'is-processing': route.name === 'data-processing', 'is-command': route.name === 'dashboard' || route.name === 'warnings' }">
       <!-- 全局雾底：所有页面共用（含一张图与流程编排）——浅色/深色各一档，地图画布自己仍是深空底 -->
       <div class="app-backdrop" aria-hidden="true" />
       <div class="main-col">
@@ -276,7 +276,7 @@ const statusTitle = computed<string>(() =>
         <div
           v-if="urgentCards.length > 0 && route.name !== 'dashboard'"
           class="alert-banner"
-          :class="{ 'alert-banner--assistant': route.name === 'assistant', 'alert-banner--editor': immersive }"
+          :class="{ 'alert-banner--assistant': route.name === 'assistant', 'alert-banner--editor': immersive, 'alert-banner--warnings': route.name === 'warnings' }"
           data-testid="alert-banner"
         >
           <span class="alert-banner__dot" aria-hidden="true"></span>
@@ -372,7 +372,7 @@ html[data-theme='dark'] .topnav {
   );
 }
 @media (prefers-reduced-transparency: no-preference) {
-  .app-shell:not(.is-overview) .topnav {
+  .app-shell:not(.is-command) .topnav {
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
   }
@@ -775,6 +775,16 @@ html[data-theme='dark'] .topbar::before {
   font-size: var(--aeg-font-xs);
   color: var(--aeg-color-text-secondary);
 }
+.alert-banner--warnings {
+  margin-top: var(--aeg-space-s2);
+  background: linear-gradient(105deg, var(--aeg-tag-red-bg), var(--aeg-color-command-panel) 58%);
+  border-color: color-mix(in srgb, var(--aeg-color-status-danger) 66%, var(--aeg-color-command-line));
+}
+.alert-banner--warnings .alert-banner__dot { flex: 0 0 8px; }
+@media (max-width: 720px) {
+  .alert-banner--warnings { flex-wrap: wrap; gap: var(--aeg-space-s1) var(--aeg-space-s2); margin-inline: var(--aeg-space-s2); }
+  .alert-banner--warnings .alert-banner__meta { flex-basis: 100%; margin-inline-start: var(--aeg-space-s4); }
+}
 /* 助手抽屉打开时把主内容整体往左挤（抽屉本身固定贴右，不再盖在内容上）；
    宽度只读 --assistant-drawer-w 一个真源，抽屉左侧拖拽时同步跟随 */
 html.assistant-drawer-open .main-content {
@@ -1073,48 +1083,48 @@ html[data-theme='dark'] .app-backdrop::after {
   opacity: 0.8;
 }
 
-html[data-theme='dark'] .is-overview > .app-backdrop::before {
+html[data-theme='dark'] .is-command > .app-backdrop::before {
   inset: 0;
   background: url('/backgrounds/aegis-command-waves.png') center bottom / cover no-repeat;
   filter: none;
   transform: none;
   opacity: 1;
 }
-html[data-theme='dark'] .is-overview > .app-backdrop::after {
+html[data-theme='dark'] .is-command > .app-backdrop::after {
   background: linear-gradient(180deg, var(--aeg-color-command-deep), transparent 75%);
   opacity: 0.42;
 }
-.is-overview .workspace-nav {
+.is-command .workspace-nav {
   gap: var(--aeg-space-s3);
   align-items: center;
   min-height: 47px;
   overflow-x: auto;
   scrollbar-width: thin;
 }
-.is-overview .workspace-nav__item {
+.is-command .workspace-nav__item {
   flex: 0 0 auto;
   min-height: 34px;
   padding-inline: var(--aeg-space-s3);
   border: 1px solid transparent;
   border-radius: var(--aeg-radius-md);
 }
-.is-overview .workspace-nav__item[aria-current] {
+.is-command .workspace-nav__item[aria-current] {
   border-color: var(--aeg-color-brand-line);
   background: var(--aeg-color-brand-soft);
 }
-.is-overview .main-content {
+.is-command .main-content {
   padding-top: var(--aeg-space-s4);
 }
 @media (min-width: 1280px) {
-  .is-overview .brand-name {
+  .is-command .brand-name {
     font-size: var(--aeg-font-lg);
   }
 }
-html[data-theme='dark'] .is-overview .topbar {
+html[data-theme='dark'] .is-command .topbar {
   border-color: var(--aeg-color-command-line);
   background: linear-gradient(105deg, var(--aeg-color-command-deep), var(--aeg-color-command-nav), var(--aeg-color-command-deep));
 }
-html[data-theme='dark'] .is-overview .topbar::before {
+html[data-theme='dark'] .is-command .topbar::before {
   inset: 0 0 auto auto;
   width: min(48vw, 680px);
   height: 65px;
@@ -1124,22 +1134,22 @@ html[data-theme='dark'] .is-overview .topbar::before {
   mask-image: linear-gradient(90deg, transparent, black 40%), linear-gradient(0deg, transparent, black 60%);
   mask-composite: intersect;
 }
-html[data-theme='dark'] .is-overview .topnav {
+html[data-theme='dark'] .is-command .topnav {
   border-color: transparent;
   background: transparent;
   box-shadow: none;
 }
-html[data-theme='dark'] .is-overview .topnav__lens {
+html[data-theme='dark'] .is-command .topnav__lens {
   border-radius: var(--aeg-radius-md);
   border-color: color-mix(in srgb, var(--aeg-color-overview-accent) 35%, var(--aeg-color-command-line));
   background: radial-gradient(ellipse at 12% -15%, var(--aeg-color-command-glow), transparent 76%),
     linear-gradient(155deg, var(--aeg-color-command-nav), var(--aeg-color-command-deep));
 }
-html[data-theme='dark'] .is-overview .workspace-nav {
+html[data-theme='dark'] .is-command .workspace-nav {
   background: var(--aeg-color-command-deep);
   border-color: var(--aeg-color-command-line);
 }
-html[data-theme='dark'] .is-overview .workspace-nav__item[aria-current] {
+html[data-theme='dark'] .is-command .workspace-nav__item[aria-current] {
   color: var(--aeg-color-text);
   border-color: color-mix(in srgb, var(--aeg-color-overview-accent) 68%, var(--aeg-color-command-line));
   background: radial-gradient(ellipse at 53% -30%, var(--aeg-color-command-glow), transparent 82%),
@@ -1147,7 +1157,7 @@ html[data-theme='dark'] .is-overview .workspace-nav__item[aria-current] {
   box-shadow: inset 0 1px 7px color-mix(in srgb, var(--aeg-color-terrain-accent) 24%, transparent), 0 3px 14px var(--aeg-color-command-glow);
 }
 @media (max-width: 640px) {
-  .is-overview .workspace-nav {
+  .is-command .workspace-nav {
     gap: var(--aeg-space-s1);
     padding-inline: var(--aeg-space-s2);
   }

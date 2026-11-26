@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { ReloadOutlined } from '@ant-design/icons-vue'
+import {
+  AlertOutlined, BarChartOutlined, BellOutlined, DatabaseOutlined, FilterOutlined, InboxOutlined,
+  PlayCircleOutlined, ReloadOutlined, RightOutlined, SearchOutlined, SendOutlined, UnorderedListOutlined,
+} from '@ant-design/icons-vue'
 import { useMediaQuery } from '@vueuse/core'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import api from '@/api/client'
 import { fetchIntegrations } from '@/api/integrations'
-import type { RiskLevel, TaskUnit, WarningRecord } from '@/api/types'
+import type { HazardType, RiskLevel, TaskUnit, WarningRecord } from '@/api/types'
 import { HAZARD_LABELS, RISK_COLORS, RISK_LABELS } from '@/api/types'
 import PageHero from '@/components/PageHero.vue'
 import FreshnessBar from '@/components/FreshnessBar.vue'
+import { useAlerts } from '@/composables/useAlerts'
 import { attachFocusTrap, type FocusTrapHandle } from '@/composables/useFocusTrap'
 import { formatOperatingTime } from '@/utils/clock'
 
@@ -28,6 +32,9 @@ const loading = ref(false)
 const loadError = ref('')
 const search = ref('')
 const levelFilter = ref<RiskLevel | ''>('')
+const hazardFilter = ref<HazardType | ''>('')
+const regionFilter = ref('')
+const channelFilter = ref('')
 const tablePage = ref(1)
 const open = ref(false)
 const current = ref<WarningRecord | null>(null)
@@ -38,8 +45,11 @@ const tasksError = ref<string | null>(null)
 const deliveryMode = ref<string | null>(null)
 /** 服务端一共多少条预警（`/readyz` 的台账数）；读不到就是 null，此时只报窗口不报总数。 */
 const storeTotal = ref<number | null>(null)
+const taskTotal = ref<number | null>(null)
+const chainTotal = ref<number | null>(null)
 /** 最近一次**成功**取数的时刻（UTC ISO）；null = 还没取到过。 */
 const fetchedAt = ref<string | null>(null)
+const { urgentCards, lastSyncAt } = useAlerts()
 let timer: ReturnType<typeof setInterval> | null = null
 /**
  * 第几次点开详情。抽屉里同时挂着"这条预警的正文"和"它的任务单元"，
@@ -50,23 +60,57 @@ let timer: ReturnType<typeof setInterval> | null = null
 let inspectSeq = 0
 
 const reachTitle = computed(() => (deliveryMode.value === 'mock' ? '触达（演练口径）' : '触达'))
+const hasSnapshot = computed(() => fetchedAt.value !== null)
 
 /** 新鲜度条左端：台账总数（读不到就说读不到）与自刷周期。 */
 const freshLabel = computed<string>(() =>
   storeTotal.value === null ? '台账总数未读到 ｜ 每 15 秒自刷' : `台账 ${storeTotal.value} 条 ｜ 每 15 秒自刷`,
 )
 
-/**
- * 横幅那句状态语：红色是"要立刻动手"的那一档，不该让人滚进表里数出来。
- * 取不到台账时不说"没有预警"——那两句在界面上长得一样，含义相反。
- */
-const heroStatus = computed(() => {
-  if (storeTotal.value === null) return { tone: 'idle' as const, text: '还没取到预警台账' }
-  const red = warnings.value.filter((w) => Number(w.risk_level) === 1).length
-  if (red > 0) return { tone: 'bad' as const, text: `窗口内红色预警 ${red} 条（共 ${warnings.value.length} 条）` }
-  if (warnings.value.length === 0) return { tone: 'idle' as const, text: `台账共 ${storeTotal.value} 条，窗口内没有预警` }
-  return { tone: 'ok' as const, text: `窗口内 ${warnings.value.length} 条，无红色` }
+const windowLabel = computed(() => hasSnapshot.value ? `最近 ${warnings.value.length} 条` : '最近预警')
+const windowSummary = computed(() => {
+  const levels = { red: 0, orange: 0, other: 0 }
+  const hazards = new Map<HazardType, number>()
+  const regions = new Set<string>()
+  const channels = new Set<string>()
+  let reached = 0
+  for (const warning of warnings.value) {
+    if (warning.risk_level === 1) levels.red += 1
+    else if (warning.risk_level === 2) levels.orange += 1
+    else levels.other += 1
+    hazards.set(warning.hazard_type, (hazards.get(warning.hazard_type) ?? 0) + 1)
+    warning.region_codes.forEach((region) => regions.add(region))
+    warning.channels.forEach((channel) => channels.add(channel))
+    if (warning.deliveries.some(isDelivered)) reached += 1
+  }
+  return {
+    levels,
+    reached,
+    hazards: [...hazards].sort(([a, aCount], [b, bCount]) => bCount - aCount || HAZARD_LABELS[a].localeCompare(HAZARD_LABELS[b], 'zh-CN')),
+    regions: [...regions].sort(),
+    channels: [...channels].sort(),
+  }
 })
+const severityBreakdown = computed(() => [
+  { label: '红色预警', count: windowSummary.value.levels.red, tone: 'danger' },
+  { label: '橙色预警', count: windowSummary.value.levels.orange, tone: 'warning' },
+  { label: '其他预警', count: windowSummary.value.levels.other, tone: 'info' },
+])
+const regionOptions = computed(() => [...new Set([...windowSummary.value.regions, regionFilter.value])].filter(Boolean).sort())
+const channelOptions = computed(() => [...new Set([...windowSummary.value.channels, channelFilter.value])].filter(Boolean).sort())
+const metrics = computed(() => [
+  { label: '台账预警', value: storeTotal.value, detail: '全部在册记录', icon: DatabaseOutlined, tone: 'info' },
+  { label: '红色预警', value: hasSnapshot.value ? windowSummary.value.levels.red : null, detail: windowLabel.value, icon: BellOutlined, tone: 'danger' },
+  { label: '橙色预警', value: hasSnapshot.value ? windowSummary.value.levels.orange : null, detail: windowLabel.value, icon: BellOutlined, tone: 'warning' },
+  { label: '待确认', value: lastSyncAt.value || urgentCards.value.length ? urgentCards.value.length : null, detail: '红色 / 橙色告警', icon: InboxOutlined, tone: 'info' },
+  {
+    label: deliveryMode.value === 'mock' ? '已触达（演练）' : deliveryMode.value ? '已触达' : '有成功回执',
+    value: hasSnapshot.value ? windowSummary.value.reached : null,
+    detail: windowLabel.value,
+    icon: SendOutlined,
+    tone: 'accent',
+  },
+])
 
 const columns = computed(() => [
   { title: '预警标题', dataIndex: 'title_zh', key: 'title_zh' },
@@ -92,16 +136,27 @@ const visibleWarnings = computed(() => {
   const query = search.value.trim().toLowerCase()
   return orderedWarnings.value.filter((warning) =>
     (levelFilter.value === '' || warning.risk_level === Number(levelFilter.value)) &&
+    (!hazardFilter.value || warning.hazard_type === hazardFilter.value) &&
+    (!regionFilter.value || warning.region_codes.includes(regionFilter.value)) &&
+    (!channelFilter.value || warning.channels.includes(channelFilter.value)) &&
     (!query || [warning.warning_id, warning.title_zh, HAZARD_LABELS[warning.hazard_type], ...warning.region_codes]
       .some((text) => text?.toLowerCase().includes(query))),
   )
 })
 const mobileWarnings = computed(() => visibleWarnings.value.slice((tablePage.value - 1) * PAGE_SIZE, tablePage.value * PAGE_SIZE))
-const filtersActive = computed(() => Boolean(search.value.trim() || levelFilter.value !== ''))
+const filtersActive = computed(() => Boolean(search.value.trim() || levelFilter.value !== '' || hazardFilter.value || regionFilter.value || channelFilter.value))
 const emptyTitle = computed(() => loading.value ? '正在读取预警' : loadError.value ? '暂时无法读取预警' : filtersActive.value ? '未找到符合条件的预警' : '还没有预警')
 const deliveryLabels = { pending: '待投递', delivered: '已送达', failed: '投递失败', retried: '重试送达' }
-watch([search, levelFilter], () => { tablePage.value = 1 })
+watch([search, levelFilter, hazardFilter, regionFilter, channelFilter], () => { tablePage.value = 1 })
 watch(visibleWarnings, (rows) => { tablePage.value = Math.min(tablePage.value, Math.max(1, Math.ceil(rows.length / PAGE_SIZE))) })
+
+function resetFilters(): void {
+  search.value = ''
+  levelFilter.value = ''
+  hazardFilter.value = ''
+  regionFilter.value = ''
+  channelFilter.value = ''
+}
 
 /**
  * 取满窗口 = 有预警在这一页之外。真机把这台进程演练到 113 条时量到：列表取 100 条，
@@ -111,9 +166,9 @@ watch(visibleWarnings, (rows) => { tablePage.value = Math.min(tablePage.value, M
 const windowNote = computed<string>(() => {
   if (warnings.value.length < WARNING_LIST_LIMIT) return ''
   const total = storeTotal.value
-  if (total === null) return `列表取的是最近 ${WARNING_LIST_LIMIT} 条（服务端总数没读到，这一页可能还有更早的预警）`
+  if (total === null) return `已加载最近 ${WARNING_LIST_LIMIT} 条，台账总数暂未取得。`
   if (total <= WARNING_LIST_LIMIT) return ''
-  return `列表取的是最近 ${WARNING_LIST_LIMIT} 条，服务端共 ${total} 条——另外 ${total - WARNING_LIST_LIMIT} 条在这一页之外（本页没有翻页到更早数据的入口）`
+  return `已加载最近 ${WARNING_LIST_LIMIT} 条，台账共 ${total} 条。更早的 ${total - WARNING_LIST_LIMIT} 条未加载。`
 })
 
 async function load(): Promise<void> {
@@ -129,8 +184,12 @@ async function load(): Promise<void> {
     try {
       const info = await api.ready()
       storeTotal.value = info?.store?.warning_count ?? null
+      taskTotal.value = info?.store?.task_count ?? null
+      chainTotal.value = info?.store?.chain_count ?? null
     } catch {
       storeTotal.value = null
+      taskTotal.value = null
+      chainTotal.value = null
     }
     if (legs) {
       const row = legs.items.find((item) => item.name === 'delivery')
@@ -179,9 +238,13 @@ async function inspect(record: WarningRecord): Promise<void> {
   }
 }
 
+function isDelivered(delivery: WarningRecord['deliveries'][number]): boolean {
+  return delivery.status === 'delivered' || delivery.status === 'retried'
+}
+
 function reachText(record: WarningRecord): string {
   if (!record.deliveries.length) return '无投递记录'
-  const delivered = record.deliveries.filter((d) => d.status === 'delivered' || d.status === 'retried').length
+  const delivered = record.deliveries.filter(isDelivered).length
   return `${delivered}/${record.deliveries.length} 通道成功`
 }
 
@@ -220,125 +283,202 @@ function onDrawerVisible(visible: boolean): void {
 
 <template>
   <div class="warnings-page">
-    <PageHero surface :status="heroStatus" title="告警与任务" caption="查阅已生成的预警、投递回执与关联处置任务。">
-      <template #actions>
-        <router-link to="/monitor#drill" custom v-slot="{ href, navigate }">
-          <a-button :href="href" @click="navigate">处置演练</a-button>
-        </router-link>
-        <a-button :loading="loading" @click="load">
-          <template #icon><ReloadOutlined aria-hidden="true" /></template>
-          刷新
-        </a-button>
-      </template>
-    </PageHero>
+    <div class="warnings-board">
+      <section class="warnings-panel warnings-ledger" aria-label="告警与任务">
+        <PageHero class="warnings-heading" title="告警与任务" caption="查阅已生成的预警、投递回执与关联处置任务。">
+          <template #actions>
+            <router-link to="/monitor#drill" custom v-slot="{ href, navigate }">
+              <a-button class="warnings-drill" type="primary" :href="href" @click="navigate">
+                <template #icon><PlayCircleOutlined aria-hidden="true" /></template>
+                处置演练
+              </a-button>
+            </router-link>
+            <a-button class="warnings-refresh" :loading="loading" @click="load">
+              <template #icon><ReloadOutlined aria-hidden="true" /></template>
+              刷新
+            </a-button>
+          </template>
+        </PageHero>
 
-    <a-card class="ops-surface" size="small" title="预警记录">
-      <div class="ops-filters warning-filters">
-        <label class="ops-filters__field">
-          <span>查找预警</span>
-          <input v-model="search" class="warning-filter" type="search" placeholder="标题、区域、预警编号" data-testid="warning-search" />
-        </label>
-        <label class="ops-filters__field">
-          <span>风险等级</span>
-          <select v-model="levelFilter" class="warning-filter" data-testid="warning-level">
-            <option value="">全部等级</option>
-            <option v-for="level in riskLevels" :key="level" :value="level">{{ RISK_LABELS[level] }}</option>
-          </select>
-        </label>
-        <a-button v-if="filtersActive" class="warning-reset" @click="search = ''; levelFilter = ''">清除筛选</a-button>
-      </div>
-      <FreshnessBar :fetched-at="fetchedAt" :label="freshLabel" :interval-ms="REFRESH_MS" :stacked="compact" />
-      <a-alert
-        v-if="loadError"
-        type="error"
-        show-icon
-        class="warning-note"
-        data-testid="warning-load-error"
-        :message="`加载预警失败：${loadError}${warnings.length ? '。当前显示上次读取的记录' : ''}`"
-      />
-      <p v-if="filtersActive" class="warning-note" data-testid="warning-filter-count">最近加载的 {{ warnings.length }} 条中有 {{ visibleWarnings.length }} 条匹配</p>
-      <p v-if="windowNote" class="warning-note" data-testid="window-note">
-        {{ windowNote }}
-      </p>
-      <div v-if="compact" :aria-busy="loading">
-        <ul v-if="mobileWarnings.length" class="ops-list">
-          <li v-for="record in mobileWarnings" :key="record.warning_id" class="ops-record warning-row">
-            <div class="ops-record__head">
-              <span class="warning-risk" :style="{ '--warning-color': RISK_COLORS[record.risk_level] }">
-                {{ RISK_LABELS[record.risk_level] }}
-              </span>
-              <time class="warning-time" :datetime="record.generated_at">{{ formatOperatingTime(record.generated_at) }}</time>
-            </div>
-            <button class="warning-title-link" type="button" @click="inspect(record)">{{ record.title_zh }}</button>
-            <div class="ops-record__meta">
-              <span>{{ HAZARD_LABELS[record.hazard_type] }} · {{ record.region_codes.join('、') || '区域未标注' }}</span>
-              <span>{{ reachTitle }} {{ reachText(record) }}</span>
-            </div>
-          </li>
-        </ul>
-        <a-pagination
-          v-if="visibleWarnings.length > PAGE_SIZE"
-          v-model:current="tablePage"
-          class="warning-pagination"
-          :total="visibleWarnings.length"
-          :page-size="PAGE_SIZE"
-          :show-size-changer="false"
-          simple
-        />
-        <p v-if="!mobileWarnings.length" class="ops-record" data-testid="warnings-empty">{{ emptyTitle }}</p>
-      </div>
-      <a-table
-        v-else
-        :columns="columns"
-        :data-source="visibleWarnings"
-        row-key="warning_id"
-        :pagination="{ pageSize: PAGE_SIZE, current: tablePage, showSizeChanger: false }"
-        size="small"
-        :scroll="{ x: 'max-content' }"
-        @change="tablePage = $event.current ?? 1"
-      >
-        <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：中文值班台上一句英文，
-             还分不清"确实还没有"与"取数没成功"，也不说下一步去哪造一条。 -->
-        <template #emptyText>
-          <div class="empty-hero" data-testid="warnings-empty">
-            <span class="empty-hero__icon" aria-hidden="true">◇</span>
-            <div>
-              <div class="empty-hero__title">{{ emptyTitle }}</div>
-              <div v-if="!loadError && !loading && !filtersActive" class="empty-hero__desc">现场预警和演练预警生成后会出现在此处。</div>
-              <router-link v-if="!loadError && !loading && !filtersActive" class="empty-hero__action" to="/monitor">查看监测 →</router-link>
-            </div>
+        <dl class="warnings-metrics" aria-label="预警指标">
+          <div v-for="metric in metrics" :key="metric.label" class="warnings-metric" :data-tone="metric.tone">
+            <dt>
+              <span class="warnings-metric__icon" aria-hidden="true"><component :is="metric.icon" /></span>
+              {{ metric.label }}
+            </dt>
+            <dd><strong>{{ metric.value ?? '—' }}</strong> <span v-if="metric.value !== null">条</span></dd>
+            <dd class="warnings-metric__detail">{{ metric.detail }}</dd>
           </div>
-        </template>
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'title_zh'">
-            <button class="warning-title-link" type="button" @click="inspect(record)">{{ record.title_zh }}</button>
+        </dl>
+
+        <div class="warning-filters" role="group" aria-label="预警查询">
+          <h2 class="warnings-filter-title"><FilterOutlined aria-hidden="true" /> 预警查询</h2>
+          <label class="warning-search">
+            <SearchOutlined aria-hidden="true" />
+            <input v-model="search" class="warning-filter" type="search" aria-label="查找预警" placeholder="标题、区域、预警编号" data-testid="warning-search" />
+          </label>
+          <div class="warning-selects">
+            <select v-model="levelFilter" class="warning-filter" aria-label="风险等级" data-testid="warning-level">
+              <option value="">全部等级</option>
+              <option v-for="level in riskLevels" :key="level" :value="level">{{ RISK_LABELS[level] }}</option>
+            </select>
+            <select v-model="hazardFilter" class="warning-filter" aria-label="灾种" data-testid="warning-hazard">
+              <option value="">全部灾种</option>
+              <option v-for="(label, hazard) in HAZARD_LABELS" :key="hazard" :value="hazard">{{ label }}</option>
+            </select>
+            <select v-model="regionFilter" class="warning-filter" aria-label="区域" data-testid="warning-region">
+              <option value="">全部区域</option>
+              <option v-for="region in regionOptions" :key="region" :value="region">{{ region }}</option>
+            </select>
+            <select v-model="channelFilter" class="warning-filter" aria-label="通道" data-testid="warning-channel">
+              <option value="">全部通道</option>
+              <option v-for="channel in channelOptions" :key="channel" :value="channel">{{ channel }}</option>
+            </select>
+          </div>
+          <a-button v-if="filtersActive" class="warning-reset" @click="resetFilters">清除筛选</a-button>
+        </div>
+        <FreshnessBar :fetched-at="fetchedAt" :label="freshLabel" :interval-ms="REFRESH_MS" :stacked="compact" />
+        <a-alert
+          v-if="loadError"
+          type="error"
+          show-icon
+          class="warning-note"
+          data-testid="warning-load-error"
+          :message="`加载预警失败：${loadError}${warnings.length ? '。当前显示上次读取的记录' : ''}`"
+        />
+        <p v-if="filtersActive" class="warning-note" data-testid="warning-filter-count">最近加载的 {{ warnings.length }} 条中有 {{ visibleWarnings.length }} 条匹配</p>
+        <p v-if="windowNote" class="warning-note" data-testid="window-note">
+          {{ windowNote }}
+        </p>
+        <div v-if="compact" :aria-busy="loading">
+          <ul v-if="mobileWarnings.length" class="ops-list">
+            <li v-for="record in mobileWarnings" :key="record.warning_id" class="ops-record warning-row">
+              <div class="ops-record__head">
+                <span class="warning-risk" :style="{ '--warning-color': RISK_COLORS[record.risk_level] }">
+                  {{ RISK_LABELS[record.risk_level] }}
+                </span>
+                <time class="warning-time" :datetime="record.generated_at">{{ formatOperatingTime(record.generated_at) }}</time>
+              </div>
+              <button class="warning-title-link" type="button" @click="inspect(record)">{{ record.title_zh }}</button>
+              <div class="ops-record__meta">
+                <span>{{ HAZARD_LABELS[record.hazard_type] }} · {{ record.region_codes.join('、') || '区域未标注' }}</span>
+                <span>{{ reachTitle }} {{ reachText(record) }}</span>
+              </div>
+            </li>
+          </ul>
+          <a-pagination
+            v-if="visibleWarnings.length > PAGE_SIZE"
+            v-model:current="tablePage"
+            class="warning-pagination"
+            :total="visibleWarnings.length"
+            :page-size="PAGE_SIZE"
+            :show-size-changer="false"
+            simple
+          />
+          <p v-if="!mobileWarnings.length" class="ops-record" data-testid="warnings-empty">{{ emptyTitle }}</p>
+        </div>
+        <a-table
+          v-else
+          class="warnings-table"
+          :columns="columns"
+          :data-source="visibleWarnings"
+          row-key="warning_id"
+          :pagination="{ pageSize: PAGE_SIZE, current: tablePage, showSizeChanger: false }"
+          size="small"
+          :scroll="{ x: 'max-content' }"
+          @change="tablePage = $event.current ?? 1"
+        >
+          <!-- 空表落回 antd 默认的英文 "No data"（全新生起的后端实测）：中文值班台上一句英文，
+               还分不清"确实还没有"与"取数没成功"，也不说下一步去哪造一条。 -->
+          <template #emptyText>
+            <div class="empty-hero" data-testid="warnings-empty">
+              <span class="empty-hero__icon" aria-hidden="true">◇</span>
+              <div>
+                <div class="empty-hero__title">{{ emptyTitle }}</div>
+                <div v-if="!loadError && !loading && !filtersActive" class="empty-hero__desc">现场预警和演练预警生成后会出现在此处。</div>
+                <router-link v-if="!loadError && !loading && !filtersActive" class="empty-hero__action" to="/monitor">查看监测 →</router-link>
+              </div>
+            </div>
           </template>
-          <template v-else-if="column.key === 'hazard'">{{ HAZARD_LABELS[record.hazard_type as keyof typeof HAZARD_LABELS] }}</template>
-          <template v-else-if="column.key === 'level'">
-            <a-tag :color="RISK_COLORS[record.risk_level as keyof typeof RISK_COLORS]">
-              {{ RISK_LABELS[record.risk_level as keyof typeof RISK_LABELS] }}
-            </a-tag>
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'title_zh'">
+              <button class="warning-title-link" type="button" @click="inspect(record)">
+                <AlertOutlined v-if="record.risk_level <= 2" class="warning-row-icon" :data-tone="record.risk_level === 1 ? 'danger' : 'warning'" aria-hidden="true" />
+                {{ record.title_zh }}
+              </button>
+            </template>
+            <template v-else-if="column.key === 'hazard'">{{ HAZARD_LABELS[record.hazard_type as keyof typeof HAZARD_LABELS] }}</template>
+            <template v-else-if="column.key === 'level'">
+              <a-tag :color="RISK_COLORS[record.risk_level as keyof typeof RISK_COLORS]">
+                {{ RISK_LABELS[record.risk_level as keyof typeof RISK_LABELS] }}
+              </a-tag>
+            </template>
+            <template v-else-if="column.key === 'regions'">
+              <a-space wrap>
+                <a-tag v-for="code in record.region_codes" :key="code">{{ code }}</a-tag>
+              </a-space>
+            </template>
+            <template v-else-if="column.key === 'generated_at'">
+              {{ formatOperatingTime(record.generated_at) }}
+            </template>
+            <template v-else-if="column.key === 'channels'">
+              <a-space wrap>
+                <a-tag v-for="channel in record.channels" :key="channel">{{ channel }}</a-tag>
+              </a-space>
+            </template>
+            <template v-else-if="column.key === 'reach'">{{ reachText(record) }}</template>
+            <template v-else-if="column.key === 'action'">
+              <a-button class="warnings-detail" type="link" size="small" @click="inspect(record)">详情 <RightOutlined aria-hidden="true" /></a-button>
+            </template>
           </template>
-          <template v-else-if="column.key === 'regions'">
-            <a-space wrap>
-              <a-tag v-for="code in record.region_codes" :key="code">{{ code }}</a-tag>
-            </a-space>
-          </template>
-          <template v-else-if="column.key === 'generated_at'">
-            {{ formatOperatingTime(record.generated_at) }}
-          </template>
-          <template v-else-if="column.key === 'channels'">
-            <a-space wrap>
-              <a-tag v-for="channel in record.channels" :key="channel">{{ channel }}</a-tag>
-            </a-space>
-          </template>
-          <template v-else-if="column.key === 'reach'">{{ reachText(record) }}</template>
-          <template v-else-if="column.key === 'action'">
-            <a-button type="link" size="small" @click="inspect(record)">详情</a-button>
-          </template>
-        </template>
-      </a-table>
-    </a-card>
+        </a-table>
+      </section>
+
+      <aside class="warnings-sidebar" aria-label="预警和任务概况">
+        <section class="warnings-panel warnings-overview">
+          <h2><InboxOutlined aria-hidden="true" /> 告警概览</h2>
+          <div class="warning-side-total">
+            <span class="warnings-metric__icon" aria-hidden="true"><DatabaseOutlined /></span>
+            <div><strong>{{ storeTotal ?? '—' }}</strong><span>台账总数</span></div>
+          </div>
+          <p class="warning-side-caption">{{ windowLabel }} · 等级分布</p>
+          <div v-if="warnings.length" class="warning-severity-track" aria-hidden="true">
+            <span v-for="level in severityBreakdown" :key="level.tone" :data-tone="level.tone" :style="{ flexGrow: level.count }" />
+          </div>
+          <dl class="warning-side-list">
+            <div v-for="level in severityBreakdown" :key="level.tone" :data-tone="level.tone">
+              <dt><span class="warning-severity-dot" aria-hidden="true" />{{ level.label }}</dt>
+              <dd>{{ hasSnapshot ? level.count : '—' }}<span v-if="hasSnapshot"> 条</span></dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="warnings-panel warnings-tasks">
+          <h2><UnorderedListOutlined aria-hidden="true" /> 任务处置</h2>
+          <div class="warning-side-total">
+            <span class="warnings-metric__icon" aria-hidden="true"><UnorderedListOutlined /></span>
+            <div><strong>{{ taskTotal ?? '—' }}</strong><span>在册任务单元</span></div>
+          </div>
+          <dl class="warning-side-list"><div><dt>链路记录</dt><dd>{{ chainTotal ?? '—' }}<span v-if="chainTotal !== null"> 条</span></dd></div></dl>
+          <p class="warning-side-caption warnings-tasks__hint">在预警详情查看关联任务</p>
+        </section>
+
+        <section class="warnings-panel warnings-hazards">
+          <h2><BarChartOutlined aria-hidden="true" /> 预警灾种分布</h2>
+          <p class="warning-side-caption">{{ windowLabel }}</p>
+          <ul v-if="windowSummary.hazards.length" class="warning-hazard-list">
+            <li v-for="[hazard, count] in windowSummary.hazards" :key="hazard">
+              <button type="button" :aria-pressed="hazardFilter === hazard" @click="hazardFilter = hazardFilter === hazard ? '' : hazard">
+                <span>{{ HAZARD_LABELS[hazard] }}</span>
+                <span class="warning-hazard-track" aria-hidden="true"><span :style="{ width: `${count / warnings.length * 100}%` }" /></span>
+                <strong>{{ count }}</strong>
+              </button>
+            </li>
+          </ul>
+          <p v-else class="warning-side-caption">{{ hasSnapshot ? '暂无预警记录' : '尚未取得预警数据' }}</p>
+        </section>
+      </aside>
+    </div>
 
     <a-drawer v-model:open="open" root-class-name="warnings-inspector" width="min(720px, 100vw)" title="预警详情与处置任务" @after-open-change="onDrawerVisible">
       <template v-if="current">
@@ -417,21 +557,183 @@ function onDrawerVisible(visible: boolean): void {
 </template>
 
 <style scoped>
+.warnings-page {
+  container-type: inline-size;
+  --warning-line: var(--aeg-color-command-line);
+  --warning-accent: var(--aeg-color-overview-accent);
+  --warning-panel: var(--aeg-color-command-panel);
+  --warning-raised: var(--aeg-color-command-raised);
+  --warning-deep: var(--aeg-color-command-deep);
+  --warning-card-edge: color-mix(in srgb, var(--warning-accent) 34%, var(--warning-line));
+  --warning-glow: var(--aeg-color-command-glow);
+  font-variant-numeric: tabular-nums;
+}
+.warnings-board {
+  display: grid;
+  grid-template-columns: minmax(224px, 19.5fr) minmax(0, 80.5fr);
+  grid-template-areas: 'sidebar ledger';
+  align-items: start;
+  gap: var(--aeg-space-s3);
+}
+.warnings-panel {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--aeg-radius-lg);
+  background:
+    radial-gradient(ellipse at 12% -12%, var(--warning-glow), transparent 61%) padding-box,
+    linear-gradient(155deg, var(--warning-panel), var(--warning-deep) 68%, var(--warning-panel)) padding-box,
+    linear-gradient(140deg, var(--warning-card-edge), var(--warning-line) 42%, color-mix(in srgb, var(--warning-accent) 42%, var(--warning-line))) border-box;
+}
+.warnings-ledger {
+  grid-area: ledger;
+  container-type: inline-size;
+  padding: var(--aeg-space-s3);
+}
+.warnings-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'title caption actions';
+  align-items: center;
+  gap: var(--aeg-space-s3) var(--aeg-space-s4);
+  margin-bottom: var(--aeg-space-s4);
+  padding-inline: var(--aeg-space-s1);
+}
+.warnings-heading :deep(.page-head__row) { display: contents; }
+.warnings-heading :deep(.page-head__title) { grid-area: title; }
+.warnings-heading :deep(.page-head__caption) {
+  grid-area: caption;
+  margin: 0;
+  padding-inline-start: var(--aeg-space-s3);
+  border-inline-start: 1px solid var(--warning-line);
+  font-size: var(--aeg-font-sm);
+}
+.warnings-heading :deep(.page-head__actions) { grid-area: actions; }
+.warnings-drill.ant-btn-primary {
+  background: linear-gradient(120deg, var(--aeg-color-brand), var(--aeg-color-brand-active));
+}
+.warnings-refresh.ant-btn {
+  border-color: var(--warning-line);
+  background: var(--warning-raised);
+}
+.warnings-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--aeg-space-s2);
+  margin: 0 0 var(--aeg-space-s4);
+}
+.warnings-page :is([data-tone], .warning-side-total) { --warning-tone: var(--warning-accent); }
+.warnings-page [data-tone='danger'] { --warning-tone: var(--aeg-color-status-danger); }
+.warnings-page [data-tone='warning'] { --warning-tone: var(--aeg-tag-orange-text); }
+.warnings-page [data-tone='info'] { --warning-tone: var(--aeg-color-status-info); }
+.warnings-page [data-tone='accent'] { --warning-tone: var(--aeg-color-status-success); }
+.warnings-metric {
+  position: relative;
+  min-width: 0;
+  padding: var(--aeg-space-s2) var(--aeg-space-s2) var(--aeg-space-s2) 52px;
+  border: 1px solid color-mix(in srgb, var(--warning-tone) 26%, var(--warning-line));
+  border-radius: var(--aeg-radius-md);
+  background:
+    radial-gradient(ellipse at 4% 6%, color-mix(in srgb, var(--warning-tone) 20%, transparent), transparent 72%),
+    linear-gradient(135deg, var(--warning-raised), var(--warning-panel) 82%);
+}
+.warnings-metric dt {
+  color: var(--aeg-color-text);
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+}
+.warnings-metric dd {
+  margin: 0;
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
+.warnings-metric dd strong,
+.warning-side-total strong {
+  color: var(--aeg-color-text);
+  font-family: var(--aeg-font-display);
+  font-size: var(--aeg-font-2xl);
+  font-weight: var(--aeg-weight-bold);
+  line-height: var(--aeg-lh-tight);
+}
+.warnings-metric .warnings-metric__detail {
+  margin-top: 2px;
+  font-size: var(--aeg-font-xs);
+}
+.warnings-metric__icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border: 1px solid color-mix(in srgb, var(--warning-tone) 28%, transparent);
+  border-radius: 50%;
+  color: var(--warning-tone);
+  background: color-mix(in srgb, var(--warning-tone) 16%, var(--warning-panel));
+  font-size: var(--aeg-font-lg);
+}
+.warnings-metric .warnings-metric__icon {
+  position: absolute;
+  inset: 50% auto auto var(--aeg-space-s2);
+  transform: translateY(-50%);
+}
 .warning-filters {
-  grid-template-columns: minmax(150px, 2fr) minmax(110px, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--aeg-space-s2) var(--aeg-space-s3);
+  padding: var(--aeg-space-s2);
   margin-bottom: var(--aeg-space-s3);
+  border: 1px solid var(--warning-line);
+  border-radius: var(--aeg-radius-md);
+  background: linear-gradient(105deg, color-mix(in srgb, var(--warning-raised) 66%, var(--warning-panel)), var(--warning-panel));
+}
+.warnings-filter-title {
+  flex: 0 0 auto;
+  margin: 0;
+  padding-inline: var(--aeg-space-s1);
+  color: var(--aeg-color-text);
+  font-size: var(--aeg-font-base);
+}
+.warnings-filter-title :deep(.anticon),
+.warnings-sidebar h2 :deep(.anticon) { color: var(--warning-accent); }
+.warning-search {
+  position: relative;
+  flex: 1 1 190px;
+  min-width: 0;
+}
+.warning-search :deep(.anticon) {
+  position: absolute;
+  inset: 50% auto auto var(--aeg-space-s2);
+  transform: translateY(-50%);
+  color: var(--aeg-color-text-secondary);
+  pointer-events: none;
+}
+.warning-search .warning-filter { padding-inline-start: var(--aeg-space-s8); }
+.warning-selects {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  flex: 1 1 430px;
+  min-width: 0;
+  gap: var(--aeg-space-s2);
 }
 .warning-filter {
   width: 100%;
   min-width: 0;
   min-height: 36px;
   padding: var(--aeg-space-s1) var(--aeg-space-s2);
-  border: 1px solid var(--aeg-color-border-strong);
+  border: 1px solid var(--warning-line);
   border-radius: var(--aeg-radius-md);
-  background: var(--aeg-color-sunken);
+  background: var(--warning-deep);
   color: var(--aeg-color-text);
   font: inherit;
 }
+.warning-filter:focus-visible,
+.warning-title-link:focus-visible,
+.warning-hazard-list button:focus-visible {
+  outline: 2px solid var(--warning-accent);
+  outline-offset: 2px;
+}
+.warning-filters select { color-scheme: light; }
+html[data-theme='dark'] .warning-filters select { color-scheme: dark; }
 .warning-filter::placeholder {
   color: var(--aeg-color-text-muted);
 }
@@ -445,7 +747,9 @@ function onDrawerVisible(visible: boolean): void {
   font-size: var(--aeg-font-sm);
 }
 .warning-title-link {
-  display: inline-block;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--aeg-space-s2);
   padding: 0;
   border: none;
   background: none;
@@ -455,6 +759,29 @@ function onDrawerVisible(visible: boolean): void {
   overflow-wrap: anywhere;
   cursor: pointer;
 }
+.warning-row-icon { color: var(--warning-tone); }
+.warnings-table :deep(.ant-table) {
+  overflow: hidden;
+  border: 1px solid var(--warning-line);
+  border-radius: var(--aeg-radius-md);
+  background: color-mix(in srgb, var(--warning-deep) 65%, var(--warning-panel));
+}
+.warnings-table :deep(.ant-table-thead > tr > th) {
+  background: var(--warning-raised);
+  color: var(--aeg-color-text);
+  white-space: nowrap;
+}
+.warnings-table :deep(.ant-table-thead > tr > th::before) { display: none; }
+.warnings-table :deep(.ant-table-tbody > tr:nth-child(even) > td) {
+  background: color-mix(in srgb, var(--warning-raised) 36%, var(--warning-deep));
+}
+.warnings-table :deep(.ant-table-tbody > tr:hover > td) {
+  background: color-mix(in srgb, var(--warning-accent) 12%, var(--warning-panel));
+}
+.warnings-table :deep(.ant-table-cell) { border-bottom-color: var(--warning-line); }
+.warnings-table :deep(.ant-table-cell:not(:first-child)) { white-space: nowrap; }
+.warnings-table :deep(.ant-table-cell .ant-tag) { margin-inline-end: 0; }
+.warnings-detail.ant-btn { padding-inline: var(--aeg-space-s1); }
 .warning-title-link:hover {
   text-decoration: underline;
 }
@@ -477,13 +804,145 @@ function onDrawerVisible(visible: boolean): void {
 .warning-pagination {
   text-align: right;
 }
+.warnings-sidebar {
+  grid-area: sidebar;
+  display: grid;
+  gap: var(--aeg-space-s3);
+  min-width: 0;
+}
+.warnings-sidebar > section { padding: var(--aeg-space-s3); }
+.warnings-sidebar h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  margin: 0;
+  padding-bottom: var(--aeg-space-s2);
+  border-bottom: 1px solid color-mix(in srgb, var(--warning-line) 65%, transparent);
+  color: var(--aeg-color-text);
+  font-size: var(--aeg-font-md);
+  line-height: var(--aeg-lh-snug);
+}
+.warnings-overview { position: relative; isolation: isolate; }
+html[data-theme='dark'] .warnings-overview::before {
+  position: absolute;
+  z-index: -1;
+  inset: 22px 1px auto auto;
+  width: 68%;
+  height: 90px;
+  background: url('/backgrounds/aegis-glacier-ridge.png') center right / contain no-repeat;
+  opacity: .45;
+  pointer-events: none;
+  content: '';
+}
+.warning-side-total {
+  display: flex;
+  align-items: center;
+  gap: var(--aeg-space-s3);
+  margin-block: var(--aeg-space-s3);
+}
+.warning-side-total .warnings-metric__icon { width: 48px; height: 48px; }
+.warning-side-total div > span {
+  display: block;
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
+.warning-side-caption {
+  margin: 0 0 var(--aeg-space-s2);
+  color: var(--aeg-color-text-secondary);
+  font-size: var(--aeg-font-sm);
+}
+.warning-severity-track {
+  display: flex;
+  overflow: hidden;
+  height: 5px;
+  margin-bottom: var(--aeg-space-s1);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--warning-line);
+}
+.warning-severity-track > span { flex: 0 1 0; background: var(--warning-tone); }
+.warning-side-list { margin: 0; }
+.warning-side-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--aeg-space-s2);
+  min-height: 30px;
+  border-bottom: 1px solid color-mix(in srgb, var(--warning-line) 54%, transparent);
+  color: var(--aeg-color-text);
+  font-size: var(--aeg-font-sm);
+}
+.warning-side-list > div:last-child { border-bottom: 0; }
+.warning-side-list dt { display: flex; align-items: center; gap: var(--aeg-space-s2); }
+.warning-side-list dd { margin: 0; font-weight: var(--aeg-weight-semibold); }
+.warning-side-list dd span { color: var(--aeg-color-text-secondary); }
+.warning-severity-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning-tone);
+}
+.warnings-tasks__hint { margin: var(--aeg-space-s2) 0 0; }
+.warnings-hazards .warning-side-caption { margin-top: var(--aeg-space-s2); }
+.warning-hazard-list { margin: 0; padding: 0; list-style: none; }
+.warning-hazard-list button {
+  display: grid;
+  grid-template-columns: minmax(4em, auto) minmax(0, 1fr) 3ch;
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  width: 100%;
+  min-height: 32px;
+  padding-inline: var(--aeg-space-s1);
+  border: 0;
+  border-radius: var(--aeg-radius-sm);
+  background: transparent;
+  color: var(--aeg-color-text);
+  font: inherit;
+  font-size: var(--aeg-font-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.warning-hazard-list button:is(:hover, [aria-pressed='true']) { background: var(--warning-raised); }
+.warning-hazard-list button strong { justify-self: end; }
+.warning-hazard-track {
+  height: 5px;
+  border-radius: var(--aeg-radius-pill);
+  background: var(--warning-line);
+}
+.warning-hazard-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--warning-accent);
+}
+@container (max-width: 1040px) {
+  .warnings-board { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'ledger' 'sidebar'; }
+  .warnings-sidebar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container (max-width: 740px) {
+  .warnings-heading { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'title actions' 'caption caption'; }
+  .warnings-heading :deep(.page-head__caption) { padding: 0; border: 0; }
+  .warnings-metric { padding-inline-start: var(--aeg-space-s2); }
+  .warnings-metric .warnings-metric__icon { display: none; }
+}
+@container (max-width: 590px) {
+  .warnings-sidebar { grid-template-columns: minmax(0, 1fr); }
+  .warnings-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .warning-selects { flex-basis: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .warning-search { flex-basis: 150px; }
+}
+@container (max-width: 410px) {
+  .warnings-heading { column-gap: var(--aeg-space-s2); }
+  .warnings-heading :deep(.page-head__title) { font-size: var(--aeg-font-lg); }
+  .warnings-metric dd strong { font-size: var(--aeg-font-xl); }
+}
+@container (max-width: 325px) {
+  .warnings-heading { grid-template-areas: 'title' 'caption' 'actions'; grid-template-columns: minmax(0, 1fr); }
+  .warnings-heading :deep(.page-head__actions) { margin-inline-start: 0; }
+}
 @media (max-width: 720px) {
-  .warning-filters {
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-    gap: var(--aeg-space-s2);
-  }
-  .warning-reset {
-    justify-self: start;
+  .warnings-ledger, .warnings-sidebar > section {
+    padding: var(--aeg-space-s2);
   }
   .warning-filter {
     min-height: 40px;
