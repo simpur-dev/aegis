@@ -55,7 +55,7 @@ function run(action: () => void): void {
 </script>
 
 <template>
-  <header class="ed-head" data-testid="editor-header" aria-label="流程编排">
+  <header class="ed-head aegis-heading-ridge" data-testid="editor-header" aria-label="流程编排">
     <h1 class="ed-head__page-title">流程编排</h1>
     <div class="ed-head__left">
       <router-link class="ed-head__back" to="/dashboard" aria-label="返回态势总览" title="返回态势总览">←</router-link>
@@ -104,6 +104,8 @@ function run(action: () => void): void {
 
 <style scoped>
 .ed-head {
+  --aeg-heading-ridge-inset: 0 24% 0 21%;
+  --aeg-heading-ridge-position: center 43%;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -115,6 +117,8 @@ function run(action: () => void): void {
   background: var(--aeg-color-masthead-bg);
   color: var(--aeg-color-text);
 }
+html[data-theme='dark'] .ed-head { position: relative; }
+html[data-theme='dark'] .ed-head:has(.ed-head__more[open]) { z-index: 8; }
 .ed-head__page-title {
   position: absolute;
   width: 1px;

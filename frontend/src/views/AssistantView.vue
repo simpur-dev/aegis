@@ -51,17 +51,6 @@ onMounted(() => void load())
   /* min-height:auto = 内容最小高度：值班台比一屏高时整页滚动，而不是把会话压回去 */
   min-height: auto;
 }
-.assistant::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  inset: 0 0 auto 24%;
-  height: min(75vh, 580px);
-  background: url('/backgrounds/tibet-relief.webp') 58% 35% / cover no-repeat;
-  opacity: 0.16;
-  mask-image: radial-gradient(ellipse at 72% 36%, black 10%, transparent 73%);
-  pointer-events: none;
-}
 .assistant :deep(.page-head) {
   margin-bottom: 0;
 }

@@ -1,13 +1,13 @@
 import * as echarts from 'echarts/core'
 import type { ECharts, EChartsCoreOption } from 'echarts/core'
 import { BarChart, LineChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TitleComponent, TooltipComponent } from 'echarts/components'
+import { GridComponent, LegendComponent, MarkLineComponent, TitleComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
 import { chartTheme, chartThemeName } from '@/theme/chart'
 
 // 按需注册：只引入折线/柱状与必要组件，避免把整个 echarts 打进首屏
-echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TitleComponent, TooltipComponent, CanvasRenderer])
+echarts.use([BarChart, LineChart, GridComponent, LegendComponent, MarkLineComponent, TitleComponent, TooltipComponent, CanvasRenderer])
 
 /**
  * 两套主题在模块加载时就注册好：`EChart.vue` 只按名字取，

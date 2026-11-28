@@ -624,6 +624,7 @@ html[data-theme='dark'] .dashboard {
   padding: var(--aeg-space-s3) var(--aeg-space-s4) var(--aeg-space-s2);
 }
 .dash-overview :deep(.page-head) {
+  --aeg-heading-ridge-inset: -6px 1% -9px 43%;
   margin-bottom: var(--aeg-space-s3);
 }
 .dash-overview :deep(.page-head__row),

@@ -124,6 +124,37 @@ describe('指标页读数', () => {
     expect(row?.breaches).toBe(2)
   })
 
+  it('达标率只使用已量测且有阈值的项，账本的越限样本另计', async () => {
+    const mixed = report()
+    mixed.metrics.warning_generation_ms = { ...mixed.metrics.warning_generation_ms, p95: 200_000 }
+    mixed.metrics.collab_txn = { ...mixed.metrics.collab_txn, count: 0 }
+    mixed.violations = { ingest_end_to_end_seconds: 1, warning_generation_ms: 2 }
+    mockedLatency.mockResolvedValue(mixed as never)
+    const wrapper = mount(MetricsView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const panel = wrapper.find('.metrics-compliance')
+    expect(panel.find('strong').text()).toBe('50.0%')
+    expect(panel.findAll('dd').map((value) => value.text())).toEqual(['1', '1', '1', '1'])
+    expect(wrapper.find('[data-testid="stat-越限项数"]').text()).toBe('2')
+    wrapper.unmount()
+  })
+
+  it('单项秒制阈值标在等值的毫秒轴位置，趋势来自接入 P95 快照', async () => {
+    const single = report()
+    mockedLatency.mockResolvedValue({
+      ...single,
+      metrics: { ingest_end_to_end_seconds: single.metrics.ingest_end_to_end_seconds },
+    } as never)
+    const wrapper = mount(MetricsView, { global: { stubs: STUBS } })
+    await flushPromises()
+    const plots = wrapper.findAllComponents({ name: 'EChart' })
+    expect(plots).toHaveLength(2)
+    const [latency, trend] = plots.map((plot) => plot.props('option'))
+    expect(latency.series[1].markLine.data[0].xAxis).toBe(300_000)
+    expect(trend.series[0].data).toEqual([[expect.any(Number), 15]])
+    wrapper.unmount()
+  })
+
   it('共用的毫秒轴先换算：秒制那几条进图时已乘 1000', async () => {
     mockedLatency.mockResolvedValue(report() as never)
     const wrapper = mount(MetricsView, { global: { stubs: STUBS } })

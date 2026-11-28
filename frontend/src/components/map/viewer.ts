@@ -50,7 +50,7 @@ import type { HistoricalSite } from './gyirongCase'
 import type { ProbeFetch } from './offline'
 import { collectFacts, tileUrlForTemplate } from './offline'
 import { chooseTerrainMode, createTerrainSetup, DEFAULT_TERRAIN_URL, terrainProbeUrl } from './terrain'
-import { EMPTY_WEATHER_LAYER, rainCellAt, rainSelectionPoint, type WeatherMapLayer } from './weather'
+import { EMPTY_WEATHER_LAYER, rainCellAt, rainSelectionPoint, weatherMarkerText, type WeatherMapLayer } from './weather'
 
 /** Cesium 命名空间的类型别名（type-only，不产生运行时导入）。 */
 type CesiumModule = typeof import('cesium')
@@ -776,6 +776,8 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
       }
       for (const point of markers) {
         const color = cesium.Color.fromCssColorString(point.color)
+        const centered = point.labelPlacement !== undefined || point.mainlandChina
+        const below = point.labelPlacement === 'below'
         weather.entities.add({
           id: point.id,
           position: cesium.Cartesian3.fromDegrees(point.lonlat.lon, point.lonlat.lat),
@@ -785,15 +787,15 @@ export async function createMapScene(el: HTMLElement, options: MapSceneOptions =
             distanceDisplayCondition: point.id.startsWith('weather-history-') ? new cesium.DistanceDisplayCondition(0, 160_000) : undefined,
           },
           label: {
-            text: point.label ? `${point.title}  ·  ${point.label}` : point.title,
-            font: '600 14px "Microsoft YaHei", sans-serif',
+            text: weatherMarkerText(point),
+            font: point.labelPlacement ? '600 13px "Microsoft YaHei", sans-serif' : '600 14px "Microsoft YaHei", sans-serif',
             fillColor: cesium.Color.fromCssColorString(palette.labelText),
             showBackground: true,
             backgroundColor: cesium.Color.fromCssColorString(palette.labelBackground).withAlpha(0.94),
-            backgroundPadding: new cesium.Cartesian2(9, 6),
-            pixelOffset: new cesium.Cartesian2(point.mainlandChina ? 0 : -8, -20),
-            horizontalOrigin: point.mainlandChina ? cesium.HorizontalOrigin.CENTER : cesium.HorizontalOrigin.RIGHT,
-            verticalOrigin: cesium.VerticalOrigin.BOTTOM,
+            backgroundPadding: point.labelPlacement ? new cesium.Cartesian2(7, 5) : new cesium.Cartesian2(9, 6),
+            pixelOffset: new cesium.Cartesian2(centered ? 0 : -8, below ? 12 : -20),
+            horizontalOrigin: centered ? cesium.HorizontalOrigin.CENTER : cesium.HorizontalOrigin.RIGHT,
+            verticalOrigin: below ? cesium.VerticalOrigin.TOP : cesium.VerticalOrigin.BOTTOM,
             heightReference: ground, disableDepthTestDistance: Number.POSITIVE_INFINITY,
             distanceDisplayCondition: point.id.startsWith('weather-history-') ? new cesium.DistanceDisplayCondition(0, 160_000) : undefined,
           },

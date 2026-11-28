@@ -17,13 +17,14 @@ defineProps<{
   badge?: string
   caption?: string
   surface?: boolean
+  hideRidge?: boolean
   /** 一眼看得出的当下状态（只写"现在怎么样了"，不复述标题；tone 由数据决定，不许拿它当装饰）。 */
   status?: { tone: 'ok' | 'warn' | 'bad' | 'idle'; text: string }
 }>()
 </script>
 
 <template>
-  <header class="page-head" :class="{ 'page-head--surface': surface }">
+  <header class="page-head" :class="{ 'page-head--surface': surface, 'aegis-heading-ridge': !hideRidge }">
     <div class="page-head__row">
       <h1 class="page-head__title">{{ title }}</h1>
       <span v-if="badge" class="page-head__badge">{{ badge }}</span>
@@ -45,6 +46,9 @@ defineProps<{
 <style scoped>
 .page-head {
   margin-bottom: var(--aeg-space-s4);
+}
+html[data-theme='dark'] .page-head.aegis-heading-ridge {
+  position: relative;
 }
 .page-head--surface {
   padding: var(--aeg-space-s4);

@@ -47,11 +47,11 @@ export interface ResolvedPresentation extends NodePresentation {
 }
 
 export const NODE_PRESENTATION: Record<NodeType, NodePresentation> = {
-  api_call: { glyph: 'http', accent: 'violet' },
-  branch: { glyph: 'branch', accent: 'violet' },
+  api_call: { glyph: 'http', accent: 'blue' },
+  branch: { glyph: 'branch', accent: 'amber' },
   chain_stage: { glyph: 'stage', accent: 'slate' },
   data_fetch: { glyph: 'fetch', accent: 'teal' },
-  delay: { glyph: 'delay', accent: 'slate' },
+  delay: { glyph: 'delay', accent: 'teal' },
   degrade_to_rule: { glyph: 'degrade', accent: 'rose' },
   device_control: { glyph: 'device', accent: 'amber' },
   end: { glyph: 'end', accent: 'slate' },

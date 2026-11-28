@@ -186,7 +186,7 @@ const statusTitle = computed<string>(() =>
        antd 默认英文空态 "No data"（此前是一张张截图发现再逐页补 emptyText）。
        逐页补只能盖住写过的表，语言包一次盖住整类。 -->
   <a-config-provider :theme="theme" :locale="zhCN">
-    <div class="app-shell" :class="{ 'is-immersive': immersive, 'is-processing': route.name === 'data-processing', 'is-command': route.name === 'dashboard' || route.name === 'warnings' }">
+    <div class="app-shell" :class="{ 'is-immersive': immersive, 'is-processing': route.name === 'data-processing', 'is-command': route.name === 'dashboard' || route.name === 'warnings', 'is-metrics': route.name === 'metrics' }">
       <!-- 全局雾底：所有页面共用（含一张图与流程编排）——浅色/深色各一档，地图画布自己仍是深空底 -->
       <div class="app-backdrop" aria-hidden="true" />
       <div class="main-col">
@@ -297,7 +297,7 @@ const statusTitle = computed<string>(() =>
         >
           <router-view />
           <!-- 服务令牌条常驻页脚：一台机器填一次，但"这台开了鉴权"必须每页都说得出口（§4.8.1） -->
-          <ServiceTokenBar v-if="!immersive" />
+          <ServiceTokenBar v-if="!immersive && route.name !== 'metrics'" />
           <!-- 页脚跟着内容走，不钉在视口底：钉着的话每一页都永久吃掉一条，
                而编排页那种"占满一屏"的布局还要去猜它的高度 -->
           <footer v-if="!immersive" class="footer">
@@ -590,15 +590,39 @@ html[data-theme='dark'] .topnav__lens {
 .workspace-nav__item[aria-current] {
   border-color: var(--aeg-color-masthead-tab);
 }
+html[data-theme='dark'] .topbar {
+  border-color: var(--aeg-color-command-line);
+  background: var(--aeg-color-command-deep);
+}
 html[data-theme='dark'] .topbar::before {
   content: '';
   position: absolute;
   z-index: -1;
-  inset: 0 0 0 auto;
-  width: min(36vw, 420px);
-  opacity: 0.25;
-  background: url('/backgrounds/tibet-relief.webp') center / cover;
-  mask-image: linear-gradient(90deg, transparent, black 30%);
+  inset: 0;
+  background: var(--aeg-header-ridge) center 41% / 100% auto no-repeat;
+  mask-image: linear-gradient(90deg, transparent 12%, black 27%, black 88%, transparent);
+  opacity: .87;
+  pointer-events: none;
+}
+html[data-theme='dark'] .workspace-nav {
+  background: color-mix(in srgb, var(--aeg-color-command-deep) 52%, transparent);
+  border-color: var(--aeg-color-command-line);
+}
+/* 页头与沉浸式工具栏共用下层山脊，各自控制取景位置。 */
+html[data-theme='dark'] .aegis-heading-ridge {
+  isolation: isolate;
+}
+html[data-theme='dark'] .aegis-heading-ridge::after {
+  position: absolute;
+  z-index: -1;
+  inset: var(--aeg-heading-ridge-inset, -6px 14% -9px 30%);
+  background: var(--aeg-header-ridge) var(--aeg-heading-ridge-position, center 49%) / 100% auto no-repeat;
+  mask-image: linear-gradient(90deg, transparent, black 30%, black 85%, transparent),
+    linear-gradient(0deg, transparent, black 27%, black 73%, transparent);
+  mask-composite: intersect;
+  opacity: var(--aeg-heading-ridge-opacity, .76);
+  pointer-events: none;
+  content: '';
 }
 .topbar-right {
   grid-area: facts;
@@ -1041,6 +1065,7 @@ html.assistant-resizing .main-content {
    渐变兜底用画布令牌，两主题各一套。所有页面共用（含一张图与流程编排）。
    模糊走背景图自身的 filter（一次性栅格化），不用 backdrop-filter——后者每帧重采样。 */
 .app-shell {
+  --aeg-header-ridge: url('/backgrounds/aegis-metrics-ridge.jpg');
   background: transparent;
 }
 .app-backdrop {
@@ -1090,7 +1115,7 @@ html[data-theme='dark'] .is-command > .app-backdrop::before {
   transform: none;
   opacity: 1;
 }
-html[data-theme='dark'] .is-command > .app-backdrop::after {
+html[data-theme='dark'] :is(.is-command, .is-metrics) > .app-backdrop::after {
   background: linear-gradient(180deg, var(--aeg-color-command-deep), transparent 75%);
   opacity: 0.42;
 }
@@ -1124,16 +1149,6 @@ html[data-theme='dark'] .is-command .topbar {
   border-color: var(--aeg-color-command-line);
   background: linear-gradient(105deg, var(--aeg-color-command-deep), var(--aeg-color-command-nav), var(--aeg-color-command-deep));
 }
-html[data-theme='dark'] .is-command .topbar::before {
-  inset: 0 0 auto auto;
-  width: min(48vw, 680px);
-  height: 65px;
-  opacity: 0.55;
-  background-position: 50% 29%;
-  filter: saturate(0.85);
-  mask-image: linear-gradient(90deg, transparent, black 40%), linear-gradient(0deg, transparent, black 60%);
-  mask-composite: intersect;
-}
 html[data-theme='dark'] .is-command .topnav {
   border-color: transparent;
   background: transparent;
@@ -1144,10 +1159,6 @@ html[data-theme='dark'] .is-command .topnav__lens {
   border-color: color-mix(in srgb, var(--aeg-color-overview-accent) 35%, var(--aeg-color-command-line));
   background: radial-gradient(ellipse at 12% -15%, var(--aeg-color-command-glow), transparent 76%),
     linear-gradient(155deg, var(--aeg-color-command-nav), var(--aeg-color-command-deep));
-}
-html[data-theme='dark'] .is-command .workspace-nav {
-  background: var(--aeg-color-command-deep);
-  border-color: var(--aeg-color-command-line);
 }
 html[data-theme='dark'] .is-command .workspace-nav__item[aria-current] {
   color: var(--aeg-color-text);
@@ -1161,6 +1172,26 @@ html[data-theme='dark'] .is-command .workspace-nav__item[aria-current] {
     gap: var(--aeg-space-s1);
     padding-inline: var(--aeg-space-s2);
   }
+}
+
+.is-metrics .main-content { padding-top: 12px; }
+.is-metrics .alert-banner { margin-top: 3px; padding-block: 4px; }
+html[data-theme='dark'] .is-metrics > .app-backdrop::before {
+  inset: 0;
+  background: var(--aeg-color-command-deep) url('/backgrounds/aegis-command-waves.png') center bottom / 100% 56% no-repeat;
+  filter: none;
+  transform: none;
+  opacity: 1;
+}
+html[data-theme='dark'] .is-metrics .workspace-nav__item[aria-current] {
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--aeg-color-command-selected) 55%, transparent));
+  border-inline: 1px solid var(--aeg-color-brand-line);
+  box-shadow: inset 0 -5px 10px -6px var(--aeg-color-overview-accent);
+}
+@media (max-width: 720px) {
+  .is-metrics .alert-banner { margin-inline: var(--aeg-space-s3); }
+  .is-metrics .alert-banner__meta { display: none; }
+  html[data-theme='dark'] .topbar::before { background-size: auto 230%; }
 }
 
 .main-col {

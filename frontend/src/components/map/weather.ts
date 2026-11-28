@@ -1,13 +1,13 @@
 import type { BBox, LngLat } from './entities'
 import { weatherColors } from '@/theme/tokens'
 
-export type WeatherMode = 'current' | 'daily' | 'hourly'
+export type LiveWeatherMode = 'current' | 'rain'
+export type RainArchiveMode = 'daily' | 'hourly'
+export type WeatherMode = LiveWeatherMode | RainArchiveMode
 
-export const WEATHER_MODES = [
-  { id: 'current', label: '当前天气' },
-  { id: 'daily', label: '吉隆日雨量' },
-  { id: 'hourly', label: '县域小时' },
-] as const
+export function isLiveWeather(mode: WeatherMode | null): mode is LiveWeatherMode {
+  return mode === 'current' || mode === 'rain'
+}
 
 export interface ForecastHour {
   end: string
@@ -62,9 +62,16 @@ export interface WeatherMapPoint {
   id: string
   title: string
   label: string
+  detail?: string
+  labelPlacement?: 'above' | 'below'
   lonlat: LngLat
   mainlandChina: boolean
   color: string
+}
+
+export function weatherMarkerText(point: WeatherMapPoint): string {
+  const heading = [point.title, point.label].filter(Boolean).join(' · ')
+  return point.detail ? `${heading}\n${point.detail}` : heading
 }
 
 export interface WeatherMapCell {
@@ -118,7 +125,7 @@ export const HOUR_RAIN_BANDS = [
   { from: 10, label: '≥10', color: weatherColors['rain-extreme'] },
 ] as const
 
-export function rainColor(value: number, mode: 'daily' | 'hourly'): string {
+export function rainColor(value: number, mode: RainArchiveMode): string {
   const bands = mode === 'daily' ? DAILY_RAIN_BANDS : HOUR_RAIN_BANDS
   return [...bands].reverse().find((band) => value >= band.from)?.color ?? bands[0].color
 }
@@ -160,6 +167,24 @@ export function weatherCondition(code: number | null, isDay?: boolean | null): {
   if ((code >= 71 && code <= 77) || code === 85 || code === 86) return { label: '降雪', icon: 'snow' }
   if (code >= 95) return { label: '雷雨', icon: 'storm' }
   return { label: code <= 55 ? '毛毛雨' : code >= 80 ? '阵雨' : '降雨', icon: 'rain' }
+}
+
+export function currentRainReading(point?: CurrentWeatherPoint) {
+  const raw = point?.rain_mm
+  const amount = raw != null && Number.isFinite(raw) && raw >= 0 ? raw : null
+  const interval = point && point.interval_minutes > 0 ? point.interval_minutes : null
+  const condition = weatherCondition(point?.weather_code ?? null, point?.is_day)
+  let label = '无雨'
+  if (condition.icon === 'rain' || condition.icon === 'storm') label = '有雨'
+  else if (condition.icon === 'snow') label = '降雪'
+  else if (condition.icon === 'unknown') label = amount === null ? '暂无数据' : amount > 0 ? '时段有雨' : '时段无雨'
+
+  let color: string = weatherColors['weather-reference']
+  if (label === '有雨' || label === '时段有雨') color = weatherColors['rain-low']
+  else if (label === '暂无数据') color = weatherColors['weather-missing']
+  const amountText = amount === null ? '雨量缺测' : `${rainText(amount)} mm`
+  const period = interval === null ? '' : `近 ${interval} 分钟`
+  return { label, color, amountText, period, condition }
 }
 
 export function rainText(value: number | null): string {

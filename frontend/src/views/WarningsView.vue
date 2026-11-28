@@ -590,6 +590,7 @@ function onDrawerVisible(visible: boolean): void {
   padding: var(--aeg-space-s3);
 }
 .warnings-heading {
+  --aeg-heading-ridge-position: center 43%;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas: 'title caption actions';

@@ -705,6 +705,10 @@ onUnmounted(() => {
         @mousedown="onCanvasMouseDown"
         @mousemove="onCanvasMouseMove"
       >
+        <svg v-for="corner in ['top', 'bottom']" :key="corner" class="ed-circuit" :class="`ed-circuit--${corner}`" viewBox="0 0 320 160" aria-hidden="true">
+          <path d="M0 30H62L107 75H180 M0 49H48L92 93H205L226 114H273 M0 74H29L69 114H153 M0 98H23L65 140H174L190 156H304 M84 0L120 36H160L183 59H224" />
+          <circle cx="180" cy="75" r="2" /><circle cx="273" cy="114" r="2" /><circle cx="153" cy="114" r="2" /><circle cx="304" cy="156" r="2" /><circle cx="224" cy="59" r="2" />
+        </svg>
         <!-- 这里刻意不开 fit-view-on-init：它跑在"第一颗被测出尺寸的节点"上、且只跑一次，
              既会被手动拖入的第一颗节点吃掉（之后打开已存定义就不再 fit），又会按 maxZoom 把
              单颗节点放大到 2.0（真机量到可视区只剩 414×339 flow 单位，第二颗怎么放都出画布）。
@@ -736,7 +740,7 @@ onUnmounted(() => {
           @edge-context-menu="openEdgeMenu"
           @pane-context-menu="openPaneMenu"
         >
-          <Background pattern-color="var(--aeg-color-editor-dot)" :gap="14" :size="2" />
+          <Background pattern-color="var(--aeg-color-editor-dot)" :gap="14" :size="1.5" />
           <!-- 空画布上不画小地图（里面什么都没有，只是块白框），但**得挂着**：
                落点让位要把它的真实尺寸当禁落区——第一颗节点贴着右下角落时它还没挂载，
                于是禁落区为空，节点落好后立刻被它盖住（真机量到 171×114px）。 -->
@@ -860,7 +864,6 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  /* 画布区透出全局雾底（与态势/监测/指标同一张背景），节点与面板自己带底色 */
   background: transparent;
   color: var(--aeg-color-text);
 }
@@ -873,8 +876,28 @@ onUnmounted(() => {
 .ed-canvas {
   position: absolute;
   inset: 0;
-  background: transparent;
+  background-color: var(--aeg-color-editor-canvas);
 }
+html[data-theme='dark'] .ed-canvas {
+  background-image:
+    radial-gradient(ellipse at 62% 58%, color-mix(in srgb, var(--aeg-color-editor-bloom-violet) 26%, transparent), transparent 39%),
+    radial-gradient(ellipse at 45% 67%, color-mix(in srgb, var(--aeg-color-editor-bloom-blue) 46%, transparent), transparent 64%),
+    radial-gradient(ellipse at 24% 34%, color-mix(in srgb, var(--aeg-color-command-selected) 20%, transparent), transparent 49%);
+}
+.ed-circuit {
+  display: none;
+  position: absolute;
+  width: min(31%, 410px);
+  fill: none;
+  stroke: var(--aeg-color-editor-accent-blue);
+  stroke-width: 1;
+  opacity: .18;
+  mask-image: linear-gradient(135deg, var(--aeg-color-editor-canvas) 5%, transparent 90%);
+  pointer-events: none;
+}
+html[data-theme='dark'] .ed-circuit { display: block; }
+.ed-circuit--top { inset: 0 0 auto auto; transform: rotate(180deg); }
+.ed-circuit--bottom { inset: auto auto 20px 0; }
 .ed-toolbar {
   position: absolute;
   top: 12px;

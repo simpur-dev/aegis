@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AimOutlined, CloseOutlined, CloudOutlined, LeftOutlined, PauseOutlined, PlayCircleOutlined, ReloadOutlined, RightOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
+import { AimOutlined, BarChartOutlined, CloseOutlined, CloudOutlined, LeftOutlined, PauseOutlined, PlayCircleOutlined, ReloadOutlined, RightOutlined } from '@ant-design/icons-vue'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import mapApi from '@/api/map'
 import { weatherColors } from '@/theme/tokens'
@@ -8,16 +8,17 @@ import { GYIRONG_CASE } from './gyirongCase'
 import { createRainTexture } from './rainTexture'
 import {
   DAILY_RAIN_BANDS, EMPTY_WEATHER_LAYER, HOUR_RAIN_BANDS,
-  gridBounds, plotRainCells, rainCellCenter, rainColor, rainText, weatherCondition,
+  currentRainReading, gridBounds, isLiveWeather, plotRainCells, rainCellCenter, rainColor, rainText,
   type CurrentMapWeather, type RainArchive, type RainCatalog, type WeatherMapLayer, type WeatherMode,
 } from './weather'
 
-const props = defineProps<{ open: boolean; mode: WeatherMode; picked: string | null; compact: boolean; subdued?: boolean }>()
+const props = defineProps<{ mode: WeatherMode | null; picked: string | null; compact: boolean; warningsVisible: boolean; subdued: boolean }>()
 const emit = defineEmits<{
   close: []
   layer: [WeatherMapLayer]
-  summary: [string]
+  mode: [WeatherMode]
   fit: [BBox]
+  'toggle-risk': []
 }>()
 
 const live = shallowRef<CurrentMapWeather | null>(null)
@@ -47,10 +48,13 @@ const bands = computed(() => props.mode === 'daily' ? DAILY_RAIN_BANDS : HOUR_RA
 const sourceUrl = computed(() => props.mode === 'daily'
   ? 'https://essd.copernicus.org/articles/17/3987/2025/essd-17-3987-2025.html'
   : props.mode === 'hourly' ? 'https://open-meteo.com/en/docs/historical-weather-api' : 'https://open-meteo.com/en/docs')
-const selectedWeather = computed(() => live.value?.points.find((point) => point.id === pointId.value))
-const condition = computed(() => weatherCondition(selectedWeather.value?.weather_code ?? null, selectedWeather.value?.is_day))
-const weatherStatus = computed(() => ({ available: '模式天气', stale: '上次缓存', unavailable: '暂不可用', disabled: '已停用' })[live.value?.status ?? 'unavailable'])
-const selectedTemperature = computed(() => selectedWeather.value?.temperature_c == null ? '—' : Math.round(selectedWeather.value.temperature_c))
+const liveMode = computed(() => isLiveWeather(props.mode))
+const liveSites = computed(() => GYIRONG_CASE.sites.map((site, index) => {
+  const point = live.value?.status === 'available' ? live.value.points.find((item) => item.id === site.id) : undefined
+  return { site, point, name: index === 0 ? '吉隆口岸' : '上游参考点', reading: currentRainReading(point) }
+}))
+const selectedWeather = computed(() => liveSites.value.find(({ site }) => site.id === pointId.value)?.point)
+const weatherStatus = computed(() => ({ available: '模式天气', stale: '缓存已过期', unavailable: '暂不可用', disabled: '数据源已停用' })[live.value?.status ?? 'unavailable'])
 const forecast = computed(() => selectedWeather.value?.forecast ?? [])
 const forecastMax = computed(() => Math.max(1, ...forecast.value.map((hour) => hour.rain_mm ?? 0)))
 const availableValues = computed(() => frame.value?.values.filter((value) => value !== null).length ?? 0)
@@ -79,16 +83,17 @@ const rain = computed(() => props.mode === 'daily' && archive.value?.grid && fra
   ? createRainTexture(archive.value.grid, frame.value) : null)
 
 const layer = computed<WeatherMapLayer>(() => {
-  if (props.mode === 'current') {
-    if (live.value?.status !== 'available') return EMPTY_WEATHER_LAYER
-    return { cells: [], points: GYIRONG_CASE.sites.flatMap((site) => {
-      const point = live.value?.points.find((item) => item.id === site.id)
-      if (!point) return []
-      const { label, icon } = weatherCondition(point.weather_code, point.is_day)
-      const temperature = point.temperature_c === null ? '' : ` · ${Math.round(point.temperature_c)}°`
-      return [{ id: `weather-${site.id}`, title: site.label, label: `${label}${temperature}`,
-        lonlat: site.lonlat, mainlandChina: site.mainlandChina, color: icon === 'sun' ? weatherColors['weather-sun-core'] : weatherColors['rain-low'] }]
-    }) }
+  if (!props.mode) return EMPTY_WEATHER_LAYER
+  if (liveMode.value) {
+    if (!live.value) return EMPTY_WEATHER_LAYER
+    return { cells: [], points: liveSites.value.map(({ site, name, reading }, index) => ({
+      id: `weather-${site.id}`, title: name, label: reading.label,
+      labelPlacement: props.compact && index === 1 ? 'below' : 'above',
+      detail: props.mode === 'rain' && reading.label !== '暂无数据'
+        ? [reading.amountText, reading.period].filter(Boolean).join(' · ')
+        : undefined,
+      lonlat: site.lonlat, mainlandChina: site.mainlandChina, color: reading.color,
+    })) }
   }
   if (!frame.value || !archive.value) return EMPTY_WEATHER_LAYER
   if (props.mode === 'daily') {
@@ -122,7 +127,7 @@ function fitArchive(): void {
 
 async function loadArchive(chosenYear?: number): Promise<void> {
   const mode = props.mode
-  if (mode === 'current') return
+  if (!mode || isLiveWeather(mode)) return
   const sequence = ++archiveRequest
   stopPlayback()
   archive.value = null
@@ -172,27 +177,24 @@ function togglePlayback(): void {
 }
 
 watch(layer, (value) => emit('layer', value), { immediate: true })
-watch([live, liveBusy], () => {
-  const home = live.value?.points.find((point) => point.id === GYIRONG_CASE.sites[0].id)
-  emit('summary', live.value?.status === 'available' && home
-    ? `${weatherCondition(home.weather_code).label}${home.temperature_c === null ? '' : ` ${Math.round(home.temperature_c)}°`}`
-    : '')
-})
-watch(() => props.mode, (mode) => {
+watch(() => props.mode, (mode, previous) => {
   archiveRequest++
   archive.value = null
   stopPlayback()
-  if (mode === 'current') { archiveBusy.value = false; return }
+  if (!mode || isLiveWeather(mode)) {
+    archiveBusy.value = false
+    if (mode && !isLiveWeather(previous) && live.value?.status !== 'available') onRefresh()
+    return
+  }
   void loadArchive()
-})
-watch(() => props.open, (open) => { if (!open) stopPlayback() })
+}, { flush: 'sync' })
 watch(() => props.picked, (picked) => {
   const site = GYIRONG_CASE.sites.find((item) => `weather-${item.id}` === picked)
   if (site) pointId.value = site.id
 })
 
 function onRefresh(): void {
-  if (disposed || document.visibilityState === 'hidden' || !navigator.onLine || props.mode !== 'current') return
+  if (disposed || document.visibilityState === 'hidden' || !navigator.onLine || (props.mode && !isLiveWeather(props.mode))) return
   void refreshLive()
 }
 
@@ -219,37 +221,33 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <aside v-show="open" id="map-weather" class="weather-panel" aria-labelledby="map-weather-title">
+  <aside v-show="mode !== null" id="map-weather" class="weather-panel" aria-labelledby="map-weather-title">
     <header class="weather-panel__header">
-      <span class="weather-panel__emblem"><CloudOutlined aria-hidden="true" /></span>
-      <div><h2 id="map-weather-title">{{ mode === 'daily' ? '吉隆日雨量回放' : mode === 'hourly' ? '县域小时雨量' : '当前天气' }}</h2><p>{{ mode === 'hourly' ? '西藏县域代表点' : mode === 'daily' ? '历史回放' : '吉隆口岸与上游' }}</p></div>
-      <button type="button" class="weather-icon-button" aria-label="关闭天气与雨情" @click="emit('close')"><CloseOutlined /></button>
+      <span class="weather-panel__emblem"><CloudOutlined v-if="mode === 'current'" aria-hidden="true" /><BarChartOutlined v-else aria-hidden="true" /></span>
+      <div><h2 id="map-weather-title">{{ mode === 'daily' ? '吉隆日雨量回放' : mode === 'hourly' ? '县域小时雨量' : mode === 'rain' ? '当前雨量' : '当前天气' }}</h2><p>{{ mode === 'hourly' ? '西藏县域代表点' : mode === 'daily' ? '历史回放' : '吉隆口岸与上游' }}</p></div>
+      <button type="button" class="weather-icon-button" aria-label="关闭天气图层" @click="emit('close')"><CloseOutlined /></button>
     </header>
 
-    <template v-if="mode === 'current'">
-      <div class="weather-sites" role="group" aria-label="天气参考点">
-        <button v-for="site in GYIRONG_CASE.sites" :key="site.id" type="button" :aria-pressed="pointId === site.id" @click="pointId = site.id">
-          {{ site.id === GYIRONG_CASE.sites[0].id ? '吉隆口岸' : '上游参考点' }}
-        </button>
-      </div>
-      <div v-if="selectedWeather" class="weather-current">
-        <div class="weather-current__main">
-          <span class="weather-symbol" :data-icon="condition.icon" aria-hidden="true">
-            <ThunderboltOutlined v-if="condition.icon === 'storm'" />
-            <CloudOutlined v-else-if="condition.icon !== 'sun' && condition.icon !== 'moon' && condition.icon !== 'snow'" />
-            <template v-else-if="condition.icon === 'snow'">❄</template>
-          </span>
-          <strong>{{ selectedTemperature }}<small v-if="selectedTemperature !== '—'">°C</small></strong>
-          <div><span class="weather-condition">{{ condition.label }}</span><time :datetime="selectedWeather.valid_at">{{ timeText.format(new Date(selectedWeather.valid_at)) }}</time><span v-if="live?.status === 'stale'" class="weather-status-stale">上次缓存</span></div>
-        </div>
-        <dl class="weather-metrics">
-          <div><dt>前 {{ selectedWeather.interval_minutes }} 分钟降雨</dt><dd>{{ rainText(selectedWeather.rain_mm) }} <span>mm</span></dd></div>
-          <div><dt>10 米风速</dt><dd>{{ rainText(selectedWeather.wind_kmh) }} <span>km/h</span></dd></div>
-        </dl>
-      </div>
-      <p v-else class="weather-empty" role="status">{{ liveBusy ? '正在获取当前天气…' : live?.status === 'disabled' ? '当前天气来源已停用。' : '此位置暂时没有当前天气。' }}</p>
-      <div v-if="forecast.length && live?.status === 'available'" class="weather-forecast">
-        <h3>接下来 6 小时 <span>降雨量 · mm</span></h3>
+    <template v-if="liveMode">
+      <ul class="weather-live" aria-label="参考点雨况" :aria-busy="liveBusy">
+        <li v-for="{ site, name, point, reading } in liveSites" :key="site.id">
+          <button type="button" class="weather-live__point" :style="{ '--point-weather': reading.color }" :aria-pressed="pointId === site.id" @click="pointId = site.id">
+            <span class="weather-live__place">
+              <strong>{{ name }}</strong>
+              <small v-if="point">
+                <span v-if="mode === 'current' && point.temperature_c !== null">{{ reading.condition.label }} {{ Math.round(point.temperature_c) }} °C · </span>
+                <time :datetime="point.valid_at">{{ timeText.format(new Date(point.valid_at)) }}</time>
+              </small>
+            </span>
+            <span class="weather-live__values">
+              <strong><i aria-hidden="true" />{{ liveBusy && !live ? '读取中' : reading.label }}</strong>
+              <small v-if="mode === 'rain' && point">{{ reading.period }} <b>{{ reading.amountText }}</b></small>
+            </span>
+          </button>
+        </li>
+      </ul>
+      <details v-if="mode === 'rain' && forecast.length" class="weather-forecast">
+        <summary>所选参考点未来 6 小时 <span>mm</span></summary>
         <div class="weather-forecast__hours" :style="{ '--weather-hours': forecast.length }">
           <div v-for="hour in forecast" :key="hour.end" :title="`${timeText.format(new Date(hour.end))} 前一小时 · ${rainText(hour.rain_mm)} mm`">
             <strong>{{ rainText(hour.rain_mm) }}</strong>
@@ -257,17 +255,27 @@ onBeforeUnmount(() => {
             <time :datetime="hour.end">{{ clockText.format(new Date(hour.end)) }}</time>
           </div>
         </div>
+      </details>
+      <div v-if="mode === 'rain'" class="weather-replay-choices" role="group" aria-label="历史雨量回放">
+        <span>历史回放</span>
+        <button type="button" class="weather-chip" @click="emit('mode', 'daily')">吉隆日雨量</button>
+        <button type="button" class="weather-chip" @click="emit('mode', 'hourly')">县域小时</button>
       </div>
       <footer class="weather-footer">
-        <div><a :href="sourceUrl" target="_blank" rel="noopener noreferrer">Open-Meteo ↗</a><span> · {{ live?.status === 'stale' ? '模式天气' : weatherStatus }} · 北京时间</span></div>
+        <div><a :href="sourceUrl" target="_blank" rel="noopener noreferrer">Open-Meteo ↗</a><span> · {{ weatherStatus }}<template v-if="live?.status === 'available'"> · 北京时间</template></span></div>
         <button type="button" class="weather-icon-button" aria-label="刷新天气" :disabled="liveBusy" @click="refreshLive"><ReloadOutlined /></button>
       </footer>
     </template>
 
-    <template v-else>
+    <template v-else-if="mode">
+      <div class="weather-replay-choices" role="group" aria-label="雨量模式">
+        <button type="button" class="weather-chip" @click="emit('mode', 'rain')">当前雨量</button>
+        <button type="button" class="weather-chip" :aria-pressed="mode === 'daily'" @click="emit('mode', 'daily')">吉隆日雨量</button>
+        <button type="button" class="weather-chip" :aria-pressed="mode === 'hourly'" @click="emit('mode', 'hourly')">县域小时</button>
+      </div>
       <div class="rain-toolbar">
         <label v-if="mode === 'daily' && catalog?.daily_years.length">年份<select :value="year" @change="loadArchive(Number(($event.target as HTMLSelectElement).value))"><option v-for="item in catalog.daily_years" :key="item" :value="item">{{ item }}</option></select></label>
-        <span v-else class="rain-toolbar__tag">历史回放</span>
+        <button type="button" class="weather-chip" :aria-pressed="warningsVisible" @click="emit('toggle-risk')">风险点</button>
         <button v-if="mode === 'daily' && archive" type="button" class="weather-chip" @click="fitArchive"><AimOutlined /> 定位雨区</button>
       </div>
       <p v-if="archiveBusy" class="weather-empty" role="status">正在读取历史雨量…</p>
@@ -281,7 +289,7 @@ onBeforeUnmount(() => {
         </div>
         <p v-if="highlightedCenter" class="rain-location">{{ highlightedCenter.lat.toFixed(2) }}°N · {{ highlightedCenter.lon.toFixed(2) }}°E</p>
         <Teleport to="#map-rain-replay" :disabled="compact">
-          <section v-show="open || !compact" class="rain-timeline" :class="{ 'is-docked': !compact }" aria-label="历史雨量回放" data-testid="rain-replay">
+          <section class="rain-timeline" :class="{ 'is-docked': !compact }" aria-label="历史雨量回放" data-testid="rain-replay">
             <div class="rain-timeline__actions">
               <button type="button" class="weather-icon-button" aria-label="前一帧" :disabled="frameIndex === 0" @click="stopPlayback(); seek(frameIndex - 1)"><LeftOutlined /></button>
               <button type="button" class="weather-chip weather-chip--play" :aria-label="playing ? '暂停回放' : '播放回放'" :disabled="frameCount < 2" @click="togglePlayback"><PauseOutlined v-if="playing" /><PlayCircleOutlined v-else />{{ playing ? '暂停' : '播放' }}</button>
@@ -341,7 +349,7 @@ onBeforeUnmount(() => {
 .weather-panel__emblem { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 13px; background: color-mix(in srgb, var(--rain-accent) 17%, transparent); color: var(--rain-accent); font-size: 20px; }
 .weather-panel h2, .weather-panel h3, .weather-panel p, .weather-panel dl, .weather-panel dd { margin: 0; }
 .weather-panel h2 { font-size: 17px; letter-spacing: 0.02em; }
-.weather-panel__header p, .weather-footer, .weather-current time, .weather-metrics dt, .rain-reading span, .weather-forecast time { color: var(--aeg-color-map-panel-text-muted); font-size: 11px; }
+.weather-panel__header p, .weather-footer, .weather-live small, .rain-reading span, .weather-forecast time { color: var(--aeg-color-map-panel-text-muted); font-size: 11px; }
 .weather-panel button, .weather-panel select, .rain-timeline button { font: inherit; cursor: pointer; }
 .weather-panel button:disabled, .rain-timeline button:disabled { opacity: .4; cursor: default; }
 :is(.weather-panel, .rain-timeline) :is(button, select, input, a):focus-visible { outline: 2px solid var(--rain-accent); outline-offset: 2px; }
@@ -349,27 +357,37 @@ onBeforeUnmount(() => {
 .weather-icon-button { width: 32px; padding: 0; flex: 0 0 32px; }
 .weather-chip { padding: 0 9px; }
 .weather-panel button:hover:not(:disabled) { border-color: var(--rain-accent); }
-.weather-sites button { padding: 6px 3px; min-height: 32px; color: var(--aeg-color-map-panel-text-muted); white-space: nowrap; background: transparent; border: 1px solid transparent; border-radius: 9px; font-size: 12px; }
-.weather-sites button[aria-pressed='true'] { color: var(--aeg-color-map-panel-text); background: color-mix(in srgb, var(--rain-accent) 18%, transparent); border-color: color-mix(in srgb, var(--rain-accent) 44%, transparent); }
-.weather-sites { display: flex; gap: 7px; margin: 11px 0; }
-.weather-sites button { min-height: 29px; padding: 3px 9px; border-color: var(--aeg-color-map-panel-border); }
-.weather-current__main { display: flex; gap: 11px; align-items: center; min-height: 67px; }
-.weather-current__main > strong { font-size: 44px; font-weight: 570; line-height: 1; letter-spacing: -0.07em; font-variant-numeric: tabular-nums; }
-.weather-current__main small { font-size: 17px; margin-inline-start: 4px; letter-spacing: normal; }
-.weather-current__main > div { display: grid; gap: 4px; margin-inline-start: auto; text-align: end; }
-.weather-condition { font-size: 15px; font-weight: 650; }
-.weather-symbol { position: relative; display: grid; place-items: center; width: 51px; height: 51px; color: var(--rain-accent); font-size: 34px; }
-.weather-symbol[data-icon='sun']::before { width: 30px; height: 30px; content: ''; border-radius: 50%; background: radial-gradient(circle at 38% 32%, var(--aeg-color-weather-sun-core), var(--aeg-color-weather-sun-edge) 78%); box-shadow: 0 0 22px color-mix(in srgb, var(--aeg-color-weather-sun-edge) 40%, transparent), 0 0 0 6px color-mix(in srgb, var(--aeg-color-weather-sun-edge) 14%, transparent); }
-.weather-symbol[data-icon='moon']::before { width: 28px; height: 28px; margin: -7px 0 0 -6px; content: ''; border-radius: 50%; box-shadow: 7px 7px 0 0 var(--aeg-color-weather-moon), 9px 9px 16px color-mix(in srgb, var(--aeg-color-weather-moon) 35%, transparent); }
-.weather-status-stale { color: var(--aeg-tag-orange-text); font-size: 11px; }
-.weather-symbol[data-icon='rain']::after { position: absolute; inset: auto auto 3px 20px; width: 2px; height: 7px; background: currentColor; border-radius: 2px; transform: rotate(24deg); box-shadow: 6px 0 currentColor, 12px 0 currentColor; content: ''; }
-.weather-panel .weather-metrics { display: grid; grid-template-columns: 1.1fr .9fr; gap: 7px; margin-top: 5px; }
-.weather-metrics > div { padding: 8px 9px; border-radius: 11px; background: color-mix(in srgb, var(--rain-accent) 7%, transparent); }
-.weather-metrics dd { font-size: 18px; font-weight: 640; font-variant-numeric: tabular-nums; }
-.weather-metrics dd span, .rain-reading small { color: var(--aeg-color-map-panel-text-muted); font-size: 11px; font-weight: 500; }
-.weather-forecast { margin-top: 13px; }
-.weather-forecast h3 { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
-.weather-forecast h3 span { color: var(--aeg-color-map-panel-text-muted); font-size: 10px; font-weight: 500; }
+.weather-live { display: grid; gap: var(--aeg-space-s2); margin: 0; padding: 0; list-style: none; }
+.weather-live__point {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--aeg-space-s2);
+  width: 100%;
+  min-height: 45px;
+  padding: var(--aeg-space-s2);
+  border: 1px solid var(--aeg-color-map-panel-border);
+  border-radius: var(--aeg-radius-md);
+  background: color-mix(in srgb, var(--rain-accent) 6%, transparent);
+  color: inherit;
+  text-align: start;
+}
+.weather-live__point[aria-pressed='true'], .weather-chip[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--rain-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--rain-accent) 50%, var(--aeg-color-map-panel-border));
+}
+.weather-live__place, .weather-live__values { display: grid; gap: 2px; }
+.weather-live__values { text-align: end; white-space: nowrap; }
+.weather-live__point strong { font-size: var(--aeg-font-base); }
+.weather-live__values strong { display: inline-flex; align-items: center; justify-content: end; gap: var(--aeg-space-s1); }
+.weather-live__values i { width: 7px; height: 7px; border-radius: 50%; background: var(--point-weather); }
+.weather-live__values b { color: var(--aeg-color-map-panel-text); font-size: var(--aeg-font-sm); font-variant-numeric: tabular-nums; }
+.rain-reading small { color: var(--aeg-color-map-panel-text-muted); font-size: 11px; font-weight: 500; }
+.weather-forecast { margin-top: var(--aeg-space-s2); font-size: var(--aeg-font-sm); }
+.weather-forecast summary { cursor: pointer; }
+.weather-forecast summary span { float: inline-end; color: var(--aeg-color-map-panel-text-muted); }
+.weather-replay-choices { display: flex; flex-wrap: wrap; align-items: center; gap: var(--aeg-space-s1) var(--aeg-space-s2); margin-top: var(--aeg-space-s2); font-size: var(--aeg-font-sm); }
+.weather-replay-choices > span { color: var(--aeg-color-map-panel-text-muted); }
 .weather-forecast__hours { display: grid; grid-template-columns: repeat(var(--weather-hours), minmax(0, 1fr)); gap: 4px; margin-top: 7px; }
 .weather-forecast__hours > div { display: grid; justify-items: center; gap: 3px; min-width: 0; font-size: 11px; }
 .weather-forecast__track { display: flex; align-items: end; height: 25px; width: 11px; border-radius: 5px; background: color-mix(in srgb, var(--rain-accent) 10%, transparent); }
@@ -379,7 +397,6 @@ onBeforeUnmount(() => {
 .weather-footer--archive { display: grid; gap: 3px; }
 .weather-panel .weather-empty { margin-top: 10px; min-height: 61px; display: grid; align-content: center; justify-items: start; gap: 6px; font-size: 12px; color: var(--aeg-color-map-panel-text-muted); }
 .rain-toolbar { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; }
-.rain-toolbar__tag { color: var(--rain-accent); }
 .rain-toolbar label { display: inline-flex; align-items: center; gap: 6px; color: var(--aeg-color-map-panel-text-muted); }
 .rain-toolbar select { padding: 5px 7px; color: var(--aeg-color-map-panel-text); background: var(--aeg-color-map-floatbar-bg); border: 1px solid var(--aeg-color-map-panel-border); border-radius: 8px; }
 .rain-reading { display: flex; justify-content: space-between; gap: 7px; align-items: center; margin-top: 9px; }
@@ -439,9 +456,6 @@ onBeforeUnmount(() => {
 @media (max-width: 819px) {
   .weather-panel { padding: 12px 14px; }
   .weather-panel__header { margin-bottom: 8px; }
-  .weather-sites { margin: 7px 0; }
-  .weather-current__main { min-height: 52px; }
-  .weather-metrics > div { padding-block: 6px; }
   .weather-forecast { margin-top: 9px; }
   .weather-footer { margin-top: 7px; padding-top: 6px; }
   .rain-toolbar, .rain-timeline { margin-top: 7px; }

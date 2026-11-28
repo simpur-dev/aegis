@@ -16,7 +16,7 @@ import { loadAmap, type AMapImageLayer, type AMapMapInstance, type AMapNamespace
 import { gcj02ToWgs84, wgs84ToGcj02 } from './gcj02'
 import { mapPalette } from '@/theme/map'
 import { useTheme } from '@/theme/useTheme'
-import { rainCellAt, rainSelectionPoint, type WeatherMapLayer } from './weather'
+import { rainCellAt, rainSelectionPoint, weatherMarkerText, type WeatherMapLayer } from './weather'
 
 const props = defineProps<{
   plan: RenderPlan
@@ -215,15 +215,16 @@ function drawWeather(): void {
     weatherOverlays.push(overlay)
   }
   for (const point of selected ? [...points, rainSelectionPoint(selected)] : points) {
-    if (point.id.startsWith('weather-history-') && map.getZoom() < 10) continue
     const { lon, lat } = point.mainlandChina ? wgs84ToGcj02(point.lonlat) : point.lonlat
     const label = document.createElement('button')
     label.type = 'button'
     label.className = 'amap-weather-marker'
+    if (point.detail) label.classList.add('is-two-line')
     label.style.setProperty('--weather-color', point.color)
-    label.textContent = point.label ? `${point.title} · ${point.label}` : point.title
+    label.textContent = weatherMarkerText(point)
     label.addEventListener('click', (event) => { event.stopPropagation(); emit('select', point.id) })
-    weatherOverlays.push(new amap.Marker({ position: [lon, lat], content: label, anchor: point.mainlandChina ? 'bottom-center' : 'bottom-right', zIndex: 25, bubble: false }))
+    const anchor = point.labelPlacement === 'below' ? 'top-center' : point.labelPlacement || point.mainlandChina ? 'bottom-center' : 'bottom-right'
+    weatherOverlays.push(new amap.Marker({ position: [lon, lat], content: label, anchor, zIndex: 25, bubble: false }))
   }
   if (weatherOverlays.length) map.add(weatherOverlays)
 }
@@ -275,6 +276,11 @@ onMounted(() => { void render() })
   font: 600 12px system-ui, sans-serif;
   white-space: nowrap;
   cursor: pointer;
+}
+:global(.amap-weather-marker.is-two-line) {
+  border-radius: var(--aeg-radius-md);
+  line-height: var(--aeg-lh-snug);
+  white-space: pre;
 }
 /* 高度跟父级走：MapView 的 .map-frame 现在是绝对定位铺满（inset: 0），有确定高度，
    所以这里用 100% 不会塌缩——原来那档 68vh 会把高德地图只画到上半屏，下面露出页面底色。

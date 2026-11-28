@@ -1233,7 +1233,7 @@ test.describe('画布节点不变量 @1440', () => {
         strokePx: Number.parseFloat(es?.strokeWidth ?? '0') * zoom,
         stroke: es?.stroke ?? '',
         borderPx: Number.parseFloat(ns?.borderTopWidth ?? '0') * zoom,
-        barPx: Number.parseFloat(ns?.borderLeftWidth ?? '0') * zoom,
+        sidePx: Number.parseFloat(ns?.borderLeftWidth ?? '0') * zoom,
         /* "收拢"这一句到底收没收到：节点卡有几张落在画布可视区之外。
            长链那种极端纵横比的图会撞上 `minZoom=0.2` 的夹持（40 颗里 26 颗在视野外），
            判据要的是真实形状的定义下 fit 能把全图收进眼里。 */
@@ -1254,7 +1254,7 @@ test.describe('画布节点不变量 @1440', () => {
       }
     })
     console.log(
-      `STROKE zoom=${m.zoom} edges=${m.edges} 线=${m.strokePx.toFixed(2)}设备px/${m.stroke} 描边=${m.borderPx.toFixed(2)} 类别条=${m.barPx.toFixed(2)} 节点=${m.nodeCount} 视野外=${m.offView}`,
+      `STROKE zoom=${m.zoom} edges=${m.edges} 线=${m.strokePx.toFixed(2)}设备px/${m.stroke} 上描边=${m.borderPx.toFixed(2)} 侧描边=${m.sidePx.toFixed(2)} 节点=${m.nodeCount} 视野外=${m.offView}`,
     )
     expect(m.edges, '画布上一条连线都没有——判据在空跑').toBeGreaterThan(3)
     expect(m.zoom, `这份定义的 fit 落在 ${m.zoom}，不在"看全局"那一档，前提变了`).toBeLessThan(0.6)
@@ -1263,7 +1263,7 @@ test.describe('画布节点不变量 @1440', () => {
       `连线只剩 ${m.strokePx.toFixed(2)} 设备像素，缩到看全局那档就看不见链路了`,
     ).toBeGreaterThanOrEqual(1.2)
     expect(m.borderPx, `节点描边只剩 ${m.borderPx.toFixed(2)} 设备像素`).toBeGreaterThanOrEqual(0.8)
-    expect(m.barPx, `节点类别条只剩 ${m.barPx.toFixed(2)} 设备像素`).toBeGreaterThanOrEqual(2)
+    expect(m.sidePx, '节点的侧描边应和顶部一样清楚').toBeCloseTo(m.borderPx)
     expect(m.offView, `fit 之后仍有 ${m.offView}/${m.nodeCount} 张节点卡在画布视野外（收拢没收到全图）`).toBe(0)
     /* 颜色也要脱离库里那支浅灰：#94a3b8 = rgb(148,163,184) */
     expect(m.stroke, `连线还是库里默认的 ${m.stroke}`).not.toBe('rgb(177, 177, 183)')
@@ -1337,16 +1337,20 @@ test.describe('画布节点不变量 @1440', () => {
         if (got < 4.5) problems.push(`标题 ${got.toFixed(2)}:1 压在 rgb(${bg.r},${bg.g},${bg.b}) 上不足 AA`)
       }
       const edge = document.querySelector('.vue-flow__edge-path')
-      const edgeStroke = edge ? parse(getComputedStyle(edge).stroke) : null
-      if (!edgeStroke || !canvasBg) problems.push('连线颜色或画布底色读不出来')
+      const stroke = edge ? getComputedStyle(edge).stroke : ''
+      const gradientId = /#([^"')]+)["']?\)$/.exec(stroke)?.[1]
+      const stops = gradientId ? document.getElementById(gradientId)?.querySelectorAll('stop') : undefined
+      const colors = stops ? [...stops].map((stop) => getComputedStyle(stop).stopColor) : [stroke]
+      const edgeColors = colors.map(parse)
+      if (!canvasBg || !edgeColors.length || edgeColors.some((color) => color === null)) problems.push('连线颜色或画布底色读不出来')
       else {
-        const got = ratio(edgeStroke, canvasBg)
+        const got = Math.min(...edgeColors.map((color) => ratio(color!, canvasBg)))
         if (got < 3) problems.push(`连线 ${got.toFixed(2)}:1 压在画布底上看不见（图形对比要 ≥3）`)
       }
       return {
         cards: cards.length,
         problems,
-        edgeStroke: edgeStroke ? `rgb(${edgeStroke.r},${edgeStroke.g},${edgeStroke.b})` : null,
+        edgeStroke: colors.join(' → '),
         cardBg: cards[0] ? getComputedStyle(cards[0]).backgroundColor : null,
       }
     })

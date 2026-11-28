@@ -1,22 +1,25 @@
 <script setup lang="ts">
 /**
- * 画布连线（移植 Dify `custom-edge` 的 2px 直线 + 中点运算符，适配 AEGIS 的运行态）。
- *
- * 条件标签常驻，中点 “+” 打开块选择器并把新节点插进这条边；
- * 线色按两端节点的运行态取：运行中 / 待人工 / 失败 / 已完成，其余走默认边色。
+ * 空闲连线沿节点类型渐变，执行时沿用运行态实色。条件标签和中点仍用于编辑。
  */
-import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from '@vue-flow/core'
-import { computed } from 'vue'
+import { BaseEdge, EdgeLabelRenderer, getBezierPath, getSmoothStepPath, type EdgeProps } from '@vue-flow/core'
+import { computed, useId } from 'vue'
 
 import type { EdgeDef, NodeState } from '@/utils/graph'
 
 import { useEditorContext } from './editor/context'
 import { useBlockInsertion } from './editor/insertion'
+import { resolveNodePresentation, type NodeAccent } from './presentation'
 
 const props = defineProps<EdgeProps<EdgeDef>>()
 
 const { document: documentStore, run } = useEditorContext()
 const insertion = useBlockInsertion()
+const edgePaintId = useId()
+const gradientId = `wf-gradient-${edgePaintId}`
+const glowGradientId = `wf-glow-${edgePaintId}`
+const arrowId = `wf-arrow-${edgePaintId}`
+const gradientLayers = [{ id: gradientId, glow: false }, { id: glowGradientId, glow: true }]
 
 const condition = computed(() => (typeof props.label === 'string' ? props.label.trim() : ''))
 
@@ -34,19 +37,46 @@ const tone = computed<EdgeTone>(() => {
   if (ends.every((state) => state === 'succeeded' || state === 'degraded' || state === 'bypassed')) return 'done'
   return 'default'
 })
+const executionColors = {
+  running: 'var(--aeg-color-editor-state-running)',
+  awaiting: 'var(--aeg-color-editor-state-awaiting)',
+  failed: 'var(--aeg-color-status-danger)',
+  done: 'var(--aeg-color-status-success)',
+} as const
+const sourceAccent = computed(() => resolveNodePresentation(props.sourceNode.data?.def?.type ?? '').accent)
+const targetAccent = computed(() => resolveNodePresentation(props.targetNode.data?.def?.type ?? '').accent)
+const lavenderTransition = computed(() =>
+  (sourceAccent.value === 'blue' && targetAccent.value === 'amber') ||
+  (sourceAccent.value === 'amber' && targetAccent.value === 'blue'),
+)
+const edgeStroke = computed(() => tone.value === 'default' ? `url(#${gradientId})` : executionColors[tone.value])
+const haloStroke = computed(() => tone.value === 'default' ? `url(#${glowGradientId})` : edgeStroke.value)
+const arrowFill = computed(() => tone.value === 'default'
+  ? accentPaint(targetAccent.value, false)
+  : executionColors[tone.value])
+
+function accentPaint(accent: NodeAccent, glow: boolean): string {
+  const tone = `var(--aeg-color-editor-accent-${accent})`
+  return glow ? `var(--aeg-color-editor-bloom-${accent}, ${tone})` : tone
+}
 
 /** EdgeProps 不带算好的 path/label 坐标，几何要按两端锚点自己求。 */
-const geometry = computed(() =>
-  getBezierPath({
+const geometry = computed(() => {
+  const anchors = {
     sourceX: props.sourceX,
     sourceY: props.sourceY,
     sourcePosition: props.sourcePosition,
     targetX: props.targetX,
     targetY: props.targetY,
     targetPosition: props.targetPosition,
-    curvature: props.curvature,
-  }),
-)
+  }
+  const gap = props.targetX - props.sourceX
+  const rise = Math.abs(props.targetY - props.sourceY)
+  if (gap >= 32 && rise >= Math.max(80, gap * 1.5)) {
+    return getSmoothStepPath({ ...anchors, borderRadius: 18, offset: 10 })
+  }
+  return getBezierPath({ ...anchors, curvature: props.curvature })
+})
 
 const labelStyle = computed(() => {
   const [, labelX, labelY] = geometry.value
@@ -65,14 +95,31 @@ function openSelector(event: MouseEvent): void {
 </script>
 
 <template>
+  <defs>
+    <template v-if="tone === 'default'">
+      <linearGradient v-for="layer in gradientLayers" :id="layer.id" :key="layer.id" gradientUnits="userSpaceOnUse"
+        :x1="props.sourceX" :y1="props.sourceY" :x2="props.targetX" :y2="props.targetY">
+        <stop offset="0%" :stop-color="accentPaint(sourceAccent, layer.glow)" />
+        <stop v-if="lavenderTransition" offset="62%" :stop-color="accentPaint('violet', layer.glow)" />
+        <stop offset="100%" :stop-color="accentPaint(targetAccent, layer.glow)" />
+      </linearGradient>
+    </template>
+    <marker v-if="props.markerEnd" :id="arrowId" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="5.6" markerHeight="5.6" orient="auto"
+      :class="{ 'wf-edge__lit-arrow': tone === 'default' }" :style="{ '--wf-arrow-fill': arrowFill, '--wf-arrow-glow': accentPaint(targetAccent, true) }">
+      <path d="M0 0 10 5 0 10 2.6 5Z" :fill="arrowFill" />
+    </marker>
+  </defs>
+  <path v-if="tone === 'default'" class="wf-edge__bloom" :d="geometry[0]" :stroke="haloStroke" aria-hidden="true" />
+  <path class="wf-edge__halo" :class="{ 'is-idle': tone === 'default' }" :d="geometry[0]" :stroke="haloStroke" aria-hidden="true" />
   <BaseEdge
     :path="geometry[0]"
-    :marker-end="props.markerEnd"
+    :marker-end="props.markerEnd ? `url(#${arrowId})` : undefined"
     :marker-start="props.markerStart"
-    :style="props.style"
+    :style="{ stroke: edgeStroke, ...props.style }"
     class="wf-edge__path"
-    :class="`is-${tone}`"
+    :class="{ 'is-selected': props.selected }"
   />
+  <path v-if="tone === 'default'" class="wf-edge__shine" :d="geometry[0]" aria-hidden="true" />
   <EdgeLabelRenderer>
     <div class="wf-edge__label" :class="`is-${tone}`" :style="labelStyle">
       <span v-if="condition !== ''" class="wf-edge__condition" :title="condition">{{ condition }}</span>
@@ -91,25 +138,48 @@ function openSelector(event: MouseEvent): void {
 </template>
 
 <style scoped>
-/* BaseEdge 渲染的 <path> 不带本组件的 scope 属性，scoped 选择器命不中它——这几条必须全局。
-   这里只管**颜色**：粗细由 `theme.css` 的 `.ed-canvas .vue-flow__edge-path` 按 `--canvas-stroke-k`
-   （1/zoom，封顶 3）补偿——zoom 作用在整个变换层上，写死 2px 再叠 `vector-effect` 会让
-   "看全局"那一档的线与节点描边各按各的比例缩，门禁量的设备像素与代码里的写法就对不上了。 */
-:global(.wf-edge__path) {
-  stroke: var(--aeg-color-editor-edge);
+.wf-edge__halo,
+.wf-edge__bloom,
+.wf-edge__shine {
+  display: none;
+  fill: none;
+  stroke-linecap: round;
+  pointer-events: none;
 }
-:global(.wf-edge__path.is-running) {
-  stroke: var(--aeg-color-editor-state-running);
+.wf-edge__halo {
+  stroke-width: calc(4.5px * var(--canvas-stroke-k, 1));
+  filter: blur(2.8px);
+  opacity: .73;
 }
-:global(.wf-edge__path.is-awaiting) {
-  stroke: var(--aeg-color-editor-state-awaiting);
+.wf-edge__halo.is-idle {
+  stroke-width: 12px;
+  filter: blur(3.5px);
+  opacity: .94;
 }
-:global(.wf-edge__path.is-failed) {
-  stroke: var(--aeg-color-status-danger);
+.wf-edge__bloom {
+  stroke-width: 24px;
+  filter: blur(9px);
+  opacity: .72;
 }
-:global(.wf-edge__path.is-done) {
-  stroke: var(--aeg-color-status-success);
+.wf-edge__shine {
+  stroke: var(--aeg-color-text);
+  stroke-width: calc(1.25px * var(--canvas-stroke-k, 1));
+  opacity: .95;
 }
+html[data-theme='dark'] .wf-edge__halo,
+html[data-theme='dark'] .wf-edge__bloom,
+html[data-theme='dark'] .wf-edge__shine { display: inline; }
+html[data-theme='dark'] .wf-edge__lit-arrow { overflow: visible; }
+html[data-theme='dark'] .wf-edge__lit-arrow path {
+  stroke: color-mix(in srgb, var(--wf-arrow-fill) 25%, var(--aeg-color-text));
+  stroke-width: .8;
+  filter: drop-shadow(0 0 2px var(--wf-arrow-glow));
+}
+:global(.ed-canvas .wf-edge__path) {
+  stroke-width: calc(var(--wf-edge-selected-width, var(--wf-edge-default-width, 1.5px)) * var(--canvas-stroke-k, 1));
+}
+:global(html[data-theme='dark'] .ed-canvas .wf-edge__path) { --wf-edge-default-width: 2.45px; }
+:global(.ed-canvas .wf-edge__path.is-selected) { --wf-edge-selected-width: 2.85px; }
 .wf-edge__label {
   position: absolute;
   display: flex;
