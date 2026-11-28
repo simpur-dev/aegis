@@ -20,8 +20,8 @@ import {
   SearchOutlined, SendOutlined, ToolOutlined, UploadOutlined,
 } from '@ant-design/icons-vue'
 import { useMediaQuery } from '@vueuse/core'
-import { computed, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
-import type { Component, ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 
 import type { ActionSpecDto, ConfirmResultDto, ProposalFrame } from '@/api/assistant'
 import { assistantApi, CHAT_LIMITS } from '@/api/assistant'
@@ -59,17 +59,29 @@ const composerBox = ref<HTMLElement | null>(null)
 
 // 抽屉「会话优先」：告警/处置收进两枚图标，点开才占空间，一次只开一块
 const dockPane = ref<'alerts' | 'handling' | null>(null)
+const panelRoot = ref<HTMLElement | null>(null)
+const pendingAlertsOnly = ref(false)
 const { openCards, refresh: refreshAlerts } = useAlerts()
 const { detail: handlingDetail, refresh: refreshHandling } = useHandlingSpace()
 const dockAlertCount = computed(() => openCards.value.length)
 const dockHandlingCount = computed(() => handlingDetail.value?.tasks_total ?? 0)
 function toggleDockPane(pane: 'alerts' | 'handling'): void {
+  if (pane === 'alerts') pendingAlertsOnly.value = false
   dockPane.value = dockPane.value === pane ? null : pane
 }
+async function showPendingAlerts(): Promise<void> {
+  pendingAlertsOnly.value = true
+  if (compact.value) dockPane.value = 'alerts'
+  await nextTick()
+  panelRoot.value?.querySelector<HTMLElement>('[data-testid="alert-stack"]')?.focus()
+}
+defineExpose({ showPendingAlerts })
 /** Esc 先收展开层、再按才关抽屉：capture 阶段拦在 AssistantDock 的 bubble 监听之前。 */
 function onDockEscape(ev: KeyboardEvent): void {
   if (!compact.value || dockPane.value === null || ev.key !== 'Escape') return
+  if (panelRoot.value?.closest('[aria-hidden="true"]')) return
   ev.stopPropagation()
+  panelRoot.value?.querySelector<HTMLButtonElement>(`[data-testid="dock-toggle-${dockPane.value}"]`)?.focus()
   dockPane.value = null
 }
 onMounted(() => {
@@ -295,9 +307,9 @@ const PANE_STORAGE: Record<PaneKind, string> = {
   alerts: 'aegis.assistant.alerts-pane',
   handling: 'aegis.assistant.handling-pane',
 }
-const PANES: ReadonlyArray<{ kind: PaneKind; label: string; component: Component }> = [
-  { kind: 'alerts', label: '在案告警', component: AlertStack },
-  { kind: 'handling', label: '处置空间', component: HandlingBar },
+const PANES: ReadonlyArray<{ kind: PaneKind; label: string }> = [
+  { kind: 'alerts', label: '在案告警' },
+  { kind: 'handling', label: '处置空间' },
 ]
 
 function readPaneHeight(kind: PaneKind): number | null {
@@ -590,7 +602,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="panel" :class="[`panel--${props.mode}`, { 'panel--compact': compact }]" data-testid="assistant-panel">
+  <div ref="panelRoot" class="panel" :class="[`panel--${props.mode}`, { 'panel--compact': compact }]" data-testid="assistant-panel">
     <a-alert
       v-if="capabilitiesError && capabilitiesKind === 'unavailable'"
       type="error"
@@ -617,7 +629,7 @@ onBeforeUnmount(() => {
       :style="!compact ? deskStyle : undefined"
       :data-testid="props.mode === 'page' ? 'assistant-desk' : undefined"
     >
-      <div class="chat">
+      <div class="chat" :class="{ 'workspace-surface': props.mode === 'page' }">
         <!-- 抽屉模式会话优先：两块收进图标栏，点开才滑出；问答框常驻底 -->
         <template v-if="compact">
           <div class="dockbar" role="group" aria-label="值班工具" data-testid="dock-bar">
@@ -654,7 +666,7 @@ onBeforeUnmount(() => {
           </div>
           <Transition name="dockpane">
             <div v-if="dockPane !== null" id="dock-pane" class="dockpane" data-testid="dock-pane">
-              <AlertStack v-show="dockPane === 'alerts'" />
+              <AlertStack v-show="dockPane === 'alerts'" v-model:pending-only="pendingAlertsOnly" />
               <HandlingBar v-show="dockPane === 'handling'" />
             </div>
           </Transition>
@@ -919,13 +931,14 @@ onBeforeUnmount(() => {
           v-for="pane in PANES"
           :key="pane.kind"
           :ref="(el) => setPaneRef(pane.kind, el)"
-          class="side-pane"
+          class="side-pane workspace-surface"
           :class="`side-pane--${pane.kind}`"
           :style="paneHeights[pane.kind] !== null ? { height: `${paneHeights[pane.kind]}px` } : undefined"
           :data-testid="`${pane.kind}-pane`"
         >
           <div class="side-pane__body">
-            <component :is="pane.component" />
+            <AlertStack v-if="pane.kind === 'alerts'" v-model:pending-only="pendingAlertsOnly" />
+            <HandlingBar v-else />
           </div>
           <div
             class="side-pane__handle"
@@ -1141,7 +1154,7 @@ onBeforeUnmount(() => {
 }
 @supports (backdrop-filter: blur(14px)) {
   @media (prefers-reduced-transparency: no-preference) {
-    .panel--page .chat {
+    html:not([data-theme='dark']) .panel--page .chat {
       background: color-mix(in srgb, var(--aeg-color-overview-tile) 86%, transparent);
       backdrop-filter: blur(14px) saturate(125%);
     }
@@ -1800,6 +1813,77 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.panel--page .chat,
+.panel--page .side-pane {
+  border-radius: 15px;
+}
+.panel--page .side-pane--alerts {
+  --data-highlight-position: 24%;
+}
+.panel--page .side-pane--handling {
+  --data-highlight-position: 62%;
+}
+.panel--page:not(.panel--compact) .welcome {
+  max-width: none;
+  gap: var(--aeg-space-s2);
+}
+.panel--page:not(.panel--compact) .welcome__intro {
+  padding: clamp(12px, 2cqi, 19px);
+}
+.panel--page:not(.panel--compact) .quick-task {
+  min-height: 72px;
+  padding: var(--aeg-space-s2) var(--aeg-space-s3);
+}
+.panel--page .composer {
+  border-radius: var(--aeg-radius-lg);
+}
+
+html[data-theme='dark'] .panel--page {
+  --assistant-inner-edge: color-mix(in srgb, var(--aeg-color-overview-accent) 26%, var(--aeg-color-command-line));
+  --assistant-inner-panel: linear-gradient(150deg, var(--aeg-color-command-panel), var(--aeg-color-command-deep) 92%);
+}
+html[data-theme='dark'] .panel--page :is(.chat, .side-pane)::before {
+  inset: 0;
+}
+html[data-theme='dark'] .panel--page .welcome__intro {
+  border-color: var(--assistant-inner-edge);
+  border-radius: var(--aeg-radius-lg);
+  background: var(--assistant-inner-panel);
+}
+html[data-theme='dark'] .panel--page .welcome__intro::before {
+  opacity: .35;
+}
+html[data-theme='dark'] .panel--page :is(.quick-task, .composer) {
+  border-color: var(--assistant-inner-edge);
+  background:
+    radial-gradient(ellipse at 29% -12%, color-mix(in srgb, var(--aeg-color-overview-accent) 20%, transparent), transparent 69%),
+    var(--assistant-inner-panel);
+}
+html[data-theme='dark'] .panel--page .quick-task:hover:not(:disabled) {
+  border-color: var(--aeg-color-overview-accent);
+  box-shadow: inset 0 1px 12px var(--aeg-color-command-glow);
+}
+html[data-theme='dark'] .panel--page .side-pane :deep(:is(.alert, .handling__task)) {
+  border-color: var(--assistant-inner-edge);
+  background: var(--assistant-inner-panel);
+}
+html[data-theme='dark'] .panel--page .side-pane :deep(.alert--drill) {
+  border-inline-start-color: var(--aeg-tag-orange-line);
+}
+html[data-theme='dark'] .panel--page .side-pane :deep(:is(.alerts__seat-input, .handling__select)) {
+  border-color: var(--assistant-inner-edge);
+  background: var(--aeg-color-command-deep);
+}
+@media (max-height: 850px) {
+  .panel--page:not(.panel--compact) .chat__scroll { padding: var(--aeg-space-s3); }
+  .panel--page:not(.panel--compact) .welcome__intro { padding-block: 10px; }
+  .panel--page:not(.panel--compact) .welcome__copy h2 { font-size: clamp(22px, 3.6cqi, 26px); }
+  .panel--page:not(.panel--compact) .welcome__copy p { margin-top: var(--aeg-space-s1); }
+  .panel--page:not(.panel--compact) .quick-task { min-height: 68px; }
+  .panel--page:not(.panel--compact) .quick-task__copy { gap: 2px; }
+  .panel--page:not(.panel--compact) .composer { padding-block: 10px; }
 }
 @container assistant-chat (max-width: 320px) {
   .composer__keys {

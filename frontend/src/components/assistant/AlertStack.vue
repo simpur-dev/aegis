@@ -15,7 +15,8 @@ import { clearOperatorSeat, lookupOperatorSeat, operatorSeat, setOperatorSeat } 
 import { RISK_LABELS, type RiskLevel } from '@/api/types'
 import { useAlerts } from '@/composables/useAlerts'
 
-const { cards, syncing, syncError, openCards, refresh, ack, transfer, snooze, snoozeActive: isSnoozed, notices, noticeError, dismissNotice } =
+const pendingOnly = defineModel<boolean>('pendingOnly', { default: false })
+const { cards, syncing, syncError, openCards, urgentCards, refresh, ack, transfer, snooze, snoozeActive: isSnoozed, notices, noticeError, dismissNotice } =
   useAlerts()
 
 const seatDraft = ref(operatorSeat.value)
@@ -129,17 +130,19 @@ function leaveSeat(): void {
   refresh()
 }
 
-const shown = computed(() => openCards.value)
+const listTitle = computed(() => pendingOnly.value ? '待确认告警' : '在案告警')
+const shown = computed(() => pendingOnly.value ? urgentCards.value : openCards.value)
 </script>
 
 <template>
-  <section class="alerts" data-testid="alert-stack">
+  <section class="alerts" :aria-label="listTitle" tabindex="-1" data-testid="alert-stack">
     <header class="alerts__bar">
-      <span class="alerts__title">在案告警</span>
-      <span v-if="shown.length" class="alerts__count" :aria-label="`${shown.length} 条在案告警`">{{ shown.length }}</span>
+      <span class="alerts__title">{{ listTitle }}</span>
+      <span v-if="shown.length" class="alerts__count" :aria-label="`${shown.length} 条${listTitle}`">{{ shown.length }}</span>
       <span v-if="syncing" class="alerts__sync">对账中…</span>
       <span v-else-if="syncError" class="alerts__sync alerts__sync--bad">{{ syncError }}</span>
       <button class="alerts__refresh" type="button" data-testid="alert-refresh" @click="refresh()">对账</button>
+      <button v-if="pendingOnly" class="alerts__refresh" type="button" @click="pendingOnly = false">全部在案</button>
     </header>
 
     <div class="alerts__seat" :aria-busy="checkingSeat">
@@ -240,7 +243,9 @@ const shown = computed(() => openCards.value)
         </div>
       </li>
     </ul>
-    <p v-if="shown.length === 0" class="alerts__empty">当前没有在案告警。新预警发布后会自动出现在这里。</p>
+    <p v-if="shown.length === 0" class="alerts__empty">
+      {{ pendingOnly ? '当前没有待确认的红色或橙色告警。' : '当前没有在案告警。新预警发布后会自动出现在这里。' }}
+    </p>
   </section>
 </template>
 
@@ -257,6 +262,7 @@ const shown = computed(() => openCards.value)
 
 .alerts__bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--aeg-space-s2);
 }
@@ -291,6 +297,7 @@ const shown = computed(() => openCards.value)
   padding: 2px 8px;
   cursor: pointer;
 }
+.alerts__refresh + .alerts__refresh { margin-left: 0; }
 
 .alerts__seat {
   display: grid;

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  AppstoreOutlined, BarChartOutlined, BlockOutlined, CheckCircleFilled, SafetyCertificateOutlined,
+  AppstoreOutlined, BarChartOutlined, BlockOutlined, CheckCircleFilled, DashboardOutlined, SafetyCertificateOutlined,
   DatabaseTwoTone, LineChartOutlined, MinusCircleFilled,
   ExclamationCircleFilled, ReloadOutlined, SnippetsOutlined,
 } from '@ant-design/icons-vue'
@@ -10,7 +10,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import api from '@/api/client'
 import type { LatencyReport } from '@/api/types'
 import EChart from '@/components/EChart.vue'
-import PageHero from '@/components/PageHero.vue'
+import DataWorkspaceHeader from '@/components/DataWorkspaceHeader.vue'
 import ServiceTokenBar from '@/components/ServiceTokenBar.vue'
 import SystemTerminal from '@/components/SystemTerminal.vue'
 import FreshnessBar from '@/components/FreshnessBar.vue'
@@ -151,28 +151,28 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="metrics-page">
-    <PageHero
-      class="metrics-hero"
+  <div class="metrics-page data-workspace-content">
+    <DataWorkspaceHeader
       title="指标量测"
       badge="运行实测"
       caption="查看协同成功率、接入时延与超限指标，评估数据处理链路的运行性能。"
     >
+      <template #icon><DashboardOutlined /></template>
       <template #actions>
         <a-button :loading="loading" @click="load">
           <template #icon><ReloadOutlined aria-hidden="true" /></template>
           重新获取
         </a-button>
       </template>
-    </PageHero>
+    </DataWorkspaceHeader>
 
     <section class="metrics-overview" aria-label="运行概览">
-      <div class="metrics-panel metrics-kpi metrics-kpi--transactions">
+      <div class="data-workspace-panel metrics-kpi metrics-kpi--transactions">
         <div class="metrics-symbol"><BlockOutlined aria-hidden="true" /></div>
         <a-statistic title="协同事务总数" :value="collaboration?.transactions ?? '—'" />
       </div>
 
-      <div class="metrics-panel metrics-kpi metrics-kpi--success" :class="`is-${successTone}`">
+      <div class="data-workspace-panel metrics-kpi metrics-kpi--success" :class="`is-${successTone}`">
         <MetricRing :value="successPercent">
           <a-statistic title="协同成功率" :value="successPercent?.toFixed(1) ?? '—'" :suffix="successPercent === null ? '' : '%'" />
         </MetricRing>
@@ -187,7 +187,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="metrics-panel metrics-kpi metrics-kpi--violations" :class="`is-${violationsTone}`">
+      <div class="data-workspace-panel metrics-kpi metrics-kpi--violations" :class="`is-${violationsTone}`">
         <div class="metrics-symbol"><SafetyCertificateOutlined aria-hidden="true" /></div>
         <div class="metrics-kpi__copy">
           <a-statistic title="越限项数" :value="violationCount ?? '—'" />
@@ -199,7 +199,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="metrics-panel metrics-kpi metrics-kpi--freshness">
+      <div class="data-workspace-panel metrics-kpi metrics-kpi--freshness">
         <div class="metrics-symbol"><DatabaseTwoTone :two-tone-color="colorSlots[resolved].brand" aria-hidden="true" /></div>
         <div class="metrics-kpi__copy">
           <h2 class="metrics-kpi__label">数据状态</h2>
@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
     </p>
 
     <div class="metrics-analysis">
-      <section class="metrics-panel metrics-latency" aria-labelledby="metrics-latency-title">
+      <section class="data-workspace-panel metrics-latency" aria-labelledby="metrics-latency-title">
         <header class="metrics-panel__head">
           <h2 id="metrics-latency-title"><BarChartOutlined aria-hidden="true" />关键链路时延分析</h2>
           <p>对比 P50 / P95，定位主要时延瓶颈。零值见明细。</p>
@@ -246,7 +246,7 @@ onBeforeUnmount(() => {
         <p v-else class="metrics-empty">{{ loading ? '正在读取量测…' : loadError ? '暂时无法读取量测。' : '尚无可绘制的时延样本。' }}</p>
       </section>
 
-      <section class="metrics-panel metrics-compliance" aria-labelledby="metrics-compliance-title">
+      <section class="data-workspace-panel metrics-compliance" aria-labelledby="metrics-compliance-title">
         <header class="metrics-panel__head">
           <h2 id="metrics-compliance-title"><SnippetsOutlined aria-hidden="true" />指标达标情况</h2>
         </header>
@@ -277,7 +277,7 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <section class="metrics-panel metrics-detail" aria-labelledby="metrics-detail-title">
+    <section class="data-workspace-panel metrics-detail" aria-labelledby="metrics-detail-title">
       <header class="metrics-panel__head">
         <h2 id="metrics-detail-title"><AppstoreOutlined aria-hidden="true" />指标明细</h2>
         <div class="metrics-filters" role="group" aria-label="指标筛选">
@@ -347,59 +347,19 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .metrics-page {
-  --metrics-accent: var(--aeg-color-overview-accent);
-  --metrics-panel: var(--aeg-color-card);
-  --metrics-line: var(--aeg-color-border);
+  container-type: inline-size;
   display: grid;
-  gap: 13px;
-  min-width: 0;
-}
-
-.metrics-hero {
-  --aeg-heading-ridge-position: center 55%;
-  position: relative;
-  isolation: isolate;
-  margin: 0;
-  padding: 0 78px 0 42px;
-}
-.metrics-hero::before {
-  position: absolute;
-  inset: 7px auto auto 9px;
-  width: 7px;
-  height: 27px;
-  transform: skew(-25deg);
-  background: var(--metrics-accent);
-  box-shadow: 11px 0 color-mix(in srgb, var(--metrics-accent) 34%, transparent);
-  content: '';
-}
-.metrics-hero :deep(.page-head__row) { gap: 10px; }
-.metrics-hero :deep(.page-head__title) { font-size: clamp(24px, 2vw, 30px); }
-.metrics-hero :deep(.page-head__badge) { border-radius: var(--aeg-radius-pill); }
-.metrics-hero :deep(.page-head__caption) { margin-block: 0; }
-.metrics-hero :deep(.ant-btn) {
-  border-color: var(--aeg-color-brand-line);
-  border-radius: 12px;
-  color: var(--aeg-color-text);
+  gap: var(--data-gap);
 }
 
 .metrics-overview,
 .metrics-analysis {
   display: grid;
-  gap: 16px;
+  gap: var(--data-column-gap);
   min-width: 0;
 }
 .metrics-overview { grid-template-columns: minmax(0, 1.08fr) minmax(0, 1.06fr) minmax(0, .94fr) minmax(0, 1.27fr); }
 .metrics-analysis { grid-template-columns: minmax(0, 3fr) minmax(275px, 1.03fr); }
-.metrics-panel {
-  position: relative;
-  isolation: isolate;
-  min-width: 0;
-  border: 1px solid var(--metrics-line);
-  border-radius: 12px;
-  background: var(--metrics-panel);
-  box-shadow: var(--aeg-shadow-sm);
-}
-
 .metrics-kpi {
   display: grid;
   grid-template-columns: minmax(68px, 36%) minmax(0, 1fr);
@@ -445,7 +405,7 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 61px;
   place-items: center;
-  border-inline-end: 1px solid var(--metrics-line);
+  border-inline-end: 1px solid var(--data-edge);
   color: var(--metrics-status, var(--aeg-color-brand));
   font-size: 39px;
 }
@@ -469,7 +429,7 @@ onBeforeUnmount(() => {
   width: min(310px, calc(100vw - 42px));
   margin: 5px 0 0;
   padding: 10px 13px;
-  border: 1px solid var(--metrics-line);
+  border: 1px solid var(--data-edge);
   border-radius: 10px;
   background: var(--aeg-color-elevated);
   box-shadow: var(--aeg-shadow-md);
@@ -531,7 +491,7 @@ onBeforeUnmount(() => {
   justify-self: stretch;
   margin: 0;
   padding-inline-start: 10px;
-  border-inline-start: 1px solid var(--metrics-line);
+  border-inline-start: 1px solid var(--data-edge);
   font-size: 13px;
 }
 .metrics-breakdown div { display: flex; justify-content: space-between; gap: 5px; padding: 4px 0; }
@@ -539,7 +499,7 @@ onBeforeUnmount(() => {
 .metrics-breakdown dt { display: inline-flex; align-items: center; gap: 6px; }
 .metrics-breakdown dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
 .metrics-breakdown :is(dd, .anticon) { color: var(--metrics-status, var(--aeg-color-text-secondary)); }
-.metrics-trend { border-top: 1px solid var(--metrics-line); padding-top: 6px; }
+.metrics-trend { border-top: 1px solid var(--data-edge); padding-top: 6px; }
 .metrics-trend h3 { margin: 0; font-size: 14px; font-weight: var(--aeg-weight-bold); }
 .metrics-trend h3 span { color: var(--aeg-color-text-secondary); font-weight: 400; }
 .metrics-trend__caption { margin: 1px 0 3px; color: var(--aeg-color-text-secondary); font-size: 11px; }
@@ -585,10 +545,10 @@ onBeforeUnmount(() => {
 .metrics-filters button:focus-visible,
 .metrics-definition summary:focus-visible { outline: 2px solid var(--aeg-color-brand); outline-offset: 2px; }
 
-.metrics-table { overflow: auto; border: 1px solid var(--metrics-line); border-radius: 7px; }
+.metrics-table { overflow: auto; border: 1px solid var(--data-edge); border-radius: 7px; }
 .metrics-table :deep(.ant-table) { min-width: 705px; background: transparent; font-variant-numeric: tabular-nums; }
 .metrics-table :deep(.ant-table.ant-table-small .ant-table-cell) {
-  border-color: var(--metrics-line);
+  border-color: var(--data-edge);
   padding: 5px 13px;
   font-size: 13px;
   line-height: 1.45;
@@ -598,7 +558,7 @@ onBeforeUnmount(() => {
   color: var(--aeg-color-text);
   background: var(--aeg-color-overview-tile);
 }
-.metrics-table :deep(.ant-table-tbody > tr:nth-child(even) > td) { background: color-mix(in srgb, var(--metrics-accent) 4%, transparent); }
+.metrics-table :deep(.ant-table-tbody > tr:nth-child(even) > td) { background: color-mix(in srgb, var(--data-ice) 4%, transparent); }
 .metrics-table :deep(.ant-table-tbody > tr > td.ant-table-cell-row-hover) { background: var(--aeg-color-brand-soft); }
 .metrics-table :deep(.ant-table-tbody > tr:last-child > td) { border-bottom: 0; }
 .metrics-table :deep(.ant-tag) { margin-inline-end: 0; }
@@ -617,41 +577,10 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
-html[data-theme='dark'] .metrics-page {
-  --metrics-panel: color-mix(in srgb, var(--aeg-color-command-deep) 91%, transparent);
-  --metrics-line: color-mix(in srgb, var(--metrics-accent) 23%, var(--aeg-color-command-line));
-}
-html[data-theme='dark'] .metrics-hero :deep(.ant-btn) {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--aeg-color-command-raised) 64%, transparent), var(--aeg-color-command-deep));
-}
-html[data-theme='dark'] .metrics-panel {
-  --metrics-flare: var(--metrics-accent);
-  --metrics-highlight: color-mix(in srgb, var(--metrics-flare) 58%, white);
-  background:
-    radial-gradient(ellipse at 0 0, color-mix(in srgb, var(--metrics-flare) 21%, transparent), transparent 49%),
-    radial-gradient(ellipse at 98% 100%, color-mix(in srgb, var(--metrics-flare) 20%, transparent), transparent 55%),
-    linear-gradient(162deg, color-mix(in srgb, var(--aeg-color-command-raised) 43%, var(--metrics-panel)), var(--metrics-panel) 70%);
-  box-shadow: inset 0 1px 12px color-mix(in srgb, var(--metrics-flare) 12%, transparent),
-    0 7px 19px -8px color-mix(in srgb, var(--metrics-flare) 38%, transparent);
-}
-html[data-theme='dark'] .metrics-panel::before {
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  padding: 1px;
-  background:
-    radial-gradient(ellipse 52% 83% at 0 0, var(--metrics-highlight), transparent 86%),
-    radial-gradient(ellipse 49% 76% at 98% 100%, var(--metrics-highlight), transparent 83%);
-  mask: linear-gradient(black 0 0) content-box, linear-gradient(black 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-  content: '';
-}
 html[data-theme='dark'] .metrics-kpi--success {
-  --metrics-flare: var(--metrics-status, var(--metrics-accent));
-  --metrics-line: color-mix(in srgb, var(--metrics-flare) 44%, var(--aeg-color-command-line));
+  --data-highlight-color: var(--metrics-status, var(--data-ice));
 }
-html[data-theme='dark'] .metrics-kpi--violations.is-bad { --metrics-flare: var(--metrics-status); }
+html[data-theme='dark'] .metrics-kpi--violations.is-bad { --data-highlight-color: var(--metrics-status); }
 html[data-theme='dark'] .metrics-kpi--transactions::after,
 html[data-theme='dark'] .metrics-kpi--success::after {
   position: absolute;
@@ -667,13 +596,13 @@ html[data-theme='dark'] .metrics-kpi--success::after {
 }
 html[data-theme='dark'] .metrics-kpi--success::after { filter: hue-rotate(-65deg); }
 html[data-theme='dark'] .metrics-symbol {
-  color: var(--metrics-status, var(--metrics-accent));
+  color: var(--metrics-status, var(--data-ice));
   filter: drop-shadow(0 3px 8px color-mix(in srgb, currentColor 55%, transparent));
 }
 html[data-theme='dark'] .metrics-panel__head h2 :deep(.anticon),
-html[data-theme='dark'] .metrics-trend h3 :deep(.anticon) { color: var(--metrics-accent); }
+html[data-theme='dark'] .metrics-trend h3 :deep(.anticon) { color: var(--data-ice); }
 html[data-theme='dark'] .metrics-filters [aria-pressed='true'] {
-  background: linear-gradient(160deg, color-mix(in srgb, white 22%, var(--metrics-accent)), var(--metrics-accent));
+  background: linear-gradient(160deg, color-mix(in srgb, white 22%, var(--data-ice)), var(--data-ice));
   box-shadow: inset 0 1px 4px color-mix(in srgb, white 35%, transparent);
 }
 html[data-theme='dark'] .metrics-table :deep(.ant-table-thead .ant-table-cell) {
@@ -691,10 +620,6 @@ html[data-theme='dark'] .metrics-table :deep(.ant-table-thead .ant-table-cell) {
   .metrics-tools { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 540px) {
-  .metrics-page { gap: 11px; }
-  .metrics-hero { padding-inline: 27px 0; }
-  .metrics-hero::before { inset-inline-start: 4px; }
-  .metrics-hero :deep(.page-head__caption) { font-size: 12px; }
   .metrics-overview, .metrics-analysis { gap: 9px; }
   .metrics-kpi { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 9px; text-align: center; }
   .metrics-kpi--success { --metrics-dial-size: 64px; }

@@ -119,27 +119,27 @@ describe('UI 基座', () => {
   })
 
   /**
-   * 页头覆盖七页（旧口径是"每页都挂 PageHero 深色横幅"）。
-   *
-   * 断言的**职责没变**：新增页面漏挂统一页头，就会掉出同一套观感。变的是两点口径：
-   * ① 横幅退役成亮面页头，所以要求的是 `title=` + `caption=`（页名与这页在讲什么）；
-   * ② 单字形图标（语/势/图/标/测/警/程）随装饰一起退役——标题已经说了页名，那颗渐变芯片没有功能目的，
-   *    所以这里反过来**禁止**再传 `icon=`。
+   * 数据处理页通过共用标题栏复用 PageHero；其他常规页直接使用 PageHero。
+   * 两种用法都提供标题与说明，并继续禁止旧的单字形图标 icon= 属性。
    */
   it('常规页面挂统一页头，沉浸式编辑器用自带头部（两者都不许半套）', () => {
     const routerText = readRepoFile('frontend', 'src', 'router.ts')
     const routes = [...routerText.matchAll(/path:\s*'\/([a-z-]+)'[^}]*?meta:\s*\{([^}]*)\}/g)].map((match) => ({
       name: `${match[1]!.split('-').map((part) => part[0]!.toUpperCase() + part.slice(1)).join('')}View.vue`,
       immersive: /immersive:\s*true/.test(match[2] as string),
+      dataWorkspace: /workspace:\s*'data'/.test(match[2] as string),
     }))
+    const workspaceHeader = readRepoFile('frontend', 'src', 'components', 'DataWorkspaceHeader.vue')
+    expect(workspaceHeader).toContain("import PageHero from '@/components/PageHero.vue'")
+    expect(workspaceHeader).toMatch(/<PageHero\b[^>]*v-bind="\$props"/)
     expect(routes.length).toBeGreaterThanOrEqual(7)
     for (const route of routes) {
       const text = readRepoFile('frontend', 'src', 'views', route.name)
       if (route.immersive) {
         /* `/workflow` 整页让位给编辑器：不挂 PageHero，但必须有自己的 56px 头部，
            否则会出现"没有页头也没有返回入口"的整页孤岛。 */
-        expect(text, `${route.name} 标了 immersive 却还挂 PageHero（外壳会被套两层）`).not.toContain(
-          "import PageHero from '@/components/PageHero.vue'",
+        expect(text, `${route.name} 标了 immersive 却还挂普通页头（外壳会被套两层）`).not.toMatch(
+          /import (?:PageHero|DataWorkspaceHeader) from/,
         )
         expect(text, `${route.name} 标了 immersive 却没有编辑器头部`).toContain(
           "import EditorHeader from '@/components/workflow/editor/EditorHeader.vue'",
@@ -147,13 +147,13 @@ describe('UI 基座', () => {
         expect(text, `${route.name} 模板里没放编辑器头部`).toMatch(/<EditorHeader[\s>]/)
         continue
       }
-      expect(text, `${route.name} 没接页头组件`).toContain("import PageHero from '@/components/PageHero.vue'")
-      expect(text, `${route.name} 模板里没用页头`).toMatch(/<PageHero[\s>]/)
-      expect(text, `${route.name} 的页头没给标题`).toMatch(/<PageHero[^>]*[:\s]title=/s)
-      expect(text, `${route.name} 的页头没给说明句（caption）`).toMatch(/<PageHero[^>]*[:\s]caption=/s)
-      expect(text, `${route.name} 又传回了单字形图标 icon=（那颗渐变芯片已退役）`).not.toMatch(
-        /<PageHero[^>]*[:\s]icon=/s,
-      )
+      const header = route.dataWorkspace ? 'DataWorkspaceHeader' : 'PageHero'
+      expect(text, `${route.name} 没接页头组件`).toContain(`import ${header} from '@/components/${header}.vue'`)
+      const opening = text.match(new RegExp(`<${header}\\b[^>]*>`))?.[0]
+      expect(opening, `${route.name} 模板里没用页头`).toBeDefined()
+      expect(opening, `${route.name} 的页头没给标题`).toMatch(/[:\s]title=/)
+      expect(opening, `${route.name} 的页头没给说明句（caption）`).toMatch(/[:\s]caption=/)
+      expect(opening, `${route.name} 又传回了单字形图标 icon=`).not.toMatch(/[:\s]icon=/)
     }
   })
 

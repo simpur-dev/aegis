@@ -26,6 +26,7 @@ defineProps<{
 <template>
   <header class="page-head" :class="{ 'page-head--surface': surface, 'aegis-heading-ridge': !hideRidge }">
     <div class="page-head__row">
+      <slot name="heading-icon" />
       <h1 class="page-head__title">{{ title }}</h1>
       <span v-if="badge" class="page-head__badge">{{ badge }}</span>
       <span v-if="status" class="page-head__status" :class="`is-${status.tone}`" :title="status.text">

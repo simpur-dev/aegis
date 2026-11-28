@@ -82,12 +82,15 @@ const legend = computed(() => levels.map((level) => ({
     linear-gradient(90deg, transparent 65%, color-mix(in srgb, var(--aeg-color-terrain-bg) 76%, transparent));
   opacity: 0.82;
 }
-html[data-theme='dark'] .terrain-preview::after {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  box-shadow: inset 0 -12px 18px -12px var(--aeg-color-command-glow);
+html[data-theme='dark'] .terrain-preview {
+  background: transparent;
+}
+html[data-theme='dark'] .terrain-preview::before {
+  background:
+    radial-gradient(ellipse 48% 36% at 29% 108%, color-mix(in srgb, var(--dash-sky-light) 26%, transparent), transparent 90%),
+    radial-gradient(ellipse 65% 35% at 65% 106%, var(--aeg-color-command-glow), transparent 86%),
+    linear-gradient(90deg, transparent 56%, color-mix(in srgb, var(--aeg-color-terrain-bg) 73%, transparent));
+  opacity: .9;
   pointer-events: none;
 }
 .terrain-preview__image {
@@ -98,6 +101,11 @@ html[data-theme='dark'] .terrain-preview::after {
   height: 100%;
   object-fit: cover;
   object-position: center 50%;
+}
+html[data-theme='dark'] .terrain-preview__image {
+  mask-image: linear-gradient(180deg, transparent, black var(--terrain-fade-top, 18%), black var(--terrain-fade-bottom, 78%), transparent 100%),
+    linear-gradient(90deg, transparent, black 5%, black 94%, transparent);
+  mask-composite: intersect;
 }
 .terrain-preview__head {
   grid-area: head;
@@ -224,6 +232,13 @@ html[data-theme='dark'] .terrain-preview__key {
   .terrain-preview__image {
     object-fit: contain;
     object-position: center 25%;
+  }
+  html[data-theme='dark'] .terrain-preview__image {
+    --terrain-fade-top: 12%;
+    --terrain-fade-bottom: 88%;
+    inset-block: 45px auto;
+    height: auto;
+    object-position: center;
   }
   .terrain-preview__regions {
     align-self: end;

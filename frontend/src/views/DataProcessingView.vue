@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import {
-  ApiOutlined, CheckCircleOutlined, DatabaseOutlined, DownOutlined, ExperimentOutlined, FilterOutlined,
+  ApiOutlined, ApartmentOutlined, CheckCircleOutlined, DatabaseOutlined, DownOutlined, ExperimentOutlined, FilterOutlined,
   OrderedListOutlined, ReloadOutlined, SendOutlined, WarningOutlined,
 } from '@ant-design/icons-vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import api, { ApiError } from '@/api/client'
 import type { ProcessingDetail, ProcessingList, ProcessingStageKey, ProcessingStatus } from '@/api/types'
-import PageHero from '@/components/PageHero.vue'
+import DataWorkspaceHeader from '@/components/DataWorkspaceHeader.vue'
 import ProcessingPayload from '@/components/ProcessingPayload.vue'
 import { formatOperatingTime, operatingClock } from '@/utils/clock'
 
@@ -132,11 +132,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="processing">
-    <PageHero
-      surface title="数据处理流水线"
+  <div class="processing data-workspace-content">
+    <DataWorkspaceHeader
+      title="数据处理流水线"
       caption="按批次检查遥测从原始输入到可查读数、数据库提交与事件投递的过程。"
     >
+      <template #icon><ApartmentOutlined /></template>
       <template #actions>
         <span v-if="history && !listError" class="live-mark">
           <span aria-hidden="true" />每 5 秒刷新
@@ -146,13 +147,13 @@ onBeforeUnmount(() => {
           刷新
         </a-button>
       </template>
-    </PageHero>
+    </DataWorkspaceHeader>
 
     <p v-if="listError" class="processing-error" role="alert">
       {{ listError }}<template v-if="history"> 当前保留上次成功读取的记录。</template>
     </p>
     <div class="processing-grid">
-      <aside class="processing-pane batch-pane" aria-labelledby="processing-rounds">
+      <aside class="data-workspace-panel batch-pane" aria-labelledby="processing-rounds">
         <div class="batch-heading">
           <h2 id="processing-rounds"><OrderedListOutlined aria-hidden="true" /> 接入批次</h2>
           <button type="button" class="latest-button" :aria-pressed="followLatest" @click="goLatest">跟随最新</button>
@@ -193,10 +194,10 @@ onBeforeUnmount(() => {
 
       <div class="processing-workspace">
         <div v-if="detailError" class="processing-error" role="alert">{{ detailError }}</div>
-        <section v-if="detail && stage" class="processing-pane trace-pane" aria-labelledby="processing-trace">
+        <section v-if="detail && stage" class="data-workspace-panel trace-pane" aria-labelledby="processing-trace">
           <div class="trace-heading">
             <div>
-              <h2 id="processing-trace">批次过程 <span class="processing-status" :data-tone="detail.status">{{ statusLabels[detail.status] }}</span></h2>
+              <h2 id="processing-trace"><ApartmentOutlined aria-hidden="true" />批次过程 <span class="processing-status" :data-tone="detail.status">{{ statusLabels[detail.status] }}</span></h2>
               <p>{{ sharedTime }} <span aria-hidden="true">·</span> <code>{{ detail.trace_id }}</code></p>
             </div>
             <span class="trace-count"><strong>{{ detail.published }}</strong> / {{ detail.readings }} 条已投递</span>
@@ -281,7 +282,7 @@ onBeforeUnmount(() => {
           </section>
         </section>
 
-        <section v-else-if="!detailError" class="processing-pane trace-empty">
+        <section v-else-if="!detailError" class="data-workspace-panel trace-empty">
           <ApiOutlined aria-hidden="true" />
           <h2>{{ listError && !history ? '处理记录暂不可用' : selectedId ? '正在读取批次过程' : onlyIssues ? '没有符合筛选的批次' : '等待遥测接入' }}</h2>
           <p v-if="!selectedId && !onlyIssues && history">
@@ -295,27 +296,20 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .processing {
+  container-type: inline-size;
   display: grid;
-  gap: var(--aeg-space-s4);
+  gap: var(--data-gap);
   min-width: 0;
 }
-.processing :deep(.page-head) { margin: 0; }
 .processing-grid {
   display: grid;
   grid-template-columns: minmax(208px, 252px) minmax(0, 1fr);
   align-items: start;
-  gap: var(--aeg-space-s4);
+  gap: var(--data-column-gap);
 }
 .processing-workspace { min-width: 0; }
-.processing-pane {
-  min-width: 0;
-  border: 1px solid var(--aeg-color-border);
-  border-radius: var(--aeg-radius-xl);
-  background: var(--aeg-color-overview-panel);
-  box-shadow: inset 0 1px 0 var(--aeg-color-glass-border), var(--aeg-shadow-sm);
-}
 .processing h2, .processing h3, .processing h4 { margin: 0; color: var(--aeg-color-text); }
-.processing h2 { font-size: var(--aeg-font-md); }
+.processing h2 { font-size: clamp(18px, 1.4vw, 24px); }
 .processing h3 { font-size: var(--aeg-font-base); }
 .processing h4 { font-size: var(--aeg-font-sm); }
 .live-mark, .stage-state {
@@ -342,7 +336,7 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 .batch-heading h2 { white-space: nowrap; }
-.batch-heading h2 :deep(.anticon) { color: var(--aeg-color-overview-accent); }
+.batch-heading h2 :deep(.anticon), .trace-heading h2 :deep(.anticon) { color: var(--data-ice); }
 .latest-button, .batch-filter button, .batch-row, .stage-rail button {
   font: inherit;
   color: var(--aeg-color-text);
@@ -553,6 +547,28 @@ onBeforeUnmount(() => {
 .trace-empty :deep(.anticon) { color: var(--aeg-color-overview-accent); font-size: var(--aeg-font-xl); }
 .trace-empty h2 { margin-top: var(--aeg-space-s3); }
 .trace-empty p { margin: var(--aeg-space-s2) 0 0; }
+html[data-theme='dark'] .trace-pane { --data-highlight-position: 60%; }
+html[data-theme='dark'] .stage-rail button,
+html[data-theme='dark'] .payload-card,
+html[data-theme='dark'] .issue-card:not(.has-issues),
+html[data-theme='dark'] .source-entry {
+  border-color: color-mix(in srgb, var(--data-edge) 47%, var(--aeg-color-border));
+  background: linear-gradient(150deg, var(--aeg-color-command-panel), var(--data-inset) 76%);
+}
+html[data-theme='dark'] .stage-rail button[aria-pressed='true'],
+html[data-theme='dark'] .batch-row[aria-pressed='true'] {
+  border-color: var(--data-ice);
+  background: linear-gradient(145deg, var(--aeg-color-command-raised), var(--data-inset));
+  box-shadow: inset 0 1px 9px color-mix(in srgb, var(--data-ice) 17%, transparent);
+}
+html[data-theme='dark'] .stage-rail button:hover { border-color: var(--data-ice); }
+html[data-theme='dark'] .stage-rail__top :deep(.anticon) { color: var(--aeg-color-terrain-accent); }
+html[data-theme='dark'] .latest-button[aria-pressed='true'],
+html[data-theme='dark'] .batch-filter button[aria-pressed='true'] {
+  border-color: var(--data-edge);
+  background: var(--aeg-color-command-panel);
+  color: var(--aeg-color-terrain-accent);
+}
 @media (max-width: 1020px) {
   .stage-rail button { min-height: 76px; }
 }
@@ -573,10 +589,6 @@ onBeforeUnmount(() => {
   .batch-foot { display: none; }
 }
 @media (max-width: 720px) {
-  .processing :deep(.page-head__actions) {
-    flex: 0 0 auto;
-    margin-left: auto;
-  }
   .live-mark { display: none; }
 }
 @media (max-width: 440px) {

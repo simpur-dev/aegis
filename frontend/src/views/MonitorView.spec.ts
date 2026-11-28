@@ -371,6 +371,30 @@ describe('监测台账要最新在上，而时序图不许跟着翻', () => {
     expect(wrapper.findComponent({ name: 'ATable' }).props('dataSource')).toHaveLength(3)
   })
 
+  it('最新标记落在有效读数上，更新但可疑的读数只留在台账', async () => {
+    mockedTelemetry.mockResolvedValue({
+      count: 3,
+      items: [oldest, middle, { ...newest, quality_flag: 'suspect', value: 400 }],
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    const option = wrapper.findComponent({ name: 'EChart' }).props('option') as {
+      series: Array<{
+        data: Array<[number, number | null]>
+        markLine: { data: Array<{ xAxis: number }> }
+        markPoint: { data: Array<{ coord: [number, number] }> }
+      }>
+    }
+    const lastValidTime = Date.parse(middle.observed_at)
+    const series = option.series[0]
+    expect(series.data.at(-1)).toEqual([Date.parse(newest.observed_at), null])
+    expect(series.markLine.data).toEqual([{ xAxis: lastValidTime }])
+    expect(series.markPoint.data).toEqual([{ coord: [lastValidTime, middle.value] }])
+    expect(wrapper.get('.chart-latest time').attributes('datetime')).toBe(middle.observed_at)
+    expect(wrapper.findComponent({ name: 'ATable' }).props('dataSource')).toHaveLength(3)
+    wrapper.unmount()
+  })
+
   it('列头写明"最新在上"：读的人不用先猜这张表是怎么排的', async () => {
     threeRows()
     const wrapper = mountView()

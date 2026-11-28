@@ -576,15 +576,16 @@ watch(
   container: dashboard / inline-size;
 }
 html[data-theme='dark'] .dashboard {
-  --dash-panel-face: linear-gradient(155deg,
-    color-mix(in srgb, var(--aeg-color-command-panel) 89%, transparent),
-    color-mix(in srgb, var(--aeg-color-command-deep) 94%, transparent) 62%);
-  --dash-detail-rim: radial-gradient(ellipse 82% 78% at 0% 0%,
-    color-mix(in srgb, var(--aeg-color-overview-accent) 42%, var(--aeg-color-command-line)),
-    var(--aeg-color-command-line));
-  --dash-detail-face: linear-gradient(145deg,
-    color-mix(in srgb, var(--aeg-color-command-raised) 65%, var(--aeg-color-command-panel)),
-    var(--aeg-color-command-panel) 82%);
+  --dash-panel-face: linear-gradient(150deg,
+    color-mix(in srgb, var(--aeg-color-command-raised) 66%, transparent),
+    color-mix(in srgb, var(--aeg-color-command-panel) 70%, transparent) 39%,
+    color-mix(in srgb, var(--aeg-color-command-deep) 87%, transparent) 84%);
+  --dash-detail-rim: radial-gradient(ellipse 70% 90% at 3% 0%,
+    color-mix(in srgb, var(--dash-sky-light) 33%, var(--aeg-color-command-line)),
+    color-mix(in srgb, var(--aeg-color-command-line) 48%, var(--aeg-color-command-deep)));
+  --dash-detail-face: linear-gradient(151deg,
+    color-mix(in srgb, var(--aeg-color-command-raised) 66%, var(--aeg-color-command-deep)),
+    color-mix(in srgb, var(--aeg-color-command-panel) 56%, var(--aeg-color-command-deep)) 76%);
 }
 .agent-detail {
   display: grid;
@@ -623,8 +624,14 @@ html[data-theme='dark'] .dashboard {
 .dash-overview__summary {
   padding: var(--aeg-space-s3) var(--aeg-space-s4) var(--aeg-space-s2);
 }
+html[data-theme='dark'] .dash-overview__summary {
+  background:
+    radial-gradient(ellipse 36% 28px at 62% 38%, color-mix(in srgb, var(--dash-sky-light) 16%, transparent), transparent 87%),
+    radial-gradient(ellipse 70% 50% at 78% 62%, color-mix(in srgb, var(--aeg-color-command-selected) 23%, transparent), transparent 75%);
+}
 .dash-overview :deep(.page-head) {
   --aeg-heading-ridge-inset: -6px 1% -9px 43%;
+  --aeg-heading-ridge-opacity: .61;
   margin-bottom: var(--aeg-space-s3);
 }
 .dash-overview :deep(.page-head__row),
@@ -740,6 +747,9 @@ html[data-theme='dark'] .dash-overview :deep(.page-head__actions .dash-drill) {
 html[data-theme='dark'] .dash-collaboration {
   border-color: transparent;
   background: var(--dash-detail-face) padding-box, var(--dash-detail-rim) border-box;
+}
+html[data-theme='dark'] .dash-collaboration .is-agent i {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--stage-node) 20%, transparent), 0 0 8px color-mix(in srgb, var(--stage-node) 40%, transparent);
 }
 .dash-collaboration__link {
   width: fit-content;
@@ -931,6 +941,9 @@ html[data-theme='dark'] .dash-agent__summary {
   .dash-overview :deep(.page-head__actions) {
     flex-basis: 100%;
   }
+  .dash-overview :deep(.page-head) {
+    --aeg-heading-ridge-opacity: .34;
+  }
   .dash-urgent {
     margin-left: 0;
   }
@@ -950,14 +963,21 @@ html[data-theme='dark'] .glass-panel {
   position: relative;
   border-color: transparent;
   background:
-    radial-gradient(ellipse 58% 20px at 4% 0%, color-mix(in srgb, var(--aeg-color-terrain-accent) 35%, transparent), transparent),
-    radial-gradient(ellipse 70% 112px at 0% -12px, color-mix(in srgb, var(--aeg-color-command-selected) 49%, transparent), transparent),
-    radial-gradient(ellipse 64% 50px at 100% 103%, color-mix(in srgb, var(--aeg-color-brand-alt) 37%, transparent), transparent),
+    radial-gradient(ellipse 36% 46px at 2% -4px, color-mix(in srgb, var(--dash-sky-light) var(--dash-panel-shine, 40%), transparent), transparent 88%),
+    radial-gradient(ellipse 72% 162px at 12% 0, color-mix(in srgb, var(--aeg-color-command-raised) 67%, transparent), transparent 88%),
+    radial-gradient(ellipse 60% 92px at 78% 108%, color-mix(in srgb, var(--aeg-color-command-selected) 28%, transparent), transparent 90%),
     var(--dash-panel-face);
   background-clip: padding-box;
-  box-shadow: 0 7px 19px var(--aeg-color-overlay-scrim), 0 3px 19px color-mix(in srgb, var(--aeg-color-command-glow) 42%, transparent);
+  box-shadow: 0 12px 26px -14px var(--aeg-color-overlay-scrim),
+    -5px -6px 24px -11px color-mix(in srgb, var(--dash-sky-light) 42%, transparent),
+    0 12px 28px -15px var(--aeg-color-command-glow);
 }
-/* 单独绘制一像素的渐隐边光，避免描边的色带透过半透明卡面。 */
+html[data-theme='dark'] .dash-agent {
+  --dash-panel-shine: 28%;
+  --dash-edge-shine: 72%;
+}
+html[data-theme='dark'] .dash-events { --dash-panel-shine: 33%; }
+/* 边缘只在朝向光源的一侧提亮，右边和下沿保留较弱反光。 */
 html[data-theme='dark'] .glass-panel::before {
   content: '';
   position: absolute;
@@ -967,9 +987,9 @@ html[data-theme='dark'] .glass-panel::before {
   border-radius: inherit;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 66% 53% at 4% 0%, var(--aeg-color-terrain-accent), transparent 82%),
-    radial-gradient(ellipse 60% 35% at 100% 100%, color-mix(in srgb, var(--aeg-color-brand-alt) 57%, transparent), transparent 86%);
-  background-color: color-mix(in srgb, var(--aeg-color-command-line) 65%, transparent);
+    radial-gradient(ellipse 48% 95px at 1% 0, color-mix(in srgb, var(--dash-sky-light) var(--dash-edge-shine, 94%), transparent), transparent 86%),
+    radial-gradient(ellipse 42% 19% at 75% 103%, color-mix(in srgb, var(--aeg-color-overview-accent) 31%, transparent), transparent 96%);
+  background-color: color-mix(in srgb, var(--aeg-color-command-line) 60%, transparent);
   mask: linear-gradient(black, black) content-box, linear-gradient(black, black);
   mask-composite: exclude;
 }

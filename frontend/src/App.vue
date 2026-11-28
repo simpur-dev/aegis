@@ -7,7 +7,9 @@ import {
   ApartmentOutlined,
   BarChartOutlined,
   DashboardOutlined,
+  RightOutlined,
   RobotOutlined,
+  WarningFilled,
 } from '@ant-design/icons-vue'
 
 import api from '@/api/client'
@@ -20,14 +22,19 @@ import { antdTheme } from '@/theme/antd'
 import { WORKSPACES, workspaceFor } from '@/router'
 import { useTheme } from '@/theme/useTheme'
 import { installSelectA11y } from '@/utils/selectA11y'
+import type AssistantView from '@/views/AssistantView.vue'
 
 const route = useRoute()
 const contentRegion = ref<HTMLElement | null>(null)
 const navTrack = ref<HTMLElement | null>(null)
 const navHighlight = ref<HTMLElement | null>(null)
 const navShine = ref<HTMLElement | null>(null)
+const assistantDock = ref<InstanceType<typeof AssistantDock> | null>(null)
+const assistantView = ref<InstanceType<typeof AssistantView> | null>(null)
 const immersive = computed(() => route.meta?.immersive === true)
+const monitoring = computed(() => route.name === 'monitor' && route.hash !== '#drill')
 const workspace = computed(() => workspaceFor(route))
+const dataWorkspace = computed(() => workspace.value.key === 'data')
 const mobileItems = WORKSPACES.filter((item) => item.key !== 'assistant')
 const mobileIcons = { duty: DashboardOutlined, research: ApartmentOutlined, data: BarChartOutlined }
 const assistantNav = WORKSPACES[3]
@@ -90,10 +97,18 @@ watch([() => route.path, () => route.hash], () => {
 
 const health = ref<{ status: string; version: string } | null>(null)
 const { events, connected, stalled } = useEventStream()
-// 告警卡片挂在全应用唯一的这条共享流上；顶部条与助手抽屉（AssistantDock 内）共用同一份卡片状态
-const { attachStream, urgentCards, urgentDrillCount, badgeCount, refresh } = useAlerts()
+// 顶栏告警入口和助手告警列表共用同一份卡片状态。
+const { attachStream, urgentCards, urgentDrillCount, refresh } = useAlerts()
 attachStream({ events, connected })
 void refresh()
+const showPendingAlertEntry = computed(() => route.name !== 'dashboard' && urgentCards.value.length > 0)
+const urgentAlertSummary = computed(() =>
+  `${urgentCards.value.length} 条红色或橙色告警待确认${urgentDrillCount.value ? `，其中演练 ${urgentDrillCount.value} 条` : ''}`,
+)
+function showPendingAlerts(): void {
+  const assistant = route.name === 'assistant' ? assistantView.value : assistantDock.value
+  void assistant?.showPendingAlerts()
+}
 // 同一条共享流同时喂告警卡与处置空间：按 subject 分流，不开第二条 SSE 连接。
 const { attachStream: attachSpaceStream, refresh: refreshSpaces } = useHandlingSpace()
 attachSpaceStream({ events, connected })
@@ -167,10 +182,13 @@ const streamLabel = computed<string>(() => {
      原因还在，挪到 title 里，hover 看得到。 */
   if (health.value === null) return '事件流已中断'
   if (connected.value) return '事件流已连接'
-  return stalled.value ? '事件流没心跳，正在重连' : '事件流重连中'
+  return stalled.value ? '事件流超时重连' : '事件流重连中'
 })
 /** 胶囊窄起来会省略号，完整那句放 title 里。 */
-const streamHint = computed<string>(() => (health.value === null ? '事件流已中断：后端不可达' : streamLabel.value))
+const streamHint = computed<string>(() => {
+  if (health.value === null) return '事件流已中断：后端不可达'
+  return !connected.value && stalled.value ? '事件流没心跳，正在重连' : streamLabel.value
+})
 /** 单胶囊里三句话各自的全称（版本号从可见文案挪到这里）。 */
 const statusTitle = computed<string>(() =>
   [
@@ -186,9 +204,11 @@ const statusTitle = computed<string>(() =>
        antd 默认英文空态 "No data"（此前是一张张截图发现再逐页补 emptyText）。
        逐页补只能盖住写过的表，语言包一次盖住整类。 -->
   <a-config-provider :theme="theme" :locale="zhCN">
-    <div class="app-shell" :class="{ 'is-immersive': immersive, 'is-processing': route.name === 'data-processing', 'is-command': route.name === 'dashboard' || route.name === 'warnings', 'is-metrics': route.name === 'metrics' }">
+    <div class="app-shell" :class="{ 'is-immersive': immersive, 'has-map': route.name === 'map', 'is-processing': route.name === 'data-processing', 'is-command': route.name === 'dashboard' || route.name === 'warnings', 'is-dashboard': route.name === 'dashboard', 'is-data-workspace': dataWorkspace, 'is-assistant': route.name === 'assistant' }">
       <!-- 全局雾底：所有页面共用（含一张图与流程编排）——浅色/深色各一档，地图画布自己仍是深空底 -->
-      <div class="app-backdrop" aria-hidden="true" />
+      <div class="app-backdrop" aria-hidden="true">
+        <div class="workspace-footer-mesh" />
+      </div>
       <div class="main-col">
         <a href="#aegis-main" class="skip-content" @click.prevent="contentRegion?.focus()">跳到主要内容</a>
         <header class="topbar">
@@ -213,7 +233,7 @@ const statusTitle = computed<string>(() =>
                   :data-testid="item.key === 'assistant' ? 'assistant-entry' : `nav-${item.key}`"
                   @click="navigate"
                 >
-                  <span v-if="route.name !== 'dashboard'" class="topnav__number" aria-hidden="true">0{{ index + 1 }}</span>
+                  <span class="topnav__number" aria-hidden="true">0{{ index + 1 }}</span>
                   <span>{{ item.label }}</span>
                 </a>
               </RouterLink>
@@ -222,18 +242,34 @@ const statusTitle = computed<string>(() =>
             <div class="topbar-right">
               <div class="nav-status" :title="statusTitle" data-testid="nav-status">
                 <span class="status-fact">
-                  <span class="status-dot" :class="health ? 'ok' : 'bad'"></span>
-                  <span class="status-pill__text">{{ health ? '后端在线' : '后端不可达' }}</span>
+                  <span class="status-dot" :class="health ? 'ok' : 'bad'" aria-hidden="true"></span>
+                  <span class="status-pill__text status-pill__text--full">{{ health ? '后端在线' : '后端不可达' }}</span>
+                  <span class="status-pill__text status-pill__text--short" aria-hidden="true">{{ health ? '在线' : '离线' }}</span>
                 </span>
                 <span class="status-fact" data-testid="stream-badge">
-                  <span class="status-dot" :class="connected && health ? 'live' : 'bad'"></span>
-                  <span class="status-pill__text">{{ streamLabel }}</span>
+                  <span class="status-dot" :class="connected && health ? 'live' : 'bad'" aria-hidden="true"></span>
+                  <span class="status-pill__text status-pill__text--full">{{ streamLabel }}</span>
+                  <span class="status-pill__text status-pill__text--short" aria-hidden="true">{{ !health ? '流中断' : connected ? '流已连接' : '流重连' }}</span>
                 </span>
-                <span class="status-fact" data-testid="events-badge" title="最近事件条数">
+                <span class="status-fact status-fact--events" data-testid="events-badge" title="最近事件条数">
                   <span class="events-count">{{ events.length }}</span>
                   <span class="status-pill__text">事件</span>
                 </span>
               </div>
+              <button
+                v-if="showPendingAlertEntry"
+                class="nav-alert"
+                type="button"
+                :aria-label="`打开待确认告警，${urgentAlertSummary}`"
+                :title="urgentAlertSummary"
+                data-testid="pending-alert-entry"
+                @click="showPendingAlerts"
+              >
+                <WarningFilled class="nav-alert__icon" aria-hidden="true" />
+                <span class="nav-alert__label" aria-hidden="true">待确认</span>
+                <strong class="nav-alert__count" aria-hidden="true">{{ urgentCards.length }}</strong>
+                <RightOutlined class="nav-alert__chevron" aria-hidden="true" />
+              </button>
               <div class="theme-switch" role="group" aria-label="主题">
                 <button
                   v-for="opt in themeOptions"
@@ -252,11 +288,11 @@ const statusTitle = computed<string>(() =>
               <RouterLink
                 :to="assistantNav.to"
                 class="mobile-assistant"
-                :aria-label="urgentCards.length ? `智能助手，${urgentCards.length} 条紧急告警` : '智能助手'"
+                :aria-label="!showPendingAlertEntry && urgentCards.length ? `智能助手，${urgentCards.length} 条紧急告警` : '智能助手'"
                 data-testid="mobile-assistant"
               >
                 <RobotOutlined aria-hidden="true" />
-                <span v-if="urgentCards.length" class="mobile-assistant__dot" aria-hidden="true" />
+                <span v-if="!showPendingAlertEntry && urgentCards.length" class="mobile-assistant__dot" aria-hidden="true" />
               </RouterLink>
             </div>
           </div>
@@ -270,34 +306,22 @@ const statusTitle = computed<string>(() =>
               {{ page.label }}
             </RouterLink>
           </nav>
+          <div v-else-if="route.name !== 'map'" class="workspace-nav workspace-nav--spacer" aria-hidden="true"></div>
         </header>
-
-        <!-- Ⅰ/Ⅱ 级告警的顶部常驻条：抽屉会被自动展开，这条是"关了抽屉也看得见"的兜底 -->
-        <div
-          v-if="urgentCards.length > 0 && route.name !== 'dashboard'"
-          class="alert-banner"
-          :class="{ 'alert-banner--assistant': route.name === 'assistant', 'alert-banner--editor': immersive, 'alert-banner--warnings': route.name === 'warnings' }"
-          data-testid="alert-banner"
-        >
-          <span class="alert-banner__dot" aria-hidden="true"></span>
-          <span class="alert-banner__text" data-testid="alert-banner-text">
-            {{ urgentCards.length }} 条红色/橙色告警待确认<template v-if="urgentDrillCount">（演练 {{ urgentDrillCount }} 条）</template>
-          </span>
-          <span class="alert-banner__meta">
-            在案 {{ badgeCount }} 条 ｜ {{ route.name === 'assistant' ? '可在告警面板中处置' : '处置入口在右侧助手抽屉' }}
-          </span>
-        </div>
 
         <main
           id="aegis-main"
           ref="contentRegion"
           tabindex="-1"
           class="main-content"
-          :class="{ 'is-immersive': immersive, 'is-map': route.name === 'map', 'is-desk': route.name === 'assistant' }"
+          :class="{ 'is-immersive': immersive, 'is-map': route.name === 'map', 'is-desk': route.name === 'assistant', 'is-overview': route.name === 'dashboard' }"
         >
-          <router-view />
+          <RouterView v-slot="{ Component }">
+            <component :is="Component" v-if="route.name === 'assistant'" ref="assistantView" />
+            <component :is="Component" v-else />
+          </RouterView>
           <!-- 服务令牌条常驻页脚：一台机器填一次，但"这台开了鉴权"必须每页都说得出口（§4.8.1） -->
-          <ServiceTokenBar v-if="!immersive && route.name !== 'metrics'" />
+          <ServiceTokenBar v-if="!immersive && route.name !== 'metrics' && !monitoring" />
           <!-- 页脚跟着内容走，不钉在视口底：钉着的话每一页都永久吃掉一条，
                而编排页那种"占满一屏"的布局还要去猜它的高度 -->
           <footer v-if="!immersive" class="footer">
@@ -327,9 +351,11 @@ const statusTitle = computed<string>(() =>
       <!-- 助手页本身就是全屏会话：再叠一份抽屉会出现两份共享同一会话的时间线 -->
       <AssistantDock
         v-if="route.name && route.name !== 'assistant'"
+        ref="assistantDock"
         :immersive="immersive"
         :avoid-map-bar="route.name === 'map'"
         :keep-overview-visible="route.name === 'dashboard'"
+        :bottom-clearance="dataWorkspace ? 104 : 0"
       />
     </div>
   </a-config-provider>
@@ -372,7 +398,7 @@ html[data-theme='dark'] .topnav {
   );
 }
 @media (prefers-reduced-transparency: no-preference) {
-  .app-shell:not(.is-command) .topnav {
+  .topnav {
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
   }
@@ -397,22 +423,10 @@ html[data-theme='dark'] .topnav {
   display: block;
   height: 100%;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--aeg-color-brand) 43%, var(--aeg-color-border));
+  border: 1px solid var(--nav-selected-edge);
   border-radius: var(--aeg-radius-pill);
-  background: linear-gradient(115deg, var(--aeg-color-overview-panel), var(--aeg-color-brand-soft)),
-    var(--aeg-color-overview-panel);
-  box-shadow: inset 0 1px 0 var(--aeg-color-glass-border), 0 2px 10px var(--aeg-color-brand-soft);
-}
-html[data-theme='dark'] .topnav__lens {
-  border-color: color-mix(in srgb, var(--aeg-color-overview-accent) 75%, var(--aeg-color-border));
-  background: linear-gradient(
-    115deg,
-    color-mix(in srgb, var(--aeg-color-overview-accent) 29%, var(--aeg-color-sunken)),
-    color-mix(in srgb, var(--aeg-color-brand) 32%, var(--aeg-color-sunken))
-  );
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--aeg-color-text) 32%, transparent),
-    0 2px 12px var(--aeg-color-brand-soft);
+  background: var(--nav-selected-face);
+  box-shadow: var(--nav-selected-shadow);
 }
 .topnav__shine {
   position: absolute;
@@ -427,7 +441,7 @@ html[data-theme='dark'] .topnav__lens {
   justify-content: center;
   gap: var(--aeg-space-s2);
   min-width: 0;
-  min-height: 40px;
+  height: 42px;
   padding-inline: var(--aeg-space-s2);
   border-radius: var(--aeg-radius-pill);
   color: var(--aeg-color-text-secondary);
@@ -470,8 +484,14 @@ html[data-theme='dark'] .topnav__lens {
   background: var(--aeg-color-masthead-tab);
   color: var(--aeg-color-masthead-tab-ink);
 }
+html[data-theme='dark'] .topnav__item[aria-current] .topnav__number {
+  border-color: var(--aeg-color-terrain-accent);
+  background: linear-gradient(145deg, var(--aeg-color-terrain-accent), var(--aeg-color-overview-accent) 56%, var(--aeg-color-brand-alt));
+  box-shadow: 0 1px 8px var(--aeg-color-command-glow);
+}
 .topnav__item:focus-visible,
 .workspace-nav__item:focus-visible,
+.theme-switch__btn:focus-visible,
 .mobile-assistant:focus-visible {
   outline: 2px solid var(--aeg-color-brand);
   outline-offset: -2px;
@@ -488,7 +508,9 @@ html[data-theme='dark'] .topnav__lens {
   }
 }
 @media (forced-colors: active) {
-  .topnav__item[aria-current] {
+  .topnav__item[aria-current],
+  .workspace-nav__item[aria-current],
+  .theme-switch__btn.is-on {
     outline: 1px solid Highlight;
     outline-offset: -2px;
   }
@@ -529,10 +551,13 @@ html[data-theme='dark'] .topnav__lens {
 }
 .brand-name {
   font-family: var(--aeg-font-display);
-  font-size: var(--aeg-font-md);
+  font-size: clamp(var(--aeg-font-md), 1.2vw, var(--aeg-font-lg));
   font-weight: var(--aeg-weight-bold);
   letter-spacing: 0.02em;
   color: var(--aeg-color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .brand-sub {
   font-size: var(--aeg-font-sm);
@@ -551,6 +576,10 @@ html[data-theme='dark'] .topnav__lens {
   height: 100%;
 }
 .topbar {
+  --nav-selected-edge: color-mix(in srgb, var(--aeg-color-brand) 43%, var(--aeg-color-border));
+  --nav-selected-face: linear-gradient(155deg, var(--aeg-color-overview-panel), var(--aeg-color-brand-soft));
+  --nav-selected-shadow: inset 0 1px 0 var(--aeg-color-glass-border), 0 2px 10px var(--aeg-color-brand-soft);
+  --workspace-nav-height: 46px;
   position: relative;
   z-index: 1;
   isolation: isolate;
@@ -560,23 +589,29 @@ html[data-theme='dark'] .topnav__lens {
 }
 .topbar-main {
   display: grid;
-  grid-template: 'brand nav facts' 68px / minmax(240px, 1fr) minmax(435px, 560px) minmax(0, 1fr);
+  grid-template: 'brand nav facts' 68px / minmax(0, 1fr) clamp(435px, 39vw, 560px) minmax(0, 1fr);
   align-items: center;
   gap: var(--aeg-space-s4);
   padding-inline: var(--aeg-space-s6);
 }
 .workspace-nav {
   display: flex;
-  gap: var(--aeg-space-s5);
+  align-items: center;
+  gap: var(--aeg-space-s2);
+  height: var(--workspace-nav-height);
   padding-inline: var(--aeg-space-s6);
   border-top: 1px solid var(--aeg-color-border);
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 .workspace-nav__item {
   display: grid;
+  flex: 0 0 auto;
   place-items: center;
-  min-height: 40px;
-  padding: 0 var(--aeg-space-s2);
-  border-bottom: 2px solid transparent;
+  inline-size: clamp(84px, 25vw, 104px);
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: var(--aeg-radius-pill);
   color: var(--aeg-color-text-secondary);
   font-size: var(--aeg-font-sm);
   font-weight: var(--aeg-weight-semibold);
@@ -588,9 +623,19 @@ html[data-theme='dark'] .topnav__lens {
   color: var(--aeg-color-text);
 }
 .workspace-nav__item[aria-current] {
-  border-color: var(--aeg-color-masthead-tab);
+  border-color: var(--nav-selected-edge);
+  background: var(--nav-selected-face);
+  box-shadow: var(--nav-selected-shadow);
 }
 html[data-theme='dark'] .topbar {
+  --nav-selected-edge: color-mix(in srgb, var(--aeg-color-terrain-accent) 80%, var(--aeg-color-command-line));
+  --nav-selected-face:
+    radial-gradient(ellipse at 25% 0, color-mix(in srgb, var(--aeg-color-overview-accent) 29%, transparent), transparent 65%),
+    linear-gradient(180deg, var(--aeg-color-command-nav), var(--aeg-color-command-panel) 58%, var(--aeg-color-command-selected));
+  --nav-selected-shadow:
+    inset 0 1px 5px color-mix(in srgb, var(--aeg-color-terrain-accent) 57%, transparent),
+    inset 0 -2px 9px color-mix(in srgb, var(--aeg-color-overview-accent) 37%, transparent),
+    0 2px 11px var(--aeg-color-command-glow);
   border-color: var(--aeg-color-command-line);
   background: var(--aeg-color-command-deep);
 }
@@ -634,14 +679,12 @@ html[data-theme='dark'] .aegis-heading-ridge::after {
   max-width: 100%;
 }
 
-/* 状态胶囊：一枚里装三条真话（min-width 180 / padding 8px 12px / 999 圆角）。
-   此前是三枚独立胶囊，@1440 就装不下：在线文案 316px、故障文案 374px，都大于 295px 的列宽，
-   只能靠省略号截断（真机截图里 "后端在线 v0…" / "事件流已…"）。合成一枚后 273px / 285px，两档都放得下。 */
+/* 状态文案可缩，最近事件数字保留完整宽度。 */
 .nav-status {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  min-width: 180px;
+  min-width: 0;
   max-width: 100%;
   gap: 10px;
   padding: 8px 12px;
@@ -667,6 +710,9 @@ html[data-theme='dark'] .aegis-heading-ridge::after {
   padding-left: 10px;
   border-left: 1px solid var(--aeg-color-border);
 }
+.status-fact.status-fact--events {
+  flex: none;
+}
 /* 挤不下时省略号收尾（全称在 title 里），不许无声裁字 */
 .status-pill__text {
   min-width: 0;
@@ -674,6 +720,7 @@ html[data-theme='dark'] .aegis-heading-ridge::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.status-pill__text--short { display: none; }
 /* 状态点：语义色走令牌，去掉上一版那圈 10px 光晕（"发光克制"，且光晕在深色底上会糊成一片） */
 .status-dot {
   flex: 0 0 auto;
@@ -706,10 +753,48 @@ html[data-theme='dark'] .aegis-heading-ridge::after {
   font-weight: var(--aeg-weight-bold);
   color: var(--aeg-color-text);
 }
+.nav-alert {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--aeg-tag-red-line);
+  border-radius: var(--aeg-radius-pill);
+  background: var(--aeg-tag-red-bg);
+  color: var(--aeg-tag-red-text);
+  font: inherit;
+  font-size: var(--aeg-font-sm);
+  font-weight: var(--aeg-weight-semibold);
+  white-space: nowrap;
+  cursor: pointer;
+}
+html[data-theme='dark'] .nav-alert {
+  border-color: color-mix(in srgb, var(--aeg-color-status-danger) 72%, var(--aeg-tag-red-line));
+  background: radial-gradient(ellipse at 55% 0, color-mix(in srgb, var(--aeg-color-status-danger) 22%, transparent), transparent 76%), var(--aeg-tag-red-bg);
+  box-shadow: inset 0 1px 4px color-mix(in srgb, var(--aeg-color-status-danger) 25%, transparent);
+}
+.nav-alert:hover {
+  border-color: var(--aeg-color-status-danger);
+  filter: brightness(1.1);
+}
+.nav-alert:focus-visible {
+  outline: 2px solid var(--aeg-color-status-danger);
+  outline-offset: 2px;
+}
+.nav-alert__icon { font-size: var(--aeg-font-md); }
+.nav-alert__count {
+  color: var(--aeg-color-status-danger);
+  font-size: var(--aeg-font-lg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.nav-alert__chevron { font-size: 10px; }
 
-/* 主题切换器：与侧栏选中项同一族"轨道 + 选中格"的分段写法。
-   选中格 `elevated` 底 + 主色字——字色取 `brand-hover` 而不是 `brand`：深色主题下 brand(#3B82F6)
-   压在 elevated(#16223A) 上只有 4.05:1，12px 的字要 4.5:1；提亮的 brand-hover(#60A5FA) 才够。 */
+/* 主题切换器使用和主导航相同的选中材质。 */
 .theme-switch {
   display: flex;
   align-items: center;
@@ -727,7 +812,7 @@ html[data-theme='dark'] .aegis-heading-ridge::after {
   width: 26px;
   height: 24px;
   padding: 0;
-  border: none;
+  border: 1px solid transparent;
   border-radius: var(--aeg-radius-pill);
   background: transparent;
   color: var(--aeg-color-text-secondary);
@@ -744,9 +829,9 @@ html[data-theme='dark'] .aegis-heading-ridge::after {
   color: var(--aeg-color-text);
 }
 .theme-switch__btn.is-on {
-  /* 半透明白色胶囊：压在雾底上有层次，但不像实心白块那样抢戏 */
-  background: var(--aeg-color-topbar-pill-bg);
-  box-shadow: inset 0 0 0 1px var(--aeg-color-glass-border);
+  border-color: var(--nav-selected-edge);
+  background: var(--nav-selected-face);
+  box-shadow: var(--nav-selected-shadow);
   color: var(--aeg-color-text);
 }
 
@@ -772,43 +857,6 @@ html[data-theme='dark'] .aegis-heading-ridge::after {
   transform: none;
 }
 
-/* Ⅰ/Ⅱ 级告警顶部条：红色系语义槽（status-danger），只做"有事"的宣告，不做操作面 */
-.alert-banner {
-  display: flex;
-  align-items: center;
-  gap: var(--aeg-space-s3);
-  margin: 0 var(--aeg-space-s6);
-  padding: var(--aeg-space-s2) var(--aeg-space-s4);
-  border: 1px solid var(--aeg-color-status-danger);
-  border-radius: var(--aeg-radius-md);
-  background: var(--aeg-color-brand-soft);
-}
-.alert-banner__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--aeg-color-status-danger);
-}
-.alert-banner__text {
-  font-size: var(--aeg-font-sm);
-  font-weight: var(--aeg-weight-semibold);
-  color: var(--aeg-color-status-danger);
-}
-.alert-banner__meta {
-  margin-left: auto;
-  font-size: var(--aeg-font-xs);
-  color: var(--aeg-color-text-secondary);
-}
-.alert-banner--warnings {
-  margin-top: var(--aeg-space-s2);
-  background: linear-gradient(105deg, var(--aeg-tag-red-bg), var(--aeg-color-command-panel) 58%);
-  border-color: color-mix(in srgb, var(--aeg-color-status-danger) 66%, var(--aeg-color-command-line));
-}
-.alert-banner--warnings .alert-banner__dot { flex: 0 0 8px; }
-@media (max-width: 720px) {
-  .alert-banner--warnings { flex-wrap: wrap; gap: var(--aeg-space-s1) var(--aeg-space-s2); margin-inline: var(--aeg-space-s2); }
-  .alert-banner--warnings .alert-banner__meta { flex-basis: 100%; margin-inline-start: var(--aeg-space-s4); }
-}
 /* 助手抽屉打开时把主内容整体往左挤（抽屉本身固定贴右，不再盖在内容上）；
    宽度只读 --assistant-drawer-w 一个真源，抽屉左侧拖拽时同步跟随 */
 html.assistant-drawer-open .main-content {
@@ -818,12 +866,7 @@ html.assistant-drawer-open .main-content {
   html.assistant-drawer-open .main-content {
     margin-right: 0;
   }
-  .alert-banner--assistant {
-    margin-inline: var(--aeg-space-s3);
-  }
-  .alert-banner--assistant .alert-banner__meta {
-    display: none;
-  }
+  .main-content { padding-top: var(--aeg-space-s3); }
 }
 /* 拖宽度手柄时关掉过渡：否则主内容会滞后于指针 */
 html.assistant-resizing .main-content {
@@ -838,9 +881,6 @@ html.assistant-resizing .main-content {
 .main-content.is-desk {
   display: flex;
   flex-direction: column;
-  /* 值班台两侧多留一倍呼吸位（24→48），会话整体右移，页面不贴边 */
-  padding-left: var(--aeg-space-s12);
-  padding-right: var(--aeg-space-s12);
 }
 .main-content.is-desk > :first-child {
   /* auto 基线 + 不压缩：零基线(flex:1)会把外壳压到视口高，
@@ -851,16 +891,9 @@ html.assistant-resizing .main-content {
   overflow: hidden;
   padding: 0;
 }
-.alert-banner--editor {
-  padding-block: var(--aeg-space-s1);
-}
-@media (max-width: 720px) {
-  .alert-banner--editor {
-    margin-inline: var(--aeg-space-s3);
-  }
-  .alert-banner--editor .alert-banner__meta {
-    display: none;
-  }
+/* 地图与编排画布有自己的实色底，给底纹留出独立区域。 */
+.main-content:is(.is-map, .is-immersive) {
+  margin-block-end: calc(var(--workspace-wave-height) * .74);
 }
 .app-shell.is-immersive {
   /* 编辑器外壳也让雾底透上来：画布与面板自己带底色，这里不再铺一整块深色板 */
@@ -868,6 +901,7 @@ html.assistant-resizing .main-content {
 }
 .footer {
   padding: var(--aeg-space-s4);
+  padding-block-end: max(var(--aeg-space-s4), calc(var(--workspace-wave-height) * .52));
   background: transparent;
   text-align: center;
   font-size: var(--aeg-font-sm);
@@ -878,11 +912,40 @@ html.assistant-resizing .main-content {
 .mobile-assistant {
   display: none;
 }
+@media (min-width: 1220px) and (max-width: 1390px) {
+  .topnav__item {
+    gap: 5px;
+    padding-inline: 4px;
+    font-size: var(--aeg-font-sm);
+  }
+  .topnav__number {
+    flex-basis: 22px;
+    height: 22px;
+  }
+}
 @media (max-width: 1219px) {
   .topbar-main {
     grid-template: 'brand facts' 50px 'nav nav' 54px / minmax(0, 1fr) auto;
     gap: 0 var(--aeg-space-s3);
   }
+}
+@media (min-width: 1220px) and (max-width: 1599px) {
+  .topbar-right:has(.nav-alert) { gap: var(--aeg-space-s2); }
+  .topbar-right:has(.nav-alert) .nav-status { gap: 6px; padding-inline: 8px; }
+  .topbar-right:has(.nav-alert) .status-fact { gap: 4px; }
+  .topbar-right:has(.nav-alert) .status-fact + .status-fact { padding-left: 6px; }
+  .topbar-right:has(.nav-alert) .status-pill__text--full {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .topbar-right:has(.nav-alert) .status-pill__text--short { display: inline; }
+}
+@media (max-width: 780px), (min-width: 1220px) and (max-width: 1379px) {
+  .nav-alert { padding-inline: 8px; }
+  .nav-alert__label, .nav-alert__chevron { display: none; }
 }
 /* 窄屏状态用圆点展示，保留读屏文案。 */
 @media (max-width: 780px) {
@@ -921,6 +984,10 @@ html.assistant-resizing .main-content {
     grid-template: 'brand facts' 54px / minmax(0, 1fr) auto;
   }
   .topnav {
+    display: none;
+  }
+  .nav-alert { min-height: 44px; }
+  .workspace-nav--spacer {
     display: none;
   }
   .mobile-nav {
@@ -1058,6 +1125,12 @@ html.assistant-resizing .main-content {
     }
   }
 }
+@media (max-width: 360px) {
+  .topbar-main:has(.nav-alert) .topbrand { gap: var(--aeg-space-s1); }
+  .topbar-main:has(.nav-alert) .topbar-right { gap: var(--aeg-space-s1); }
+  .topbar-main:has(.nav-alert) .nav-status { gap: 4px; padding-inline: 6px; }
+  .topbar-main:has(.nav-alert) .brand-compact > span { display: none; }
+}
 
 /* ——— 全局雾底（2026-11-19 用户裁决恢复） ———
    素材是离线资产 `public/backgrounds/aegis-horizon.webp`（不外链任何 CDN）：
@@ -1066,7 +1139,14 @@ html.assistant-resizing .main-content {
    模糊走背景图自身的 filter（一次性栅格化），不用 backdrop-filter——后者每帧重采样。 */
 .app-shell {
   --aeg-header-ridge: url('/backgrounds/aegis-metrics-ridge.jpg');
+  --workspace-wave-height: clamp(44px, 5.15vw, 92px);
   background: transparent;
+}
+@media (max-width: 640px) {
+  .app-shell { --workspace-wave-height: clamp(24px, 7vw, 39px); }
+}
+@media (forced-colors: active) {
+  .app-shell { --workspace-wave-height: 0px; }
 }
 .app-backdrop {
   position: fixed;
@@ -1107,90 +1187,107 @@ html[data-theme='dark'] .app-backdrop::after {
     radial-gradient(ellipse at 92% 41%, var(--aeg-color-brand-soft), transparent 52%);
   opacity: 0.8;
 }
+.workspace-footer-mesh {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: var(--aeg-bottom-nav-height, 0px);
+  z-index: 1;
+  height: var(--workspace-wave-height);
+  background: url('/backgrounds/aegis-workspace-footer.webp') center bottom / 100% 100% no-repeat;
+  mask-image: linear-gradient(to bottom, transparent, black 30%);
+  mix-blend-mode: multiply;
+  filter: invert(1) hue-rotate(185deg) contrast(1.25);
+  opacity: .70;
+}
+html[data-theme='dark'] .workspace-footer-mesh {
+  mix-blend-mode: screen;
+  filter: none;
+  opacity: .96;
+}
 
-html[data-theme='dark'] .is-command > .app-backdrop::before {
+html[data-theme='dark'] :is(.is-assistant, .is-immersive, .has-map) > .app-backdrop::before {
+  display: none;
+}
+html[data-theme='dark'] :is(.is-immersive, .has-map) > .app-backdrop {
+  background: var(--aeg-color-command-deep);
+}
+html[data-theme='dark'] :is(.is-immersive, .has-map) > .app-backdrop::after {
+  display: none;
+}
+html[data-theme='dark'] .is-assistant > .app-backdrop::after {
+  background:
+    radial-gradient(ellipse at 57% 65%, var(--aeg-color-command-panel), transparent 68%),
+    var(--aeg-color-command-deep);
+  opacity: 1;
+}
+
+html[data-theme='dark'] :is(.is-command, .is-data-workspace) > .app-backdrop::before {
   inset: 0;
-  background: url('/backgrounds/aegis-command-waves.png') center bottom / cover no-repeat;
+  background: var(--aeg-color-command-deep);
   filter: none;
   transform: none;
   opacity: 1;
 }
-html[data-theme='dark'] :is(.is-command, .is-metrics) > .app-backdrop::after {
+html[data-theme='dark'] .is-command > .app-backdrop::after {
   background: linear-gradient(180deg, var(--aeg-color-command-deep), transparent 75%);
   opacity: 0.42;
 }
-.is-command .workspace-nav {
-  gap: var(--aeg-space-s3);
-  align-items: center;
-  min-height: 47px;
-  overflow-x: auto;
-  scrollbar-width: thin;
+html[data-theme='dark'] .is-dashboard {
+  --dash-masthead-height: 115px;
+  --dash-sky-light: color-mix(in srgb, var(--aeg-color-terrain-accent) 72%, var(--aeg-color-text));
 }
-.is-command .workspace-nav__item {
-  flex: 0 0 auto;
-  min-height: 34px;
-  padding-inline: var(--aeg-space-s3);
-  border: 1px solid transparent;
-  border-radius: var(--aeg-radius-md);
+html[data-theme='dark'] .is-dashboard > .app-backdrop {
+  background: linear-gradient(165deg, var(--aeg-color-command-panel), var(--aeg-color-command-deep) 67%);
 }
-.is-command .workspace-nav__item[aria-current] {
-  border-color: var(--aeg-color-brand-line);
-  background: var(--aeg-color-brand-soft);
-}
-.is-command .main-content {
-  padding-top: var(--aeg-space-s4);
-}
-@media (min-width: 1280px) {
-  .is-command .brand-name {
-    font-size: var(--aeg-font-lg);
-  }
-}
-html[data-theme='dark'] .is-command .topbar {
-  border-color: var(--aeg-color-command-line);
-  background: linear-gradient(105deg, var(--aeg-color-command-deep), var(--aeg-color-command-nav), var(--aeg-color-command-deep));
-}
-html[data-theme='dark'] .is-command .topnav {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-}
-html[data-theme='dark'] .is-command .topnav__lens {
-  border-radius: var(--aeg-radius-md);
-  border-color: color-mix(in srgb, var(--aeg-color-overview-accent) 35%, var(--aeg-color-command-line));
-  background: radial-gradient(ellipse at 12% -15%, var(--aeg-color-command-glow), transparent 76%),
-    linear-gradient(155deg, var(--aeg-color-command-nav), var(--aeg-color-command-deep));
-}
-html[data-theme='dark'] .is-command .workspace-nav__item[aria-current] {
-  color: var(--aeg-color-text);
-  border-color: color-mix(in srgb, var(--aeg-color-overview-accent) 68%, var(--aeg-color-command-line));
-  background: radial-gradient(ellipse at 53% -30%, var(--aeg-color-command-glow), transparent 82%),
-    linear-gradient(180deg, var(--aeg-color-command-nav), var(--aeg-color-command-selected));
-  box-shadow: inset 0 1px 7px color-mix(in srgb, var(--aeg-color-terrain-accent) 24%, transparent), 0 3px 14px var(--aeg-color-command-glow);
-}
-@media (max-width: 640px) {
-  .is-command .workspace-nav {
-    gap: var(--aeg-space-s1);
-    padding-inline: var(--aeg-space-s2);
-  }
-}
-
-.is-metrics .main-content { padding-top: 12px; }
-.is-metrics .alert-banner { margin-top: 3px; padding-block: 4px; }
-html[data-theme='dark'] .is-metrics > .app-backdrop::before {
-  inset: 0;
-  background: var(--aeg-color-command-deep) url('/backgrounds/aegis-command-waves.png') center bottom / 100% 56% no-repeat;
-  filter: none;
-  transform: none;
+/* 总览的主导航、二级导航与面板共用同一张山景。延长取景区的下沿，让山脚融入页面。 */
+html[data-theme='dark'] .is-dashboard > .app-backdrop::before {
+  inset: 0 0 auto;
+  height: calc(var(--dash-masthead-height) + 100px);
+  background: var(--aeg-header-ridge) center calc(41% - 41px) / max(100%, 725px) auto no-repeat;
+  mask-image: linear-gradient(90deg, transparent 9%, black 23%, black 90%, transparent),
+    linear-gradient(180deg, black 0 45%, transparent 100%);
+  mask-composite: intersect;
+  filter: brightness(1.13);
   opacity: 1;
 }
-html[data-theme='dark'] .is-metrics .workspace-nav__item[aria-current] {
-  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--aeg-color-command-selected) 55%, transparent));
-  border-inline: 1px solid var(--aeg-color-brand-line);
-  box-shadow: inset 0 -5px 10px -6px var(--aeg-color-overview-accent);
+html[data-theme='dark'] .is-dashboard > .app-backdrop::after {
+  background:
+    radial-gradient(ellipse 26% 28px at 44% calc(var(--dash-masthead-height) - 3px), color-mix(in srgb, var(--dash-sky-light) 30%, transparent), transparent 94%),
+    radial-gradient(ellipse 31% 68px at 33% calc(var(--dash-masthead-height) - 14px), color-mix(in srgb, var(--dash-sky-light) 20%, transparent), transparent 85%),
+    radial-gradient(ellipse 48% 150px at 70% var(--dash-masthead-height), color-mix(in srgb, var(--aeg-color-command-selected) 37%, transparent), transparent 80%),
+    radial-gradient(ellipse 60% 44% at 34% 55%, color-mix(in srgb, var(--aeg-color-command-raised) 48%, transparent), transparent 82%);
+  opacity: 1;
 }
+html[data-theme='dark'] .is-dashboard .topbar {
+  border-color: color-mix(in srgb, var(--aeg-color-command-line) 32%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--aeg-color-command-deep) 31%, transparent), transparent);
+}
+html[data-theme='dark'] .is-dashboard .topbar::before { display: none; }
+html[data-theme='dark'] .is-dashboard .workspace-nav {
+  background: color-mix(in srgb, var(--aeg-color-command-deep) 24%, transparent);
+  border-top-color: color-mix(in srgb, var(--aeg-color-command-line) 22%, transparent);
+}
+@media (max-width: 1219px) {
+  html[data-theme='dark'] .is-dashboard { --dash-masthead-height: 151px; }
+}
+@media (max-width: 640px) {
+  html[data-theme='dark'] .is-dashboard { --dash-masthead-height: 101px; }
+  html[data-theme='dark'] .is-dashboard > .app-backdrop::after { opacity: .7; }
+}
+.main-content.is-overview {
+  padding-top: var(--aeg-space-s4);
+}
+
+html[data-theme='dark'] .is-data-workspace > .app-backdrop::after {
+  background: linear-gradient(var(--aeg-color-command-deep), transparent 75%);
+  opacity: .32;
+}
+html[data-theme='dark'] .is-data-workspace .assistant-dock {
+  outline: 2px solid var(--aeg-color-terrain-accent);
+  box-shadow: 0 4px 15px var(--aeg-color-command-glow);
+}
+.is-data-workspace .footer { padding-block-start: 9px; }
 @media (max-width: 720px) {
-  .is-metrics .alert-banner { margin-inline: var(--aeg-space-s3); }
-  .is-metrics .alert-banner__meta { display: none; }
   html[data-theme='dark'] .topbar::before { background-size: auto 230%; }
 }
 

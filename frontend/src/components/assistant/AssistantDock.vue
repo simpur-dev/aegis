@@ -12,7 +12,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
-import { useAlerts } from '@/composables/useAlerts'
 import {
   clampDrawerWidth,
   clampTop,
@@ -23,11 +22,13 @@ import {
   isClick,
 } from '@/components/assistant/dock'
 
-const props = defineProps<{ immersive?: boolean; avoidMapBar?: boolean; keepOverviewVisible?: boolean }>()
+const props = defineProps<{ immersive?: boolean; avoidMapBar?: boolean; keepOverviewVisible?: boolean; bottomClearance?: number }>()
 
 const STORAGE_KEY = 'aegis.assistant.dock'
 
 const dockEl = ref<HTMLButtonElement | null>(null)
+const panel = ref<InstanceType<typeof AssistantPanel> | null>(null)
+let alertTrigger: HTMLElement | null = null
 const open = ref(false)
 /**
  * 首次打开前不挂载会话面板：抽屉收起只是 CSS 隐藏，挂了就会在每页后台拉
@@ -48,26 +49,12 @@ const headerVar = computed(() => (props.immersive ? '--aeg-editor-header-height'
 /** 抽屉顶部的落点（跟随顶栏/编辑器头部高度；水平位置与宽度由 CSS 变量算）。 */
 const drawerTopStyle = computed(() => ({ top: `${headerH.value}px` }))
 
-const { urgentCards } = useAlerts()
-watch(
-  () => urgentCards.value.length,
-  (now, prev) => {
-    // 总览用页头告警入口保留地图空间，其余页面有新紧急告警时展开抽屉。
-    if (now > 0 && (prev ?? 0) === 0 && !props.keepOverviewVisible) {
-      open.value = true
-      saveState()
-    }
-  },
-)
-
 function readHeaderHeight(): number {
   const header = document.querySelector('.topbar')
   const editorHeader = props.immersive ? document.querySelector('[data-testid="editor-header"]') : null
-  const banner = document.querySelector('.alert-banner')
   const bottom = Math.max(
     header?.getBoundingClientRect().bottom ?? 0,
     editorHeader?.getBoundingClientRect().bottom ?? 0,
-    banner?.getBoundingClientRect().bottom ?? 0,
   )
   if (bottom > 0) return Math.round(bottom)
   const raw = getComputedStyle(document.documentElement).getPropertyValue(headerVar.value).trim()
@@ -108,7 +95,8 @@ function measure(): void {
 }
 function boundDockTop(value: number): number {
   const mapClearance = props.avoidMapBar && window.innerWidth <= 820 ? 82 : 0
-  return clampTop(value, window.innerHeight - bottomNavHeight, headerH.value, DOCK_SIZE + mapClearance)
+  const footerClearance = window.innerWidth > 720 ? props.bottomClearance ?? 0 : 0
+  return clampTop(value, window.innerHeight - bottomNavHeight - footerClearance, headerH.value, DOCK_SIZE + mapClearance)
 }
 
 /**
@@ -173,7 +161,11 @@ function onResizeDoubleClick(): void {
 }
 
 function toggle(): void {
-  open.value = !open.value
+  if (open.value) {
+    close()
+    return
+  }
+  open.value = true
   saveState()
 }
 
@@ -181,7 +173,18 @@ function close(): void {
   if (!open.value) return
   open.value = false
   saveState()
+  if (alertTrigger) (alertTrigger.isConnected ? alertTrigger : dockEl.value)?.focus()
+  alertTrigger = null
 }
+async function showPendingAlerts(): Promise<void> {
+  const trigger = document.activeElement
+  if (trigger instanceof HTMLElement) alertTrigger = trigger
+  open.value = true
+  saveState()
+  await nextTick()
+  await panel.value?.showPendingAlerts()
+}
+defineExpose({ showPendingAlerts })
 
 /* —— 拖拽：只改竖直位置 —— */
 let pressed = false
@@ -239,7 +242,7 @@ function onResize(): void {
   applyWidth()
 }
 watch(
-  [() => props.immersive, () => props.avoidMapBar, () => props.keepOverviewVisible, () => urgentCards.value.length],
+  [() => props.immersive, () => props.avoidMapBar, () => props.keepOverviewVisible, () => props.bottomClearance],
   onResize,
   { flush: 'post' },
 )
@@ -259,7 +262,7 @@ onMounted(() => {
   width.value = clampDrawerWidth(saved.width ?? defaultDrawerWidth(window.innerWidth), window.innerWidth)
   applyWidth()
   top.value = boundDockTop(saved.top ?? window.innerHeight - DOCK_SIZE - 24)
-  open.value = saved.open ?? (urgentCards.value.length > 0 && !props.keepOverviewVisible)
+  open.value = saved.open ?? false
   window.addEventListener('resize', onResize)
   window.addEventListener('keydown', onEscape)
 })
@@ -348,7 +351,7 @@ onBeforeUnmount(() => {
       <button type="button" class="assistant-drawer__close" aria-label="收起助手" @click="close">×</button>
     </header>
     <div class="assistant-drawer__body">
-      <AssistantPanel v-if="panelMounted" mode="dock" />
+      <AssistantPanel v-if="panelMounted" ref="panel" mode="dock" />
     </div>
   </aside>
 </template>

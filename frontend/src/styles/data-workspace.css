@@ -1,0 +1,58 @@
+/* 数据处理与智能助手的页头和内容面板共用光影。 */
+.data-workspace-content {
+  --data-gap: 14px;
+  --data-column-gap: 16px;
+  --data-ice: var(--aeg-color-overview-accent);
+  --data-edge: var(--aeg-color-border);
+  --data-inset: var(--aeg-color-sunken);
+  min-width: 0;
+}
+
+:is(.data-workspace-panel, .workspace-surface) {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  border: 1px solid var(--data-edge, var(--aeg-color-border));
+  border-radius: 15px;
+  background: var(--aeg-color-card);
+  box-shadow: var(--aeg-shadow-sm);
+}
+
+html[data-theme='dark'] .data-workspace-content {
+  --data-edge: color-mix(in srgb, var(--data-ice) 54%, var(--aeg-color-command-line));
+  --data-inset: color-mix(in srgb, var(--aeg-color-command-deep) 93%, var(--aeg-color-command-panel));
+}
+
+html[data-theme='dark'] :is(.data-workspace-panel, .workspace-surface) {
+  --data-panel-tint: var(--data-highlight-color, var(--aeg-color-overview-accent));
+  --workspace-surface-depth: var(--data-inset, color-mix(in srgb, var(--aeg-color-command-deep) 93%, var(--aeg-color-command-panel)));
+  border-color: color-mix(in srgb, var(--data-panel-tint) 54%, var(--aeg-color-command-line));
+  background:
+    radial-gradient(ellipse 35% 22% at var(--data-highlight-position, 38%) 0%, color-mix(in srgb, var(--data-panel-tint) 31%, transparent), transparent 80%),
+    radial-gradient(ellipse 67% 63% at var(--data-highlight-position, 38%) -10%, color-mix(in srgb, var(--data-panel-tint) 22%, transparent), transparent 70%),
+    radial-gradient(ellipse 63% 29% at 57% 105%, color-mix(in srgb, var(--data-panel-tint) 19%, transparent), transparent 79%),
+    linear-gradient(145deg, var(--aeg-color-command-panel), var(--workspace-surface-depth) 82%);
+  box-shadow: inset 0 0 14px color-mix(in srgb, var(--data-panel-tint) 23%, transparent),
+    0 6px 20px -7px var(--aeg-color-command-glow);
+}
+
+html[data-theme='dark'] :is(.data-workspace-panel, .workspace-surface)::before {
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background:
+    radial-gradient(ellipse 35% 100% at var(--data-highlight-position, 38%) 0%, color-mix(in srgb, var(--data-panel-tint) 72%, white), transparent 74%),
+    radial-gradient(ellipse 94% 65% at 32% 100%, color-mix(in srgb, var(--data-panel-tint) 81%, white), transparent 77%);
+  mask: linear-gradient(black 0 0) content-box, linear-gradient(black 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  content: '';
+}
+
+@media (max-width: 720px) {
+  .data-workspace-content {
+    --data-gap: 12px;
+    --data-column-gap: 12px;
+  }
+}

@@ -239,7 +239,7 @@ export function useAlerts() {
     dismissNotice,
     /** 还在桌上的（未合并、未关闭），已按严重度排序。 */
     openCards: computed(() => cards.value.filter(isOpen)),
-    /** Ⅰ/Ⅱ 级待确认且未稍后提醒：触发自动展开与顶部条。 */
+    /** Ⅰ/Ⅱ 级待确认且未稍后提醒，与顶部入口共用同一口径。 */
     urgentCards,
     urgentDrillCount,
     /** 角标数：在案告警总量，包含已接手的告警。 */
